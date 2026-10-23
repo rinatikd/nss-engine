@@ -1,3 +1,9 @@
+# Совместная работа NSS Engine
+
+Сначала прочитай [AGENTS.md](AGENTS.md), [карту исходников](docs/SOURCE_MAP.md), [переносимые навыки](docs/PORTABLE_SKILLS.md) и [процесс совместной работы](docs/AGENT_COLLABORATION.md). Эти правила применяются и к Claude; инструкции для Codex не являются разрешением игнорировать границы проекта.
+
+В Claude Free подключение GitHub даёт контекст, но не подтверждает наличие исполняющего агента, Git push или PR. Не обещай операции, которые текущая сессия не умеет выполнить. Не включай платный API/подписку. Для анализа выбирай нужные файлы и конкретную ветку, указывай SHA, если он доступен. Результаты передавай в формате docs/CLAUDE_HANDOFF_TEMPLATE.md. Не выдавай предложенный патч за применённый или проверенный.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
