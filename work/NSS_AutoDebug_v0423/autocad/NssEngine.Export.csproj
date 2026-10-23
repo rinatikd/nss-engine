@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup>
+  <TargetFramework>net8.0-windows</TargetFramework>
+  <Nullable>enable</Nullable>
+  <ImplicitUsings>disable</ImplicitUsings>
+  <UseWPF>true</UseWPF>
+  <UseWindowsForms>true</UseWindowsForms>
+  <Version>0.42.3</Version>
+  <DefineConstants>$(DefineConstants);NSS_DEBUG_ISOLATED</DefineConstants>
+  <AssemblyName>NssEngine.AutoDebug.V0423</AssemblyName>
+  <EnableDynamicLoading>true</EnableDynamicLoading>
+  <OutputType>Library</OutputType>
+  <PlatformTarget>x64</PlatformTarget>
+ </PropertyGroup>
+ <ItemGroup>
+  <Reference Include="AcCoreMgd"><HintPath>$(AutoCADDir)\AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+  <Reference Include="AcDbMgd"><HintPath>$(AutoCADDir)\AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+  <Reference Include="AcMgd"><HintPath>$(AutoCADDir)\AcMgd.dll</HintPath><Private>false</Private></Reference>
+ </ItemGroup>
+ <PropertyGroup Condition="'$(NssDebugRegistrationFile)' != ''"><DefineConstants>$(DefineConstants);NSS_RUN_REGISTRATION</DefineConstants></PropertyGroup>
+ <ItemGroup Condition="'$(NssDebugRegistrationFile)' != ''"><Compile Include="$(NssDebugRegistrationFile)" /></ItemGroup>
+</Project>

@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup><Compile Include="../autocad/PreviewContractV042.cs" Link="PreviewContractV042.cs" /><Compile Include="../autocad/SnapshotContractV042.cs" Link="SnapshotContractV042.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../autocad/SharedFileHashV042.cs" Link="SharedFileHashV042.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../autocad/DatabaseStateV042.cs" Link="DatabaseStateV042.cs" /></ItemGroup>
+</Project>

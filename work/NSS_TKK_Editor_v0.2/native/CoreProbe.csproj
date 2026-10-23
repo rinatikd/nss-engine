@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework><OutputType>Library</OutputType>
+    <EnableDynamicLoading>true</EnableDynamicLoading><EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>NssTkkCoreProbe</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup><Compile Include="CoreProbe.cs" /></ItemGroup>
+  <ItemGroup>
+    <Reference Include="AcCoreMgd"><HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcDbMgd"><HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

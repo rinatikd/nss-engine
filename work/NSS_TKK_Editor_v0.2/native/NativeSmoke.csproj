@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable><PlatformTarget>x64</PlatformTarget><EnableDynamicLoading>true</EnableDynamicLoading>
+    <AssemblyName>NssTkkNativeSmoke.V002</AssemblyName><EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup><Compile Include="NativeSmoke.cs" /><Compile Include="NativePrepare.cs" /><Compile Include="NativeScenario.cs" /><Compile Include="NativeAutoProbe.cs" /><Compile Include="NativeGuiProbe.cs" /><Compile Include="NativeGuiScenario.cs" /><Compile Include="NativeGuiCancellation.cs" /><Compile Include="NativeGuiCommands.cs" /><Compile Include="NativeEngineering.cs" /></ItemGroup>
+  <ItemGroup>
+    <Reference Include="AcCoreMgd"><HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcDbMgd"><HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcMgd"><HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcMgd.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>
