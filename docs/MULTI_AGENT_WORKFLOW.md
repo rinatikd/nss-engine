@@ -1,4 +1,4 @@
-# Общая работа Codex, Claude, Grok, Gemini и DeepSeek
+# Общая работа Codex, Cursor, Claude, Grok, Gemini и DeepSeek
 
 ## Область и разрешение
 
@@ -20,6 +20,7 @@
 |---|---|---|---|
 | Codex CLI, основной ПК | Git + локальные инструменты | Первый push в main | Конкретное назначение следующих задач |
 | Codex приложения, дополнительный ПК | Отдельный клон + Git + PR | Push/PR и CI; текущий клон C:/NSS_Engine/collaboration/nss-engine | Автоматический диспетчер |
+| Cursor | Локальный IDE-агент + Git | Документация подтверждает AGENTS.md и .agents/skills; подготовлен docs/CURSOR_SETUP.md | ПК/установка, вход, доступ к коду, отчёт агента и PR ещё не проверены |
 | Claude Free | GitHub Integration | GitHub App установлен; проверка разрешает cloud sessions | Обычный чат не подтвердил чтение файлов: лимит сообщений; Code требует платного плана |
 | Grok | GitHub из каталога коннекторов | Пользователь подключил GitHub; read-only проверка вернула SHA main 79a53fec612b80c1c6cf3afff6c39931f5939675 и совпадающие детали README/AGENTS | Полный объём выданного OAuth не проверен; запись и PR не тестировались |
 | Gemini web | Import code / GitHub | Вход выполнен; приложение GitHub найдено в Персональный ИИ → Подключенные приложения | Привязка GitHub и чтение NSS ещё не подтверждены; пользователь открывает экран разрешений |
