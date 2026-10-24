@@ -71,7 +71,7 @@ class RepoGuardTests(unittest.TestCase):
         self.assertEqual(self.guard('--staged').returncode, 0)
 
     def test_expression_marker_is_still_allowed(self):
-        self.stage(self.assignment('${ENVIRONMENT_VALUE}'))
+        self.stage(self.assignment('${RUNTIME_CREDENTIAL}'))
         self.assertEqual(self.guard('--staged').returncode, 0)
 
     def test_index_instead_of_unstaged_working_file(self):

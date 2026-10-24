@@ -17,7 +17,7 @@ PATTERNS={
  'jwt':re.compile(rb'\beyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\b'),
 }
 ASSIGN=re.compile(rb'''(?i)(?:api[_-]?key|client[_-]?secret|access[_-]?token|password)\s*[:=]\s*['"]([^'"\r\n]{12,})['"]''')
-PLACEHOLDERS=(b'example',b'placeholder',b'your',b'change',b'replace',b'dummy',b'test',b'xxx',b'...',b'${',b'getenv',b'environ',b'<',b'process.env',b'secret_name')
+PLACEHOLDERS=(b'example',b'placeholder',b'your',b'change',b'replace',b'dummy',b'test',b'xxx',b'...',b'getenv',b'environ',b'<',b'process.env',b'secret_name')
 
 def git(*args):
  p=subprocess.run(GIT+list(args),cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.PIPE)

@@ -1,6 +1,6 @@
 # Очередь совместной работы NSS
 
-Обновлено: 2026-10-24, Asia/Qyzylorda. Успешный `git fetch origin` выполнен в основной копии; проверенная база — `main` / `origin/main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`, дерево основной копии чистое. Подтверждены только перечисленные ниже состояния GitHub. `proposed` означает, что задачу описали, но не передали; `sent` требует фактической передачи; `accepted` требует ответа исполнителя; `reviewed` означает проверку результата; `integrated` означает наличие в актуальном `origin/main`.
+Обновлено: 2026-10-24, Asia/Qyzylorda. Проверенная база — `main` / `origin/main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`; дерево main чистое. Статусы: `proposed` — описано, но не передано; `ready` — входы и канал проверены, но ещё не отправлено; `sent` — передано; `accepted` / `acknowledged` — исполнитель подтвердил; `in_progress` — работа начата; `review` / `reviewed` — результат проверен; `integrated` — включено в актуальную main. `blocked_input`, `blocked_access`, `blocked_quota`, `waiting_user`, `rejected` — блокирующие статусы. Факты GitHub и проверок ниже относятся к указанным SHA и не обновляются автоматически.
 
 ## COORD-01 — единая проверенная база
 
@@ -75,7 +75,7 @@
 
 - **Исполнитель:** Cursor; **проверяющий:** Codex CLI.
 - **База из последней записи:** `main` `79a53fec612b80c1c6cf3afff6c39931f5939675`; актуальная база Cursor-клона не проверена.
-- **Разрешённые файлы и полный исходный prompt:** в доступных Issue/документах не восстановлены полностью, поэтому новое поручение не выдавалось.
+- **Разрешённые файлы и prompt:** полный read-only prompt есть в `docs/CURSOR_SETUP.md:35-43`; он указывает `AGENTS.md`, `README.md`, `docs/SOURCE_MAP.md`, `docs/PORTABLE_SKILLS.md` и просит отчёт о Git origin/branch/SHA/status; не разрешает правки.
 - **Критерий:** read-only отчёт о фактических origin/ветке/SHA, прочитанных правилах и навыках.
 - **Зависимости:** фактический ответ Cursor и его проверяемая рабочая копия.
 - **Статус:** по записи от 2026-10-24 ответ ожидался; сейчас `parked`, не считать активным назначением. Небольшую правку выбирать только после доступного канала и отчёта.
@@ -94,3 +94,9 @@
 - PR #4 was found during the live refresh; it is a draft and outside COORD-01's permitted scope. No file assignment was made.
 - Claude and DeepSeek tasks are blocked_access: no verified transmission/response channel is available in this session. No assignment is marked sent or accepted.
 - Candidate branch `agent/codex-cli/coord-01-integrated-candidate` is pushed at `01c7edafc39403602a571cb51d1b48d96e344291`. PR creation and merge tools are unavailable; existing PRs and `main` remain unchanged. Open PR form: https://github.com/rinatikd/nss-engine/pull/new/agent/codex-cli/coord-01-integrated-candidate.
+
+## Independent review follow-up (2026-10-24)
+
+A read-only internal Astra review of candidate `b5c16a8` confirmed the PR1 ? PR2 ? SEC-01 history and found no functional defect in the narrow SEC-01 guard change. It found three actionable consistency/coverage issues: the Cursor prompt was already available in `docs/CURSOR_SETUP.md` but TASK_QUEUE said it was unrecovered; queue and workflow used different lifecycle vocabularies; and `test_expression_marker_is_still_allowed` used `${ENVIRONMENT_VALUE}`, which matched the placeholder exemption before reaching the expression-marker branch.
+
+Corrections: the queue now links to the exact read-only Cursor prompt and avoids claiming it was sent; both documents define aligned lifecycle states; `repo_guard.py` no longer classifies `${` as a placeholder token (the existing expression-marker rule handles it), and the test uses `${RUNTIME_CREDENTIAL}` so it reaches that rule. Verification on the updated candidate: 7 targeted repo_guard tests PASS, staged repo_guard PASS, full portable checks PASS, and diff check PASS. Native CAD/BIM and private fixtures remain untested.
