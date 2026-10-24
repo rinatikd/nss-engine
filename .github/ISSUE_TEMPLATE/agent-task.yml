@@ -1,0 +1,87 @@
+name: Задача для ИИ-агента
+description: Создать ограниченную задачу, которую агент вернёт отдельным Pull Request
+title: "[agent] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Перед отправкой прочитайте `AGENTS.md` и `docs/GITHUB_AGENT_WORKFLOW.md`.
+        Не прикладывайте секреты или реальные DWG/DXF/RVT/RFA.
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Исполнитель
+      description: Один исполнитель на одну задачу; отдельный review оформляется отдельно.
+      options:
+        - Codex
+        - Claude
+        - Gemini
+        - Grok
+        - Другой, назначит руководитель
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      options:
+        - CCTV / СВН
+        - ТКК / AutoCAD
+        - КПП / АР
+        - ЦОУ
+        - CI / безопасность / документация
+        - Другое
+    validations:
+      required: true
+  - type: input
+    id: base
+    attributes:
+      label: Основание
+      description: Ветка и commit SHA, на которых строится задача (обычно main и последний опубликованный SHA).
+      placeholder: main @ <commit SHA>
+    validations:
+      required: true
+  - type: textarea
+    id: objective
+    attributes:
+      label: Что требуется получить
+      description: Один конкретный результат. Опишите поведение до и после либо нужный документ.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Разрешённые файлы и ограничения
+      description: Назовите каталоги/файлы и что агенту запрещено менять или запускать.
+      value: |
+        Только опубликованные исходники и синтетические данные.
+        Не менять main, не переписывать историю. Не запускать AutoCAD/Revit и реальные сборки без отдельного задания.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Критерии приёмки
+      description: Проверяемые условия, по которым руководитель сможет принять результат.
+      placeholder: |
+        - Воспроизводимый исходный пример
+        - Ожидаемое исправленное поведение
+        - Нужные проверки и ограничения
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Проверка и необходимые входы
+      description: Какие команды нужно выполнить? Нужны ли исходники, Autodesk, нормы или решения владельца?
+    validations:
+      required: true
+  - type: checkboxes
+    id: review
+    attributes:
+      label: Обработка результата
+      options:
+        - label: Результат возвращается в отдельном PR; слияние выполняет владелец проекта после review.
+          required: true
+        - label: В задаче нет секретов или исходных закрытых чертежей.
+          required: true

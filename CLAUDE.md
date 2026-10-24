@@ -8,3 +8,4 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 - A committed graphify-out/graph.json is rewritten whole on every build, so a large diff to it in a pull request is expected. Do not flag it as churn or suggest skipping the graph rebuild or its hooks.
+For this repository, read `AGENTS.md` and `docs/GITHUB_AGENT_WORKFLOW.md` before changing files. Work from the assigned issue in a separate branch (use `agent/claude/<issue>-<slug>` if the host allows a custom name) and return a pull request. Never push to `main`; follow the project's private drawing, secret, and Autodesk boundaries.

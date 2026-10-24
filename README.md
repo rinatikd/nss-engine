@@ -30,7 +30,7 @@ python tools/run_portable_checks.py
 
 Перед работой читать AGENTS.md, docs/SOURCE_MAP.md и docs/PORTABLE_SKILLS.md. Проверка перед коммитом включается локально: `git config core.hooksPath .githooks` (репозиторий содержит hook, не меняет глобальные hooks).
 
-Распределение задач между моделями, подтверждённые результаты и оценка приёмки: [совместный цикл 24.10.2026](docs/MULTI_AGENT_REVIEW_2026-10-24.md). Каждый агент работает в своей ветке/worktree; координатор отдельно проверяет результат до интеграции.
+Общий регламент задач Claude/Gemini/Grok/Codex: [работа через GitHub](docs/GITHUB_AGENT_WORKFLOW.md). Формы Issue и PR находятся в `.github/`. Результаты прошлого совместного цикла и оценка приёмки: [отчёт 24.10.2026](docs/MULTI_AGENT_REVIEW_2026-10-24.md).
 
 ## Первый push
 
