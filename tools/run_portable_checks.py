@@ -21,6 +21,7 @@ def main():
     if len(sys.argv)>1 and sys.argv[1]=='--worker':return worker(sys.argv[2:])
     tkk=ROOT/'work/NSS_TKK_Editor_v0.2'
     checks=[
+      (ROOT/'tools',[],['test_repo_guard']),
       (tkk/'tests',[str(tkk/'engine')],['test_editor_core','test_equal_spacing','test_diagnostics','test_fes_numbering','test_span_labels','test_snapshot_validation']),
       (tkk/'modules/cctv',[],['test_cctv_core']),
       (ROOT/'work/NSS_AutoDebug_v0423/tests',[str(ROOT/'work/NSS_AutoDebug_v0423')],['test_analyzer','test_v022','test_v023']),
