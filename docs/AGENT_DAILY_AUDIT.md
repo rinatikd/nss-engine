@@ -55,8 +55,14 @@ PR #6 was merged normally into `main` as `7d003ada368833f6a825eb2ebf2d43f8b676a0
 
 ## Координационный пересмотр (2026-10-24)
 
-Текущая main — 31848525631e6c326d7aac61eefe856ddfc9877c; рабочая копия fast-forward и чистая. PR #10 / CCTV-OUTPUT-01 исправляет потерю старого DXF при частичном сбое записи; GitHub checks 2/2, локальные 14 целевых тестов и portable suite прошли, независимое read-only ревью без блокеров. AutoCAD и приватные fixtures не запускались.
+На момент пересмотра перед PR #12 main была 31848525631e6c326d7aac61eefe856ddfc9877c; более поздние интеграции зафиксированы ниже.
 
 Комментарий Codex Desktop в Issue #5 сообщил, что Claude и DeepSeek вернули ограниченные read-only ревью; старые статусы blocked_access / не отправлено устарели. Полные локальные отчёты со второго ПК недоступны, поэтому отмечено response_received с частичной независимой проверкой. Неподтверждённые детали не выдаются за принятый результат.
 
-Следующая задача CCTV-CSV-01 (#11) ограничена чтением UTF-8 BOM в CSV камер и тестом. Некорректный DXF требует уточнения входного контракта; политика пустых камер/стен не меняется. PR #4 остаётся старым черновиком на базе 79a53fec… с двумя неуспешными portable checks; обновление/слияние не выполнялось. Cursor припаркован; подтверждённых полезных задач Grok/Gemini/Qwen сейчас нет.
+На момент этого пересмотра CCTV-CSV-01 была следующей задачей; позднее она интегрирована через PR #13, см. раздел ниже. Некорректный DXF требует уточнения входного контракта; политика пустых камер/стен не меняется. PR #4 остаётся старым черновиком на базе 79a53fec… с двумя неуспешными portable checks; обновление/слияние не выполнялось. Cursor припаркован; подтверждённых полезных задач Grok/Gemini/Qwen сейчас нет.
+
+## CCTV-CSV-01 integration update (2026-10-24)
+
+PR #13 merged normally after both GitHub portable checks succeeded and independent review found no blocker. Main at that integration checkpoint: 48338c9a3d762dbda3a8a871e67e355929cc2c2e. Local main fast-forwarded cleanly and repo_guard --tree HEAD passed.
+
+The UTF-8 BOM reproduction failed on baseline with KeyError: name. After switching camera CSV decoding to utf-8-sig, BOM and plain UTF-8 fixtures produced identical 14,810-byte DXF output, stdout and stderr. Targeted CCTV tests: 15 PASS; full portable suite PASS; repo_guard staged/tree and diff check PASS. Native AutoCAD/private fixtures were not run. Issue #11 is closed.
