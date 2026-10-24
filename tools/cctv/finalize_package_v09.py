@@ -1,9 +1,11 @@
 from pathlib import Path
 import json,runpy,hashlib,csv,re,collections
+from tkk_integrity import tkk_block_fingerprints, verify_tkk_blocks
 p=Path(__file__).with_name('build_package_v09.py');s=p.read_text(encoding='utf-8')
 s=s.replace("s.arrow((375,137),(615,137),5,.4)","s.poly([(285,150),(285,158),(705,158),(705,150)],5,lw=.4,closed=False);s.arrow((705,158),(705,150),5,.4)")
 p.write_text(s,encoding='utf-8');api=runpy.run_path(str(p));root=api['ROOT'];out=api['OUT'];ezdxf=api['ezdxf']
 source=ezdxf.readfile(api['SOURCE']);sig=api['tkk_record'](source)
+source_blocks=tkk_block_fingerprints(source,api['TKK'])
 for v in ['34_chain','47_corner_proposal']:
  folder=out/v;r=json.loads((folder/'review.json').read_text(encoding='utf-8'));path=folder/f'CCTV_v09_{v}.dxf';d=ezdxf.readfile(path)
  for lo in d.layouts:
@@ -16,7 +18,9 @@ for v in ['34_chain','47_corner_proposal']:
    if e.dxftype()=='TEXT':e.dxf.text=t
    else:e.text=t
  api['make_structure'](d,folder,r['cabinet_groups'],[],r['thermal_cameras'])
- assert not d.audit().errors;d.saveas(path);c=ezdxf.readfile(path);assert api['tkk_record'](c)==sig;assert not c.audit().errors
+ assert not d.audit().errors;d.saveas(path);c=ezdxf.readfile(path)
+ verify_tkk_blocks(c,api['TKK'],source_blocks)
+ assert api['tkk_record'](c)==sig;assert not c.audit().errors
  # Entire source annotation set and well block definitions survive. Check 2D continuity & patterned hatches again after final save.
  m=c.modelspace();ly=api['TKK'];original=[e for e in source.modelspace() if e.dxf.layer==ly];current=[e for e in m if e.dxf.layer==ly]
  assert collections.Counter(e.dxftype() for e in original)==collections.Counter(e.dxftype() for e in current)

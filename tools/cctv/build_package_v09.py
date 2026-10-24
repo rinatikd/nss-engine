@@ -4,6 +4,7 @@ import ezdxf
 from ezdxf.xref import Loader
 from ezdxf import bbox
 from ezdxf.lldxf.tagwriter import TagCollector
+from tkk_integrity import tkk_block_fingerprints, verify_tkk_blocks
 from shapely.geometry import Polygon,Point,LineString
 from shapely.geometry.polygon import orient
 from shapely.ops import nearest_points,unary_union
@@ -298,6 +299,7 @@ def model_preview(doc,positions,sectors,directory):
 def build(positions,variant):
  directory=OUT/variant;directory.mkdir(exist_ok=True)
  doc=ezdxf.readfile(SOURCE);source_sig=tkk_record(doc);source_count=collections.Counter(e.dxftype() for e in doc.modelspace() if e.dxf.layer==TKK)
+ source_blocks=tkk_block_fingerprints(doc,TKK)
  prev=ezdxf.readfile(PREV);loader=Loader(prev,doc)
  loader.load_modelspace(filter_fn=lambda e:e.dxf.layer.startswith(('СВН_','СО_')))
  for lo in prev.layouts:
@@ -430,6 +432,7 @@ def build(positions,variant):
  preaudit=doc.audit();assert not preaudit.errors
  # Original TKK entity payloads must remain identical after serialization.
  path=directory/f'CCTV_v09_{variant}.dxf';doc.saveas(path);check=ezdxf.readfile(path);saved=tkk_record(check)
+ verify_tkk_blocks(check,TKK,source_blocks)
  missing=sorted(set(source_sig)-set(saved));changed=[h for h in source_sig.keys()&saved.keys() if source_sig[h]!=saved[h]]
  assert not missing and not changed,{'missing':missing,'changed':changed[:10]}
  assert not check.audit().errors
