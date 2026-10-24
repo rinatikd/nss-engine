@@ -45,3 +45,7 @@ GitHub reports PR #6 open, mergeable and clean at head `82439e60aca99729e4289a1d
 
 
 The status above was checked against the live GitHub PR API before the final queue refresh.
+
+## COORD-01 final integration update (2026-10-24)
+
+PR #6 was merged normally into `main` as `7d003ada368833f6a825eb2ebf2d43f8b676a064` after PR `Source checks` run 37 succeeded and independent review found no blocking issue. GitHub now reports PR #1 merged. PR #2 was closed as superseded after compare confirmed its head has no commits ahead of main. The main tree preserves `shapely==2.1.2`; the proposed bump to 2.2.0 was not adopted. The root working copy fast-forwarded to the merge commit and passed `repo_guard --tree HEAD`. Claude/DeepSeek task access blockers remain; Cursor remains parked until its read-only report is received. Native Autodesk and private-fixture validation was not run.
