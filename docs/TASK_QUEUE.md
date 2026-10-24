@@ -107,3 +107,9 @@ Corrections: the queue now links to the exact read-only Cursor prompt and avoids
 - SEC-01 `add8d053b534349fef190ba7de27be4590bac259` is integrated. `shapely==2.1.2` remains the main pin; PR #1 requested 2.2.0 but that upgrade was not adopted.
 - GitHub CI `Source checks` run 37 passed before merge; local portable suite, 7 targeted repo_guard tests and repo_guard staged/tree passed. Native AutoCAD/Revit and private fixtures were not run.
 - Claude and DeepSeek are still `blocked_access`; Cursor remains parked pending its read-only report. Their tasks were not sent in this session.
+
+## Уточнение вторичного ПК после COORD-01: подтверждённые каналы
+
+См. [PROVIDER_CAD_REVIEW_01.md](PROVIDER_CAD_REVIEW_01.md) и [отчёт Issue #5](https://github.com/rinatikd/nss-engine/issues/5#issuecomment-6380159920). Утверждения выше «не отправлены в этой сессии» относятся только к сессии CLI координатора. Их нельзя распространять на все ПК: Claude-CAD-01 и прежний пакет DEEPSEEK-CCTV-01 действительно переданы через браузер вторичного ПК, ответы получены и проверены локально. Глобальный blocked_access для этих проб устарел.
+
+CLAUDE-REV-01 на базе40e4069 остаётся новым неотправленным назначением: не путать его с завершённым CLAUDE-CAD-01 на79a53fe. Для DeepSeek ID был переиспользован: завершённый пакет32b268e и предложенная проверка40e4069 — разные исполнения. Новую проверку не помечать sent/reviewed на основании старого ответа. Координатору сопоставить результаты и зафиксировать новый уникальный ID при необходимости свежего запуска. Обратная связь провайдерам ожидает отдельного согласия; никакого нового сообщения или write-назначения этим дополнением не отправлено.
