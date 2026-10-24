@@ -115,6 +115,25 @@ class T(unittest.TestCase):
             self.assertEqual(prefixes, ["nss-cctv-"])
             self.assertEqual(os.listdir(d), [])
 
+    def test_cli_end_to_end_with_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as d:
+            plan = os.path.join(d, "plan.dxf")
+            cameras = os.path.join(d, "cameras.csv")
+            output = os.path.join(d, "result.dxf")
+            with open(plan, "w", encoding="ascii") as f:
+                f.write("0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nA-WALL\n10\n6000\n20\n-5000\n11\n6000\n21\n8000\n0\nENDSEC\n0\nEOF\n")
+            with open(cameras, "w", encoding="utf-8-sig", newline="") as f:
+                f.write("name,x,y,rotation_deg,model,focal_mm,height_m,tilt_deg,bitrate_mbps\n")
+                f.write("ВН-1.1,1000,1000,0,DS-2CD1143G2-I,2.8,3,0,0.72\n")
+            completed = subprocess.run(
+                [sys.executable, os.path.join(os.path.dirname(__file__), "cctv_cli.py"),
+                 plan, cameras, output, "--layers", "A-WALL", "--days", "30", "--level", "Observe"],
+                check=False, capture_output=True, text=True, encoding="utf-8",
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(os.path.isfile(output))
+            self.assertIn("Архив 30 сут", completed.stdout)
+
     def _assert_save_failure_is_safe(self, existing_output):
         with tempfile.TemporaryDirectory() as d:
             output = os.path.join(d, "result.dxf")
