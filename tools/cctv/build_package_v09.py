@@ -9,6 +9,11 @@ from shapely.geometry import Polygon,Point,LineString
 from shapely.geometry.polygon import orient
 from shapely.ops import nearest_points,unary_union
 from scipy.optimize import linear_sum_assignment
+try:
+ from thermal_visibility import thermal_visible_sector
+except ModuleNotFoundError as exc:
+ if exc.name!='thermal_visibility':raise
+ from tools.cctv.thermal_visibility import thermal_visible_sector
 ROOT=Path(__file__).resolve().parents[2];OUT=ROOT/'output/CCTV_v09';OUT.mkdir(parents=True,exist_ok=True)
 SOURCE=ROOT/'ГП_Виллы_12.10.26 для СС_с_телефонной_канализацией_исправлены_УГО_04мм.dxf'
 PREV=ROOT/'output/CCTV_v08_review/CCTV_Source_v08_review.dxf'
@@ -220,24 +225,7 @@ def strip_mtext(s):
  return s.replace('{','').replace('}','')
 
 def sector_polygon(x,y,aim,reach=105,fov=42.5):
- pts=[(x,y)]
- for k in range(87):
-  a=math.radians(aim-fov/2+fov*k/86);end=(x+reach*math.cos(a),y+reach*math.sin(a));ray=LineString([(x,y),end]);hit=ray.intersection(boundary)
-  if not hit.is_empty:
-   candidates=[]
-   def take(g):
-    if hasattr(g,'geoms'):
-     for v in g.geoms:take(v)
-    elif hasattr(g,'coords'):
-     for q in g.coords:
-      dist=math.hypot(q[0]-x,q[1]-y)
-      if dist>.0001:candidates.append(dist)
-   take(hit)
-   if candidates:
-    dist=max(0,min(candidates)-.001);end=(x+dist*math.cos(a),y+dist*math.sin(a))
-  pts.append(end)
- poly=Polygon(pts)
- return (poly if poly.is_valid else poly.buffer(0)).difference(fence)
+ return thermal_visible_sector(fence,x,y,aim,reach,fov)
 
 def add_sector(m,poly,layer,c):
  parts=list(poly.geoms) if hasattr(poly,'geoms') else [poly]
