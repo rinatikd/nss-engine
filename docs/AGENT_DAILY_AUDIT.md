@@ -25,10 +25,15 @@
 
 Fresh `git fetch origin` succeeded. `main` and `origin/main` remain at `40e4069fec420fe188cdfb38cc9cf2ee94aae603`, and the main working tree is clean. GitHub currently reports PR #1 open/unmerged and dirty against its older main base; PR #2 open/unmerged and clean only against PR #1's old head. PR #4 is a newly observed draft outside this checkpoint's scope.
 
-The integrated candidate was pushed as `agent/codex-cli/coord-01-integrated-candidate` at `01c7edafc39403602a571cb51d1b48d96e344291`, containing dependency/rules/SEC-01 changes and four corrections from the earlier PR #2 documentation review. The portable suite passed before the later docs-only edits; `repo_guard --staged`, portable checks and `repo_guard --tree HEAD` passed after the docs update. The available GitHub connector has no PR-creation or merge operation, so the candidate branch is published but no PR is open. Claude and DeepSeek still lack a verified task channel. This updates the existing daily record, not a duplicate schedule.
+The integrated candidate was pushed as `agent/codex-cli/coord-01-integrated-candidate`. PR #6 was opened on current `main` (`40e4069fec420fe188cdfb38cc9cf2ee94aae603`) at head `8baa962ca49d1858e31405c1c4c4c51500482bd1`; GitHub reports mergeable with state `unstable` while `Source checks` are in progress. The portable suite, targeted guard tests, staged/tree guard and diff check passed locally. Hold merge until PR checks and review are complete. The Codex Apps GitHub connector supports PR creation; the separate basic connector does not. Claude and DeepSeek still lack a verified task channel. This updates the existing daily record, not a duplicate schedule.
 
 ## Independent review follow-up (2026-10-24)
 
 A read-only internal Astra review of candidate `b5c16a8` confirmed the PR1 -> PR2 -> SEC-01 history and found no functional defect in the narrow SEC-01 guard change. It found three actionable consistency/coverage issues: the Cursor prompt was already available in `docs/CURSOR_SETUP.md` but TASK_QUEUE said it was unrecovered; queue and workflow used different lifecycle vocabularies; and `test_expression_marker_is_still_allowed` used `${ENVIRONMENT_VALUE}`, which matched the placeholder exemption before reaching the expression-marker branch.
 
 Corrections: the queue now links to the exact read-only Cursor prompt and avoids claiming it was sent; both documents define aligned lifecycle states; `repo_guard.py` no longer classifies `${` as a placeholder token (the existing expression-marker rule handles it), and the test uses `${RUNTIME_CREDENTIAL}` so it reaches that rule. Verification on the updated candidate: 7 targeted repo_guard tests PASS, staged repo_guard PASS, full portable checks PASS, and diff check PASS. Native CAD/BIM and private fixtures remain untested.
+
+
+## PR #6 update (2026-10-24)
+
+The GitHub PR-creation tool was available through the Codex Apps connector and PR #6 is now open. Earlier notes that no PR tool was available are superseded. Initial GitHub run `Source checks` is in progress; the current head and check status must be refreshed before any merge decision.
