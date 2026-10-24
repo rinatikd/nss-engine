@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 import math
+import os
+import tempfile
 import csv
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Optional
@@ -262,8 +264,26 @@ class DxfWriter:
         blk.append("0\nENDBLK\n8\n0\n0\nENDSEC")
         out += ["\n".join(blk)]
         out += ["0\nSECTION\n2\nENTITIES\n" + "\n".join(self.body) + "\n0\nENDSEC", "0\nEOF"]
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(out) + "\n")
+        content = "\n".join(out) + "\n"
+        destination = os.path.abspath(path)
+        directory = os.path.dirname(destination)
+        prefix = "nss-cctv-"
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=directory,
+                prefix=prefix, suffix=".tmp", delete=False,
+            ) as f:
+                temp_path = f.name
+                f.write(content)
+            os.replace(temp_path, destination)
+            temp_path = None
+        finally:
+            if temp_path is not None:
+                try:
+                    os.unlink(temp_path)
+                except FileNotFoundError:
+                    pass
 
 
 # ---------- каталог и проект ----------
