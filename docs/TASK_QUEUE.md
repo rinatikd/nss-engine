@@ -1,20 +1,20 @@
 # Очередь совместной работы NSS
 
-Обновлено: 2026-10-24, Asia/Qyzylorda. Текущий main / origin/main — 31848525631e6c326d7aac61eefe856ddfc9877c; рабочая копия fast-forward и чистая. Статусы: proposed — описано; ready — входы/канал проверены; sent — передано; accepted/acknowledged — исполнитель подтвердил; in_progress — начато; response_received — ответ получен, проверка может быть частичной; reviewed — проверено; integrated — в main. blocked_*, waiting_user, parked и rejected фиксируют состояние без утверждения о выполнении.
+Обновлено: 2026-10-24, Asia/Qyzylorda. Этот срез очереди начат на main 48338c9a3d762dbda3a8a871e67e355929cc2c2e; перед созданием каждой новой ветки нужно fetch и записать её фактический SHA. Статусы: proposed — описано; ready — входы/канал проверены; sent — передано; accepted/acknowledged — исполнитель подтвердил; in_progress — начато; response_received — ответ получен, проверка может быть частичной; reviewed — проверено; integrated — в main. blocked_*, waiting_user, parked и rejected фиксируют состояние без утверждения о выполнении.
 
 ## COORD-01 — единая проверенная база
 
 - Issue: [#5](https://github.com/rinatikd/nss-engine/issues/5).
 - Исполнитель: Codex CLI, основной ПК / координатор.
 - Проверяющий: владелец проекта; для SEC-01 и последующих кодовых задач проводилось отдельное read-only ревью.
-- База и итог: начало — main 40e4069fec420fe188cdfb38cc9cf2ee94aae603; PR #6 — 7d003ada368833f6a825eb2ebf2d43f8b676a064; PR #7 — a6f6881e0a5b24d35aa5643eee583f3903d55ee1; текущая main после PR #10 — 31848525631e6c326d7aac61eefe856ddfc9877c.
+- База и итог: начало — main 40e4069fec420fe188cdfb38cc9cf2ee94aae603; PR #6 — 7d003ada368833f6a825eb2ebf2d43f8b676a064; PR #7 — a6f6881e0a5b24d35aa5643eee583f3903d55ee1; PR #10 — 31848525631e6c326d7aac61eefe856ddfc9877c; PR #12 — 843d4ae631144f9f20adedd713854704af75ac46; PR #13 — 48338c9a3d762dbda3a8a871e67e355929cc2c2e.
 - Разрешённые файлы: AGENTS.md, CLAUDE.md, GEMINI.md, docs/*.md; для SEC-01 — requirements-test.txt, tools/repo_guard.py, tools/test_repo_guard.py, tools/run_portable_checks.py и отчёт.
 - Критерии: актуальные статусы PR/CI, независимое ревью SEC-01, полная очередь, реальные статусы участников, штатная интеграция, без секретов/платных ресурсов/пользовательских чертежей.
 - Зависимости: последовательно PR #1 → PR #2 → SEC-01; затем очередь и отдельные CCTV задачи.
 - Статус: integrated. PR #1 merged; PR #2 закрыт как superseded после подтверждения, что его head уже в main; SEC-01 включён через PR #6. Source checks run 37 прошёл; PR #7 и #10 получили успешные portable checks.
 - Контрольная точка: очередь сверена с новым отчётом ниже; Issue не считается автоматическим запуском агента.
 
-Пересечения: Claude и DeepSeek выполняли read-only ревью. CCTV-OUTPUT-01 интегрирована. Следующая по очереди задача CCTV-CSV-01 подготовлена и резервирует перечисленные в её карточке файлы; запись начнётся после документационного PR.
+Пересечения: Claude и DeepSeek выполняли read-only ревью. CCTV-OUTPUT-01 и CCTV-CSV-01 интегрированы; активных write-назначений нет. Любую следующую CCTV задачу назначать отдельным Issue после согласования поведения malformed DXF; пустые камеры/стены не менять без контракта.
 
 ## PR #1 — зависимость тестов и отчёт подключения
 
@@ -96,12 +96,12 @@
 
 - Issue: [#11](https://github.com/rinatikd/nss-engine/issues/11).
 - Исполнитель / проверяющий: Codex CLI; независимое read-only ревью назначено /root/coord01_review.
-- База: main 31848525631e6c326d7aac61eefe856ddfc9877c.
+- База задачи в Issue: main 31848525631e6c326d7aac61eefe856ddfc9877c; ветка фактически создана от main 843d4ae631144f9f20adedd713854704af75ac46.
 - Разрешённые файлы: work/NSS_TKK_Editor_v0.2/modules/cctv/cctv_cli.py, work/NSS_TKK_Editor_v0.2/modules/cctv/test_cctv_core.py.
 - Критерии: BOM и plain UTF-8 дают одинаковый результат; end-to-end synthetic test; не менять политику пустых камер/стен; portable suite и repo_guard проходят.
 - Зависимости: после CCTV-OUTPUT-01; эти файлы не редактировать параллельно.
-- Статус: ready; Issue #11 открыта, задача проверена и назначена координатору. Резюме вторичного ПК сообщало KeyError: 'name'; воспроизведение будет первой проверкой после создания ветки.
-- Контрольная точка: начать после завершения документационного PR; затем открыть отдельный PR, пройти независимое ревью и CI.
+- Статус: integrated через PR #13; commit ветки 5c407462cff4559128c779c7c704af36ed5daebc; main после merge 48338c9a3d762dbda3a8a871e67e355929cc2c2e. Issue #11 закрыта. Baseline KeyError воспроизведён; BOM и plain UTF-8 дают идентичный результат.
+- Контрольная точка: выполнена. PR #13 checks 2/2 portable success; targeted CCTV 15 PASS; portable suite, staged/tree guard и diff check PASS; независимое ревью без блокеров.
 
 ## Существующий PR #4 — типовой КПП, вне назначенной очереди
 
