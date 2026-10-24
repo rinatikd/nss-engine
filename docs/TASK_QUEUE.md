@@ -89,8 +89,8 @@
 
 - GitHub Issue: #5. Latest successful fetch confirms `main` and `origin/main` at `40e4069fec420fe188cdfb38cc9cf2ee94aae603`; main working tree is clean.
 - PR #1 remains open, unmerged, `mergeable_state=dirty`, head `e95e0d4fd3ff4228e0d01ccbcef4a60214e57082`, base `79a53fec612b80c1c6cf3afff6c39931f5939675`. Preserve the current main Shapely pin pending review.
-- PR #2 remains open, unmerged, head `d4d9c36728f33d9bfb18fec9915b2c5b0de388c5`, based on PR #1 head `e95e0d4fd3ff4228e0d01ccbcef4a60214e57082`; its `clean` status is relative to that old base. Four documentation review corrections are present only in the local integration candidate; upstream PR is unchanged.
+- PR #2 remains open, unmerged, head `d4d9c36728f33d9bfb18fec9915b2c5b0de388c5`, based on PR #1 head `e95e0d4fd3ff4228e0d01ccbcef4a60214e57082`; its `clean` status is relative to that old base. Four documentation review corrections are included in candidate commit `01c7edafc39403602a571cb51d1b48d96e344291`; upstream PR #2 remains unchanged.
 - SEC-01 `add8d053b534349fef190ba7de27be4590bac259` was reviewed and tested after the dependency/rules integration in a local simulation. The full portable suite reported 101 passing tests and repo_guard staged/tree passed before the later docs-only edits.
 - PR #4 was found during the live refresh; it is a draft and outside COORD-01's permitted scope. No file assignment was made.
 - Claude and DeepSeek tasks are blocked_access: no verified transmission/response channel is available in this session. No assignment is marked sent or accepted.
-- The integrated candidate is local only. No PR creation or merge tool is available; no upstream branch has been modified.
+- Candidate branch `agent/codex-cli/coord-01-integrated-candidate` is pushed at `01c7edafc39403602a571cb51d1b48d96e344291`. PR creation and merge tools are unavailable; existing PRs and `main` remain unchanged. Open PR form: https://github.com/rinatikd/nss-engine/pull/new/agent/codex-cli/coord-01-integrated-candidate.
