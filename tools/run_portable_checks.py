@@ -23,6 +23,7 @@ def main():
     checks=[
       (tkk/'tests',[str(tkk/'engine')],['test_editor_core','test_equal_spacing','test_diagnostics','test_fes_numbering','test_span_labels','test_snapshot_validation']),
       (tkk/'modules/cctv',[],['test_cctv_core']),
+      (ROOT/'tools/cctv',[],['test_kpp_plan']),
       (ROOT/'work/NSS_AutoDebug_v0423/tests',[str(ROOT/'work/NSS_AutoDebug_v0423')],['test_analyzer','test_v022','test_v023']),
     ]
     for cwd,paths,modules in checks:
