@@ -25,7 +25,7 @@ def main():
       (tkk/'tests',[str(tkk/'engine')],['test_editor_core','test_equal_spacing','test_diagnostics','test_fes_numbering','test_span_labels','test_snapshot_validation']),
       (tkk/'modules/cctv',[],['test_cctv_core']),
       (ROOT/'work/NSS_AutoDebug_v0423/tests',[str(ROOT/'work/NSS_AutoDebug_v0423')],['test_analyzer','test_v022','test_v023']),
-      (ROOT/'tools/tests',[str(ROOT),str(ROOT/'tools')],['test_repo_guard','test_tkk_integrity','test_thermal_visibility']),
+      (ROOT/'tools/tests',[str(ROOT),str(ROOT/'tools')],['test_repo_guard','test_tkk_integrity','test_thermal_visibility','test_finalize_no_side_effects']),
     ]
     for cwd,paths,modules in checks:
         if not all((cwd/(m+'.py')).is_file() for m in modules):raise RuntimeError('A required tracked test module is missing: '+str(cwd))
