@@ -1,4 +1,5 @@
 import math, os, tempfile, unittest, sys, subprocess
+from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(__file__))
 import cctv_core as c
 
@@ -89,6 +90,100 @@ class T(unittest.TestCase):
             with open(output, encoding="utf-8") as f:
                 result_dxf = f.read()
             self.assertIn("99.0\n2\nHFOV_DEG", result_dxf)
+
+
+    def test_save_uses_bounded_temp_prefix_for_long_destination_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            basename = "x" * 239 + ".dxf"
+            output = os.path.join(d, basename)
+            writer = c.DxfWriter()
+            real_named_temporary_file = c.tempfile.NamedTemporaryFile
+            prefixes = []
+
+            def capture_temp_file(*args, **kwargs):
+                prefixes.append(kwargs["prefix"])
+                return real_named_temporary_file(*args, **kwargs)
+
+            def simulate_replace(source, destination):
+                self.assertEqual(os.path.basename(destination), basename)
+                os.unlink(source)
+
+            with patch.object(c.tempfile, "NamedTemporaryFile", side_effect=capture_temp_file):
+                with patch.object(c.os, "replace", side_effect=simulate_replace):
+                    writer.save(output)
+
+            self.assertEqual(prefixes, ["nss-cctv-"])
+            self.assertEqual(os.listdir(d), [])
+
+    def test_cli_end_to_end_with_utf8_bom(self):
+        with tempfile.TemporaryDirectory() as d:
+            plan = os.path.join(d, "plan.dxf")
+            cameras = os.path.join(d, "cameras.csv")
+            output = os.path.join(d, "result.dxf")
+            with open(plan, "w", encoding="ascii") as f:
+                f.write("0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nA-WALL\n10\n6000\n20\n-5000\n11\n6000\n21\n8000\n0\nENDSEC\n0\nEOF\n")
+            with open(cameras, "w", encoding="utf-8-sig", newline="") as f:
+                f.write("name,x,y,rotation_deg,model,focal_mm,height_m,tilt_deg,bitrate_mbps\n")
+                f.write("ВН-1.1,1000,1000,0,DS-2CD1143G2-I,2.8,3,0,0.72\n")
+            completed = subprocess.run(
+                [sys.executable, os.path.join(os.path.dirname(__file__), "cctv_cli.py"),
+                 plan, cameras, output, "--layers", "A-WALL", "--days", "30", "--level", "Observe"],
+                check=False, capture_output=True, text=True, encoding="utf-8",
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(os.path.isfile(output))
+            self.assertIn("Архив 30 сут", completed.stdout)
+
+    def _assert_save_failure_is_safe(self, existing_output):
+        with tempfile.TemporaryDirectory() as d:
+            output = os.path.join(d, "result.dxf")
+            sentinel = b"previous valid drawing\x00"
+            if existing_output:
+                with open(output, "wb") as f:
+                    f.write(sentinel)
+
+            writer = c.DxfWriter()
+            real_named_temporary_file = c.tempfile.NamedTemporaryFile
+
+            class PartialWriteFailure:
+                def __init__(self, stream):
+                    self.stream = stream
+
+                @property
+                def name(self):
+                    return self.stream.name
+
+                def __enter__(self):
+                    self.stream.__enter__()
+                    return self
+
+                def __exit__(self, *args):
+                    return self.stream.__exit__(*args)
+
+                def write(self, content):
+                    self.stream.write(content[:16])
+                    raise OSError("simulated disk write failure")
+
+            def make_failing_temp_file(*args, **kwargs):
+                return PartialWriteFailure(real_named_temporary_file(*args, **kwargs))
+
+            with patch.object(c.tempfile, "NamedTemporaryFile", side_effect=make_failing_temp_file):
+                with self.assertRaisesRegex(OSError, "simulated disk write failure"):
+                    writer.save(output)
+
+            if existing_output:
+                with open(output, "rb") as f:
+                    self.assertEqual(f.read(), sentinel)
+                self.assertEqual(os.listdir(d), ["result.dxf"])
+            else:
+                self.assertFalse(os.path.exists(output))
+                self.assertEqual(os.listdir(d), [])
+
+    def test_save_failure_preserves_existing_destination(self):
+        self._assert_save_failure_is_safe(existing_output=True)
+
+    def test_save_failure_does_not_publish_partial_new_destination(self):
+        self._assert_save_failure_is_safe(existing_output=False)
 
 
 if __name__ == "__main__":

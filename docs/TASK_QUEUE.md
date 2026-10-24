@@ -1,115 +1,112 @@
 # Очередь совместной работы NSS
 
-Обновлено: 2026-10-24, Asia/Qyzylorda. Текущий `main` / `origin/main` `7d003ada368833f6a825eb2ebf2d43f8b676a064`; основная копия обновлена fast-forward после merge PR #6. Статусы: `proposed` — описано; `ready` — входы и канал проверены; `sent` — передано; `accepted`/`acknowledged` — подтверждено; `in_progress` — начато; `review`/`reviewed` — проверено; `integrated` — в `main`. `blocked_*`, `waiting_user` и `rejected` фиксируют открытый блокер.
+Обновлено: 2026-10-24, Asia/Qyzylorda. Этот срез очереди начат на main 48338c9a3d762dbda3a8a871e67e355929cc2c2e; перед созданием каждой новой ветки нужно fetch и записать её фактический SHA. Статусы: proposed — описано; ready — входы/канал проверены; sent — передано; accepted/acknowledged — исполнитель подтвердил; in_progress — начато; response_received — ответ получен, проверка может быть частичной; reviewed — проверено; integrated — в main. blocked_*, waiting_user, parked и rejected фиксируют состояние без утверждения о выполнении.
 
 ## COORD-01 — единая проверенная база
 
-- **Issue:** [#5](https://github.com/rinatikd/nss-engine/issues/5).
-- **Исполнитель:** Codex CLI, основной ПК / текущая сессия координатора.
-- **Проверяющий:** владелец проекта; отдельный проверяющий не назначен.
-- **База:** `main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`.
-- **Разрешённые файлы:** `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `docs/*.md`; для SEC-01 — `requirements-test.txt`, `tools/repo_guard.py`, `tools/test_repo_guard.py`, `tools/run_portable_checks.py` и его отчёт.
-- **Критерии:** фактические статусы PR и CI; независимый просмотр SEC-01; очередь с полными карточками и честными статусами; конкретные задания Claude/DeepSeek переданы и проверены либо записан подтверждённый блокер; штатная интеграция через GitHub; без секретов, платных ресурсов и пользовательских чертежей.
-- **Зависимости:** сначала установить, что делать с PR #1 и уже закреплённой в `main` Shapely; затем привести PR #2 к актуальной базе и снять замечания; SEC-01 проверять на актуальной базе после этих изменений.
-- **Статус:** `integrated`. PR #6 merged обычным merge в `main` `7d003ada368833f6a825eb2ebf2d43f8b676a064`; PR #1 merged; PR #2 закрыт как superseded. `Source checks` run 37 success; SEC-01 independently reviewed.
-- **Контрольная точка:** продолжать аудит каналов Claude/DeepSeek/Cursor; не помечать задания `sent` пока нет фактической передачи.
+- Issue: [#5](https://github.com/rinatikd/nss-engine/issues/5).
+- Исполнитель: Codex CLI, основной ПК / координатор.
+- Проверяющий: владелец проекта; для SEC-01 и последующих кодовых задач проводилось отдельное read-only ревью.
+- База и итог: начало — main 40e4069fec420fe188cdfb38cc9cf2ee94aae603; PR #6 — 7d003ada368833f6a825eb2ebf2d43f8b676a064; PR #7 — a6f6881e0a5b24d35aa5643eee583f3903d55ee1; PR #10 — 31848525631e6c326d7aac61eefe856ddfc9877c; PR #12 — 843d4ae631144f9f20adedd713854704af75ac46; PR #13 — 48338c9a3d762dbda3a8a871e67e355929cc2c2e.
+- Разрешённые файлы: AGENTS.md, CLAUDE.md, GEMINI.md, docs/*.md; для SEC-01 — requirements-test.txt, tools/repo_guard.py, tools/test_repo_guard.py, tools/run_portable_checks.py и отчёт.
+- Критерии: актуальные статусы PR/CI, независимое ревью SEC-01, полная очередь, реальные статусы участников, штатная интеграция, без секретов/платных ресурсов/пользовательских чертежей.
+- Зависимости: последовательно PR #1 → PR #2 → SEC-01; затем очередь и отдельные CCTV задачи.
+- Статус: integrated. PR #1 merged; PR #2 закрыт как superseded после подтверждения, что его head уже в main; SEC-01 включён через PR #6. Source checks run 37 прошёл; PR #7 и #10 получили успешные portable checks.
+- Контрольная точка: очередь сверена с новым отчётом ниже; Issue не считается автоматическим запуском агента.
 
-Проверка пересечений: PR #1 и PR #2 затрагивают общую документацию и унаследованную зависимость; SEC-01 меняет только repo guard/его portable runner и отдельный отчёт. Claude/DeepSeek — read-only ревью без записи, но пока не отправлены. Одновременных write-назначений нет.
+Пересечения: Claude и DeepSeek выполняли read-only ревью. CCTV-OUTPUT-01 и CCTV-CSV-01 интегрированы; активных write-назначений нет. Любую новую задачу назначать отдельным Issue; обработку malformed DXF назначать после согласования её контракта. Пустые камеры/стены не менять без контракта.
 
-## Интеграция PR #1 — часть COORD-01
+## PR #1 — зависимость тестов и отчёт подключения
 
-- **Исполнитель:** автор PR `@rinatikd`; точный агент-исполнитель по API не установлен (ветка `agent/codex-desktop/connectivity-check`).
-- **Проверяющий:** Claude-сгенерированный отчёт в [комментарии PR #1](https://github.com/rinatikd/nss-engine/pull/1#issuecomment-6378273917); формальных GitHub reviews — 0.
-- **База и head:** PR создан от `79a53fec612b80c1c6cf3afff6c39931f5939675`; head `e95e0d4fd3ff4228e0d01ccbcef4a60214e57082`. Текущий `main` — `40e4069fec420fe188cdfb38cc9cf2ee94aae603`.
-- **Разрешённые файлы:** `requirements-test.txt`, `docs/CODEX_DESKTOP_CONNECTION.md`.
-- **Критерии:** зависимость тестов закреплена; отчёт подключения отделяет фактические проверки от предположений; CI проходит на актуальной базе.
-- **Зависимости:** до PR #2.
-- **Статус:** PR #1 GitHub API пометил `merged=true` после integration merge; #6 включает connection report. `requirements-test.txt` в `main` сохраняет `shapely==2.1.2`; замена на `2.2.0` не вошла.
-- **Контрольная точка:** после обновления PR-ветки/явного решения автора по уже имеющейся зависимости и повторной проверки на текущем main.
+- Исполнитель: автор PR @rinatikd; точный агент через API не установлен.
+- Проверяющий: отчёт Claude в [комментарии PR #1](https://github.com/rinatikd/nss-engine/pull/1#issuecomment-6378273917); формальных GitHub reviews — 0.
+- База / head: 79a53fec612b80c1c6cf3afff6c39931f5939675 / e95e0d4fd3ff4228e0d01ccbcef4a60214e57082.
+- Разрешённые файлы: requirements-test.txt, docs/CODEX_DESKTOP_CONNECTION.md.
+- Критерии: закрепить тестовую зависимость, отделить подтверждённые проверки от предположений, пройти CI.
+- Зависимости: перед PR #2.
+- Статус: integrated через PR #6. В main оставлен shapely==2.1.2; предложение о 2.2.0 не принято.
+- Контрольная точка: выполнена.
 
-## Интеграция PR #2 — часть COORD-01
+## PR #2 — общие правила и очередь
 
-- **Исполнитель:** автор PR `@rinatikd`; точный агент-исполнитель по API не установлен (ветка `agent/codex-desktop/claude-collaboration`).
-- **Проверяющий:** Claude-сгенерированный отчёт — комментарий [к PR #2](https://github.com/rinatikd/nss-engine/pull/2#issuecomment-6378274058), сделан на head `5e9b817badc67dd652167ba7639c1292a4215737`; формальных GitHub reviews и review threads — 0.
-- **База и head:** PR сейчас нацелен на ветку PR #1 (`e95e0d4fd3ff4228e0d01ccbcef4a60214e57082`); head `d4d9c36728f33d9bfb18fec9915b2c5b0de388c5`. Текущий `main` — `40e4069fec420fe188cdfb38cc9cf2ee94aae603`.
-- **Разрешённые файлы:** `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `docs/AGENT_COLLABORATION.md`, `docs/AGENT_DAILY_AUDIT.md`, `docs/CLAUDE_HANDOFF_TEMPLATE.md`, `docs/CURSOR_SETUP.md`, `docs/MULTI_AGENT_WORKFLOW.md`, `docs/PROVIDER_CONNECTION_CHECKS.md`, `docs/QWEN_ONBOARDING.md`, `docs/QWEN_REVIEW_01.md`, `docs/TASK_QUEUE.md`. `requirements-test.txt` и `docs/CODEX_DESKTOP_CONNECTION.md` входят в базовую ветку PR #1, а не в собственные 12 файлов PR #2.
-- **Критерии:** общие правила и очередь верны для актуальной базы; статусы и возможности участников подтверждены; CI повторно проходит после обновления base; замечания ревью разрешены либо мотивированно закрыты.
-- **Зависимости:** после решения по PR #1; затем отдельный интеграционный проход SEC-01.
-- **Статус:** PR #2 закрыт как superseded PR #6; GitHub compare `main...agent/codex-desktop/claude-collaboration` показал `ahead_by=0`, весь head уже в `main`.
-- **Контрольная точка:** после смены base на актуальный main, разрешения замечаний в текущих файлах и нового успешного CI.
+- Исполнитель: автор PR @rinatikd; точный агент по API не установлен.
+- Проверяющий: комментарий Claude к PR #2, сделанный на старом head 5e9b817badc67dd652167ba7639c1292a4215737; formal reviews/threads — 0.
+- База / head: PR был основан на PR #1 head e95e0d4fd3ff4228e0d01ccbcef4a60214e57082; head d4d9c36728f33d9bfb18fec9915b2c5b0de388c5.
+- Разрешённые файлы: AGENTS.md, CLAUDE.md, GEMINI.md, docs/AGENT_COLLABORATION.md, docs/AGENT_DAILY_AUDIT.md, docs/CLAUDE_HANDOFF_TEMPLATE.md, docs/CURSOR_SETUP.md, docs/MULTI_AGENT_WORKFLOW.md, docs/PROVIDER_CONNECTION_CHECKS.md, docs/QWEN_ONBOARDING.md, docs/QWEN_REVIEW_01.md, docs/TASK_QUEUE.md.
+- Критерии: правила отражают проверенные каналы и базу; замечания разрешены; CI на актуальной базе успешен.
+- Зависимости: после PR #1.
+- Статус: PR #2 закрыт как superseded PR #6; compare показал ahead_by=0. Четыре замечания к документации исправлены до merge.
+- Контрольная точка: выполнена.
 
 ## SEC-01 — парольные фразы в repo_guard
 
-- **Исполнитель:** в отчёте ветки указан Codex приложения; личность исполнителя через PR/API не подтверждена.
-- **Проверяющий:** Codex CLI, основной ПК (отдельная сессия и самостоятельный просмотр diff/тестов).
-- **База и commit:** родитель `79a53fec612b80c1c6cf3afff6c39931f5939675`; commit `add8d053b534349fef190ba7de27be4590bac259` в `agent/codex-desktop/guard-passphrases`. Проверена применимость к нынешнему `main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`.
-- **Разрешённые файлы:** `docs/GUARD_PASSPHRASES.md`, `tools/repo_guard.py`, `tools/test_repo_guard.py`, `tools/run_portable_checks.py`.
-- **Критерии:** буквальная парольная фраза с пробелами блокируется и не выводится; placeholders и expression markers остаются разрешёнными по прежней политике; синтетические Git-тесты и portable suite проходят.
-- **Зависимости:** проверено после PR #1/#2 в локальной интеграционной симуляции; текущий `main` уже имеет Shapely 2.1.2.
-- **Статус:** `reviewed` локально, не `integrated`. Семь тестов SEC-01 прошли; на симулированной базе текущего `main` `repo_guard --staged` и `--tree HEAD` прошли, portable suite — 101 тест. Симуляция требовала разрешить конфликты PR #1/PR #2 и не меняла основной GitHub. PR для SEC-01 не найден; создать его доступными средствами нельзя. Ограничение: guard эвристический, проверяет известные шаблоны присваиваний/токенов, а не все возможные форматы секретов. Приватный fixture и AutoCAD/Revit не запускались.
-- **Статус:** `integrated` в PR #6 / `main` `7d003ada368833f6a825eb2ebf2d43f8b676a064`; 7 targeted tests, full portable checks, local guard checks и PR CI run 37 успешны. Heuristic остаётся неполным детектором; CAD/BIM и private fixture не проверялись.
+- Исполнитель: в отчёте ветки указан Codex приложения; личность API не подтверждена.
+- Проверяющий: Codex CLI на основном ПК, отдельная read-only сессия.
+- База / commit: родитель 79a53fec612b80c1c6cf3afff6c39931f5939675; add8d053b534349fef190ba7de27be4590bac259.
+- Разрешённые файлы: docs/GUARD_PASSPHRASES.md, tools/repo_guard.py, tools/test_repo_guard.py, tools/run_portable_checks.py.
+- Критерии: парольная фраза с пробелами блокируется без вывода; placeholders/expression markers сохраняют прежнее поведение; тесты проходят.
+- Зависимости: после решения PR #1/#2.
+- Статус: integrated через PR #6 в 7d003ada368833f6a825eb2ebf2d43f8b676a064; 7 targeted tests, portable suite, staged/tree guard и run 37 успешны. Guard остаётся эвристическим, не универсальным детектором.
+- Контрольная точка: выполнена; AutoCAD/Revit и приватные fixtures не запускались.
 
-## CLAUDE-REV-01 — read-only ревью запуска NSS_CCTV_ANALYZE
+## CLAUDE-CAD-01 / CLAUDE-REV-01 — ревью NSS_CCTV_ANALYZE
 
-- **Исполнитель:** Claude — предложен пользователем, но пока не получил задачу.
-- **Проверяющий:** Codex CLI.
-- **База:** `main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`.
-- **Разрешённые файлы:** только чтение `work/NSS_TKK_Editor_v0.2/source/CctvCommands.cs`, `work/NSS_TKK_Editor_v0.2/modules/cctv/cctv_cli.py`, `work/NSS_TKK_Editor_v0.2/modules/cctv/cctv_core.py`, `work/NSS_TKK_Editor_v0.2/modules/cctv/test_cctv_core.py`.
-- **Критерии:** для отмены, ошибок, дочернего Python, таймаутов и сохранности входных/выходных файлов указать точное место, условие, ожидаемое/наблюдаемое поведение, влияние и воспроизводимый синтетический пример; не менять файлы и не заявлять нативный AutoCAD запуск.
-- **Зависимости:** доступный Claude канал без новой подписки/платного API.
-- **Статус:** `blocked_access`, не отправлено и не принято. `claude.exe` версии `2.1.306` установлен, но `claude auth status` вернул `loggedIn=false`, `authMethod=none`; локальные окна/браузеры и прямой Claude-коннектор недоступны. Issue #3 относится к старому ревью PR, не к этой задаче.
-- **Контрольная точка:** если появится уже авторизованный бесплатный Claude-канал; время неизвестно.
+- Исполнитель: Claude через рабочий контекст Codex Desktop; прямая сессия в текущей среде не подтверждена.
+- Проверяющий: Codex CLI; ответ в комментарии [COORD-01 #5](https://github.com/rinatikd/nss-engine/issues/5#issuecomment-6380159920), доступная статика проверена отдельно.
+- База ответа: 79a53fec612b80c1c6cf3afff6c39931f5939675; текущая база 31848525631e6c326d7aac61eefe856ddfc9877c.
+- Файлы по отчёту: CctvCommands.cs, TkkEditor.csproj, cctv_cli.py, связанные core/catalog. Полные локальные отчёт и fixtures со второго ПК недоступны.
+- Критерии: отмена, ошибки, дочерний Python, таймауты, сохранность входов/выходов с точным местом и воспроизведением; статический анализ не равен запуску AutoCAD 2026.
+- Зависимости: полный отчёт или повторная проверка текущего SHA; без платной подписки/API.
+- Статус: response_received, полнота частичная. Краткое резюме указывало потерю старого DXF при сбое записи; подтверждено и исправлено CCTV-OUTPUT-01 (#8/#10). Остальные пункты не считаются независимо проверенными.
+- Контрольная точка: полный разбор отмены/таймаутов/дочернего процесса; нативный хост отдельно.
 
-## DEEPSEEK-CCTV-01 — независимое ревью расчёта и тестов CCTV
+## DEEPSEEK-CCTV-01 — ревью cctv_core.py и тестов
 
-- **Исполнитель:** DeepSeek — предложен пользователем, но пока не получил задачу.
-- **Проверяющий:** Codex CLI.
-- **База:** `main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`.
-- **Разрешённые файлы:** только чтение `work/NSS_TKK_Editor_v0.2/modules/cctv/cctv_core.py` и `work/NSS_TKK_Editor_v0.2/modules/cctv/test_cctv_core.py`.
-- **Критерии:** воспроизводимые замечания по единицам, численным границам и непокрытым сценариям; отделять доказанные дефекты от предположений; не менять исходники и не использовать инженерные чертежи.
-- **Зависимости:** авторизованный канал DeepSeek без API-ключа, платной подписки или передачи чертежей.
-- **Статус:** `blocked_access`, не отправлено и не принято. В доступных инструментах нет DeepSeek-коннектора/CLI, браузер и локальные приложения не обнаружены. Прошлый отчёт подключения описывает обычный чат без авторизованного GitHub, но в этой сессии он не перепроверялся.
-- **Контрольная точка:** при появлении прямого read-only DeepSeek-канала без новых платных ресурсов; время неизвестно.
+- Исполнитель: DeepSeek получил ограниченный пакет через Codex Desktop; запись/GitHub-доступ не подтверждены.
+- Проверяющий: Codex CLI по резюме [COORD-01 #5](https://github.com/rinatikd/nss-engine/issues/5#issuecomment-6380159920).
+- База пакета: 32b268e5325d49d94848cad030dfb798e4f705f3; текущая main — 31848525631e6c326d7aac61eefe856ddfc9877c.
+- Файлы: read-only cctv_core.py, test_cctv_core.py, README; без чертежей. Полный локальный ответ здесь недоступен.
+- Критерии: единицы, границы, непокрытые случаи; отделять факты от предположений.
+- Зависимости: полный отчёт или повторное ревью текущего SHA без платных ресурсов.
+- Статус: response_received, независимо проверена только часть резюме. Storage formula признана корректной, endpoint-ray finding отклонён; bulge/3D flags — ограничение парсера, политика reject/warn/approx не согласована и не считается дефектом.
+- Контрольная точка: повторить аудит на текущем SHA или получить полный отчёт.
 
-## Cursor — прежняя read-only проверка
+## Cursor — read-only проверка
 
-- **Исполнитель:** Cursor; **проверяющий:** Codex CLI.
-- **База из последней записи:** `main` `79a53fec612b80c1c6cf3afff6c39931f5939675`; актуальная база Cursor-клона не проверена.
-- **Разрешённые файлы и prompt:** полный read-only prompt есть в `docs/CURSOR_SETUP.md:35-43`; он указывает `AGENTS.md`, `README.md`, `docs/SOURCE_MAP.md`, `docs/PORTABLE_SKILLS.md` и просит отчёт о Git origin/branch/SHA/status; не разрешает правки.
-- **Критерий:** read-only отчёт о фактических origin/ветке/SHA, прочитанных правилах и навыках.
-- **Зависимости:** фактический ответ Cursor и его проверяемая рабочая копия.
-- **Статус:** по записи от 2026-10-24 ответ ожидался; сейчас `parked`, не считать активным назначением. Небольшую правку выбирать только после доступного канала и отчёта.
-- **Контрольная точка:** после реального read-only ответа Cursor и проверки его базы; срок неизвестен.
+- Исполнитель: Cursor; проверяющий: Codex CLI.
+- База клона: неизвестна; последняя запись ссылалась на 79a53fec612b80c1c6cf3afff6c39931f5939675.
+- Prompt и файлы: docs/CURSOR_SETUP.md:35-43; отчёт должен указать origin/ветку/SHA/status и прочитанные правила/навыки.
+- Критерии: проверить фактическую базу и факт чтения без правок.
+- Зависимости: ответ и проверяемая рабочая копия.
+- Статус: parked; отчёт не получен, правка не назначалась.
+- Контрольная точка: после отчёта; срок неизвестен.
 
-## Другие участники
+## CCTV-OUTPUT-01 — атомарная запись результата CCTV
 
-Для Grok, Gemini и Qwen в текущем цикле конкретные новые объекты ревью не назначены. Предыдущие проверки находятся в датированных отчётах PR #2; они не подтверждают текущий доступ или лимиты. Не создавать для них расписаний и задач ради активности.
+- Issue / PR: [#8](https://github.com/rinatikd/nss-engine/issues/8), [#10](https://github.com/rinatikd/nss-engine/pull/10).
+- Исполнитель / проверяющий: Codex CLI; независимое read-only ревью /root/coord01_review.
+- База / commit / интеграция: main a6f6881e0a5b24d35aa5643eee583f3903d55ee1; ветка 14e46b7726989b4e0e49a403952578447b8b44ec; итоговая main 31848525631e6c326d7aac61eefe856ddfc9877c.
+- Разрешённые файлы: work/NSS_TKK_Editor_v0.2/modules/cctv/cctv_core.py, work/NSS_TKK_Editor_v0.2/modules/cctv/test_cctv_core.py.
+- Критерии: не терять старый выход при ошибке; не публиковать частичный новый файл; удалять временный; успешный DXF и длинные допустимые имена сохраняются.
+- Зависимости: замечание из read-only отчёта Claude/Codex Desktop; единственная write-задача на эти файлы в тот период.
+- Статус: integrated; PR #10 CI 2/2 success; targeted CCTV 14 PASS, portable suite PASS, staged/tree guard и diff check PASS. Проверены частичный write failure, os.replace failure, Windows sharing violation, длинное имя и побайтовая совместимость. Issue #8 закрыта.
+- Контрольная точка: выполнена; AutoCAD и приватные fixtures не проверялись.
 
-## COORD-01 latest checkpoint (2026-10-24)
+## CCTV-CSV-01 — чтение CSV с UTF-8 BOM
 
-- GitHub Issue: #5. Latest successful fetch confirms `main` and `origin/main` at `40e4069fec420fe188cdfb38cc9cf2ee94aae603`; main working tree is clean.
-- **Статус:** PR #1 GitHub API пометил `merged=true` после integration merge; #6 включает connection report. `requirements-test.txt` в `main` сохраняет `shapely==2.1.2`; замена на `2.2.0` не вошла.
-- PR #2 remains open, unmerged, head `d4d9c36728f33d9bfb18fec9915b2c5b0de388c5`, based on PR #1 head `e95e0d4fd3ff4228e0d01ccbcef4a60214e57082`; its `clean` status is relative to that old base. Four documentation review corrections are included in candidate commit `01c7edafc39403602a571cb51d1b48d96e344291`; upstream PR #2 remains unchanged.
-- SEC-01 `add8d053b534349fef190ba7de27be4590bac259` was reviewed and tested after the dependency/rules integration in a local simulation. The full portable suite reported 101 passing tests and repo_guard staged/tree passed before the later docs-only edits.
-- PR #4 was found during the live refresh; it is a draft and outside COORD-01's permitted scope. No file assignment was made.
-- Claude and DeepSeek tasks are blocked_access: no verified transmission/response channel is available in this session. No assignment is marked sent or accepted.
-- PR #6 is open from `agent/codex-cli/coord-01-integrated-candidate` to `main` at base `40e4069fec420fe188cdfb38cc9cf2ee94aae603`. Verified head: `82439e60aca99729e4289a1d781bdefaa108969e`; GitHub reports `mergeable=true`, state `clean`; PR-triggered `Source checks` run 35 completed successfully. Independent read-only review found no blocking issue; no formal GitHub review is recorded. No merge has been performed.
+- Issue: [#11](https://github.com/rinatikd/nss-engine/issues/11).
+- Исполнитель / проверяющий: Codex CLI; независимое read-only ревью назначено /root/coord01_review.
+- База задачи в Issue: main 31848525631e6c326d7aac61eefe856ddfc9877c; ветка фактически создана от main 843d4ae631144f9f20adedd713854704af75ac46.
+- Разрешённые файлы: work/NSS_TKK_Editor_v0.2/modules/cctv/cctv_cli.py, work/NSS_TKK_Editor_v0.2/modules/cctv/test_cctv_core.py.
+- Критерии: BOM и plain UTF-8 дают одинаковый результат; end-to-end synthetic test; не менять политику пустых камер/стен; portable suite и repo_guard проходят.
+- Зависимости: после CCTV-OUTPUT-01; эти файлы не редактировать параллельно.
+- Статус: integrated через PR #13; commit ветки 5c407462cff4559128c779c7c704af36ed5daebc; main после merge 48338c9a3d762dbda3a8a871e67e355929cc2c2e. Issue #11 закрыта. Baseline KeyError воспроизведён; BOM и plain UTF-8 дают идентичный результат.
+- Контрольная точка: выполнена. PR #13 checks 2/2 portable success; targeted CCTV 15 PASS; portable suite, staged/tree guard и diff check PASS; независимое ревью без блокеров.
 
-## Independent review follow-up (2026-10-24)
+## Существующий PR #4 — типовой КПП, вне назначенной очереди
 
-A read-only internal Astra review of candidate `b5c16a8` confirmed the PR1 -> PR2 -> SEC-01 history and found no functional defect in the narrow SEC-01 guard change. It found three actionable consistency/coverage issues: the Cursor prompt was already available in `docs/CURSOR_SETUP.md` but TASK_QUEUE said it was unrecovered; queue and workflow used different lifecycle vocabularies; and `test_expression_marker_is_still_allowed` used `${ENVIRONMENT_VALUE}`, which matched the placeholder exemption before reaching the expression-marker branch.
+PR #4 остаётся draft из ветки claude/kpp-plan-generator на старой базе 79a53fec612b80c1c6cf3afff6c39931f5939675; live API показал два failed portable runs. Не обновлялся, не ревьюился, не объединялся. Исполнитель обозначен только веткой/описанием; проверяющий не назначен; инженерные допущения требуют подтверждения. Для продвижения нужна отдельная ограниченная задача.
 
-Corrections: the queue now links to the exact read-only Cursor prompt and avoids claiming it was sent; both documents define aligned lifecycle states; `repo_guard.py` no longer classifies `${` as a placeholder token (the existing expression-marker rule handles it), and the test uses `${RUNTIME_CREDENTIAL}` so it reaches that rule. Verification on the updated candidate: 7 targeted repo_guard tests PASS, staged repo_guard PASS, full portable checks PASS, and diff check PASS. Native CAD/BIM and private fixtures remain untested.
+## Дополнительные доказательства вторичного ПК
 
-## COORD-01 post-merge state (2026-10-24)
-
-- PR #6 merged into `main` at `7d003ada368833f6a825eb2ebf2d43f8b676a064`; PR #1 merged, PR #2 closed as superseded by #6.
-- SEC-01 `add8d053b534349fef190ba7de27be4590bac259` is integrated. `shapely==2.1.2` remains the main pin; PR #1 requested 2.2.0 but that upgrade was not adopted.
-- GitHub CI `Source checks` run 37 passed before merge; local portable suite, 7 targeted repo_guard tests and repo_guard staged/tree passed. Native AutoCAD/Revit and private fixtures were not run.
-- Claude and DeepSeek are still `blocked_access`; Cursor remains parked pending its read-only report. Their tasks were not sent in this session.
-
-## Уточнение вторичного ПК после COORD-01: подтверждённые каналы
-
-См. [PROVIDER_CAD_REVIEW_01.md](PROVIDER_CAD_REVIEW_01.md) и [отчёт Issue #5](https://github.com/rinatikd/nss-engine/issues/5#issuecomment-6380159920). Утверждения выше «не отправлены в этой сессии» относятся только к сессии CLI координатора. Их нельзя распространять на все ПК: Claude-CAD-01 и прежний пакет DEEPSEEK-CCTV-01 действительно переданы через браузер вторичного ПК, ответы получены и проверены локально. Глобальный blocked_access для этих проб устарел.
-
-CLAUDE-REV-01 на базе40e4069 остаётся новым неотправленным назначением: не путать его с завершённым CLAUDE-CAD-01 на79a53fe. Для DeepSeek ID был переиспользован: завершённый пакет32b268e и предложенная проверка40e4069 — разные исполнения. Новую проверку не помечать sent/reviewed на основании старого ответа. Координатору сопоставить результаты и зафиксировать новый уникальный ID при необходимости свежего запуска. Обратная связь провайдерам ожидает отдельного согласия; никакого нового сообщения или write-назначения этим дополнением не отправлено.
+Подробности завершённых CLAUDE-CAD-01 и прежнего пакета DEEPSEEK-CCTV-01: [PROVIDER_CAD_REVIEW_01.md](PROVIDER_CAD_REVIEW_01.md), [первичный отчёт в Issue #5](https://github.com/rinatikd/nss-engine/issues/5#issuecomment-6380159920). Это прежние снимки79a53fe/32b268e, а не ревью текущего main. Атомарная запись и BOM с тех пор исправлены координатором — статусы соответствующих задач выше остаются определяющими. Текущие назначения координатора сохранены; новых поручений это дополнение не создаёт. Обратная связь внешним провайдерам по результатам локальной проверки всё ещё ожидает отдельного согласия пользователя.

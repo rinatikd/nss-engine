@@ -16,7 +16,7 @@ a = ap.parse_args()
 cat = c.load_catalog(a.catalog)
 walls = c.read_walls(a.plan, [x for x in a.layers.split(",") if x] or None)
 cams = []
-with open(a.cameras, newline="", encoding="utf-8") as f:
+with open(a.cameras, newline="", encoding="utf-8-sig") as f:
     for r in csv.DictReader(f):
         m = cat[r["model"]]
         fl = float(r["focal_mm"])
