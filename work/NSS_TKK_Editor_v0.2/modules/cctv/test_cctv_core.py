@@ -27,6 +27,21 @@ class T(unittest.TestCase):
         poly = c.visibility_polygon((0, 0), 0, 90, 20, [], rays=10)
         self.assertAlmostEqual(math.hypot(*poly[6]), 20, places=6)
 
+    def test_collinear_wall_occludes_center_ray(self):
+        # A wall along the view axis must not produce a full-range spike.
+        for wall in (((5, 0), (10, 0)), ((10, 0), (5, 0))):
+            with self.subTest(wall=wall):
+                poly = c.visibility_polygon((0, 0), 0, 90, 20, [wall], rays=10)
+                self.assertEqual(poly[6], (5.0, 0.0))
+
+    def test_parallel_ray_intersections(self):
+        # Intersection parameters also support non-unit ray directions.
+        self.assertEqual(c._ray_segment((1, 2), (2, 0), (11, 2), (5, 2)), 2.0)
+        self.assertEqual(c._ray_segment((1, 2), (2, 0), (-1, 2), (5, 2)), 0.0)
+        self.assertIsNone(c._ray_segment((1, 2), (2, 0), (5, 3), (11, 3)))
+        self.assertIsNone(c._ray_segment((1, 2), (2, 0), (-5, 2), (-1, 2)))
+        self.assertIsNone(c._ray_segment((1, 2), (0, 0), (5, 2), (11, 2)))
+
     def test_storage(self):
         self.assertAlmostEqual(c.storage_tb_per_day(4), 0.0432, places=6)
         cams = [c.Camera(f"C{i}", 0, 0, 0, c.Lens(6.4, 1920, 3.2), bitrate_mbps=4) for i in range(16)]

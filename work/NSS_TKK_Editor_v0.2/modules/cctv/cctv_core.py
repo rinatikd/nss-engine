@@ -78,9 +78,18 @@ def _ray_segment(o: Point, d: Point, a: Point, b: Point) -> Optional[float]:
     """Параметр t>=0 пересечения луча o+t*d с отрезком ab, либо None."""
     ex, ey = b[0] - a[0], b[1] - a[1]
     den = d[0] * ey - d[1] * ex
-    if abs(den) < 1e-12:
-        return None
     ox, oy = a[0] - o[0], a[1] - o[1]
+    if abs(den) < 1e-12:
+        # Parallel lines can overlap: return the first point on the ray,
+        # independently of the order of the segment's endpoints.
+        dd = d[0] * d[0] + d[1] * d[1]
+        if dd == 0 or abs(ox * d[1] - oy * d[0]) >= 1e-12:
+            return None
+        ta = (ox * d[0] + oy * d[1]) / dd
+        tb = ((b[0] - o[0]) * d[0] + (b[1] - o[1]) * d[1]) / dd
+        if max(ta, tb) < 0:
+            return None
+        return max(0.0, min(ta, tb))
     t = (ox * ey - oy * ex) / den
     u = (ox * d[1] - oy * d[0]) / den
     if t >= 0 and -1e-9 <= u <= 1 + 1e-9:
