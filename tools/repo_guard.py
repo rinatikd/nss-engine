@@ -54,7 +54,6 @@ def main():
   if b'\0' in data:problems.append((path,'binary-content'));continue
   for label,pattern in PATTERNS.items():
    for match in pattern.finditer(data):
-    if any(t in match.group().lower() for t in PLACEHOLDERS):continue
     line=data.count(b'\n',0,match.start())+1;problems.append((path,f'{label}:line-{line}'))
   for match in ASSIGN.finditer(data):
    value=match.group(1).lower()
