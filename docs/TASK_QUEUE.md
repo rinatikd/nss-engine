@@ -93,7 +93,7 @@
 - SEC-01 `add8d053b534349fef190ba7de27be4590bac259` was reviewed and tested after the dependency/rules integration in a local simulation. The full portable suite reported 101 passing tests and repo_guard staged/tree passed before the later docs-only edits.
 - PR #4 was found during the live refresh; it is a draft and outside COORD-01's permitted scope. No file assignment was made.
 - Claude and DeepSeek tasks are blocked_access: no verified transmission/response channel is available in this session. No assignment is marked sent or accepted.
-- PR #6 is open from `agent/codex-cli/coord-01-integrated-candidate` to `main`, whose base SHA is `40e4069fec420fe188cdfb38cc9cf2ee94aae603`. Head at opening: `8baa962ca49d1858e31405c1c4c4c51500482bd1`; current PR state must be refreshed before merge. GitHub reports it mergeable, state `unstable`, with `Source checks` in progress. Do not merge before current required checks and review are complete.
+- PR #6 is open from `agent/codex-cli/coord-01-integrated-candidate` to `main` at base `40e4069fec420fe188cdfb38cc9cf2ee94aae603`. Last verified head: `65b8ed12cf8279c3ade789840a8523f4311fa122`; GitHub reports `mergeable=true`, state `clean`; PR-triggered `Source checks` run 33 completed successfully. Independent read-only review found no blocking issue. Refresh head, checks and review before any merge.
 
 ## Independent review follow-up (2026-10-24)
 

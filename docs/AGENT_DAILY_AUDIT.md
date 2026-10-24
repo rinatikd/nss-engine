@@ -37,3 +37,8 @@ Corrections: the queue now links to the exact read-only Cursor prompt and avoids
 ## PR #6 update (2026-10-24)
 
 The GitHub PR-creation tool was available through the Codex Apps connector and PR #6 is now open. Earlier notes that no PR tool was available are superseded. Initial GitHub run `Source checks` is in progress; the current head and check status must be refreshed before any merge decision.
+
+
+## PR #6 verification refresh (2026-10-24)
+
+GitHub reports PR #6 open, mergeable and clean at head `65b8ed12cf8279c3ade789840a8523f4311fa122` against `main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`. PR-triggered `Source checks` run 33 completed successfully. Independent read-only review of d192733 and its fixes found no blocking issue; subsequent changes are docs-only queue/audit corrections. Reconfirm current head/status before any merge.
