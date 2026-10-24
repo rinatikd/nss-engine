@@ -1,3 +1,7 @@
+# Работа в NSS Engine
+
+Сначала прочитай AGENTS.md, docs/SOURCE_MAP.md, docs/PORTABLE_SKILLS.md и docs/MULTI_AGENT_WORKFLOW.md. Для Gemini web фиксируй ветку/SHA импортированного снимка: изменения GitHub после импорта автоматически не синхронизируются. Не считай облачный чат доступом к Windows-папкам или Autodesk. Без инструментов записи верни анализ/предложенный патч; не обещай push/PR. Не включай платный API или подписку.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
