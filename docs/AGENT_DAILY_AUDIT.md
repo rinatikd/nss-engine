@@ -41,4 +41,7 @@ The GitHub PR-creation tool was available through the Codex Apps connector and P
 
 ## PR #6 verification refresh (2026-10-24)
 
-GitHub reports PR #6 open, mergeable and clean at head `65b8ed12cf8279c3ade789840a8523f4311fa122` against `main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`. PR-triggered `Source checks` run 33 completed successfully. Independent read-only review of d192733 and its fixes found no blocking issue; subsequent changes are docs-only queue/audit corrections. Reconfirm current head/status before any merge.
+GitHub reports PR #6 open, mergeable and clean at head `82439e60aca99729e4289a1d781bdefaa108969e` against `main` `40e4069fec420fe188cdfb38cc9cf2ee94aae603`. PR-triggered `Source checks` run 35 completed successfully. Independent read-only review found no blocking issue; no formal GitHub review is recorded. No merge has been performed.
+
+
+The status above was checked against the live GitHub PR API before the final queue refresh.
