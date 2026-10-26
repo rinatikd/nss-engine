@@ -1,0 +1,26 @@
+name: Chrome Bridge Windows Broker v0.9 source-only
+on:
+  push:
+    paths:
+      - 'tools/chrome-bridge-windows-broker-v09/**'
+      - '.github/workflows/windows-broker-v09.yml'
+  pull_request:
+    paths:
+      - 'tools/chrome-bridge-windows-broker-v09/**'
+      - '.github/workflows/windows-broker-v09.yml'
+permissions:
+  contents: read
+jobs:
+  source-only:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        working-directory: tools/chrome-bridge-windows-broker-v09
+        run: node --check policy.mjs
+      - name: Unit and explicitly skipped OS integration tests
+        working-directory: tools/chrome-bridge-windows-broker-v09
+        run: node --test .\tests\policy.test.mjs .\tests\windows-integration.test.mjs

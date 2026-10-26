@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Chrome Bridge Windows broker challenge response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "nonce", "policySha256", "brokerSha256", "codexSha256", "workspaceId", "evidence"],
+  "properties": {
+    "protocol": { "const": 1 },
+    "nonce": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "policySha256": { "$ref": "#/$defs/hash" },
+    "brokerSha256": { "$ref": "#/$defs/hash" },
+    "codexSha256": { "$ref": "#/$defs/hash" },
+    "workspaceId": { "type": "string", "pattern": "^[a-z0-9_-]{1,32}$" },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["appContainer", "network", "credentials", "workspace", "handles", "environment", "job", "cleanup"],
+      "properties": {
+        "appContainer": { "type": "object", "required": ["enabled", "sid", "lowPrivilege", "lpac", "capabilitySids"], "properties": { "enabled": { "const": true }, "sid": { "type": "string", "pattern": "^S-1-15-2-(?:[0-9]+-){1,16}[0-9]+$" }, "lowPrivilege": { "const": true }, "lpac": { "const": true }, "capabilitySids": { "type": "array", "maxItems": 0 } }, "additionalProperties": false },
+        "network": { "type": "object", "required": ["outboundAllowed", "denialProbePassed"], "properties": { "outboundAllowed": { "const": false }, "denialProbePassed": { "const": true } }, "additionalProperties": false },
+        "credentials": { "type": "object", "required": ["profileReadDenied", "codexHomeReadDenied", "syntheticCredentialReadDenied"], "properties": { "profileReadDenied": { "const": true }, "codexHomeReadDenied": { "const": true }, "syntheticCredentialReadDenied": { "const": true } }, "additionalProperties": false },
+        "workspace": { "type": "object", "required": ["pathSha256", "readOnly", "writeProbeDenied"], "properties": { "pathSha256": { "$ref": "#/$defs/hash" }, "readOnly": { "const": true }, "writeProbeDenied": { "const": true } }, "additionalProperties": false },
+        "handles": { "type": "array", "items": { "enum": ["stdin", "stdout", "stderr"] }, "minItems": 3, "maxItems": 3, "uniqueItems": true },
+        "environment": { "type": "array", "items": { "enum": ["SystemRoot", "TEMP", "TMP"] }, "minItems": 3, "maxItems": 3, "uniqueItems": true },
+        "job": { "type": "object", "required": ["killOnClose", "activeProcessLimit", "childProcessRestricted", "memoryLimitBytes", "cpuTimeLimit100ns", "descendantsEmptyAfterCrash"], "properties": { "killOnClose": { "const": true }, "activeProcessLimit": { "const": 1 }, "childProcessRestricted": { "const": true }, "memoryLimitBytes": { "type": "integer", "minimum": 67108864, "maximum": 536870912 }, "cpuTimeLimit100ns": { "type": "integer", "minimum": 100000 }, "descendantsEmptyAfterCrash": { "const": true } }, "additionalProperties": false },
+        "cleanup": { "type": "object", "required": ["fixtureRemoved", "handlesClosed"], "properties": { "fixtureRemoved": { "const": true }, "handlesClosed": { "const": true } }, "additionalProperties": false }
+      }
+    }
+  },
+  "$defs": { "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}
