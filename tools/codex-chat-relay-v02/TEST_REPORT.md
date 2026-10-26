@@ -1,4 +1,4 @@
-# Chat Relay v0.2 hardening — validation report
+# Chat Relay v0.2 hardening вЂ” validation report
 
 **Assessment:** **NO-GO for a live local Codex run on this host.** Fail-closed preflight detected installed MCP, plugin, app, hook, and tool configuration and refused the Relay path. This is a source-only follow-up based on PR #41 head `d0c1d2ae1df3485d8c536f630fff813d4c5badb3`; production was not changed.
 
@@ -15,13 +15,15 @@ Read-only inspection performed on 2026-10-26:
 
 ## Results
 
-- **PASS — 28/28 unit tests**, using temporary config files, temporary SQLite journals and mocked GitHub/Codex processes.
-- **PASS — 2/2 Python compile checks** (`relay.py`, `test_relay.py`).
-- **PASS — host preflight fail-closed:** actual local config was rejected before request claim or local execution.
-- **PASS — CLI read-only inspection:** version, `mcp list`, and `features list`; only sanitized facts were recorded.
-- **FAIL — 0.**
-- **SKIP — live GitHub relay polling/post and actual Codex model invocation.** The issue was not modified by the Relay and no local model process was started.
-- **BLOCKED — live Relay use:** current host has additional configured capabilities. A separately reviewed configuration and Windows sandbox assessment are required before any later pilot. `CODEX_DISABLED` and production settings were left untouched.
+- **PASS вЂ” 28/28 unit tests**, using temporary config files, temporary SQLite journals and mocked GitHub/Codex processes.
+- **PASS вЂ” 2/2 Python compile checks** (`relay.py`, `test_relay.py`).
+- **PASS - GitHub Source checks run #99:** `repo_guard.py --tree HEAD` and portable checks completed successfully on this branch.
+epo_guard.py --tree HEAD) and portable checks completed successfully on this branch.
+- **PASS вЂ” host preflight fail-closed:** actual local config was rejected before request claim or local execution.
+- **PASS вЂ” CLI read-only inspection:** version, `mcp list`, and `features list`; only sanitized facts were recorded.
+- **FAIL вЂ” 0.**
+- **SKIP вЂ” live GitHub relay polling/post and actual Codex model invocation.** The issue was not modified by the Relay and no local model process was started.
+- **BLOCKED вЂ” live Relay use:** current host has additional configured capabilities. A separately reviewed configuration and Windows sandbox assessment are required before any later pilot. `CODEX_DISABLED` and production settings were left untouched.
 
 ## Regression coverage
 
@@ -33,12 +35,13 @@ The first run permanently records all currently eligible request IDs and process
 
 ## File inventory and SHA256
 
-- `relay.py` — `587C39ED24B18DB6F20ED050056F2C2DD76F7A7ED72F1A7536BD18DA8B64EE55`
-- `test_relay.py` — `3981EB6D14D059D297CA4E7D26BE2C0B5B2D4086DA46C7ECFD2251DAAD630ADE`
-- `README.md` — `F64983C3327CE980DE8D38452B90B3690A6B24308556E2050D225C905F5CC7E6`
-- `TEST_REPORT.md` — this report
+- `relay.py` вЂ” `587C39ED24B18DB6F20ED050056F2C2DD76F7A7ED72F1A7536BD18DA8B64EE55`
+- `test_relay.py` вЂ” `3981EB6D14D059D297CA4E7D26BE2C0B5B2D4086DA46C7ECFD2251DAAD630ADE`
+- `README.md` вЂ” `F64983C3327CE980DE8D38452B90B3690A6B24308556E2050D225C905F5CC7E6`
+- `TEST_REPORT.md` вЂ” this report
 
 ## Remaining limits
 
 The preflight checks the active `CODEX_HOME`/default TOML and pins the inspected CLI version, but it cannot attest Windows sandbox enforcement or future CLI behavior. This implementation intentionally blocks any configured MCP/plugin/app/hook/tool sections rather than trying to selectively permit them. GitHub live poll/post has not been exercised. The terminal displays request and answer text for operator review; redirected output can retain that text. Issue #40 is public. Do not use private prompts or sensitive answers for a live pilot.
+
 
