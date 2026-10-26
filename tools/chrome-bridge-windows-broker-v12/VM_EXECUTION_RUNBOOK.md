@@ -29,7 +29,16 @@ The script compiles into a fresh `%TEMP%` subdirectory, deletes it afterward and
 
 The future VM operator must create an ephemeral code-signing certificate in that VM, trust it only in the disposable user's certificate stores, compile `synthetic_worker.cpp`, and sign only that synthetic image. The private key and trust-store changes must be deleted when the VM snapshot is discarded. Create a synthetic credential canary outside the worker workspace with random contents and confirm its path is not a real profile/credential path. Start a controller-owned loopback listener on a dedicated port. Do not use external hosts or real credentials.
 
-After signing, the operator can generate the compile-time pins with:
+Before compiling the worker, generate only its synthetic probe pins:
+
+```powershell
+& .\tests\Write-WorkerTestPins.ps1 `
+  -SyntheticCredentialPath C:\cb-v12\fixtures\fake-secret.bin `
+  -LoopbackPort 47231 `
+  -OperatorConfirmedDisposableVm
+```
+
+Then compile `native\synthetic_worker.cpp` to `C:\cb-v12\fixtures\synthetic_worker.exe` and sign only that image with the ephemeral VM certificate. After signing, generate the launcher pins:
 
 ```powershell
 & .\tests\Prepare-DisposablePins.ps1 `
@@ -40,7 +49,7 @@ After signing, the operator can generate the compile-time pins with:
   -OperatorConfirmedDisposableVm
 ```
 
-This writes `native\test_pins.h` and `native\worker_test_pins.h` into the package. It refuses invalid Authenticode status and pins the present worker bytes/certificate. Treat the generated headers as disposable, untrusted test inputs; never commit them or use production signing material.
+`Write-WorkerTestPins.ps1` writes `native\worker_test_pins.h`; `Prepare-DisposablePins.ps1` writes `native\test_pins.h` only. The latter refuses invalid Authenticode status and pins the present worker bytes/certificate. Treat generated headers as disposable, untrusted test inputs; never commit them or use production signing material.
 
 ## Required gate before a probe launch
 
@@ -65,3 +74,5 @@ The current launcher entry point is deliberately gated on both generated pins an
 8. **Crash cleanup:** **not executable with the current source.** There are no deterministic controller pause points/worker hold mode or external cleanup agent yet. Add those in a reviewed follow-up before any crash/kill trial. Do not infer crash cleanup from normal RAII or Job kill-on-close.
 
 For each scenario the controller must write a signed, SHA-pinned manifest containing case ID, PR source SHA, image hashes, Windows build, API results, timestamps, evidence hashes, rollback actions and residual-process/workspace inventory. A broker-generated JSON report is secondary only. Missing data, ambiguous errors or cleanup failure is BLOCKED/FAIL.
+
+
