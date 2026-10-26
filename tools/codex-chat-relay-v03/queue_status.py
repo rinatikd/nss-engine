@@ -21,8 +21,8 @@ def summarize(comments: list[dict]) -> dict:
     requests: dict[str, int] = {}
     responses: set[str] = set()
     import re
-    req = re.compile(r"\\A\\[CODEX-CHAT REQUEST ([A-Za-z0-9_-]{4,80})\\]\\r?\\n")
-    res = re.compile(r"\\A\\[CODEX-CHAT RESPONSE ([A-Za-z0-9_-]{4,80})\\]")
+    req = re.compile(r"\A\[CODEX-CHAT REQUEST ([A-Za-z0-9_-]{4,80})\]\r?\n")
+    res = re.compile(r"\A\[CODEX-CHAT RESPONSE ([A-Za-z0-9_-]{4,80})\]")
     for comment in comments:
         if not isinstance(comment, dict):
             raise ValueError("malformed comment")
