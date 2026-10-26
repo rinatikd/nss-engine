@@ -1,0 +1,7 @@
+# Diagnostics-only allowlist. This file does not authorize execution.
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+
+[features]
+shell_tool = false
+apps = false
