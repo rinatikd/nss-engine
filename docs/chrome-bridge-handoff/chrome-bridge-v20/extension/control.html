@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chrome Bridge</title>
+<link rel="stylesheet" href="style.css">
+<main>
+  <p class="eyebrow">AGENT HUB В· 0.3</p>
+  <h1>Chrome Bridge</h1>
+  <p>РњРѕСЃС‚ РјРµР¶РґСѓ Р»РѕРєР°Р»СЊРЅС‹РјРё РР-Р°РіРµРЅС‚Р°РјРё Рё РІР°С€РёРј Р±СЂР°СѓР·РµСЂРѕРј. Р”РµСЂР¶РёС‚Рµ СЌС‚Сѓ РІРєР»Р°РґРєСѓ РѕС‚РєСЂС‹С‚РѕР№ (Р»СѓС‡С€Рµ РІ РѕС‚РґРµР»СЊРЅРѕРј РѕРєРЅРµ Chrome РІРјРµСЃС‚Рµ СЃ РІРєР»Р°РґРєР°РјРё С‡Р°С‚РѕРІ).</p>
+
+  <section>
+    <h2>1. РџРѕРґРєР»СЋС‡РµРЅРёРµ</h2>
+    <label>РљР»СЋС‡ Р±СЂР°СѓР·РµСЂР° РёР· Setup-Windows.ps1<input id="token" type="password" autocomplete="off"></label>
+    <div class="row"><button id="connect">РџРѕРґРєР»СЋС‡РёС‚СЊ</button><button id="stop" class="secondary">РћСЃС‚Р°РЅРѕРІРёС‚СЊ</button></div>
+    <p id="status" role="status">РћС‚РєР»СЋС‡РµРЅРѕ</p>
+  </section>
+
+  <section>
+    <p>Control only: https://claude.ai, https://gemini.google.com, https://chat.deepseek.com. Connect, then locally approve Grant control (1, 3 or 4 hours). Explicit re-grant after expiry, origin change, disconnect or restart. Other origins remain read-only. Grants permit sending prompts to external services; never send secrets.</p><h2>2. РЎР°Р№С‚С‹</h2>
+    <label>РЎСЂРѕРє Р»РѕРєР°Р»СЊРЅРѕРіРѕ СЂР°Р·СЂРµС€РµРЅРёСЏ Control<select id="controlDuration"><option value="240">4 С‡Р°СЃР°</option><option value="180">3 С‡Р°СЃР°</option><option value="60">1 С‡Р°СЃ</option></select></label>
+    <div class="row">
+      <label>РўРёРї<select id="mode"><option value="read">РћР±С‹С‡РЅС‹Р№ СЃР°Р№С‚ (С‡С‚РµРЅРёРµ)</option><option value="chat">РР-С‡Р°С‚ (Р°РіРµРЅС‚СЃРєРёР№ СЂРµР¶РёРј)</option></select></label>
+      <label id="adapterWrap" hidden>РђРґР°РїС‚РµСЂ<select id="adapter"></select></label>
+    </div>
+    <label>РђРґСЂРµСЃ СЃР°Р№С‚Р°<input id="origin" placeholder="https://claude.ai"></label>
+    <div class="row"><button id="grant">Р”РѕР±Р°РІРёС‚СЊ СЃР°Р№С‚</button><button id="revoke" class="secondary">РћС‚РѕР·РІР°С‚СЊ РІСЃРµ СЃР°Р№С‚С‹</button></div>
+    <ul id="sites"></ul>
+
+  </section>
+
+  <section>
+    <h2>3. Р‘РµР·РѕРїР°СЃРЅРѕСЃС‚СЊ</h2>
+    <label class="check"><input id="actions" type="checkbox">Р Р°Р·СЂРµС€РёС‚СЊ Р·Р°РїСЂРѕСЃС‹ РЅР° РЅР°Р¶Р°С‚РёСЏ Рё РІРІРѕРґ (browser_click / browser_fill вЂ” РєР°Р¶РґС‹Р№ РїРѕРґС‚РІРµСЂР¶РґР°РµС‚СЃСЏ РЅРёР¶Рµ)</label>
+    <label class="check"><input id="confirmReads" type="checkbox">РџРѕРґС‚РІРµСЂР¶РґР°С‚СЊ РєР°Р¶РґРѕРµ С‡С‚РµРЅРёРµ СЃС‚СЂР°РЅРёС†С‹ (browser_read)</label>
+  </section>
+
+  <section>
+    <h2>Р—Р°РїСЂРѕСЃС‹ РЅР° РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ</h2>
+    <div id="approvals"><p class="hint">РќРµС‚ РѕР¶РёРґР°СЋС‰РёС… Р·Р°РїСЂРѕСЃРѕРІ.</p></div>
+  </section>
+
+  <section>
+    <h2>РњРѕРЅРёС‚РѕСЂ РєРѕРјР°РЅРґ</h2>
+    <p id="taskState" role="status">РћР¶РёРґР°РЅРёРµ РїРѕРґРєР»СЋС‡РµРЅРёСЏ</p>
+    <progress id="taskProgress" max="100" value="0"></progress>
+    <p id="taskTimes" class="hint"></p>
+  </section>
+  <section>
+    <h2>Р–СѓСЂРЅР°Р» (Р±РµР· СЃРѕРґРµСЂР¶РёРјРѕРіРѕ СЃС‚СЂР°РЅРёС†)</h2>
+    <pre id="log"></pre>
+  </section>
+
+  <details>
+    <summary>РђРґР°РїС‚РµСЂС‹ С‡Р°С‚РѕРІ (JSON, РЅР°РєР»Р°РґС‹РІР°СЋС‚СЃСЏ РїРѕРІРµСЂС… РІСЃС‚СЂРѕРµРЅРЅС‹С…)</summary>
+    <p class="hint">РЎРµР»РµРєС‚РѕСЂС‹ РёРЅС‚РµСЂС„РµР№СЃРѕРІ РјРѕРіСѓС‚ СѓСЃС‚Р°СЂРµС‚СЊ. РџСЂРёРјРµСЂ: {"chatgpt":{"send":"button[data-testid='send-button']"}}. РџСЂРѕРІРµСЂРєР°: agent_selftest.</p>
+    <textarea id="adapterJson" rows="8" spellcheck="false">{}</textarea>
+    <button id="saveAdapters" class="secondary">РЎРѕС…СЂР°РЅРёС‚СЊ Р°РґР°РїС‚РµСЂС‹</button>
+    <p id="adapterMsg" class="hint"></p>
+  </details>
+</main>
+<script type="module" src="control.js"></script>
+
