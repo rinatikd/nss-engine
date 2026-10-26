@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "broker": {
+    "path": "C:\\Program Files\\ChromeBridge\\broker.exe",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "signerCertificateSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "version": "UNPINNED-EXAMPLE"
+  },
+  "codex": {
+    "path": "C:\\Program Files\\OpenAI\\Codex\\bin\\codex.exe",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "signerCertificateSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "version": "UNPINNED-EXAMPLE"
+  },
+  "workspaces": {
+    "source": { "path": "C:\\ChromeBridge\\workspaces\\source", "access": "read-only" }
+  },
+  "approval": { "perJobLocalConfirmation": true, "dangerousActions": "deny" },
+  "limits": { "timeoutSeconds": 120, "maxOutputBytes": 262144, "maxProcesses": 1, "maxMemoryBytes": 134217728 }
+}
