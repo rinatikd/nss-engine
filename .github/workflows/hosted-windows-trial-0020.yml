@@ -1,0 +1,25 @@
+name: Hosted Windows isolation trial feasibility (source only)
+on:
+  workflow_dispatch:
+    inputs:
+      source_only_acknowledged:
+        description: Confirm this run performs source checks only; it does not run broker probes.
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  source-only:
+    if: inputs.source_only_acknowledged == true
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Static feasibility checks only
+        working-directory: tools/hosted-windows-trial-0020
+        run: node --test .\tests\feasibility.test.mjs
