@@ -4,7 +4,7 @@ Date: 2026-10-26 (Asia/Qyzylorda)
 
 ## Revision and scope
 
-This report describes the source-only v0.11 package proposed in draft PR #48. The authoritative revision is the PR head commit SHA linked from Issue #40 after publication. No Windows Broker executable was built or launched. No Codex process, model, MCP tool, production service, credential, tunnel setting, active CODEX_HOME, or CODEX_DISABLED setting was changed.
+This report describes the source-only v0.11 package proposed in draft PR #49. The authoritative revision is the PR head commit SHA linked from Issue #40 after publication. No Windows Broker executable was built or launched. No Codex process, model, MCP tool, production service, credential, tunnel setting, active CODEX_HOME, or CODEX_DISABLED setting was changed.
 
 ## Local source-only validation
 
@@ -28,9 +28,10 @@ node --test .\\tests\\policy.test.mjs .\\tests\\launch-trace.test.mjs .\\tests\\
 
 The launch transaction exists only as a JavaScript event-trace fixture and a reviewed native implementation design. There is no native `CreateProcessW(CREATE_SUSPENDED)` launcher; therefore image identity continuity through `ResumeThread`, `STARTUPINFOEX/HANDLE_LIST`, AppContainer assignment, and Job Object enforcement are unimplemented and unproven. The event tests are not OS evidence.
 
-The eight VM procedures in `VM_TEST_PLAN.md` are specifications, not runs. They require a disposable, independently observed Windows VM, synthetic fixtures, evidence tied to the exact tested commit, and cleanup/rollback records. The workflow added by this proposal is manual source-only CI and was not dispatched in this local validation; no GitHub CI result is claimed here.
+The eight VM procedures in `VM_TEST_PLAN.md` are specifications, not runs. They require a disposable, independently observed Windows VM, synthetic fixtures, evidence tied to the exact tested commit, and cleanup/rollback records. The v0.11 workflow added by this proposal is manual source-only CI and was not dispatched. The repository's separate automatic portable checks completed successfully on PR head 27ccee0bdfc3161b08d7eb6fc36178595a87eefd; those checks do not run the v0.11 manual workflow or any native broker.
 
 ## Decision
 
 - **GO:** continue source-only review and implementation in the draft branch.
 - **NO-GO:** native launcher use, local Codex execution through the broker, VM isolation claims, production activation, or cutover until a native launcher is implemented and independently verified with all eight host-observed VM probes.
+
