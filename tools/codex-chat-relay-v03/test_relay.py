@@ -60,6 +60,23 @@ class RelayV03Tests(unittest.TestCase):
         self.assertEqual([["--version"], ["features", "list"], ["mcp", "list"]], calls)
         self.assertFalse(any("exec" in call for call in calls))
 
+    def test_invalid_profile_blocks_before_cli_probe(self):
+        with tempfile.TemporaryDirectory() as folder:
+            profile = Path(folder) / "invalid.toml"
+            profile.write_text('[mcp_servers.extra]\\ncommand="x"\\n', encoding="utf-8")
+            with patch.object(diagnose.shutil, "which") as which:
+                self.assertEqual(2, diagnose.run(["--profile", str(profile)]))
+                which.assert_not_called()
+
+    def test_report_write_failure_returns_nonzero(self):
+        with tempfile.TemporaryDirectory() as folder:
+            report = Path(folder) / "missing-folder" / "report.json"
+            class Result:
+                stdout = "codex-cli 0.164.0"
+            with patch.object(diagnose.shutil, "which", return_value=str(Path(__file__).resolve())):
+                with patch.object(diagnose.subprocess, "run", return_value=Result()):
+                    self.assertEqual(3, diagnose.run(["--report", str(report)]))
+
     def test_github_pagination_collects_all_pages(self):
         rows = [[{"id": i} for i in range(1, 101)], [{"id": 101}]]
         gh = relay.GitHub(lambda page, size, timeout: (200, rows[page - 1], page == 1))
