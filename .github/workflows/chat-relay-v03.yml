@@ -1,0 +1,31 @@
+name: Relay v0.3 source-only checks
+on:
+  push:
+    paths:
+      - 'tools/codex-chat-relay-v03/**'
+      - '.github/workflows/chat-relay-v03.yml'
+  pull_request:
+    paths:
+      - 'tools/codex-chat-relay-v03/**'
+      - '.github/workflows/chat-relay-v03.yml'
+permissions:
+  contents: read
+jobs:
+  source-only:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Unit tests (mocks only)
+        working-directory: tools/codex-chat-relay-v03
+        run: python -m unittest -v
+      - name: Syntax and allowlist checks
+        working-directory: tools/codex-chat-relay-v03
+        run: |
+          python -m py_compile relay.py diagnose.py test_relay.py
+          python diagnose.py --source-only
+      - name: Confirm execution remains blocked
+        working-directory: tools/codex-chat-relay-v03
+        run: python -c "import subprocess,sys; result=subprocess.run([sys.executable, 'relay.py', '--smoke-test']); assert result.returncode == 3, f'expected blocked exit 3, got {result.returncode}'"
