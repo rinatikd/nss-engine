@@ -54,6 +54,9 @@ def run(argv=None):
     if args.source_only:
         print(json.dumps({"diagnostic_only": True, "profile_allowlist_valid": not findings, "findings": findings, "launch_authorized": False}, indent=2))
         return 0 if not findings else 2
+    if findings:
+        print(json.dumps({"diagnostic_only": True, "profile_allowlist_valid": False, "findings": findings, "launch_authorized": False}, indent=2))
+        return 2
     exe = shutil.which("codex")
     if not exe:
         print("BLOCKED: Codex executable not found; no launch attempted.")
@@ -74,7 +77,11 @@ def run(argv=None):
     report["profile_allowlist_valid"] = not findings
     report["launch_authorized"] = False
     if args.report:
-        args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        try:
+            args.report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            print("BLOCKED: unable to write diagnostic report.")
+            return 3
     print(json.dumps(report, indent=2))
     return 0
 
