@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Foreground, opt-in GitHub Issue #40 relay. GitHub text is never a command."""
 from __future__ import annotations
-import argparse, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, tempfile, time, threading
+import argparse, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, tempfile, time, threading, tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -13,6 +13,7 @@ SENDER_ID = 337319789
 MAX_BODY = 12_000
 MAX_OUTPUT = 24_000
 MAX_COMMENTS = 2_000
+VERIFIED_CLI_VERSION = "codex-cli 0.164.0"
 REQUEST = re.compile(r"\A\[CODEX-CHAT REQUEST ([A-Za-z0-9_-]{4,80})\]\r?\n([\s\S]{1,12000})\Z")
 RESPONSE = re.compile(r"\A\[CODEX-CHAT RESPONSE ([A-Za-z0-9_-]{4,80})\]")
 SECRET = re.compile(r"(?i)(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----|AKIA[0-9A-Z]{16})")
@@ -124,10 +125,57 @@ class GitHub:
             raise RelayError("reply publication outcome unknown")
         return posted
 
+
+def codex_capability_preflight(config_path: Path | None = None, env=os.environ, *, verify_cli=True, version_runner=subprocess.run) -> tuple[bool, list[str]]:
+    """Inspect config and pinned CLI version; refuse any unreviewed tool surface."""
+    if env.get("CODEX_DISABLED", "").strip().lower() in TRUE:
+        return False, ["CODEX_DISABLED is set"]
+    if verify_cli:
+        executable=shutil.which("codex")
+        if not executable: return False, ["Codex CLI unavailable; effective capabilities cannot be verified"]
+        try:
+            version=version_runner([executable,"--version"],capture_output=True,text=True,encoding="utf-8",timeout=10,check=False,shell=False)
+        except (OSError,subprocess.TimeoutExpired):
+            return False, ["Codex CLI version check failed"]
+        if version.returncode != 0 or version.stdout.strip() != VERIFIED_CLI_VERSION:
+            return False, ["Codex CLI version is not reviewed; expected "+VERIFIED_CLI_VERSION]
+    path = config_path or (Path(env["CODEX_HOME"]) if env.get("CODEX_HOME") else Path.home()/".codex")/"config.toml"
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False, ["Codex config missing; effective capabilities cannot be verified"]
+    except (OSError, tomllib.TOMLDecodeError):
+        return False, ["Codex config unreadable or malformed; effective capabilities cannot be verified"]
+    if not isinstance(data, dict):
+        return False, ["Codex config has an unexpected structure"]
+    findings=[]
+    def inspect(node, trail=""):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                name=str(key).lower()
+                label=(trail+"." if trail else "")+str(key)
+                if name in {"mcp_servers", "plugins", "apps", "hooks", "tools", "tool_servers"} and value:
+                    if name == "mcp_servers" and isinstance(value, dict):
+                        findings.append("configured MCP servers: "+", ".join(sorted(map(str,value.keys()))))
+                    else:
+                        count=len(value) if isinstance(value,(dict,list,tuple)) else 1
+                        findings.append(f"configured {name} capability section ({count} entries)")
+                elif name == "features" and isinstance(value,dict):
+                    active=sorted(str(k) for k,v in value.items() if v is True)
+                    if active: findings.append("enabled feature overrides: "+", ".join(active))
+                inspect(value,label)
+        elif isinstance(node, list):
+            for i,value in enumerate(node): inspect(value,f"{trail}[{i}]")
+    inspect(data)
+    # Stable de-duplication: nested configs may report a capability twice.
+    findings=list(dict.fromkeys(findings))
+    return not findings, findings
+
 def codex_disabled(env=os.environ): return env.get("CODEX_DISABLED","").strip().lower() in TRUE
 
-def run_codex(prompt: str, request_id: str, *, confirm: Callable[[str],str]=input, popen=subprocess.Popen, env=os.environ):
-    if codex_disabled(env): raise RelayError("CODEX_DISABLED")
+def run_codex(prompt: str, request_id: str, *, confirm: Callable[[str],str]=input, popen=subprocess.Popen, env=os.environ, capability_check: Callable=codex_capability_preflight):
+    allowed, findings=capability_check(env=env)
+    if not allowed: raise RelayError("Codex capability preflight blocked: "+"; ".join(findings))
     codex=shutil.which("codex")
     if not codex: raise RelayError("Codex CLI unavailable")
     temp=tempfile.TemporaryDirectory(prefix="codex-chat-v02-")
@@ -163,7 +211,8 @@ def run_codex(prompt: str, request_id: str, *, confirm: Callable[[str],str]=inpu
             proc.kill(); raise RelayError("Codex output stream did not close")
         if overflow[0]: raise RelayError("Codex output exceeds limit")
         if code != 0: raise RelayError("Codex failed; output redacted")
-        answer=b"".join(chunks).decode("utf-8",errors="replace").strip()
+        try: answer=b"".join(chunks).decode("utf-8",errors="strict").strip()
+        except UnicodeDecodeError as exc: raise RelayError("Codex output is malformed; outcome unknown") from exc
         answer=CONTROL.sub("?",answer)
         if not answer or SECRET.search(answer): raise RelayError("Codex output invalid or secret-like")
         return answer
@@ -178,11 +227,20 @@ def main():
     state=State(state_path); gh=GitHub()
     try:
         gh.verify(); comments=gh.comments()
-        if state.baseline(comments): print("First run: existing Issue comments recorded as baseline; no requests run."); return 0
+        if state.baseline(comments):
+            print("First run baseline complete: existing eligible request IDs were recorded and will never be processed.")
+            print("Post a new Issue #40 request with a new requestId to begin; do not edit the local journal.")
+            return 0
         response_ids={m.group(1) for c in comments if c.get("user",{}).get("id")==SENDER_ID and isinstance(c.get("body"),str) and (m:=RESPONSE.match(c["body"]))}
         if not args.local_codex:
-            print("Local Codex mode is opt-in; rerun with --local-codex to review requests. Nothing claimed.")
+            print("No request was claimed. Use --local-codex to review and approve newly posted request IDs.")
             return 0
+        allowed, findings=codex_capability_preflight()
+        if not allowed:
+            print("Codex capability preflight BLOCKED; no request was claimed or launched.")
+            for finding in findings: print("- "+finding)
+            return 3
+        print("Codex capability preflight PASS: no configured MCP/plugin/app/hook/tool extensions detected.")
         pending=[]
         for c in comments:
             r=parse_request(c)
@@ -202,7 +260,9 @@ def main():
             state.state(r.request_id,"RUNNING")
             try: answer=run_codex(r.body,r.request_id)
             except RelayError as e:
-                state.state(r.request_id,"FAILED"); print(f"Request failed: {e}"); continue
+                msg=str(e).lower()
+                status="UNKNOWN" if any(token in msg for token in ("unknown","timed out","exceeds limit","malformed")) else "FAILED"
+                state.state(r.request_id,status); print(f"Local execution {status}: {e}; do not retry this requestId."); continue
             print("Proposed response (not yet published):\n"+answer)
             if input(f"Publish response {r.request_id} to public Issue #40? Type PUBLISH {r.request_id}: ") != f"PUBLISH {r.request_id}":
                 state.state(r.request_id,"REJECTED"); continue
@@ -217,7 +277,10 @@ def main():
             body=f"[CODEX-CHAT RESPONSE {r.request_id}]\n\n{answer}\n\n_Local operator-approved relay; not a cryptographic attestation._"
             try: gh.post(body)
             except RelayError:
-                state.event(r.request_id,"PUBLISH_UNKNOWN"); raise
+                state.event(r.request_id,"PUBLISH_UNKNOWN")
+                state.state(r.request_id,"UNKNOWN")
+                print(f"PUBLISH UNKNOWN for {r.request_id}: GitHub may already have accepted the reply. Do not retry; inspect Issue #40 manually.")
+                return 4
             state.state(r.request_id,"DONE"); print(f"Published response {r.request_id}.")
         return 0
     finally: state.close()

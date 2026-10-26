@@ -1,29 +1,44 @@
-# Chat Relay v0.2 — validation report
+# Chat Relay v0.2 hardening — validation report
 
-**Status:** Draft PR suitable for source review; **NO-GO for unattended use or production installation.**
+**Assessment:** **NO-GO for a live local Codex run on this host.** Fail-closed preflight detected installed MCP, plugin, app, hook, and tool configuration and refused the Relay path. This is a source-only follow-up based on PR #41 head `d0c1d2ae1df3485d8c536f630fff813d4c5badb3`; production was not changed.
+
+## Sanitized Windows Codex preflight evidence
+
+Read-only inspection performed on 2026-10-26:
+
+- Installed executable: `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin\codex.exe`; version `codex-cli 0.164.0` (the reviewed version pinned by the relay preflight).
+- Default `%USERPROFILE%\.codex\config.toml` exists and parses as TOML. No config values, environment values, credentials, or command arguments were printed.
+- Config contains 3 MCP server definitions: `chrome-bridge`, `github`, `node_repl`; 10 plugin entries; 3 app connector groups; hook configuration; nested tool mappings.
+- `codex features list` reports `apps stable true` and `shell_tool stable true` in the regular profile. Relay's invocation would disable those two features, but this does not eliminate MCP/plugins/hooks.
+- `codex mcp list` reports configured entries, including `chrome-bridge` enabled. The inspection commands did not start an MCP server or a model request.
+- Relay preflight result: **BLOCKED** with sanitized findings for MCP servers, plugins, apps, hooks and tool sections. The installed version matches the pin, but configured tools cause refusal. No request was claimed, no Codex process was launched by Relay, and no setting was changed.
 
 ## Results
 
-- **PASS — 16/16 unit tests**, using isolated temporary SQLite files and mocked GitHub/Codex subprocesses.
+- **PASS — 28/28 unit tests**, using temporary config files, temporary SQLite journals and mocked GitHub/Codex processes.
 - **PASS — 2/2 Python compile checks** (`relay.py`, `test_relay.py`).
-- **PASS — CLI help inspection:** local Codex CLI documents repeatable `--disable`, `--sandbox`, `--cd`, and `--ephemeral` flags. No model call was launched.
+- **PASS — host preflight fail-closed:** actual local config was rejected before request claim or local execution.
+- **PASS — CLI read-only inspection:** version, `mcp list`, and `features list`; only sanitized facts were recorded.
 - **FAIL — 0.**
-- **SKIP — 2 live integration checks:** relay `gh` authentication/poll/post against Issue #40; real Codex execution. No messages were sent and no local Codex process was started.
-- **BLOCKED — production readiness:** configured MCP servers and all Codex runtime capabilities are not attested by this prototype. The code disables `shell_tool` and `apps`, but cannot prove there are no additional user-configured tools. A per-request `RUN <id>` confirmation is also required; none was given for a live request in this validation.
+- **SKIP — live GitHub relay polling/post and actual Codex model invocation.** The issue was not modified by the Relay and no local model process was started.
+- **BLOCKED — live Relay use:** current host has additional configured capabilities. A separately reviewed configuration and Windows sandbox assessment are required before any later pilot. `CODEX_DISABLED` and production settings were left untouched.
 
-## Covered by unit tests
+## Regression coverage
 
-Sender ID and login allowlist; fixed open Issue behavior; malformed/control/secret-like input; body fingerprint changes; first-run baseline; duplicate comment/request IDs; restart conversion of interrupted `RUNNING` into terminal `UNKNOWN`; hourly launch cap across restart; `CODEX_DISABLED`; exact `RUN <id>` gate; no shell and prompt passed only over stdin; read-only/ephemeral/temp-directory flags; bounded stdout and timeout termination; reply publication through stdin; correlated GitHub response verification; malformed publish result treated as unknown.
+Fixed sender ID + login and open Issue #40 checks; missing/malformed config; additional MCP/plugin/app/hook rejection before confirmation or process launch; pinned CLI version acceptance/rejection; baseline UX and dedupe; restart to `UNKNOWN` for interrupted run/publication; simulated server-accepted POST with lost client response (no retry after restart); Unicode and multiline request/response; oversize request/stdout; malformed UTF-8 and terminal control output; timeout termination; per-request approvals; shell-free stdin transport; `CODEX_DISABLED` refusal.
+
+## Baseline behavior
+
+The first run permanently records all currently eligible request IDs and processes none. The terminal and README now state this. Existing `codex_chat_autorelay_0002` is intentionally ineligible after baseline. To exercise a future staging pilot, post a new Issue #40 request with a new requestId after baseline; do not edit SQLite state to revive an old request.
 
 ## File inventory and SHA256
 
-- `relay.py` — `CBF318C36627C6FC2DF0AE80974B548947F45F78740D342B862A048F364664E4`
-- `test_relay.py` — `FACB8EAF6DBA61B99312932B74F753F9DD198EEF9DD532E937AD82DE82048F8F`
-- `README.md` — `499D7EA977AED30B60E125DBBDBA6D4BF641CD1B595FDD14E1882DA4277FE951`
+- `relay.py` — `587C39ED24B18DB6F20ED050056F2C2DD76F7A7ED72F1A7536BD18DA8B64EE55`
+- `test_relay.py` — `3981EB6D14D059D297CA4E7D26BE2C0B5B2D4086DA46C7ECFD2251DAAD630ADE`
+- `README.md` — `F64983C3327CE980DE8D38452B90B3690A6B24308556E2050D225C905F5CC7E6`
+- `TEST_REPORT.md` — this report
 
-## Scope and remaining risks
+## Remaining limits
 
-This is a manually started foreground poller over public GitHub Issue #40. First run records existing comments without processing them. Later runs accept only new comments from login `rinatikd` with numeric account ID `337319789`, verify the authenticated `gh` identity and fixed open issue, require a human approval before a local run and another confirmation before publication. No background service, MCP endpoint, Chrome Bridge, credential, tunnel, `main`, or `CODEX_DISABLED` setting was modified.
-
-The source checks cannot ensure the host's Codex config lacks other MCP servers or read-capable tools, nor prove the CLI sandbox on this Windows host. The local GitHub CLI account/API path was not exercised end-to-end. GitHub Issue comments are public and not a private channel. Review the local Codex config and run a separately approved staging smoke test before relying on it. Ambiguous process/post outcomes are terminal and are never retried automatically.
+The preflight checks the active `CODEX_HOME`/default TOML and pins the inspected CLI version, but it cannot attest Windows sandbox enforcement or future CLI behavior. This implementation intentionally blocks any configured MCP/plugin/app/hook/tool sections rather than trying to selectively permit them. GitHub live poll/post has not been exercised. The terminal displays request and answer text for operator review; redirected output can retain that text. Issue #40 is public. Do not use private prompts or sensitive answers for a live pilot.
 
