@@ -43,3 +43,5 @@ try {
   Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath (Join-Path $PWD 'image_inspector.obj') -Force -ErrorAction SilentlyContinue
 }
+exit 0
+
