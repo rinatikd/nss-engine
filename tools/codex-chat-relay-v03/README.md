@@ -40,3 +40,14 @@ The source retains fixed repository/Issue/sender constants and provides mocked p
 ## Status
 
 Staging-ready for source review and read-only diagnostics. **NO-GO** for local Codex execution until effective tool isolation and Windows host sandbox behavior are independently verified and separately approved.
+
+## Optional automated read-only queue observation
+
+`queue_status.py` is an **observation-only** CLI. It checks the authenticated `gh` identity and fixed public Issue #40 and prints only protocol request IDs, correlation counts and flags `execution_enabled=false`, `write_enabled=false`. It **never** launches Codex, invokes any AI model, posts to GitHub, or changes the local configuration. An operator can schedule this foreground program with Windows Task Scheduler after reviewing the source and deciding where to store diagnostic output. Example manual check:
+
+```powershell
+python .\queue_status.py
+python -m unittest -v test_queue_status
+```
+
+A protocol-pending request is only one without a matching `[CODEX-CHAT RESPONSE requestId]` comment. Historical tasks answered using ordinary comments may still appear pending. This helper is **not** a functioning automatic ChatGPT-to-Codex chat relay, and it has no daemon or auto-start installation. Avoid logging any private material; GitHub Issue #40 is public.
