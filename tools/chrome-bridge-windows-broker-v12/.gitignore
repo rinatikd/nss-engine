@@ -1,0 +1,8 @@
+# Generated only inside a disposable VM; never check in the pins or test cert.
+/native/test_pins.h
+/native/worker_test_pins.h
+/fixtures/
+*.exe
+*.obj
+*.pdb
+*.ilk
