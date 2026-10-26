@@ -7,6 +7,7 @@
 #include <aclapi.h>
 #include <bcrypt.h>
 #include <wincrypt.h>
+#include <sddl.h>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -34,7 +35,8 @@ struct WinTrustState {
   ~WinTrustState() {
     if (opened) {
       data.dwStateAction = WTD_STATEACTION_CLOSE;
-      WinVerifyTrust(nullptr, &WINTRUST_ACTION_GENERIC_VERIFY_V2, &data);
+      GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+      WinVerifyTrust(nullptr, &action, &data);
     }
   }
 };
@@ -137,7 +139,8 @@ int wmain(int argc, wchar_t** argv) {
   trust.data.fdwRevocationChecks=WTD_REVOKE_WHOLECHAIN; trust.data.dwUnionChoice=WTD_CHOICE_FILE;
   trust.data.pFile=&fi; trust.data.dwStateAction=WTD_STATEACTION_VERIFY;
   trust.data.dwProvFlags=WTD_CACHE_ONLY_URL_RETRIEVAL|WTD_REVOCATION_CHECK_CHAIN;
-  LONG trustResult=WinVerifyTrust(nullptr, &WINTRUST_ACTION_GENERIC_VERIFY_V2, &trust.data);
+  GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+  LONG trustResult=WinVerifyTrust(nullptr, &action, &trust.data);
   trust.opened=true;
   bool protectedDacl=false; std::wstring ownerText;
   bool aclOk=checkAcl(file, expectedOwner, protectedDacl, ownerText);
@@ -164,3 +167,4 @@ int wmain(int argc, wchar_t** argv) {
             << "\",\"executionAuthorized\":false,\"pathRedacted\":true}\n";
   return imageOk && ownerOk && protectedDacl && aclOk ? 0 : 10;
 }
+
