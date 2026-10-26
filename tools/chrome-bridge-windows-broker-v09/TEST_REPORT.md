@@ -7,6 +7,8 @@ Date: 2026-10-26
 - **PASS: 12** Node unit tests; `node --check policy.mjs` passed.
 - **PASS:** Both `.json.in` templates parse as JSON; PowerShell verifier parses as a script. Its source only reads file metadata/hash/signature and never starts the image; it was not run against a real Codex or broker executable.
 - **PASS:** No executable, object, library, or debug-symbol artifacts are included in the staging package.
+- **PASS:** Final GitHub Actions Windows source-only workflow and repository Source checks passed on head `2564679578dd92473105a527074f481fd191a773`.
+- **FAIL: 0 outstanding.** The first repo guard run rejected `package.json` as a local config file; the manifest was removed, and both final workflows passed.
 - **FAIL: 0** test failures.
 - **SKIP: 8** Windows OS integration tests. These are marked in the suite and did not run.
 - **BLOCKED: 8** real OS enforcement claims: AppContainer token/capabilities, Job Object kill-on-close, protected ACL/reparse/hardlink race, inherited handle/environment isolation, network denial, credential/CODEX_HOME denial, child-process escape, and crash cleanup.
