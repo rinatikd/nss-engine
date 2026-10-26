@@ -1,0 +1,33 @@
+name: Windows Broker v0.10 source checks
+on:
+  push:
+    paths:
+      - 'tools/chrome-bridge-windows-broker-v10/**'
+      - '.github/workflows/windows-broker-v10.yml'
+  pull_request:
+    paths:
+      - 'tools/chrome-bridge-windows-broker-v10/**'
+      - '.github/workflows/windows-broker-v10.yml'
+permissions:
+  contents: read
+jobs:
+  source-only:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Node syntax and tests
+        working-directory: tools/chrome-bridge-windows-broker-v10
+        run: |
+          node --check policy.mjs
+          node --test .\tests\policy.test.mjs .\tests\windows-integration.test.mjs .\tests\native-inspector.test.mjs
+      - name: Compile native inspector and run negative unsigned-image probe
+        shell: pwsh
+        working-directory: tools/chrome-bridge-windows-broker-v10
+        run: .\tests\native-compile.ps1
+      - name: Bind test summary to exact source revision
+        shell: pwsh
+        run: |
+          @("## Windows Broker v0.10 source validation", "", "Checked-out commit: ``$env:GITHUB_SHA``", "", "Native build and unsigned fixture rejection: passed in preceding step.", "OS isolation / VM probes: not run by this workflow.", "Execution authorization: false.") | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
