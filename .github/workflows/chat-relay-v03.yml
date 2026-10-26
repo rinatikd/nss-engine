@@ -28,7 +28,4 @@ jobs:
           python diagnose.py --source-only
       - name: Confirm execution remains blocked
         working-directory: tools/codex-chat-relay-v03
-        shell: pwsh
-        run: |
-          python .\relay.py --smoke-test
-          if ($LASTEXITCODE -ne 3) { throw "Expected fail-closed exit code 3; got $LASTEXITCODE" }
+        run: python -c "import subprocess,sys; result=subprocess.run([sys.executable, 'relay.py', '--smoke-test']); assert result.returncode == 3, f'expected blocked exit 3, got {result.returncode}'"
