@@ -10,10 +10,11 @@ This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest native imp
 
 - **PASS: 28, FAIL: 0** local Node source/unit tests, including watchdog regressions. Eight Windows integration placeholders are skipped because independent host observations are unavailable.
 - **PASS:** PowerShell 5.1 AST parse of `Run-SyntheticVmProbe.ps1`.
-- **PASS:** latest hosted source checks run `40458982050` for PR head `732f04f`.
-- **PASS:** Windows Server 2025/MSVC compile-only run `40458982198` compiled the native sources, including the additional token SID/capability checks; it launched neither native binary.
+- **PASS:** latest hosted source checks run `40459200587` for report snapshot `55b5bf8` (source head `732f04f`).
+- **PASS:** Windows Server 2025/MSVC compile-only run `40459200619` compiled the native sources, including the additional token SID/capability checks; it launched neither native binary.
 - **FAIL:** synthetic-only run `40458982032` failed at `ROOT_STORE_ADD_WATCHDOG_TIMEOUT` after the 30-second cap on `certutil -user -addstore`. Its logs show `Signature matches Public Key`, then no completion from the Root store add. The cleanup `certutil -user -delstore` completed successfully. Stage artifact: [run 40458982032 artifact 12713038721](https://github.com/rinatikd/nss-engine/actions/runs/40458982032/artifacts/12713038721), SHA256 `3284a6d583a59f983edd67739b696d915bab4efae9bd01aba76183f3ed223931`.
 - **FAIL/BLOCKED:** earlier synthetic run `40457766208` timed out after 10 minutes in `X509Store.Add`; the two Root-store write mechanisms fail at the same phase on this hosted worker. Run `40456020612` also ended in failure with logs unavailable. No launcher success is evidenced.
+- **FAIL:** repeat run `40459200559` reproduced the same `ROOT_STORE_ADD_WATCHDOG_TIMEOUT`; bounded certificate removal succeeded. Artifact `12713568327`, SHA256 `f70a73720b9696103c2a282e090145666ee06a96b26e8a192a49fcabf22e7db2`.
 - **SKIP: 8** Windows integration placeholders; **BLOCKED: 8** independent host-observed VM scenarios below.
 - **FAIL: 0** in the latest local test suite. This is not evidence of native runtime isolation.
 
