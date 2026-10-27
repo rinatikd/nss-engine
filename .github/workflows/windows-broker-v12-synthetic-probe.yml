@@ -1,0 +1,68 @@
+name: Windows Broker v0.12 synthetic VM probe
+
+on:
+  pull_request:
+    paths:
+      - 'tools/chrome-bridge-windows-broker-v12/**'
+      - '.github/workflows/windows-broker-v12-synthetic-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-probe:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run disposable synthetic-only AppContainer probe
+        timeout-minutes: 12
+        shell: pwsh
+        run: |
+          $env:CB_V12_PROBE_LOG = Join-Path $env:RUNNER_TEMP 'cb-v12-synthetic-probe.log'
+          Set-Content -LiteralPath $env:CB_V12_PROBE_LOG -Value 'Synthetic-only diagnostic stages; no secrets or user paths.' -Encoding utf8
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'BLOCKED: vswhere.exe not found' }
+          $vsPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsPath) { throw 'BLOCKED: Visual C++ x64 tools not found' }
+          $devCmd = Join-Path $vsPath 'Common7\Tools\VsDevCmd.bat'
+          if (-not (Test-Path -LiteralPath $devCmd)) { throw 'BLOCKED: VsDevCmd.bat not found' }
+
+          $probeScript = Join-Path $env:GITHUB_WORKSPACE 'tools\chrome-bridge-windows-broker-v12\tests\Run-SyntheticVmProbe.ps1'
+          if (-not (Test-Path -LiteralPath $probeScript)) { throw 'BLOCKED: synthetic probe script missing' }
+          $batch = Join-Path $env:RUNNER_TEMP 'cb-v12-synthetic-probe.cmd'
+          @"
+          @echo off
+          call "$devCmd" -no_logo -arch=amd64 -host_arch=amd64
+          if errorlevel 1 exit /b 1
+          pwsh.exe -NoProfile -File "$probeScript" -DisposableVmAcknowledged
+          exit /b %errorlevel%
+          "@ | Set-Content -LiteralPath $batch -Encoding ascii
+
+          # Cmdlets outside the native-launcher watchdog can block in Windows
+          # certificate tooling; bound the entire child process as a final cap.
+          $psi = [Diagnostics.ProcessStartInfo]::new($env:ComSpec)
+          $psi.ArgumentList.Add('/d')
+          $psi.ArgumentList.Add('/c')
+          $psi.ArgumentList.Add($batch)
+          $psi.UseShellExecute = $false
+          $process = [Diagnostics.Process]::Start($psi)
+          if (-not $process.WaitForExit(600000)) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(15000)
+            throw 'SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT'
+          }
+          if ($process.ExitCode -ne 0) { throw "Synthetic VM probe failed: $($process.ExitCode)" }
+
+      - name: Upload synthetic probe stage log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-broker-v12-synthetic-stages
+          path: ${{ runner.temp }}/cb-v12-synthetic-probe.log
+          if-no-files-found: warn
+          retention-days: 3
+

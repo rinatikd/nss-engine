@@ -1,0 +1,28 @@
+name: Windows Broker v0.11 source-only checks
+on:
+  workflow_dispatch:
+    inputs:
+      source_only_acknowledged:
+        description: Confirm this workflow performs source checks only and runs no native executable.
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  source-only:
+    if: inputs.source_only_acknowledged == true
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Static and fixture-model tests only
+        working-directory: tools/chrome-bridge-windows-broker-v11
+        run: |
+          node --check policy.mjs
+          node --check launch-trace.mjs
+          node --test .\tests\policy.test.mjs .\tests\launch-trace.test.mjs .\tests\native-inspector.test.mjs .\tests\native-launcher-contract.test.mjs .\tests\package-gates.test.mjs .\tests\windows-integration.test.mjs
