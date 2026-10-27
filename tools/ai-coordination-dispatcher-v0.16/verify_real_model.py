@@ -12,6 +12,7 @@ import time
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from calculation_check import validate_calculation
 
 PROMPT = (
     "Рассчитай общий поток и архив за сутки: 4 камеры, каждая передаёт 2 Мбит/с, "
@@ -53,23 +54,24 @@ def validate_task(task):
             raise ValueError("Response completeness/integrity failed")
         if (result.get("usage") or {}).get("output_tokens", 0) < 1:
             raise ValueError("No measured model generation")
-    answer = task["answer"].replace(",", ".")
     final_executor = next(a for a in reversed(attempts) if a["role"] == "executor")
     if final_executor["result"]["text"] != task["answer"]:
         raise ValueError("Final answer is not bound to the executor response")
-    if not re.search(r"(?<!\d)8(?:\.0)?\s*Мбит/с", answer, re.I) or not re.search(r"(?<!\d)86\.4\s*ГБ", answer, re.I):
-        raise ValueError("Independent arithmetic check failed")
+    validate_calculation(task["answer"])
     final_review = next(a for a in reversed(attempts) if a["role"] == "reviewer")
     verdict = json.loads(final_review["result"]["text"])
     if verdict["decision"] != "APPROVE" or verdict["evidence_gaps"]:
         raise ValueError("Final review did not approve the answer")
 
 
-async def verify(db, model, timeout):
+async def verify(db, executor_model, reviewer_model, timeout):
     models = local_json("/api/tags").get("models", [])
-    selected = next((m for m in models if m.get("name") == model), None)
-    if not selected or not re.fullmatch(r"[a-f0-9]{64}", selected.get("digest", "")):
-        raise ValueError("A completely installed model with a digest is required")
+    selected = {}
+    for role, name in (("executor", executor_model), ("reviewer", reviewer_model)):
+        model = next((m for m in models if m.get("name") == name), None)
+        if not model or not re.fullmatch(r"[a-f0-9]{64}", model.get("digest", "")):
+            raise ValueError("A completely installed model with a digest is required for " + role)
+        selected[role] = model
     version = local_json("/api/version").get("version")
     params = StdioServerParameters(command=sys.executable, args=[
         str(Path(__file__).parent / "mcp_bridge.py"), "--db", db])
@@ -86,7 +88,7 @@ async def verify(db, model, timeout):
             health = await call("dispatcher_health", {})
             if health["paid_api_allowed"] is not False:
                 raise ValueError("Paid API policy changed")
-            await call("dispatcher_start_local_worker", {"executor_model": model, "reviewer_model": model})
+            await call("dispatcher_start_local_worker", {"executor_model": executor_model, "reviewer_model": reviewer_model})
             submitted = await call("dispatcher_submit_task", {"prompt": PROMPT, "rubric": RUBRIC, "max_revisions": 1})
             task_id = submitted["task_id"]
             try:
@@ -98,7 +100,7 @@ async def verify(db, model, timeout):
             finally:
                 await call("dispatcher_stop_worker", {})
     return {"check": "real-ollama-mcp-executor-reviewer", "passed": False,
-            "ollama_version": version, "installed_model": selected,
+            "ollama_version": version, "installed_models": selected,
             "mcp_tools": [t.name for t in catalog.tools], "elapsed_seconds": round(time.monotonic() - started, 2),
             "paid_model_api_calls": 0, "chatgpt_web_app_verified": False, "task": task}
 
@@ -107,10 +109,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--model", default="qwen2.5:1.5b")
+    parser.add_argument("--model", help="Use one installed model for both roles")
+    parser.add_argument("--executor-model", default="qwen2.5:3b")
+    parser.add_argument("--reviewer-model", default="qwen2.5:1.5b")
     parser.add_argument("--timeout", type=int, default=360)
     args = parser.parse_args()
-    evidence = asyncio.run(verify(args.db, args.model, args.timeout))
+    executor_model = args.model or args.executor_model
+    reviewer_model = args.model or args.reviewer_model
+    evidence = asyncio.run(verify(args.db, executor_model, reviewer_model, args.timeout))
     # Preserve genuine responses even on a failed assertion; never turn failure into PASS.
     Path(args.output).write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
     task = evidence["task"]
@@ -132,7 +138,7 @@ def main():
     evidence["passed"] = True
     Path(args.output).write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
     summary = "\n## Real local model integration: PASS\n\n"
-    summary += "Model: `" + args.model + "`. Provider API charges: 0. ChatGPT web app: not verified.\n\n"
+    summary += "Executor: `" + executor_model + "`; reviewer: `" + reviewer_model + "`. Provider API charges: 0. ChatGPT web app: not verified.\n\n"
     summary += "Synthetic calculation answer (untrusted model text):\n\n"
     summary += "\n".join("> " + line for line in evidence["task"]["answer"].splitlines()) + "\n"
     if os.environ.get("GITHUB_STEP_SUMMARY"):

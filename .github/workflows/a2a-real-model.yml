@@ -71,12 +71,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! timeout 420 ollama pull qwen2.5:1.5b > "$RUNNER_TEMP/model-pull.log" 2>&1; then
-            echo '::error::Official model pull failed; no inference readiness claim is made.'
-            exit 1
-          fi
+          for model in qwen2.5:3b qwen2.5:1.5b; do
+            if ! timeout 420 ollama pull "$model" >> "$RUNNER_TEMP/model-pull.log" 2>&1; then
+              echo '::error::Official model pull failed; no inference readiness claim is made.'
+              exit 1
+            fi
+          done
       - name: Real MCP executor and reviewer with independent arithmetic check
-        run: python verify_real_model.py --model qwen2.5:1.5b --db "$RUNNER_TEMP/real-model.sqlite" --output "$RUNNER_TEMP/real-model-evidence.json" --timeout 360
+        run: python verify_real_model.py --executor-model qwen2.5:3b --reviewer-model qwen2.5:1.5b --db "$RUNNER_TEMP/real-model.sqlite" --output "$RUNNER_TEMP/real-model-evidence.json" --timeout 360
       - name: Retain synthetic integration evidence
         if: always()
         uses: actions/upload-artifact@v4
