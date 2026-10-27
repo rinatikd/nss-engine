@@ -82,9 +82,6 @@ try {
 
     Write-ProbeStage 'create-ephemeral-certificate'
     $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=ChromeBridge disposable synthetic worker' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddHours(2)
-    $rootCer = Join-Path $tempRoot 'synthetic-test-root.cer'
-    Write-ProbeStage 'export-ephemeral-certificate'
-    [IO.File]::WriteAllBytes($rootCer, $certificate.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
     Write-ProbeStage 'add-ephemeral-certificate-to-user-root'
     $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new([Security.Cryptography.X509Certificates.StoreName]::Root, [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
     try {
