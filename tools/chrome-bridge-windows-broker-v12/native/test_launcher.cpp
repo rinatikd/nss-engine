@@ -364,6 +364,33 @@ bool CreatePrivateWorkspace(PSID appSid, Workspace& workspace) {
   return valid;
 }
 
+bool VerifyAppContainerToken(HANDLE token, PSID expectedAppContainerSid) {
+  DWORD isAppContainer = 0, returned = 0;
+  if (!GetTokenInformation(token, TokenIsAppContainer, &isAppContainer,
+      sizeof(isAppContainer), &returned) || returned != sizeof(isAppContainer) || !isAppContainer) return false;
+
+  DWORD required = 0;
+  SetLastError(ERROR_SUCCESS);
+  if (GetTokenInformation(token, TokenAppContainerSid, nullptr, 0, &required) ||
+      GetLastError() != ERROR_INSUFFICIENT_BUFFER ||
+      required < sizeof(TOKEN_APPCONTAINER_INFORMATION)) return false;
+  std::vector<ULONG_PTR> appContainerBuffer((required + sizeof(ULONG_PTR) - 1) / sizeof(ULONG_PTR));
+  if (!GetTokenInformation(token, TokenAppContainerSid, appContainerBuffer.data(),
+      static_cast<DWORD>(appContainerBuffer.size() * sizeof(ULONG_PTR)), &returned) ||
+      returned < sizeof(TOKEN_APPCONTAINER_INFORMATION)) return false;
+  const auto* appInfo = reinterpret_cast<const TOKEN_APPCONTAINER_INFORMATION*>(appContainerBuffer.data());
+  if (!appInfo->TokenAppContainer || !expectedAppContainerSid ||
+      !EqualSid(appInfo->TokenAppContainer, expectedAppContainerSid)) return false;
+
+  // TokenCapabilities returns TOKEN_GROUPS. The fixed aligned buffer is much
+  // larger than the expected empty set; any API error or nonempty set denies.
+  std::array<ULONG_PTR, 512> capabilityBuffer{};
+  if (!GetTokenInformation(token, TokenCapabilities, capabilityBuffer.data(),
+      static_cast<DWORD>(sizeof(capabilityBuffer)), &returned) || returned < sizeof(DWORD)) return false;
+  const auto* capabilities = reinterpret_cast<const TOKEN_GROUPS*>(capabilityBuffer.data());
+  return capabilities->GroupCount == 0;
+}
+
 int LaunchSyntheticProbe() {
   // Caller-controlled paths or commands are never accepted. The generated pin
   // header is only for an ephemeral, disposable-VM test certificate and worker.
@@ -463,9 +490,8 @@ int LaunchSyntheticProbe() {
     Deny(L"CHILD_TOKEN_QUERY_FAILED"); Rollback(pi, job.get()); return 36;
   }
   Handle token(tokenRaw);
-  DWORD isApp = 0, returned = 0;
-  if (!GetTokenInformation(token.get(), TokenIsAppContainer, &isApp, sizeof(isApp), &returned) || !isApp) {
-    Deny(L"CHILD_NOT_APPCONTAINER"); Rollback(pi, job.get()); return 37;
+  if (!VerifyAppContainerToken(token.get(), profile.sid)) {
+    Deny(L"CHILD_APPCONTAINER_SID_OR_CAPABILITIES_MISMATCH"); Rollback(pi, job.get()); return 37;
   }
   // Check child image identity/hash one more time while candidate handle remains
   // held. Any uncertainty terminates the suspended process before ResumeThread.
@@ -501,3 +527,4 @@ int wmain(int argc, wchar_t** argv) {
   return LaunchSyntheticProbe();
 #endif
 }
+
