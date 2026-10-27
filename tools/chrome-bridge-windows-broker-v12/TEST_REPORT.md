@@ -4,16 +4,16 @@ Date: 2026-10-27 (Asia/Qyzylorda)
 
 ## Source revision and scope
 
-This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest reviewed implementation commit: `429cd003d74eb5bc295a84982e63e304cbc9fd01`. PR head at report time: `9ea70018dea1b38fe88a2dd0d5026f57a54d2992` (report/metadata update after the implementation commit). No Codex process or model was launched; production services, credentials, tunnel settings, active CODEX_HOME and project execution policy were not changed. The user's permission to remove `CODEX_DISABLED` is noted, but does not itself provide an isolated execution boundary.
+This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest native implementation commit: `52f63298018aeabb36b1e6b8b615ea6f9bf5862b`; latest PR head: `732f04f8e124aaca471c5824843182506cad1b32`. No Codex process or model was launched; production services, credentials, tunnel settings, active CODEX_HOME and project execution policy were not changed. The user's permission to remove `CODEX_DISABLED` is noted, but does not itself provide an isolated execution boundary.
 
 ## Validation results
 
 - **PASS: 28, FAIL: 0** local Node source/unit tests, including watchdog regressions. Eight Windows integration placeholders are skipped because independent host observations are unavailable.
 - **PASS:** PowerShell 5.1 AST parse of `Run-SyntheticVmProbe.ps1`.
-- **PASS:** GitHub source checks run `40457651965` for PR head `9ea7001`.
-- **PASS:** Windows Server 2025/MSVC compile-only run `40457651968`; both native sources compiled and neither binary was launched. The compiler reported unused-variable/parameter warnings.
-- **BLOCKED/PENDING:** synthetic-only run `40457652019`, job `122034622176`, was still `in_progress` on last inspection. Its step log endpoint returned `404 BlobNotFound`; no stage-level evidence or successful launcher result is available. Do not count this run as PASS.
-- **FAIL/BLOCKED:** prior synthetic run `40451830379` ended with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT`; logs last reached certificate trust setup before export/import. Run `40456020612` ended in failure, but GitHub logs returned `404 BlobNotFound` and the job step remained stale as in progress. Neither reached an evidenced successful launcher result.
+- **PASS:** latest hosted source checks run `40458982050` for PR head `732f04f`.
+- **PASS:** Windows Server 2025/MSVC compile-only run `40458982198` compiled the native sources, including the additional token SID/capability checks; it launched neither native binary.
+- **FAIL:** synthetic-only run `40458982032` failed at `ROOT_STORE_ADD_WATCHDOG_TIMEOUT` after the 30-second cap on `certutil -user -addstore`. Its logs show `Signature matches Public Key`, then no completion from the Root store add. The cleanup `certutil -user -delstore` completed successfully. Stage artifact: [run 40458982032 artifact 12713038721](https://github.com/rinatikd/nss-engine/actions/runs/40458982032/artifacts/12713038721), SHA256 `3284a6d583a59f983edd67739b696d915bab4efae9bd01aba76183f3ed223931`.
+- **FAIL/BLOCKED:** earlier synthetic run `40457766208` timed out after 10 minutes in `X509Store.Add`; the two Root-store write mechanisms fail at the same phase on this hosted worker. Run `40456020612` also ended in failure with logs unavailable. No launcher success is evidenced.
 - **SKIP: 8** Windows integration placeholders; **BLOCKED: 8** independent host-observed VM scenarios below.
 - **FAIL: 0** in the latest local test suite. This is not evidence of native runtime isolation.
 
@@ -47,4 +47,30 @@ These are source observations, not proof of runtime enforcement. The Wintrust he
 
 ## Decision
 
-**PARTIAL; NO-GO for local Codex execution and production activation.** Source tests, source checks and compile-only validation pass. The synthetic probe is pending without retrievable logs; previous attempts failed or timed out. All eight independent VM scenarios and crash recovery remain blocked. The active ChatGPT-to-local-CLI path remains fail-closed by `CODEX_DISABLED`; no job was created. Permission to remove the gate is not equivalent to verified isolation. Do not enable execution based on compilation, broker self-report or JSON attestation alone.
+**PARTIAL; NO-GO for local Codex execution and production activation.** Source tests, source checks and compile-only validation pass. The latest synthetic probe failed at the bounded Root-store add; no native launcher run was reached. All eight independent VM scenarios and crash recovery remain blocked. The active ChatGPT-to-local-CLI path remains fail-closed by `CODEX_DISABLED`; no job was created. Permission to remove the gate is not equivalent to verified isolation. Do not enable execution based on compilation, broker self-report or JSON attestation alone.
+
+## Follow-up: bounded diagnostic artifact
+
+Implementation commit `df49e1674c113bacef11bbe1d4adde1b6e4ed462` adds timestamped synthetic-only stage logging to a runner-temp text file and uploads that file with three-day retention even when the probe fails. It contains phase names and generic error markers only; it is not treated as host attestation. Regression tests assert the logging and artifact wiring.
+
+- **PASS: 28, FAIL: 0, SKIP: 8** local Node suite after the logging change.
+- **PASS:** PowerShell AST parse of the modified probe script.
+- **PASS:** hosted source checks `40458270563` and compile-only `40458270659` on head `df49e16`; neither launched the native binary.
+- **FAIL:** run `40458270520` completed after the 10-minute watchdog; see the later Root-store diagnostic entry below.
+
+This logging change improves future diagnosis; it does not close the isolation gate or change the NO-GO decision.
+
+## Follow-up: Root-store watchdog diagnosis and bounded certutil trial
+
+Run `40457766208` completed with failure after its 10-minute outer watchdog. Its logs show worker compilation and ephemeral certificate creation succeeded; the last marker was `add-public-ephemeral-certificate` immediately before the blocked `X509Store.Add`. This identified the Root-store write phase for that version. It is a **FAIL**, not an isolation pass.
+
+Implementation head `5acde624644a0d87d0e73cc1e611a3c3b7695a1d` replaces Root-store addition/removal with `certutil -user -addstore/-delstore`, each guarded by a 30-second process-tree watchdog; cleanup failure now fails the probe. This is a new synthetic-only experiment. It does not touch this workstation's certificate stores.
+
+- **PASS: 28, FAIL: 0, SKIP: 8** local Node tests after the certutil change.
+- **PASS:** PowerShell AST parse after the certutil change.
+- **FAIL:** `certutil -user -addstore` also blocked, then the 30-second watchdog terminated the process. `certutil -user -delstore` cleanup succeeded. The log artifact is linked above.
+- **PASS:** hosted source checks `40458982050` and compile-only `40458982198` on head `732f04f`; native binaries were not launched by compile-only.
+- **PASS: 28, FAIL: 0, SKIP: 8** local Node tests after the AppContainer token SID and empty capability validation was added; PowerShell AST parse also passed.
+
+No result here authorizes Codex launch. Runtime integration and all eight host-observed isolation scenarios remain blocked.
+
