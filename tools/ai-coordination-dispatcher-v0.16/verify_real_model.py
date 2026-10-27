@@ -113,7 +113,22 @@ def main():
     evidence = asyncio.run(verify(args.db, args.model, args.timeout))
     # Preserve genuine responses even on a failed assertion; never turn failure into PASS.
     Path(args.output).write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
-    validate_task(evidence["task"])
+    task = evidence["task"]
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        observation = {"state": task["state"], "answer": task["answer"], "attempts": [{
+            "role": a["role"], "state": a["state"], "text": (a.get("result") or {}).get("text"),
+            "usage": (a.get("result") or {}).get("usage"),
+        } for a in task["attempts"]]}
+        # Fixed synthetic calculation only. Escape command delimiters/newlines in model data.
+        message = json.dumps(observation, ensure_ascii=False)[:3500]
+        message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print("::notice title=A2A observed result::" + message, flush=True)
+    try:
+        validate_task(task)
+    except ValueError as exc:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print("::error title=A2A validation::" + str(exc), flush=True)
+        raise
     evidence["passed"] = True
     Path(args.output).write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
     summary = "\n## Real local model integration: PASS\n\n"
