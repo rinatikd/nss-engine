@@ -371,7 +371,7 @@ def watch_foreground(db_path: Path, source: CommentSource, *, interval_seconds: 
 def status(db_path: Path) -> dict[str, object]:
     if not db_path.exists():
         return {"status": "NOT_INITIALIZED", "database": str(db_path), "baseline_complete": False,
-                "poller_running": False}
+                "watcher_process_status": "NOT_TRACKED_BY_DATABASE"}
     connection = _connect(db_path)
     try:
         meta = {row["key"]: row["value"] for row in connection.execute("SELECT key,value FROM meta")}
@@ -381,7 +381,7 @@ def status(db_path: Path) -> dict[str, object]:
         return {"status": "READY" if meta.get("baseline_complete") == "1" else "NOT_INITIALIZED",
                 "database": str(db_path), "baseline_complete": meta.get("baseline_complete") == "1",
                 "last_complete_scan": meta.get("last_complete_scan"), "cursors": cursors,
-                "recent_events": events, "poller_running": False}
+                "recent_events": events, "watcher_process_status": "NOT_TRACKED_BY_DATABASE"}
     finally:
         connection.close()
 

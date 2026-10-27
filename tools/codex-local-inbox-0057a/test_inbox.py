@@ -254,6 +254,12 @@ class DurableInboxTests(unittest.TestCase):
             watch_foreground(self.db, self.source, interval_seconds=60,
                              sleep_fn=stop_after_first_scan, emit=emitted.append)
 
+    def test_status_does_not_claim_a_foreground_process_is_stopped(self):
+        scan_once(self.db, self.source)
+        result = status(self.db)
+        self.assertEqual(result["watcher_process_status"], "NOT_TRACKED_BY_DATABASE")
+        self.assertNotIn("poller_running", result)
+
     def test_invalid_identity_or_partial_page_aborts_before_state_write(self):
         bad = comment(57, 90)
         bad["issue_url"] = "https://api.github.com/repos/other/repo/issues/57"
