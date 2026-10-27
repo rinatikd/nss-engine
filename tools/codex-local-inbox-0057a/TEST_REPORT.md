@@ -11,9 +11,11 @@ Host: Windows `10.0.19045.0`; PowerShell `5.1.19041.2364`; Python `3.15.0`
 - **PASS:** Python compilation (`py_compile`) for `inbox.py` and `test_inbox.py`.
 - **PASS:** PowerShell 5.1 parser check for `task_scheduler.ps1`; generated `MSFT_TaskTimeTrigger` with `PT5M` interval and `P3650D` duration, without registering a task.
 - **PASS:** Read-only live scan made unauthenticated GET requests to the two fixed public issues, #54 and #57. It established an isolated temporary baseline and printed no issue body; temporary database and SQLite sidecars were removed. This verifies current API compatibility and local outbound reachability only.
-- **PASS:** Scheduler `Status` reported `NOT_INSTALLED`. Install mode with an incorrect confirmation phrase was rejected before registration; a follow-up host query confirmed the task remains absent.
+- **PASS:** Scheduler `Status` reported `NOT_INSTALLED`. Install mode with an incorrect confirmation phrase was rejected before registration.
+- **PASS:** Read-only Codex CLI preflight reported `codex-cli 0.164.0`; `codex mcp list` exited 0 and the configured list contained the names `chrome-bridge`, `github`, and `node_repl`. Raw output/config values were not printed. This confirms a GitHub-capable CLI configuration exists, not that the CLI read this Issue.
 - **FAIL:** 0.
-- **SKIP:** Installing/running the scheduled task and observing a five-minute cycle; this was intentionally not done. New live request delivery to a local Codex CLI was not attempted.
+- **BLOCKED:** After the owner requested a working direct channel, Task Scheduler installation was attempted with the script's exact opt-in phrase. Windows returned `Access is denied` (`0x80070005`) at `Register-ScheduledTask`; subsequent `Status` and host query confirmed no task is present. No alternate privilege/persistence mechanism was attempted. Thus the five-minute background cycle is not active.
+- **SKIP:** New live request delivery to a local Codex CLI was not attempted.
 - **BLOCKED:** No process-level receipt from local Codex CLI; no effective CLI sandbox/tool isolation proof. Actual Windows ACL enforcement and race-free handle-level protection against local filesystem substitution were not established. The code has best-effort symlink/junction checks and fails on inaccessible database paths, but this is not an OS sandbox.
 
 ## Behavior and limits
@@ -32,3 +34,4 @@ e29d163ca2639ee7afee31ae77de1d9460bfda065defa12f34449ebe5c79c40a  test_inbox.py
 ```
 
 The final Git commit SHA is reported in the draft PR and the Issue #57 response after publication.
+
