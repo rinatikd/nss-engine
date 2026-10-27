@@ -50,8 +50,11 @@ jobs:
           PY
           mkdir -p "$RUNNER_TEMP/codex-native"
           tar -xzf "$RUNNER_TEMP/codex.tgz" -C "$RUNNER_TEMP/codex-native"
-          native="$RUNNER_TEMP/codex-native/package/vendor/x86_64-unknown-linux-musl/codex/codex"
-          test -x "$native"
+          native="$RUNNER_TEMP/codex-native/package/vendor/x86_64-unknown-linux-musl/bin/codex"
+          if [ ! -x "$native" ]; then
+            echo "::error::Verified Codex archive does not contain expected native executable"
+            exit 1
+          fi
           "$native" --version
           echo "A2A_CODEX_EXECUTABLE=$native" >> "$GITHUB_ENV"
       - name: Install verified official Ollama
