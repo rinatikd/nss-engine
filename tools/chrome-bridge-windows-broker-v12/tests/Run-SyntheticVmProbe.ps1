@@ -30,6 +30,7 @@ $canaryBefore = $null
 $canaryAfter = $null
 
 try {
+    Write-Host 'PROBE_STAGE=prepare-canary'
     $env:TEMP = $tempRoot
     $env:TMP = $tempRoot
     [IO.File]::WriteAllBytes($canary, [Text.Encoding]::UTF8.GetBytes('synthetic-only-' + [guid]::NewGuid().ToString('N')))
@@ -50,6 +51,7 @@ try {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
     $listener.Start()
 
+    Write-Host 'PROBE_STAGE=compile-worker'
     & (Join-Path $PSScriptRoot 'Write-WorkerTestPins.ps1') -SyntheticCredentialPath $canary -LoopbackPort $port -OperatorConfirmedDisposableVm
     if (-not $?) { throw 'WORKER_PINS_FAILED' }
 
@@ -67,6 +69,7 @@ try {
     $signature = Set-AuthenticodeSignature -FilePath $worker -Certificate $certificate -HashAlgorithm SHA256
     if ($signature.Status -ne 'Valid') { throw 'SYNTHETIC_SIGNATURE_INVALID' }
 
+    Write-Host 'PROBE_STAGE=prepare-launcher-pins'
     & (Join-Path $PSScriptRoot 'Prepare-DisposablePins.ps1') -WorkerPath $worker -SignerThumbprint $certificate.Thumbprint -SyntheticCredentialPath $canary -LoopbackPort $port -OperatorConfirmedDisposableVm
     if (-not $?) { throw 'LAUNCHER_PINS_FAILED' }
 
@@ -76,8 +79,18 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "LAUNCHER_COMPILE_FAILED:$LASTEXITCODE" }
     } finally { Pop-Location }
 
-    & $launcher
-    $exitCode = $LASTEXITCODE
+    Write-Host 'PROBE_STAGE=launch-synthetic-only'
+    $startInfo = [Diagnostics.ProcessStartInfo]::new($launcher)
+    $startInfo.WorkingDirectory = $tempRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $probeProcess = [Diagnostics.Process]::Start($startInfo)
+    if (-not $probeProcess.WaitForExit(70000)) {
+        $probeProcess.Kill()
+        [void]$probeProcess.WaitForExit(10000)
+        throw 'SYNTHETIC_LAUNCHER_WATCHDOG_TIMEOUT'
+    }
+    $exitCode = $probeProcess.ExitCode
     $networkAccepted = $listener.Pending()
     $canaryAfter = (Get-FileHash -LiteralPath $canary -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($exitCode -ne 0 -or $networkAccepted -or $canaryBefore -ne $canaryAfter) {
