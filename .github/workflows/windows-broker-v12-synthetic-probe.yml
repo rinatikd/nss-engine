@@ -26,12 +26,32 @@ jobs:
           if (-not (Test-Path -LiteralPath $vswhere)) { throw 'BLOCKED: vswhere.exe not found' }
           $vsPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $vsPath) { throw 'BLOCKED: Visual C++ x64 tools not found' }
-          $devShell = Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
-          if (-not (Test-Path -LiteralPath $devShell)) { throw 'BLOCKED: Visual Studio DevShell module missing' }
-          Import-Module $devShell -Force
-          Enter-VsDevShell -VsInstallPath $vsPath -DevCmdArguments '-arch=x64' -ErrorAction Stop | Out-Null
+          $devCmd = Join-Path $vsPath 'Common7\Tools\VsDevCmd.bat'
+          if (-not (Test-Path -LiteralPath $devCmd)) { throw 'BLOCKED: VsDevCmd.bat not found' }
 
           $probeScript = Join-Path $env:GITHUB_WORKSPACE 'tools\chrome-bridge-windows-broker-v12\tests\Run-SyntheticVmProbe.ps1'
           if (-not (Test-Path -LiteralPath $probeScript)) { throw 'BLOCKED: synthetic probe script missing' }
-          & $probeScript -DisposableVmAcknowledged
+          $batch = Join-Path $env:RUNNER_TEMP 'cb-v12-synthetic-probe.cmd'
+          @"
+          @echo off
+          call "$devCmd" -no_logo -arch=amd64 -host_arch=amd64
+          if errorlevel 1 exit /b 1
+          pwsh.exe -NoProfile -File "$probeScript" -DisposableVmAcknowledged
+          exit /b %errorlevel%
+          "@ | Set-Content -LiteralPath $batch -Encoding ascii
+
+          # Cmdlets outside the native-launcher watchdog can block in Windows
+          # certificate tooling; bound the entire child process as a final cap.
+          $psi = [Diagnostics.ProcessStartInfo]::new($env:ComSpec)
+          $psi.ArgumentList.Add('/d')
+          $psi.ArgumentList.Add('/c')
+          $psi.ArgumentList.Add($batch)
+          $psi.UseShellExecute = $false
+          $process = [Diagnostics.Process]::Start($psi)
+          if (-not $process.WaitForExit(600000)) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(15000)
+            throw 'SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT'
+          }
+          if ($process.ExitCode -ne 0) { throw "Synthetic VM probe failed: $($process.ExitCode)" }
 

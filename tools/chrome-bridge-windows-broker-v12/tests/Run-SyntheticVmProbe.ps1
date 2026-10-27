@@ -83,9 +83,14 @@ try {
     Write-ProbeStage 'create-ephemeral-certificate'
     $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=ChromeBridge disposable synthetic worker' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddHours(2)
     $rootCer = Join-Path $tempRoot 'synthetic-test-root.cer'
-    Write-ProbeStage 'trust-ephemeral-certificate'
-    Export-Certificate -Cert $certificate -FilePath $rootCer -Force | Out-Null
-    Import-Certificate -FilePath $rootCer -CertStoreLocation 'Cert:\CurrentUser\Root' -Confirm:$false | Out-Null
+    Write-ProbeStage 'export-ephemeral-certificate'
+    [IO.File]::WriteAllBytes($rootCer, $certificate.Export([Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+    Write-ProbeStage 'add-ephemeral-certificate-to-user-root'
+    $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new([Security.Cryptography.X509Certificates.StoreName]::Root, [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+    try {
+        $rootStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+        $rootStore.Add($certificate)
+    } finally { $rootStore.Close() }
     Write-ProbeStage 'sign-synthetic-worker'
     $signature = Set-AuthenticodeSignature -FilePath $worker -Certificate $certificate -HashAlgorithm SHA256
     if ($signature.Status -ne 'Valid') { throw 'SYNTHETIC_SIGNATURE_INVALID' }
@@ -119,8 +124,13 @@ try {
 } finally {
     if ($listener) { $listener.Stop() }
     if ($certificate) {
-        Remove-Item -LiteralPath (Join-Path 'Cert:\CurrentUser\My' $certificate.Thumbprint) -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath (Join-Path 'Cert:\CurrentUser\Root' $certificate.Thumbprint) -Force -ErrorAction SilentlyContinue
+        foreach ($storeName in @([Security.Cryptography.X509Certificates.StoreName]::My, [Security.Cryptography.X509Certificates.StoreName]::Root)) {
+            $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+            try {
+                $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+                $store.Remove($certificate)
+            } catch { } finally { $store.Close() }
+        }
     }
     foreach ($pin in $pinPaths) { Remove-Item -LiteralPath $pin -Force -ErrorAction SilentlyContinue }
     if ([IO.Directory]::Exists($tempRoot) -and $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) {

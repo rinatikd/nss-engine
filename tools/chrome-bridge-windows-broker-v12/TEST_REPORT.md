@@ -1,26 +1,25 @@
-﻿# Windows Broker v0.12 test report
+# Windows Broker v0.12 test report
 
-Date: 2026-10-26 (Asia/Qyzylorda)
+Date: 2026-10-27 (Asia/Qyzylorda)
 
 ## Source revision and scope
 
-This report accompanies the source-only proposal for draft PR #50, stacked on v0.11 PR #49. The authoritative source SHA is the current PR head linked from Issue #40. No C++ executable was built or run. No Codex process, model, MCP tool, production service, credential, tunnel, active CODEX_HOME, or CODEX_DISABLED setting was changed.
+This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest published source head before this report refresh: `fe1e56f1db176a97852d1815854d069b31219dd6`. No Codex process, model, production service, credential, tunnel, active CODEX_HOME, or `CODEX_DISABLED` setting was changed. A harmless `codex_submit` request in the active ChatGPT session returned `CODEX_DISABLED: isolated local execution policy required`; no job was created.
 
 ## Local validation
 
-- **PASS: 27** Node source/unit tests: inherited strict policy/nonce tests, synthetic launch-order/rollback traces, native-inspector source checks, package gates, and six new v0.12 native source-contract tests.
-- **PASS:** `node --check .\\policy.mjs`; `node --check .\\launch-trace.mjs`.
-- **FAIL: 0** in the final test run. An initial run had three overstrict new source assertions; the test expectations were corrected and the complete suite was rerun successfully.
-- **SKIP: 8** Windows integration test placeholders.
-- **BLOCKED: 8** real host-observed Windows VM scenarios.
-- **BLOCKED:** Native compilation. No `cl.exe`, `clang-cl.exe`, `clang++.exe`, or `g++.exe` was available; `tests/build-native.ps1` was not run.
+- **PASS: 28, FAIL: 0** Node source/unit tests; rerun locally on 2026-10-27, including a regression test for compiler and whole-step watchdogs. Eight tests were skipped because no approved independent host observation is available.
+- **PASS:** Windows Server 2025/MSVC compile-only run `40452633516` compiled `test_launcher.cpp` and `synthetic_worker.cpp`; it launched neither binary. Prior compile-only run `40449939764` also passed.
+- **FAIL / BLOCKED:** synthetic run `40451830379` ended with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT`. Its logs show worker compilation completed in about 11 seconds and ephemeral certificate creation completed. The last phase marker is `trust-ephemeral-certificate`, immediately before `Export-Certificate` and `Import-Certificate`; the stall is isolated to that certificate export/trust block. No signed worker or launcher run was reached. Runs `40452509992` and `40452633521` still report `in_progress` with no retrievable logs and are not counted as passes.
+- **NOT YET VALIDATED:** current local patch replaces `Export-Certificate` / `Import-Certificate` with direct `X509Store` operations, separates export and store-add phase markers, keeps the 10-minute outer process watchdog, and retains per-compile watchdogs plus normal runner TEMP/TMP. PowerShell 5.1 AST parse and local Node tests pass; this patch has not run on hosted Windows yet.
+- **SKIP: 8** Windows integration test placeholders; **BLOCKED: 8** independent host-observed VM scenarios.
+- **FAIL: 0** in the latest local Node test run. This does not validate native runtime behavior.
 
 Exact local test command:
 
 ```powershell
-node --check .\\policy.mjs
-node --check .\\launch-trace.mjs
-node --test .\\tests\\policy.test.mjs .\\tests\\launch-trace.test.mjs .\\tests\\native-inspector.test.mjs .\\tests\\native-launcher-contract.test.mjs .\\tests\\package-gates.test.mjs .\\tests\\windows-integration.test.mjs
+node --check codex-handoff-output/windows-broker-v12/policy.mjs
+node --test codex-handoff-output/windows-broker-v12/tests/*.test.mjs
 ```
 
 ## Source review summary
@@ -46,4 +45,5 @@ These are source observations, not proof. The exact Wintrust helper ABI is docum
 
 ## Decision and unresolved risks
 
-**PARTIAL; NO-GO for native execution or production activation.** The source-only contract tests pass, but native compilation, executable negative probes, all eight OS observations, crash-recovery validation, independent review of image identity continuity, and a dedicated test controller remain outstanding. A compile macro or JSON attestation does not prove disposable-VM approval or isolation.
+**PARTIAL; NO-GO for local Codex execution or production activation.** Source tests and compile-only checks pass. The synthetic probe has not reached launcher execution; certificate-store setup stalled in a hosted run. All eight independent host-observed scenarios and crash-recovery validation remain blocked. The ChatGPT-to-local-CLI call is confirmed fail-closed by `CODEX_DISABLED`. A compile success, launcher self-report, or JSON attestation does not prove isolation and does not authorize changing that gate.
+
