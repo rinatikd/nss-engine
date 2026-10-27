@@ -56,3 +56,11 @@ A successful local doctor, daemon health or command-line MCP test is not proof o
 Offline launcher tests: `python -m unittest -v test_tunnel_connector`. Actual account authentication and tunnel exchange remain separate checks.
 
 Offline validation performed here: 12 launcher tests PASS. Official v0.0.18 accepted the generated JSON-as-YAML through `profiles add --from-file` in an isolated temporary directory and rejected a malformed YAML control case. Neither command started a tunnel, contacted an account, or ran a model.
+
+## Проверка транспорта без внешнего аккаунта
+
+```sh
+python verify_local_tunnel.py --client /absolute/path/to/tunnel-client --timeout 40
+```
+
+Проверено на Linux с настоящим tunnel-client0.0.18 dev proxy: локальный control plane → stdio unified runtime → MCP initialize/list_tools(9)/health/submit/get/cancel. Задача сохранена и отменена. Это проверка транспорта без модели и внешнего аккаунта; hosted_tunnel_verified и chatgpt_app_verified остаются false. Временные процессы/профиль/БД удаляются. Не используйте этот dev proxy вместо внешней защищённой регистрации.
