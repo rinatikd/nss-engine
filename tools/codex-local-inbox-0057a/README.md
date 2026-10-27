@@ -21,6 +21,15 @@ python .\inbox.py scan-once
 python .\inbox.py status
 ```
 
+If Task Scheduler registration is unavailable, an operator may explicitly start a foreground poller in a PowerShell window:
+
+```powershell
+$dbPath = Join-Path (Resolve-Path .).Path 'runtime\inbox.sqlite3'
+python .\inbox.py watch --db $dbPath
+```
+
+It scans immediately, then every 300 seconds; keep that window open and press Ctrl+C to stop. It prints only status, IDs, URL, and constrained marker metadata. This user-started process does not run at boot, does not wake or launch Codex, and cannot prove the CLI received an item.
+
 The first complete scan establishes a baseline and reports no historical comment as new. Later complete scans report new allowlisted-author comments with the Issue number, comment ID, marker (if present), URL, and `OBSERVED_UNVERIFIED`. The body is held only in memory long enough to compute its hash; it is not stored or printed. An edit or deletion is recorded in the audit table and never re-emitted as a new request. A failed/incomplete scan leaves the SQLite state and cursor unchanged.
 
 No GitHub token is required for this public repository. The implementation has no token/configuration option. It uses the unauthenticated read-only REST API, fixed repository/issue IDs, pagination, a bounded retry for rate-limit/transient responses, and a 15-second per-request timeout. The durable database defaults to `%LOCALAPPDATA%\NSSCodexInbox0057A\inbox.sqlite3`; pass `--db` to use a separate review/test path.

@@ -13,6 +13,7 @@ from pathlib import Path
 from inbox import (
     ALLOWED_AUTHOR_ID, ALLOWED_ISSUES, API_ROOT, GitHubPublicApi, InboxError,
     _validate_comment, scan_once, status,
+    watch_foreground,
 )
 
 
@@ -235,6 +236,23 @@ class DurableInboxTests(unittest.TestCase):
         with self.assertRaisesRegex(InboxError, "symlink/junction"):
             scan_once(link, FakeSource())
         self.assertFalse(target.exists())
+
+    def test_foreground_watcher_uses_five_minute_interval_and_is_stoppable(self):
+        emitted = []
+        intervals = []
+
+        def stop_after_first_scan(seconds):
+            intervals.append(seconds)
+            raise StopIteration
+
+        with self.assertRaises(StopIteration):
+            watch_foreground(self.db, self.source, interval_seconds=300,
+                             sleep_fn=stop_after_first_scan, emit=emitted.append)
+        self.assertEqual(intervals, [300])
+        self.assertIn('"status": "BASELINE_ESTABLISHED"', emitted[0])
+        with self.assertRaises(InboxError):
+            watch_foreground(self.db, self.source, interval_seconds=60,
+                             sleep_fn=stop_after_first_scan, emit=emitted.append)
 
     def test_invalid_identity_or_partial_page_aborts_before_state_write(self):
         bad = comment(57, 90)

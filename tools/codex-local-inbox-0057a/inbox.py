@@ -350,6 +350,24 @@ def scan_once(db_path: Path, source: CommentSource) -> dict[str, object]:
         connection.close()
 
 
+def watch_foreground(db_path: Path, source: CommentSource, *, interval_seconds: int = 300,
+                    sleep_fn=time.sleep, emit=print) -> None:
+    """Explicitly started foreground poller. Ctrl+C stops it; it never launches Codex."""
+    if interval_seconds != 300:
+        raise InboxError("foreground polling interval is fixed at 300 seconds")
+    while True:
+        try:
+            result = scan_once(db_path, source)
+            emit(json.dumps(result, ensure_ascii=False))
+        except InboxError as exc:
+            emit(json.dumps({"status": "SCAN_BLOCKED", "error": str(exc)}, ensure_ascii=False))
+        except (OSError, sqlite3.Error) as exc:
+            emit(json.dumps({"status": "SCAN_BLOCKED", "error": type(exc).__name__}, ensure_ascii=False))
+        except Exception as exc:
+            emit(json.dumps({"status": "SCAN_BLOCKED", "error": f"unexpected {type(exc).__name__}"}, ensure_ascii=False))
+        sleep_fn(interval_seconds)
+
+
 def status(db_path: Path) -> dict[str, object]:
     if not db_path.exists():
         return {"status": "NOT_INITIALIZED", "database": str(db_path), "baseline_complete": False,
@@ -370,11 +388,17 @@ def status(db_path: Path) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only GitHub task inbox; never launches Codex.")
-    parser.add_argument("command", choices=("status", "scan-once"))
+    parser.add_argument("command", choices=("status", "scan-once", "watch"))
     parser.add_argument("--db", type=Path, default=default_db_path())
     args = parser.parse_args(argv)
     if args.command == "status":
         print(json.dumps(status(args.db), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "watch":
+        try:
+            watch_foreground(args.db, GitHubPublicApi())
+        except KeyboardInterrupt:
+            print(json.dumps({"status": "WATCH_STOPPED", "reason": "operator_keyboard_interrupt"}))
         return 0
     try:
         result = scan_once(args.db, GitHubPublicApi())
