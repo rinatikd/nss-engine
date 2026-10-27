@@ -15,6 +15,9 @@ class CalculationCheckTests(unittest.TestCase):
             "8.000 Мбит/с; 86.400 ГБ",
             "+8 Мбит/с; +86.4 ГБ",
             "8\u00a0Мбит / с; 86,4\u00a0ГБ",
+            "Поток:4×2=8Мбит/с; Архив:8×10^6/8×86400/10^9=86.4 десятичных ГБ",
+            "8 Mbps; 86.4 decimal GB",
+            "8 Мбит/с; 86,4 ДЕСЯТИЧНЫХ ГБ",
         ]
         for answer in answers:
             with self.subTest(answer=answer):
@@ -27,6 +30,7 @@ class CalculationCheckTests(unittest.TestCase):
             r"Поток: \(4\times2=8\;\text{Мбит/с}\). Архив: \(86.4\;\text{ГБ}\).",
             r"Поток: $8\,\mathrm{Мбит}/с$; архив: $86{,}4\qquad\textrm{ГБ}$",
             r"\({8}\,\text{Мбит / с}\); \({86.4}\,\mathrm{GB}\)",
+            r"8 Мбит/с; \(86.4\,\text{десятичных ГБ}\)",
         ]
         for answer in answers:
             with self.subTest(answer=answer):
@@ -40,6 +44,7 @@ class CalculationCheckTests(unittest.TestCase):
             "8 Мбит/с; 864 ГБ", "8 Мбит/с; 0.86.4 ГБ",
             "x8 Мбит/с; 86.4 ГБ", "8 Мбит/с; x86.4 ГБ",
             "1\u200b8 Мбит/с; 86.4 ГБ", "8e0 Мбит/с; 86.4 ГБ",
+            "8 Mbps; 186.4 decimal GB", "8 Mbps; 86.41 decimal GB",
         ]
         for answer in answers:
             with self.subTest(answer=answer), self.assertRaises(ValueError):
@@ -53,6 +58,7 @@ class CalculationCheckTests(unittest.TestCase):
             r"\(-\,8\;\text{Мбит/с}\); 86.4 ГБ",
             r"8 Мбит/с; \({-86.4}\;\mathrm{ГБ}\)",
             "**-8 Мбит/с**; **86.4 ГБ**",
+            "8 Mbps; -86.4 decimal GB", "8 Мбит/с; −86,4 десятичных ГБ",
         ]
         for answer in answers:
             with self.subTest(answer=answer), self.assertRaises(ValueError):
@@ -66,6 +72,10 @@ class CalculationCheckTests(unittest.TestCase):
             "8 Mbps; 86.4 GiB", "8 Мбит/с; 86.4 ГиБ",
             "8 Mbps; 86.4 GB/s", "8 Мбит/с; 86.4 ГБ / с",
             "8 Mbps; 86.4 GB^2", "8 MbpsExtra; 86.4 GB",
+            "8 Мбит/с; 86.4 двоичных ГБ", "8 Mbps; 86.4 binary GB",
+            "8 Мбит/с; 86.4 десятичных Гб", "8 Mbps; 86.4 decimal GiB",
+            "8 Мбит/с; 86.4 примерно ГБ", "8 Mbps; 86.4 arbitrary GB",
+            "8 Mbps; 86.4decimal GB",
         ]
         for answer in answers:
             with self.subTest(answer=answer), self.assertRaises(ValueError):
@@ -77,6 +87,8 @@ class CalculationCheckTests(unittest.TestCase):
             "8 Mbps; архив 86.4 GB; окончательный архив -86.4 GB",
             "8 Mbps; 86.4 GB, окончательный архив 86.4 Gb",
             "8 Mbps; окончательный поток 8 MB/s; 86.4 GB",
+            "8 Mbps; 86.4 decimal GB; окончательный архив 86.4 binary GB",
+            "8 Мбит/с; 86.4 десятичных ГБ; окончательный архив 86.4 двоичных ГБ",
         ]
         for answer in answers:
             with self.subTest(answer=answer), self.assertRaises(ValueError):

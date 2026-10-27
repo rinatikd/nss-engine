@@ -111,7 +111,7 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--model", help="Use one installed model for both roles")
     parser.add_argument("--executor-model", default="qwen2.5:3b")
-    parser.add_argument("--reviewer-model", default="qwen2.5:1.5b")
+    parser.add_argument("--reviewer-model", default="qwen2.5:3b")
     parser.add_argument("--timeout", type=int, default=360)
     args = parser.parse_args()
     executor_model = args.model or args.executor_model

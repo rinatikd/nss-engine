@@ -16,9 +16,11 @@ _FLOW_UNIT = (
     r"|[Mm][Bb]\s*/\s*s|[Mm][Bb]ps)"
 )
 _ARCHIVE_UNIT = r"(?:[Gg][iI]?[Bb]|[Гг][иИ]?[Бб])"
+_ARCHIVE_QUALIFIER = r"(?P<archive_qualifier>(?i:десятичных|decimal|двоичных|binary))"
 _QUANTITY = re.compile(
-    _NUMBER + r"\s*(?:(?P<flow>" + _FLOW_UNIT + r")|(?P<archive>"
-    + _ARCHIVE_UNIT + r"))(?![\w]|\s*[/^])"
+    _NUMBER + r"(?:\s*(?P<flow>" + _FLOW_UNIT + r")|(?:\s+"
+    + _ARCHIVE_QUALIFIER + r"\s+|\s*)(?P<archive>" + _ARCHIVE_UNIT
+    + r"))(?![\w]|\s*[/^])"
 )
 
 
@@ -57,7 +59,8 @@ def _is_bit_rate(unit):
 def validate_calculation(answer: str) -> None:
     """Require a positive 8 Mbit/s result and 86.4 decimal GB result.
 
-    Accept Russian/English bit-rate notation, GB/ГБ, decimal comma, inline
+    Accept Russian/English bit-rate notation, GB/ГБ with an optional exact
+    'десятичных'/'decimal' qualifier, decimal comma, inline
     Markdown and limited LaTeX text/spacing wrappers. Byte rates, gigabits,
     binary GiB, negative values and numeric substrings do not satisfy it.
     """
@@ -66,8 +69,11 @@ def validate_calculation(answer: str) -> None:
         if match.group("flow") is not None:
             values["flow"] = (Decimal(match.group("number")), _is_bit_rate(match.group("flow")))
         else:
+            qualifier = (match.group("archive_qualifier") or "").casefold()
             values["archive"] = (
-                Decimal(match.group("number")), match.group("archive") in {"ГБ", "GB"})
+                Decimal(match.group("number")),
+                match.group("archive") in {"ГБ", "GB"}
+                and qualifier in {"", "десятичных", "decimal"})
     if values.get("flow") != (Decimal("8"), True):
         raise ValueError("Expected a positive total flow of 8 Mbit/s")
     if values.get("archive") != (Decimal("86.4"), True):
