@@ -24,6 +24,8 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                         "dispatcher_codex_sandbox_smoke",
                         "dispatcher_submit_task", "dispatcher_start_local_worker",
                         "dispatcher_get_task", "dispatcher_cancel_task", "dispatcher_stop_worker",
+                        "dispatcher_codex_health", "dispatcher_codex_submit_task",
+                        "dispatcher_codex_get_task", "dispatcher_codex_cancel_task",
                     ])
                     self.assertTrue(all(t.outputSchema is not None for t in catalog.tools))
                     submit_tool = next(t for t in catalog.tools if t.name == "dispatcher_submit_task")

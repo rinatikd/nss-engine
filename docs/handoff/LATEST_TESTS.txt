@@ -1,0 +1,8 @@
+Snapshot verification 2026-10-27:
+243 Python tests PASS, 0 FAIL, 0 SKIP (24.355s), current integrated source after MCP catalog update.
+46 JavaScript backend tests PASS, 0 FAIL, 0 SKIP.
+8 UI behavior tests PASS, 0 FAIL, 0 SKIP.
+Portable NSS Engine checks passed before latest UI/MCP linkage; source guard rerun for this handoff.
+Earlier real-model CI PASS: 40520744532 (shared UI/MCP executor/reviewer), 40521441115 (actual Codex/Ollama HTTP path).
+Current MCP-to-Codex actual-model CI verifier is newly prepared; do not infer PASS from earlier HTTP test.
+Unfinished optional Tunnel/CLI binding is isolated under tools/handoff-wip and excluded from these test counts.

@@ -41,12 +41,12 @@ function a2aTask(ledger, task) {
 }
 
 /** Minimal authenticated HTTP facade over the durable ledger. Bind to loopback by default. */
-export function createA2AServer({ ledger, token, agentName = 'Local A2A Agent', agentUrl = 'http://127.0.0.1:8787', sender = 'client', defaultRecipient = 'claude', maxBodyBytes = 70_000 }) {
+export function createA2AServer({ ledger, token, agentName = 'Local A2A Agent', agentUrl = 'http://127.0.0.1:8787', sender = 'client', defaultRecipient = 'claude', maxBodyBytes = 70_000, health = () => ({ ok: true }) }) {
   if (!(ledger instanceof Ledger) || typeof token !== 'string' || token.length < 24) throw new Error('LEDGER_AND_32_CHAR_TOKEN_REQUIRED');
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, agentUrl);
-      if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true });
+      if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, health());
       if (req.method === 'GET' && url.pathname === '/.well-known/agent-card.json') return json(res, 200, {
         name: agentName, description: 'Durable A2A task gateway with operator-reviewed ambiguous delivery handling.',
         version: '0.4.0', protocolVersion: '1.0', supportedInterfaces: [{ url: agentUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],

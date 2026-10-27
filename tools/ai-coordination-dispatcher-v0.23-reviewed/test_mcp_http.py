@@ -50,6 +50,8 @@ class McpHttpTests(unittest.IsolatedAsyncioTestCase):
                             "dispatcher_codex_sandbox_smoke",
                             "dispatcher_submit_task", "dispatcher_start_local_worker",
                             "dispatcher_get_task", "dispatcher_cancel_task", "dispatcher_stop_worker",
+                        "dispatcher_codex_health", "dispatcher_codex_submit_task",
+                        "dispatcher_codex_get_task", "dispatcher_codex_cancel_task",
                         ])
                         health = await session.call_tool("dispatcher_health", {})
                         self.assertFalse(health.isError)

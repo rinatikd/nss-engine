@@ -12,6 +12,7 @@ from codex_config_audit import audit_codex_config
 from codex_diagnostics import inspect_codex
 from codex_sandbox_probe import run_readonly_sandbox_probe
 from web_app import Application
+from codex_rpc import register_codex_tools
 
 
 def create_bridge(db, port=8766, *, application=None):
@@ -121,6 +122,7 @@ def create_bridge(db, port=8766, *, application=None):
         """Stop the shared application worker after its current step; queued tasks remain in SQLite."""
         return app.stop()
 
+    register_codex_tools(bridge, app)
     return bridge, app
 
 

@@ -1,0 +1,14 @@
+{
+  "name": "collab-ledger-model",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "demo": "node src/demo.mjs",
+    "start": "node --no-warnings src/server.mjs"
+  }
+}

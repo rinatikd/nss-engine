@@ -32,6 +32,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install MCP integration dependencies
+        run: python -m pip install -r ../ai-coordination-dispatcher-v0.23-reviewed/requirements-interface.lock
       - name: Offline transport and CLI regression tests
         run: node --test tests/*.test.mjs
       - name: Install verified native Codex CLI

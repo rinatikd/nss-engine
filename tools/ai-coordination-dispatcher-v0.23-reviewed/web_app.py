@@ -5,18 +5,21 @@ import http.client
 import json
 from pathlib import Path
 import secrets
+import re
 import threading
 import time
 from urllib.parse import urlsplit, unquote
 import webbrowser
 
 from orchestrator import Store, MockAgent, OllamaAgent, step
+from codex_rpc import CodexRPCClient, CodexRPCError
 
 ROOT = Path(__file__).resolve().parent
 
 
 class Application:
-    def __init__(self, db):
+    def __init__(self, db, *, codex_client=None):
+        self.codex_client = CodexRPCClient.from_environment() if codex_client is None else codex_client
         self.db = str(db)
         Path(db).parent.mkdir(parents=True, exist_ok=True)
         store = self.store()
@@ -166,6 +169,12 @@ def make_server(app, port=8765):
             self.end_headers()
             self.wfile.write(body)
 
+        def codex_error(self, exc):
+            status = exc.status if exc.status in (400, 404, 409, 503) else 503
+            self.send(status, {"error": {404: "Задача Codex не найдена", 409: "Конфликт задачи Codex: проверьте её текущее состояние"}.get(status,
+                "Сервис Codex недоступен или ответ не подтверждён. Повтор использует тот же request_id."),
+                "code": exc.code, "delivery_unknown": bool(exc.delivery_unknown)})
+
         def allowed(self, mutation=False):
             authority = "127.0.0.1:" + str(self.server.server_port)
             if self.headers.get("Host") != authority:
@@ -187,6 +196,20 @@ def make_server(app, port=8765):
             elif path in ("/app.js", "/style.css"):
                 self.send(200, (ROOT / "ui" / path[1:]).read_bytes(),
                           "text/javascript; charset=utf-8" if path.endswith(".js") else "text/css; charset=utf-8")
+            elif path == "/api/codex/state":
+                self.send(200, app.codex_client.health())
+            elif path == "/api/codex/tasks":
+                try:
+                    self.send(200, app.codex_client.list_tasks())
+                except CodexRPCError as exc:
+                    self.codex_error(exc)
+            elif path.startswith("/api/codex/tasks/"):
+                try:
+                    self.send(200, app.codex_client.get(unquote(path[len("/api/codex/tasks/"):])))
+                except ValueError:
+                    self.send(400, {"error": "Неверный идентификатор задачи Codex"})
+                except CodexRPCError as exc:
+                    self.codex_error(exc)
             elif path == "/api/state":
                 self.send(200, app.state())
             elif path.startswith("/api/tasks/"):
@@ -211,7 +234,19 @@ def make_server(app, port=8765):
                 if not isinstance(data, dict):
                     raise ValueError("Ожидается JSON-объект")
                 path = urlsplit(self.path).path
-                if path == "/api/tasks":
+                if path == "/api/codex/tasks":
+                    if set(data) != {"request_id", "prompt"}:
+                        raise ValueError("Неверный формат задачи Codex")
+                    if (not isinstance(data["request_id"], str) or not re.fullmatch(r"[0-9a-fA-F]{32}", data["request_id"]) or
+                        not isinstance(data["prompt"], str) or not data["prompt"].strip() or len(data["prompt"]) > 6000):
+                        raise ValueError("Неверные поля задачи Codex")
+                    self.send(200, app.codex_client.submit(data["request_id"], data["prompt"]))
+                elif path.startswith("/api/codex/tasks/") and path.endswith("/cancel"):
+                    if data:
+                        raise ValueError("Отмена не принимает параметры")
+                    task_id = unquote(path[len("/api/codex/tasks/"):-len("/cancel")])
+                    self.send(200, app.codex_client.cancel(task_id))
+                elif path == "/api/tasks":
                     if set(data) != {"task_id", "prompt", "rubric", "mode", "max_revisions"} or data["mode"] not in ("mock", "local"):
                         raise ValueError("Неверный формат задачи или недоступный режим")
                     task_id = data["task_id"] or "task-" + secrets.token_hex(6)
@@ -236,6 +271,8 @@ def make_server(app, port=8765):
                         store.close()
                 else:
                     self.send(404, {"error": "Не найдено"})
+            except CodexRPCError as exc:
+                self.codex_error(exc)
             except (ValueError, TypeError, KeyError, UnicodeError):
                 self.send(400, {"error": "Проверьте поля запроса: режим, текст, критерии и число исправлений"})
 

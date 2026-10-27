@@ -1,0 +1,31 @@
+name: A2A project handoff
+
+on:
+  push:
+    branches: [agent/codex/a2a-interface-mcp-v016]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Guard source snapshot
+        run: python3 tools/repo_guard.py --tree HEAD
+      - name: Build and verify transfer archive
+        run: python3 tools/build_a2a_handoff.py --output "$RUNNER_TEMP/A2A-Project-Handoff-2026-10-27-current.zip"
+      - name: Publish downloadable handoff artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: A2A-Project-Handoff-2026-10-27-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/A2A-Project-Handoff-2026-10-27-current.zip
+            ${{ runner.temp }}/A2A-Project-Handoff-2026-10-27-current.zip.sha256
+          retention-days: 90
+          if-no-files-found: error

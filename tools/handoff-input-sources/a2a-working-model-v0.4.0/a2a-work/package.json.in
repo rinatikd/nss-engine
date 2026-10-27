@@ -1,0 +1,15 @@
+{
+  "name": "a2a-codex-bridge",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "demo": "node src/demo.mjs",
+    "start": "node --no-warnings src/server.mjs",
+    "worker": "node --no-warnings src/worker.mjs"
+  }
+}

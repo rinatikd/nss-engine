@@ -1,0 +1,71 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { Ledger } from '../src/ledger.mjs';
+import { createA2AServer } from '../src/server.mjs';
+import { tmpdb } from './util.mjs';
+
+test('HTTP API: Agent Card public, auth enforced, submit idempotent and inspectable', async (t) => {
+  const { db } = tmpdb(t); const ledger = new Ledger(db); t.after(() => ledger.close());
+  const token = 'test-token-that-is-at-least-32-chars';
+  const server = createA2AServer({ ledger, token, agentUrl: 'http://127.0.0.1' });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const card = await fetch(`${base}/.well-known/agent-card.json`);
+  assert.equal(card.status, 200); assert.equal((await card.json()).protocolVersion, '1.0');
+  assert.equal((await fetch(`${base}/v1/tasks`)).status, 401);
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const payload = { id: 'http-1', contextId: 'ctx-http', recipient: 'claude', text: 'Review this.' };
+  const first = await fetch(`${base}/v1/tasks`, { method: 'POST', headers, body: JSON.stringify(payload) });
+  assert.equal(first.status, 201); assert.equal((await first.json()).task.state, 'submitted');
+  const duplicate = await fetch(`${base}/v1/tasks`, { method: 'POST', headers, body: JSON.stringify(payload) });
+  assert.equal(duplicate.status, 200); assert.equal((await duplicate.json()).result, 'duplicate');
+  const conflict = await fetch(`${base}/v1/tasks`, { method: 'POST', headers, body: JSON.stringify({ ...payload, text: 'different' }) });
+  assert.equal(conflict.status, 409);
+  const get = await fetch(`${base}/v1/tasks/http-1`, { headers });
+  assert.equal(get.status, 200); const task = (await get.json()).task;
+  assert.equal(task.id, 'http-1'); assert.equal('fence' in task, false); assert.equal('owner' in task, false);
+  const events = await fetch(`${base}/v1/tasks/http-1/events`, { headers });
+  assert.equal((await events.json()).events[0].kind, 'submitted');
+});
+
+test('HTTP API rejects malformed JSON and oversized bodies', async (t) => {
+  const { db } = tmpdb(t); const ledger = new Ledger(db); t.after(() => ledger.close());
+  const server = createA2AServer({ ledger, token: 'test-token-that-is-at-least-32-chars', maxBodyBytes: 20 });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const headers = { authorization: 'Bearer test-token-that-is-at-least-32-chars', 'content-type': 'application/json' };
+  assert.equal((await fetch(`${base}/v1/tasks`, { method: 'POST', headers, body: '{' })).status, 400);
+  assert.equal((await fetch(`${base}/v1/tasks`, { method: 'POST', headers, body: JSON.stringify({ text: 'x'.repeat(100) }) })).status, 413);
+});
+
+test('A2A JSON-RPC: message/send, tasks/get, tasks/cancel, protocol errors and Agent Card', async (t) => {
+  const { db } = tmpdb(t); const ledger = new Ledger(db); t.after(() => ledger.close());
+  const token = 'a2a-test-token-that-is-long-enough-32';
+  const server = createA2AServer({ ledger, token, agentUrl: 'http://127.0.0.1:8787', defaultRecipient: 'claude' });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const card = await (await fetch(`${base}/.well-known/agent-card.json`)).json();
+  assert.equal(card.protocolVersion, '1.0'); assert.equal(card.supportedInterfaces[0].protocolBinding, 'JSONRPC');
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const call = async (id, method, params) => fetch(`${base}/`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id, method, params }) }).then(r => r.json());
+  const sentResponse = await fetch(`${base}/`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 'rpc-1', method: 'message/send', params: { message: { role: 'user', messageId: 'm-1', contextId: 'ctx-a2a', parts: [{ kind: 'text', text: 'Review the patch.' }] } } }) });
+  assert.match(sentResponse.headers.get('content-type'), /application\/a2a\+json/); assert.equal(sentResponse.headers.get('a2a-version'), '1.0');
+  const sent = await sentResponse.json();
+  assert.equal(sent.id, 'rpc-1'); assert.equal(sent.result.status.state, 'submitted');
+  const taskId = sent.result.id;
+  const fetched = await call(2, 'tasks/get', { id: taskId });
+  assert.equal(fetched.result.id, taskId); assert.equal(fetched.result.contextId, 'ctx-a2a');
+  const listed = await call(6, 'tasks/list', { contextId: 'ctx-a2a', pageSize: 10 });
+  assert.equal(listed.result.tasks.length, 1); assert.equal(listed.result.tasks[0].id, taskId);
+  const canceled = await call(3, 'tasks/cancel', { id: taskId });
+  assert.equal(canceled.result.status.state, 'canceled');
+  const missing = await call(4, 'tasks/get', { id: 'does-not-exist' });
+  assert.equal(missing.error.code, -32001);
+  const badMethod = await call(5, 'tasks/not-real', {});
+  assert.equal(badMethod.error.code, -32601);
+  const unauthorized = await fetch(`${base}/`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tasks/get', params: { id: taskId } }) });
+  assert.equal(unauthorized.status, 401);
+});

@@ -1,0 +1,42 @@
+[
+  [
+    "const grants = new ControlGrants();",
+    "const grants = new ControlGrants();\n// Per-Chrome-session approvals: survives bridge process/epoch restarts, not browser restart.\nconst GRANTS_KEY = 'chromeBridgeSessionGrantsV1';\nasync function persistGrants() {\n  await chrome.storage.session.set({ [GRANTS_KEY]: Object.fromEntries(grants.grants) });\n}\nasync function forgetGrant(origin) {\n  const data = (await chrome.storage.session.get(GRANTS_KEY))[GRANTS_KEY] || {};\n  delete data[origin];\n  await chrome.storage.session.set({ [GRANTS_KEY]: data });\n}\nasync function restoreGrants() {\n  const stored = (await chrome.storage.session.get(GRANTS_KEY))[GRANTS_KEY] || {};\n  const sites = await getSites();\n  const now = Date.now();\n  const restored = {};\n  for (const [origin, expires] of Object.entries(stored)) {\n    if (!CONTROL_ORIGINS[origin] || sites[origin]?.mode !== 'chat') continue;\n    if (!Number.isFinite(expires) || expires <= now || expires > now + 240 * 60000) continue;\n    if (!(await chrome.permissions.contains({ origins: [origin + '/*'] }))) continue;\n    restored[origin] = expires;\n  }\n  grants.grants = new Map(Object.entries(restored));\n  await chrome.storage.session.set({ [GRANTS_KEY]: restored });\n  refreshGrantLabels();\n}"
+  ],
+  [
+    "if (previous && previous !== origin) grants.grants.delete(previous);",
+    "if (previous && previous !== origin) { grants.grants.delete(previous); void forgetGrant(previous); }"
+  ],
+  [
+    "grants.grants.delete(origin);\n      await setSites(cur);",
+    "grants.grants.delete(origin);\n      await forgetGrant(origin);\n      await setSites(cur);"
+  ],
+  [
+    "grant.onclick = (event) => {",
+    "grant.onclick = async (event) => {"
+  ],
+  [
+    "grants.approve(origin, event.isTrusted, minutes);\n          refreshGrantLabels();",
+    "grants.approve(origin, event.isTrusted, minutes);\n          await persistGrants();\n          refreshGrantLabels();"
+  ],
+  [
+    "if (previous && previous !== current) grants.grants.delete(previous);",
+    "if (previous && previous !== current) { grants.grants.delete(previous); await forgetGrant(previous); }"
+  ],
+  [
+    "if (!epoch || grants.epoch !== epoch) grants.reset(epoch || null);",
+    "if (!epoch) {\n        grants.reset(null);\n      } else if (grants.epoch !== epoch) {\n        grants.epoch = epoch;\n        await restoreGrants();\n      }"
+  ],
+  [
+    "function stop() {\n  running = false;\n  grants.reset();",
+    "function stop({ revoke = true } = {}) {\n  running = false;\n  grants.reset();\n  if (revoke) void chrome.storage.session.remove(GRANTS_KEY);"
+  ],
+  [
+    "$('stop').onclick = stop;",
+    "$('stop').onclick = () => stop({ revoke: true });"
+  ],
+  [
+    "window.addEventListener('beforeunload', stop);",
+    "window.addEventListener('beforeunload', () => stop({ revoke: false }));"
+  ]
+]

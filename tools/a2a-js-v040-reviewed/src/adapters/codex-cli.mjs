@@ -37,7 +37,11 @@ export class CodexCliAdapter {
     this.timeoutMs = timeoutMs; this.sandbox = sandbox; this.approval = approval; this.extraArgs = [...extraArgs];
   }
 
-  async send(task) {
+  async send(task, { signal } = {}) {
+    if (signal?.aborted) {
+      const { NotDispatched } = await import('../dispatcher.mjs');
+      throw new NotDispatched('CODEX_ABORTED_BEFORE_START');
+    }
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'a2a-codex-'));
     const outputFile = path.join(temp, 'last-message.txt');
     // Approval is a top-level Codex option, not an exec subcommand option.
@@ -59,28 +63,33 @@ export class CodexCliAdapter {
         '-c', 'tools.update_plan.enabled=false', '-c', 'model_context_window=8192');
     }
     args.push(...this.extraArgs, '-');
-    let stdout = '', stderr = '', sessionId = null, cliError = '', timedOut = false, spawned = false, stdinFailed = false;
+    let stdout = '', stderr = '', sessionId = null, cliError = '', timedOut = false, aborted = false, spawned = false, stdinFailed = false;
     try {
       const result = await new Promise((resolve, reject) => {
         const child = spawn(this.executable, args, { cwd: this.cwd, shell: false, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: childEnv });
-        let force;
+        let force, stopping = false;
         const terminate = signal => {
           if (!child.pid) return;
           try { if (process.platform === 'win32') child.kill(signal); else process.kill(-child.pid, signal); }
           catch (e) { if (e.code !== 'ESRCH') { /* outcome remains unknown; settlement is bounded below */ } }
         };
-        const clearTimers = () => { clearTimeout(timer); clearTimeout(force); };
-        const timer = setTimeout(() => {
-          timedOut = true;
+        const clearTimers = () => { clearTimeout(timer); clearTimeout(force); signal?.removeEventListener('abort', abort); };
+        const stop = () => {
+          if (stopping) return;
+          stopping = true;
           terminate('SIGTERM');
           force = setTimeout(() => {
             terminate('SIGKILL');
             // A detached descendant can retain the pipe handles. Do not let those
             // handles turn a declared timeout into an unbounded wait for close().
             child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
-            reject(new Error('CODEX_TIMEOUT_OUTCOME_UNKNOWN'));
+            reject(new Error(aborted ? 'CODEX_ABORTED_OUTCOME_UNKNOWN' : 'CODEX_TIMEOUT_OUTCOME_UNKNOWN'));
           }, 3000);
-        }, this.timeoutMs);
+        };
+        const abort = () => { aborted = true; stop(); };
+        const timer = setTimeout(() => { timedOut = true; stop(); }, this.timeoutMs);
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
         child.stdin.on('error', () => { stdinFailed = true; });
         child.once('spawn', () => { spawned = true; child.stdin.end(task.text); });
         child.stdout.on('data', b => { stdout = boundedAppend(stdout, b.toString(), 1024 * 1024); });
@@ -93,6 +102,7 @@ export class CodexCliAdapter {
         if (!line.trim()) continue;
         try { const event = JSON.parse(line); if (event.type === 'error' && typeof event.message === 'string') cliError = event.message; if (event.type === 'turn.failed' && typeof event.error?.message === 'string') cliError = event.error.message; if (typeof event.thread_id === 'string' && event.thread_id) sessionId = event.thread_id; if (typeof event.session_id === 'string' && event.session_id) sessionId = event.session_id; } catch { /* tolerate non-JSON diagnostics */ }
       }
+      if (aborted) throw new Error('CODEX_ABORTED_OUTCOME_UNKNOWN');
       if (timedOut) throw new Error('CODEX_TIMEOUT_OUTCOME_UNKNOWN');
       if (stdinFailed) throw new Error('CODEX_STDIN_OUTCOME_UNKNOWN');
       if (result.code !== 0) throw new Error(`CODEX_EXIT_${result.code ?? result.signal ?? 'UNKNOWN'}: ${(stderr + (this.provider === 'ollama-local' ? '\n' + cliError : '')).slice(-1800)}`);

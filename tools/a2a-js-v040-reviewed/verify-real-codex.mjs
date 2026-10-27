@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { Ledger } from './src/ledger.mjs';
 import { runOnce } from './src/dispatcher.mjs';
 import { CodexCliAdapter } from './src/adapters/codex-cli.mjs';
@@ -19,7 +19,7 @@ const EXPECTED = 'A2A_CODEX_LOCAL_E2E_OK';
 const safeError = error => String(error?.message || error).slice(-1800)
   .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/g,'[redacted]')
   .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi,'Bearer [redacted]');
-const evidence = { check:'real-http-jsonrpc-sqlite-codex-ollama', passed:false,
+const evidence = { check:'real-mcp-http-jsonrpc-sqlite-codex-ollama', passed:false,
   paid_api_calls:0, chatgpt_app_verified:false, windows_isolation_verified:false, model:MODEL,
   requests:[], started_at:new Date().toISOString() };
 const annotation = (level,title,value)=>{
@@ -35,7 +35,7 @@ async function localJSON(route, options) {
 async function persist() {
   if(OUTPUT)await fs.writeFile(OUTPUT,JSON.stringify(evidence,null,2),'utf8');
 }
-let root, ledger, server, proxy;
+let root, ledger, server, proxy, mcpProcess, probeTimer;
 try {
   assert.ok(EXECUTABLE && path.isAbsolute(EXECUTABLE),'Absolute pinned native Codex executable is required');
   assert.ok(['qwen2.5:3b','qwen2.5:7b'].includes(MODEL),'Known local model tag is required');
@@ -96,8 +96,34 @@ try {
     const r=await fetch(url,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/a2a+json'},body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method,params}),signal:AbortSignal.timeout(10000)});
     assert.equal(r.status,200);const value=await r.json();assert.ok(!value.error,JSON.stringify(value.error));return value.result;
   }
-  const submitted=await rpc('message/send',{message:{role:'user',messageId:'real-local-1',contextId:'real-local-e2e',parts:[{kind:'text',text:`Return this marker verbatim as your entire final response, without punctuation, quotes, explanation or tools:\n${EXPECTED}`}]}});
-  assert.equal(submitted.status.state,'submitted');
+  const probe=path.resolve(import.meta.dirname,'../ai-coordination-dispatcher-v0.23-reviewed/verify_codex_mcp.py');
+  let probeOutput='',probeError='';
+  mcpProcess=spawn(process.env.A2A_MCP_PYTHON||'python3',[probe,'--db',path.join(root,'mcp.sqlite'),'--expected-marker',EXPECTED,'--timeout','280'],{
+    env:{...process.env,A2A_CODEX_RPC_URL:url,A2A_CODEX_RPC_TOKEN:token},stdio:['ignore','pipe','pipe'],shell:false});
+  mcpProcess.stdout.on('data',b=>{probeOutput=(probeOutput+b.toString()).slice(-64000);});
+  mcpProcess.stderr.on('data',b=>{probeError=(probeError+b.toString()).slice(-64000);});
+  const probeDone=new Promise((resolve,reject)=>{
+    mcpProcess.once('error',reject);
+    mcpProcess.once('close',code=>{
+      clearTimeout(probeTimer);
+      try{
+        const result=JSON.parse(probeOutput.trim());
+        if(code!==0 || !result.passed)throw new Error('MCP verification failed: '+(result.error||'unverified task'));
+        resolve(result);
+      }catch(error){reject(new Error(error.message+'; MCP diagnostics: '+probeError.slice(-1000)));}
+    });
+  });
+  probeDone.catch(()=>{}); // awaited below; avoid an early process error becoming unhandled.
+  probeTimer=setTimeout(()=>mcpProcess.kill('SIGTERM'),295000);
+  let taskId;
+  for(let i=0;i<150;i++){
+    taskId=ledger.next('codex');
+    if(taskId)break;
+    if(mcpProcess.exitCode!==null)await probeDone;
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  assert.ok(taskId,'MCP did not submit a task into the JavaScript ledger');
+  const submitted={id:taskId};
   const adapter=new CodexCliAdapter({name:'codex',executable:EXECUTABLE,cwd:workspace,model:MODEL,
     provider:'ollama-local',localPort:proxy.address().port,timeoutMs:240000,extraArgs:['--skip-git-repo-check']});
   const send = adapter.send.bind(adapter);
@@ -106,6 +132,10 @@ try {
   };
   const dispatched=await runOnce({ledger,adapter,owner:'real-local-codex-worker',ttlMs:300000});
   evidence.dispatch_status=dispatched.status;
+  const mcpResult=await probeDone;
+  assert.equal(mcpResult.task.task_id,submitted.id);
+  assert.equal(mcpResult.task.answer,EXPECTED);
+  evidence.mcp_verified=true;evidence.mcp_result=mcpResult;
   const completed=await rpc('tasks/get',{id:submitted.id});evidence.task=completed;
   assert.equal(dispatched.status,'completed','Actual CLI dispatch did not complete');
   assert.equal(completed.status.state,'completed');
@@ -118,10 +148,11 @@ try {
   assert.ok(evidence.requests.every(r=>r.tool_names.length===0 && !r.authorization_present));
   const persisted=new Ledger(db);
   try{assert.equal(persisted.get(submitted.id).state,'completed');assert.equal(persisted.events(submitted.id).find(e=>e.kind==='completed').body.artifact.text,answer);}finally{persisted.close();}
-  evidence.passed=true;annotation('notice','A2A real Codex result',{state:completed.status.state,answer,model:MODEL,usage:generation.usage,tool_names:generation.tool_names,paid_api_calls:0});
+  evidence.passed=true;annotation('notice','A2A real Codex result',{state:completed.status.state,answer,model:MODEL,usage:generation.usage,tool_names:generation.tool_names,paid_api_calls:0,mcp_verified:true});
   console.log('PASS: HTTP -> JSON-RPC -> SQLite -> actual Codex CLI -> local Ollama -> durable result');
 }catch(error){evidence.error=error.message;annotation('error','A2A real Codex validation',{error:error.message,dispatch_status:evidence.dispatch_status,proxy_error:evidence.proxy_error,adapter_error:evidence.adapter_error});console.error('FAIL:',error.message);process.exitCode=1;
 }finally{
+  clearTimeout(probeTimer);if(mcpProcess && mcpProcess.exitCode===null)mcpProcess.kill('SIGTERM');
   evidence.finished_at=new Date().toISOString();await persist();
   if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
   if(proxy){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));}
