@@ -4,18 +4,20 @@ Date: 2026-10-27 (Asia/Qyzylorda)
 
 ## Source revision and scope
 
-This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest code head under validation: `429cd003d74eb5bc295a84982e63e304cbc9fd01`. No Codex process, model, production service, credential, tunnel, active CODEX_HOME, or `CODEX_DISABLED` setting was changed. A harmless `codex_submit` request in the active ChatGPT session returned `CODEX_DISABLED: isolated local execution policy required`; no job was created.
+This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest reviewed implementation commit: `429cd003d74eb5bc295a84982e63e304cbc9fd01`. PR head at report time: `9ea70018dea1b38fe88a2dd0d5026f57a54d2992` (report/metadata update after the implementation commit). No Codex process or model was launched; production services, credentials, tunnel settings, active CODEX_HOME and project execution policy were not changed. The user's permission to remove `CODEX_DISABLED` is noted, but does not itself provide an isolated execution boundary.
 
-## Local validation
+## Validation results
 
-- **PASS: 28, FAIL: 0** Node source/unit tests; rerun locally on 2026-10-27, including a regression test for compiler and whole-step watchdogs. Eight tests were skipped because no approved independent host observation is available.
-- **PASS:** Windows Server 2025/MSVC compile-only run `40456020513` compiled `test_launcher.cpp` and `synthetic_worker.cpp`; it launched neither binary. Source checks `40456020555` also passed. Neither job launched a native binary.
-- **FAIL / BLOCKED:** synthetic run `40451830379` ended with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT`. Its logs show worker compilation completed in about 11 seconds and certificate creation completed. The last marker was `trust-ephemeral-certificate`, immediately before `Export-Certificate` and `Import-Certificate`; the stall is isolated to that export/trust block. No signed worker or launcher run was reached.
-- **FAIL / BLOCKED:** current synthetic run `40456020612` (head `429cd00`) ended with run-level `failure`; GitHub's logs endpoint returns `404 BlobNotFound` and the job-step endpoint still says `in_progress`. No stage-specific conclusion is available. The run used a public-only test certificate and separate Root-store open/add markers. No launcher success can be claimed. Earlier direct-store run `40454265636` failed with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT` before completing Root-store setup.
-- **SKIP: 8** Windows integration test placeholders; **BLOCKED: 8** independent host-observed VM scenarios.
-- **FAIL: 0** in the latest local Node test run. This does not validate native runtime behavior.
+- **PASS: 28, FAIL: 0** local Node source/unit tests, including watchdog regressions. Eight Windows integration placeholders are skipped because independent host observations are unavailable.
+- **PASS:** PowerShell 5.1 AST parse of `Run-SyntheticVmProbe.ps1`.
+- **PASS:** GitHub source checks run `40457651965` for PR head `9ea7001`.
+- **PASS:** Windows Server 2025/MSVC compile-only run `40457651968`; both native sources compiled and neither binary was launched. The compiler reported unused-variable/parameter warnings.
+- **BLOCKED/PENDING:** synthetic-only run `40457652019`, job `122034622176`, was still `in_progress` on last inspection. Its step log endpoint returned `404 BlobNotFound`; no stage-level evidence or successful launcher result is available. Do not count this run as PASS.
+- **FAIL/BLOCKED:** prior synthetic run `40451830379` ended with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT`; logs last reached certificate trust setup before export/import. Run `40456020612` ended in failure, but GitHub logs returned `404 BlobNotFound` and the job step remained stale as in progress. Neither reached an evidenced successful launcher result.
+- **SKIP: 8** Windows integration placeholders; **BLOCKED: 8** independent host-observed VM scenarios below.
+- **FAIL: 0** in the latest local test suite. This is not evidence of native runtime isolation.
 
-Exact local test command:
+Local command:
 
 ```powershell
 node --check codex-handoff-output/windows-broker-v12/policy.mjs
@@ -24,16 +26,16 @@ node --test codex-handoff-output/windows-broker-v12/tests/*.test.mjs
 
 ## Source review summary
 
-The v0.12 native prototype is test-only and gated on a generated `test_pins.h` plus an explicit compile macro. Candidate open uses `GENERIC_READ` and `FILE_SHARE_READ`, rejects reparse points and multiple links, hashes the held handle, passes that handle to WinVerifyTrust and compares the signer leaf certificate SHA256. After `CreateProcessW(CREATE_SUSPENDED)`, it checks process image path/file ID/hash, Job membership/limits, and AppContainer token before `ResumeThread`. Startup uses explicit inheritable pipe handles via HANDLE_LIST, AppContainer security capabilities plus LPAC policy, and JOB_LIST assignment with kill-on-close/active-process/memory/time limits and no breakaway flags. Failure paths terminate the Job/process and wait.
+The native prototype is test-only and gated on generated `test_pins.h` plus an explicit compile macro. It opens the candidate read-only with restrictive sharing, rejects reparse points/multiple links, hashes the held file handle, passes that handle to WinVerifyTrust and compares the signer leaf certificate SHA256. After `CreateProcessW(CREATE_SUSPENDED)`, it checks process image path/file ID/hash, Job membership/limits and AppContainer token before `ResumeThread`. Startup uses explicit inheritable pipe handles via HANDLE_LIST, AppContainer capabilities plus LPAC policy, and Job-list assignment with kill-on-close/resource limits and no breakaway flags. Failure paths terminate and wait.
 
-These are source observations, not proof. The exact Wintrust helper ABI is documented as potentially changeable; its code path is uncompiled. File-ID/path comparison plus share denial is not a documented end-to-end process image transaction guarantee. Independent observation is required.
+These are source observations, not proof of runtime enforcement. The Wintrust helper ABI remains a risk and needs direct supported-API validation. File-ID/path comparison plus share denial does not by itself establish a complete process-image transaction guarantee. Independent host observation remains required.
 
-## Eight VM scenario statuses
+## VM scenario status
 
 | # | Scenario | Status | Evidence needed |
 |---|---|---|---|
 | 1 | AppContainer/LPAC/capabilities | BLOCKED | Independent token/SID/capability observation before resume |
-| 2 | Job limits/kill-on-close/breakaway | BLOCKED | Host queries of job limits, membership, process count and kill-on-close |
+| 2 | Job limits/kill-on-close/breakaway | BLOCKED | Host queries of Job limits, membership, process count and kill-on-close |
 | 3 | ACL/reparse/hardlink mutation race | BLOCKED | Controller-observed handle ACL/file ID and adversarial mutation results |
 | 4 | Inherited handles/environment | BLOCKED | Host-side child handle enumeration and environment allowlist comparison |
 | 5 | Network denial | BLOCKED | Independent loopback listener and OS/network evidence |
@@ -41,9 +43,8 @@ These are source observations, not proof. The exact Wintrust helper ABI is docum
 | 7 | Child-process escape | BLOCKED | Process-create telemetry, Job count and descendant inventory |
 | 8 | Crash cleanup/rollback | BLOCKED | Deterministic crash pausepoints and external recovery controller are not implemented |
 
-`VM_EXECUTION_RUNBOOK.md` contains the future commands, observer evidence design, and the precise current execution gate. The hosted workflow runs reported above are synthetic-only probes and are not independent host attestation. The separate root GitHub workflow remains manual source-only.
+`VM_EXECUTION_RUNBOOK.md` documents a future acceptance procedure, not completed evidence. Hosted synthetic runs do not provide independent host attestation. The root workflow is source-only/manual.
 
-## Decision and unresolved risks
+## Decision
 
-**PARTIAL; NO-GO for local Codex execution or production activation.** Source tests and compile-only checks pass. No hosted synthetic probe has produced a successful launcher result; attempts stalled in certificate Root-store setup and the latest run has no retrievable result. All eight independent host-observed scenarios and crash-recovery validation remain blocked. The ChatGPT-to-local-CLI call is confirmed fail-closed by `CODEX_DISABLED`. User authorization to remove the project flag does not establish a verified runner. A compile success, launcher self-report, or JSON attestation does not prove isolation.
-
+**PARTIAL; NO-GO for local Codex execution and production activation.** Source tests, source checks and compile-only validation pass. The synthetic probe is pending without retrievable logs; previous attempts failed or timed out. All eight independent VM scenarios and crash recovery remain blocked. The active ChatGPT-to-local-CLI path remains fail-closed by `CODEX_DISABLED`; no job was created. Permission to remove the gate is not equivalent to verified isolation. Do not enable execution based on compilation, broker self-report or JSON attestation alone.
