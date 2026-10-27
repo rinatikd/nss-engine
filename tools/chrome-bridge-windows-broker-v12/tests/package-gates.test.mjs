@@ -51,11 +51,16 @@ test('synthetic hosted probe bounds compiler and whole-step hangs and never targ
   assert.match(syntheticProbe, /X509Certificate2\]::new\(\$certificate\.RawData\)/);
   assert.match(syntheticProbe, /open-user-root-store/);
   assert.match(syntheticProbe, /add-public-ephemeral-certificate/);
+  assert.match(syntheticProbe, /CB_V12_PROBE_LOG/);
+  assert.match(syntheticProbe, /probe-error/);
+  assert.match(syntheticProbe, /cleanup-complete/);
   assert.doesNotMatch(syntheticProbe, /Import-Certificate|Export-Certificate/);
   assert.match(syntheticWorkflow, /timeout-minutes:\s*12/);
   assert.match(syntheticWorkflow, /WaitForExit\(600000\)/);
   assert.match(syntheticWorkflow, /\$process\.Kill\(\$true\)/);
   assert.match(syntheticWorkflow, /SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT/);
+  assert.match(syntheticWorkflow, /actions\/upload-artifact@v4/);
+  assert.match(syntheticWorkflow, /windows-broker-v12-synthetic-stages/);
   assert.doesNotMatch(syntheticProbe, /\$env:(?:TEMP|TMP)\s*=\s*\$tempRoot/);
   assert.doesNotMatch(syntheticProbe, /codex\.exe|codex\.cmd|CODEX_HOME|OPENAI_API_KEY/i);
 });
