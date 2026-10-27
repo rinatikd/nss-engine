@@ -14,6 +14,7 @@ Host: Windows `10.0.19045.0`; PowerShell `5.1.19041.2364`; Python `3.15.0`
 - **PASS:** Scheduler `Status` reported `NOT_INSTALLED`. Install mode with an incorrect confirmation phrase was rejected before registration.
 - **PASS:** Read-only Codex CLI preflight reported `codex-cli 0.164.0`; `codex mcp list` exited 0 and the configured list contained the names `chrome-bridge`, `github`, and `node_repl`. Raw output/config values were not printed. This confirms a GitHub-capable CLI configuration exists, not that the CLI read this Issue.
 - **PASS:** Added an explicitly started foreground `watch` mode with a fixed 300-second interval and Ctrl+C stop. It runs only the read-only inbox and never starts Codex.
+- **PASS:** Started that foreground watcher in the current interactive tool session. Its first live scan established the baseline for Issues #54/#57 and emitted no new request. Its SQLite state is under the workspace runtime directory; the request bodies are not stored. This is session-bound and has no boot persistence.
 - **FAIL:** 0.
 - **BLOCKED:** After the owner requested a working direct channel, Task Scheduler installation was attempted with the script's exact opt-in phrase. Windows returned `Access is denied` (`0x80070005`) at `Register-ScheduledTask`; subsequent `Status` and host query confirmed no task is present. No alternate privilege/persistence mechanism was attempted. Thus the five-minute background cycle is not active.
 - **SKIP:** New live request delivery to a local Codex CLI was not attempted. Foreground watcher execution is operator-controlled and does not auto-launch Codex.
@@ -35,3 +36,4 @@ aaba154bbfaf291b162844d3d3f5b64b2fb8d8cc65c882f691f524fcb499d6ef  test_inbox.py
 ```
 
 The final Git commit SHA is reported in the draft PR and the Issue #57 response after publication.
+
