@@ -315,6 +315,9 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(result["state"], "COMPLETED")
             self.assertEqual(len(calls), 4)
             self.assertEqual(len(reviews), 2)
+            self.assertNotIn("format", calls[0])
+            self.assertEqual(calls[1]["format"]["type"], "object")
+            self.assertEqual(set(calls[1]["format"]["required"]), {"schema", "decision", "critique", "evidence_gaps"})
             self.assertIn("fixture: add detail", calls[2]["messages"][0]["content"])
         self.assertEqual(stage_final(self.store, "job", self.path)["status"], "QUEUED")
         result = self.store.status("job")["attempts"][0]["result"]

@@ -276,18 +276,32 @@ class OllamaAgent:
     max_output_tokens = 1024
 
     def __init__(self, role, model, port=11434):
+        self.role = role
         self.model = model
         self.port = port
         self.identity = "ollama:" + role + ":" + model
 
     def invoke(self, call):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=75)
+        payload = {
+            "model": self.model, "stream": False,
+            "messages": [{"role": "user", "content": call["prompt"]}],
+            "options": {"num_predict": self.max_output_tokens},
+        }
+        if self.role == "reviewer":
+            # Ask the local engine to constrain the grammar, then validate independently.
+            payload["format"] = {
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "schema": {"type": "string", "enum": ["ai-review-verdict/v1"]},
+                    "decision": {"type": "string", "enum": ["APPROVE", "REVISE", "REJECT"]},
+                    "critique": {"type": "string", "maxLength": 1500},
+                    "evidence_gaps": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 300}},
+                },
+                "required": ["schema", "decision", "critique", "evidence_gaps"],
+            }
         try:
-            conn.request("POST", "/api/chat", body=canonical({
-                "model": self.model, "stream": False,
-                "messages": [{"role": "user", "content": call["prompt"]}],
-                "options": {"num_predict": self.max_output_tokens},
-            }).encode("utf-8"), headers={"Content-Type": "application/json"})
+            conn.request("POST", "/api/chat", body=canonical(payload).encode("utf-8"), headers={"Content-Type": "application/json"})
             response = conn.getresponse()
             if response.status != 200:
                 raise RuntimeError("local inference failed")

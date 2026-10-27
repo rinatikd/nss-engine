@@ -1,0 +1,86 @@
+name: A2A real local model
+
+on:
+  push:
+    branches: [agent/codex/a2a-interface-mcp-v016]
+    paths:
+      - .github/workflows/a2a-real-model.yml
+      - tools/ai-coordination-dispatcher-v0.16/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-model-mcp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_MODELS: ${{ runner.temp }}/ollama-models
+      OLLAMA_NO_CLOUD: '1'
+      OLLAMA_NUM_PARALLEL: '1'
+      OLLAMA_MAX_LOADED_MODELS: '1'
+      OLLAMA_CONTEXT_LENGTH: '4096'
+      OLLAMA_MAX_TRANSFER_STREAMS: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    defaults:
+      run:
+        working-directory: tools/ai-coordination-dispatcher-v0.16
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install tested MCP dependencies
+        run: python -m pip install -r requirements-interface.lock
+      - name: Run offline tests
+        run: python -m unittest discover -v -p 'test_*.py'
+      - name: Install checksum-verified official Ollama
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --max-time 300 \
+            https://github.com/ollama/ollama/releases/download/v0.40.11/ollama-linux-amd64.tar.zst \
+            -o "$RUNNER_TEMP/ollama-linux-amd64.tar.zst"
+          echo "7bedab90dd122661be78798e9f0edf37fccf0cccf2699d2c58ea1a3afdc04b6d  $RUNNER_TEMP/ollama-linux-amd64.tar.zst" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/ollama"
+          tar --zstd -xf "$RUNNER_TEMP/ollama-linux-amd64.tar.zst" -C "$RUNNER_TEMP/ollama"
+          echo "$RUNNER_TEMP/ollama/bin" >> "$GITHUB_PATH"
+      - name: Start local CPU model server
+        shell: bash
+        run: |
+          set -euo pipefail
+          ollama serve > "$RUNNER_TEMP/ollama-server.log" 2>&1 &
+          python - <<'PY'
+          import http.client,time
+          for _ in range(30):
+              c=http.client.HTTPConnection('127.0.0.1',11434,timeout=1)
+              try:
+                  c.request('GET','/api/version')
+                  if c.getresponse().status==200:break
+              except OSError:pass
+              finally:c.close()
+              time.sleep(1)
+          else:raise SystemExit('Local model server failed to become ready')
+          PY
+      - name: Pull real model with normal artifact digest verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! timeout 420 ollama pull qwen2.5:1.5b > "$RUNNER_TEMP/model-pull.log" 2>&1; then
+            echo '::error::Official model pull failed; no inference readiness claim is made.'
+            exit 1
+          fi
+      - name: Real MCP executor and reviewer with independent arithmetic check
+        run: python verify_real_model.py --model qwen2.5:1.5b --db "$RUNNER_TEMP/real-model.sqlite" --output "$RUNNER_TEMP/real-model-evidence.json" --timeout 360
+      - name: Retain synthetic integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2a-real-model-evidence
+          path: ${{ runner.temp }}/real-model-evidence.json
+          if-no-files-found: warn
+          retention-days: 7
