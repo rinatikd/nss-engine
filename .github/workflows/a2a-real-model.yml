@@ -47,6 +47,7 @@ jobs:
           echo "7bedab90dd122661be78798e9f0edf37fccf0cccf2699d2c58ea1a3afdc04b6d  $RUNNER_TEMP/ollama-linux-amd64.tar.zst" | sha256sum --check
           mkdir -p "$RUNNER_TEMP/ollama"
           tar --zstd -xf "$RUNNER_TEMP/ollama-linux-amd64.tar.zst" -C "$RUNNER_TEMP/ollama"
+          rm -- "$RUNNER_TEMP/ollama-linux-amd64.tar.zst"
           echo "$RUNNER_TEMP/ollama/bin" >> "$GITHUB_PATH"
       - name: Start local CPU model server
         shell: bash
@@ -71,14 +72,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for model in qwen2.5:3b; do
+          for model in qwen2.5:3b qwen2.5:7b; do
             if ! timeout 420 ollama pull "$model" >> "$RUNNER_TEMP/model-pull.log" 2>&1; then
               echo '::error::Official model pull failed; no inference readiness claim is made.'
               exit 1
             fi
           done
       - name: Real MCP executor and reviewer with independent arithmetic check
-        run: python verify_real_model.py --executor-model qwen2.5:3b --reviewer-model qwen2.5:3b --db "$RUNNER_TEMP/real-model.sqlite" --output "$RUNNER_TEMP/real-model-evidence.json" --timeout 360
+        run: python verify_real_model.py --executor-model qwen2.5:3b --reviewer-model qwen2.5:7b --db "$RUNNER_TEMP/real-model.sqlite" --output "$RUNNER_TEMP/real-model-evidence.json" --timeout 360
       - name: Retain synthetic integration evidence
         if: always()
         uses: actions/upload-artifact@v4
