@@ -36,6 +36,9 @@ test('create-suspended launch config carries the handle allowlist, AppContainer/
   const resume = launcher.indexOf('ResumeThread(pi.hThread)', create);
   assert.ok(create >= 0 && childCheck > create && resume > childCheck);
   assert.match(launcher, /PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT/);
+  assert.match(launcher, /VerifyAppContainerToken\(token\.get\(\), profile\.sid\)/);
+  assert.match(launcher, /EqualSid\(appInfo->TokenAppContainer, expectedAppContainerSid\)/);
+  assert.match(launcher, /capabilities->GroupCount == 0/);
   const setJob = launcher.slice(launcher.indexOf('bool SetJobLimits'), launcher.indexOf('bool VerifyJobLimits'));
   assert.doesNotMatch(setJob, /JOB_OBJECT_LIMIT_(?:SILENT_)?BREAKAWAY_OK/);
 });
@@ -65,3 +68,4 @@ test('VM plan describes all eight host-observed scenarios and evidence is not se
   assert.match(plan, /self-report|self-attest/i);
   assert.match(plan, /BLOCKED/i);
 });
+
