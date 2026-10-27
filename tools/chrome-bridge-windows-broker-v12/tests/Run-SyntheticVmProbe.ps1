@@ -42,8 +42,8 @@ function Write-ProbeStage([string]$Name) {
     }
 }
 
-function Invoke-BoundedCompiler([string]$Compiler, [string[]]$Arguments, [string]$WorkingDirectory, [int]$TimeoutSec, [string]$Stage) {
-    $psi = [Diagnostics.ProcessStartInfo]::new($Compiler)
+function Invoke-BoundedProcess([string]$Executable, [string[]]$Arguments, [string]$WorkingDirectory, [int]$TimeoutSec, [string]$Stage) {
+    $psi = [Diagnostics.ProcessStartInfo]::new($Executable)
     $psi.WorkingDirectory = $WorkingDirectory
     $psi.UseShellExecute = $false
     # Do not redirect compiler pipes: MSVC's vctip child can outlive cl.exe
@@ -88,20 +88,16 @@ try {
 
     $vsCompiler = (Get-Command cl.exe -ErrorAction Stop).Source
     Write-ProbeStage 'compile-worker'
-    Invoke-BoundedCompiler $vsCompiler @('/nologo', '/std:c++17', '/EHsc', '/W4', '/D_WIN32_WINNT=0x0A00', (Join-Path $native 'synthetic_worker.cpp'), "/Fe:$worker", 'ws2_32.lib') $tempRoot 120 'WORKER_COMPILE'
+    Invoke-BoundedProcess $vsCompiler @('/nologo', '/std:c++17', '/EHsc', '/W4', '/D_WIN32_WINNT=0x0A00', (Join-Path $native 'synthetic_worker.cpp'), "/Fe:$worker", 'ws2_32.lib') $tempRoot 120 'WORKER_COMPILE'
 
     Write-ProbeStage 'create-ephemeral-certificate'
     $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=ChromeBridge disposable synthetic worker' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddHours(2)
-    Write-ProbeStage 'add-ephemeral-certificate-to-user-root'
     $publicCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData)
-    $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new([Security.Cryptography.X509Certificates.StoreName]::Root, [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-    try {
-        Write-ProbeStage 'open-user-root-store'
-        $rootStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-        Write-ProbeStage 'add-public-ephemeral-certificate'
-        $rootStore.Add($publicCertificate)
-        Write-ProbeStage 'public-ephemeral-certificate-added'
-    } finally { $rootStore.Close() }
+    $rootCertificatePath = Join-Path $tempRoot 'synthetic-root.cer'
+    [IO.File]::WriteAllBytes($rootCertificatePath, $publicCertificate.RawData)
+    $certutil = (Get-Command certutil.exe -ErrorAction Stop).Source
+    Write-ProbeStage 'install-ephemeral-root-with-bounded-certutil'
+    Invoke-BoundedProcess $certutil @('-user', '-addstore', '-f', 'Root', $rootCertificatePath) $tempRoot 30 'ROOT_STORE_ADD'
     Write-ProbeStage 'sign-synthetic-worker'
     $signature = Set-AuthenticodeSignature -FilePath $worker -Certificate $certificate -HashAlgorithm SHA256
     if ($signature.Status -ne 'Valid') { throw 'SYNTHETIC_SIGNATURE_INVALID' }
@@ -111,7 +107,7 @@ try {
     if (-not $?) { throw 'LAUNCHER_PINS_FAILED' }
 
     Write-ProbeStage 'compile-launcher'
-    Invoke-BoundedCompiler $vsCompiler @('/nologo', '/std:c++17', '/EHsc', '/W4', '/D_WIN32_WINNT=0x0A00', '/DNTDDI_VERSION=0x0A00000A', '/DCHROME_BRIDGE_V12_DISPOSABLE_VM_BUILD', (Join-Path $native 'test_launcher.cpp'), "/Fe:$launcher", 'wintrust.lib', 'bcrypt.lib', 'advapi32.lib', 'userenv.lib', 'ole32.lib') $tempRoot 180 'LAUNCHER_COMPILE'
+    Invoke-BoundedProcess $vsCompiler @('/nologo', '/std:c++17', '/EHsc', '/W4', '/D_WIN32_WINNT=0x0A00', '/DNTDDI_VERSION=0x0A00000A', '/DCHROME_BRIDGE_V12_DISPOSABLE_VM_BUILD', (Join-Path $native 'test_launcher.cpp'), "/Fe:$launcher", 'wintrust.lib', 'bcrypt.lib', 'advapi32.lib', 'userenv.lib', 'ole32.lib') $tempRoot 180 'LAUNCHER_COMPILE'
 
     Write-ProbeStage 'launch-synthetic-only'
     $startInfo = [Diagnostics.ProcessStartInfo]::new($launcher)
@@ -139,15 +135,20 @@ try {
     Write-ProbeStage 'cleanup-start'
     if ($listener) { $listener.Stop() }
     if ($certificate) {
-        foreach ($storeName in @([Security.Cryptography.X509Certificates.StoreName]::My, [Security.Cryptography.X509Certificates.StoreName]::Root)) {
-            $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-            try {
-                $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                if ($storeName -eq [Security.Cryptography.X509Certificates.StoreName]::My) { $store.Remove($certificate) }
-                else { $store.Remove($publicCertificate) }
-            } catch { } finally { $store.Close() }
+        $cleanupFailed = $false
+        try {
+            Write-ProbeStage 'remove-ephemeral-root-with-bounded-certutil'
+            Invoke-BoundedProcess $certutil @('-user', '-delstore', 'Root', $certificate.Thumbprint) $tempRoot 30 'ROOT_STORE_REMOVE'
+        } catch {
+            $cleanupFailed = $true
+            Write-ProbeStage 'ephemeral-root-cleanup-failed'
         }
+        $myStore = [Security.Cryptography.X509Certificates.X509Store]::new([Security.Cryptography.X509Certificates.StoreName]::My, [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+        try { $myStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite); $myStore.Remove($certificate) }
+        catch { $cleanupFailed = $true; Write-ProbeStage 'ephemeral-signing-cert-cleanup-failed' }
+        finally { $myStore.Close() }
         if ($publicCertificate) { $publicCertificate.Dispose() }
+        if ($cleanupFailed) { throw 'EPHEMERAL_CERT_CLEANUP_FAILED' }
     }
     foreach ($pin in $pinPaths) { Remove-Item -LiteralPath $pin -Force -ErrorAction SilentlyContinue }
     if ([IO.Directory]::Exists($tempRoot) -and $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) {
