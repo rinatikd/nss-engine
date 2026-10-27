@@ -22,6 +22,8 @@ jobs:
         timeout-minutes: 12
         shell: pwsh
         run: |
+          $env:CB_V12_PROBE_LOG = Join-Path $env:RUNNER_TEMP 'cb-v12-synthetic-probe.log'
+          Set-Content -LiteralPath $env:CB_V12_PROBE_LOG -Value 'Synthetic-only diagnostic stages; no secrets or user paths.' -Encoding utf8
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           if (-not (Test-Path -LiteralPath $vswhere)) { throw 'BLOCKED: vswhere.exe not found' }
           $vsPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -54,4 +56,13 @@ jobs:
             throw 'SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT'
           }
           if ($process.ExitCode -ne 0) { throw "Synthetic VM probe failed: $($process.ExitCode)" }
+
+      - name: Upload synthetic probe stage log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-broker-v12-synthetic-stages
+          path: ${{ runner.temp }}/cb-v12-synthetic-probe.log
+          if-no-files-found: warn
+          retention-days: 3
 
