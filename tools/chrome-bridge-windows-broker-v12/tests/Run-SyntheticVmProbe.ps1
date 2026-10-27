@@ -29,8 +29,17 @@ $canaryBefore = $null
 $canaryAfter = $null
 
 function Write-ProbeStage([string]$Name) {
-    [Console]::Out.WriteLine("PROBE_STAGE=$Name")
+    $line = "$( [DateTime]::UtcNow.ToString('o') ) PROBE_STAGE=$Name"
+    [Console]::Out.WriteLine($line)
     [Console]::Out.Flush()
+    if (-not [string]::IsNullOrWhiteSpace($env:CB_V12_PROBE_LOG)) {
+        try {
+            [IO.File]::AppendAllText($env:CB_V12_PROBE_LOG, "$line`r`n", [Text.UTF8Encoding]::new($false))
+        } catch {
+            # Diagnostics must never convert a failed probe into a pass or hide
+            # the original failure; console output remains the primary log.
+        }
+    }
 }
 
 function Invoke-BoundedCompiler([string]$Compiler, [string[]]$Arguments, [string]$WorkingDirectory, [int]$TimeoutSec, [string]$Stage) {
@@ -51,6 +60,7 @@ function Invoke-BoundedCompiler([string]$Compiler, [string[]]$Arguments, [string
 }
 
 try {
+    Write-ProbeStage 'probe-start'
     Write-ProbeStage 'prepare-canary'
     # Keep MSVC and certificate tooling on the runner's normal scratch path.
     # Probe outputs and fixtures remain explicitly pinned under $tempRoot.
@@ -122,7 +132,11 @@ try {
     }
     Write-ProbeStage 'synthetic-result-pass'
     [pscustomobject]@{ status = 'PASS_SYNTHETIC_ONLY'; launcherExitCode = $exitCode; canaryUnchanged = $true; canaryAclProtected = $true; loopbackListenerSawNoConnection = $true; codexLaunched = $false; independentHostAttestation = $false } | ConvertTo-Json -Compress
+} catch {
+    Write-ProbeStage 'probe-error'
+    throw
 } finally {
+    Write-ProbeStage 'cleanup-start'
     if ($listener) { $listener.Stop() }
     if ($certificate) {
         foreach ($storeName in @([Security.Cryptography.X509Certificates.StoreName]::My, [Security.Cryptography.X509Certificates.StoreName]::Root)) {
@@ -139,5 +153,6 @@ try {
     if ([IO.Directory]::Exists($tempRoot) -and $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
+    Write-ProbeStage 'cleanup-complete'
 }
 
