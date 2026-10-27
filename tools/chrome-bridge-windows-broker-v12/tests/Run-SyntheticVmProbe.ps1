@@ -2,6 +2,7 @@
 param([Parameter(Mandatory = $true)][switch]$DisposableVmAcknowledged)
 
 $ErrorActionPreference = 'Stop'
+$ConfirmPreference = 'None'
 if (-not $DisposableVmAcknowledged -or $env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') {
     throw 'BLOCKED: this probe is restricted to an explicitly acknowledged disposable hosted Windows runner.'
 }
@@ -15,8 +16,6 @@ if (-not $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase))
 }
 [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
 
-$oldTemp = $env:TEMP
-$oldTmp = $env:TMP
 $listener = $null
 $certificate = $null
 $canary = Join-Path $tempRoot 'synthetic-canary.bin'
@@ -29,10 +28,39 @@ $networkAccepted = $false
 $canaryBefore = $null
 $canaryAfter = $null
 
+function Write-ProbeStage([string]$Name) {
+    [Console]::Out.WriteLine("PROBE_STAGE=$Name")
+    [Console]::Out.Flush()
+}
+
+function Invoke-BoundedCompiler([string]$Compiler, [string[]]$Arguments, [string]$WorkingDirectory, [int]$TimeoutSec, [string]$Stage) {
+    $psi = [Diagnostics.ProcessStartInfo]::new($Compiler)
+    $psi.WorkingDirectory = $WorkingDirectory
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { $psi.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($psi)
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+        try { $process.Kill($true) } catch { }
+        [void]$process.WaitForExit(10000)
+        throw "${Stage}_WATCHDOG_TIMEOUT"
+    }
+    $process.WaitForExit()
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+    if ($stdout) { [Console]::Out.Write($stdout); [Console]::Out.Flush() }
+    if ($stderr) { [Console]::Error.Write($stderr); [Console]::Error.Flush() }
+    if ($process.ExitCode -ne 0) { throw "${Stage}_FAILED:$($process.ExitCode)" }
+}
+
 try {
-    Write-Host 'PROBE_STAGE=prepare-canary'
-    $env:TEMP = $tempRoot
-    $env:TMP = $tempRoot
+    Write-ProbeStage 'prepare-canary'
+    # Keep MSVC and certificate tooling on the runner's normal scratch path.
+    # Probe outputs and fixtures remain explicitly pinned under $tempRoot.
     [IO.File]::WriteAllBytes($canary, [Text.Encoding]::UTF8.GetBytes('synthetic-only-' + [guid]::NewGuid().ToString('N')))
     $canaryBefore = (Get-FileHash -LiteralPath $canary -Algorithm SHA256).Hash.ToLowerInvariant()
 
@@ -51,35 +79,32 @@ try {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
     $listener.Start()
 
-    Write-Host 'PROBE_STAGE=compile-worker'
+    Write-ProbeStage 'generate-worker-pins'
     & (Join-Path $PSScriptRoot 'Write-WorkerTestPins.ps1') -SyntheticCredentialPath $canary -LoopbackPort $port -OperatorConfirmedDisposableVm
     if (-not $?) { throw 'WORKER_PINS_FAILED' }
 
     $vsCompiler = (Get-Command cl.exe -ErrorAction Stop).Source
-    Push-Location $tempRoot
-    try {
-        & $vsCompiler /nologo /std:c++17 /EHsc /W4 /D_WIN32_WINNT=0x0A00 (Join-Path $native 'synthetic_worker.cpp') "/Fe:$worker" ws2_32.lib
-        if ($LASTEXITCODE -ne 0) { throw "WORKER_COMPILE_FAILED:$LASTEXITCODE" }
-    } finally { Pop-Location }
+    Write-ProbeStage 'compile-worker'
+    Invoke-BoundedCompiler $vsCompiler @('/nologo', '/std:c++17', '/EHsc', '/W4', '/D_WIN32_WINNT=0x0A00', (Join-Path $native 'synthetic_worker.cpp'), "/Fe:$worker", 'ws2_32.lib') $tempRoot 120 'WORKER_COMPILE'
 
+    Write-ProbeStage 'create-ephemeral-certificate'
     $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=ChromeBridge disposable synthetic worker' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddHours(2)
     $rootCer = Join-Path $tempRoot 'synthetic-test-root.cer'
+    Write-ProbeStage 'trust-ephemeral-certificate'
     Export-Certificate -Cert $certificate -FilePath $rootCer -Force | Out-Null
-    Import-Certificate -FilePath $rootCer -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
+    Import-Certificate -FilePath $rootCer -CertStoreLocation 'Cert:\CurrentUser\Root' -Confirm:$false | Out-Null
+    Write-ProbeStage 'sign-synthetic-worker'
     $signature = Set-AuthenticodeSignature -FilePath $worker -Certificate $certificate -HashAlgorithm SHA256
     if ($signature.Status -ne 'Valid') { throw 'SYNTHETIC_SIGNATURE_INVALID' }
 
-    Write-Host 'PROBE_STAGE=prepare-launcher-pins'
+    Write-ProbeStage 'prepare-launcher-pins'
     & (Join-Path $PSScriptRoot 'Prepare-DisposablePins.ps1') -WorkerPath $worker -SignerThumbprint $certificate.Thumbprint -SyntheticCredentialPath $canary -LoopbackPort $port -OperatorConfirmedDisposableVm
     if (-not $?) { throw 'LAUNCHER_PINS_FAILED' }
 
-    Push-Location $tempRoot
-    try {
-        & $vsCompiler /nologo /std:c++17 /EHsc /W4 /D_WIN32_WINNT=0x0A00 /DNTDDI_VERSION=0x0A00000A /DCHROME_BRIDGE_V12_DISPOSABLE_VM_BUILD (Join-Path $native 'test_launcher.cpp') "/Fe:$launcher" wintrust.lib bcrypt.lib advapi32.lib userenv.lib ole32.lib
-        if ($LASTEXITCODE -ne 0) { throw "LAUNCHER_COMPILE_FAILED:$LASTEXITCODE" }
-    } finally { Pop-Location }
+    Write-ProbeStage 'compile-launcher'
+    Invoke-BoundedCompiler $vsCompiler @('/nologo', '/std:c++17', '/EHsc', '/W4', '/D_WIN32_WINNT=0x0A00', '/DNTDDI_VERSION=0x0A00000A', '/DCHROME_BRIDGE_V12_DISPOSABLE_VM_BUILD', (Join-Path $native 'test_launcher.cpp'), "/Fe:$launcher", 'wintrust.lib', 'bcrypt.lib', 'advapi32.lib', 'userenv.lib', 'ole32.lib') $tempRoot 180 'LAUNCHER_COMPILE'
 
-    Write-Host 'PROBE_STAGE=launch-synthetic-only'
+    Write-ProbeStage 'launch-synthetic-only'
     $startInfo = [Diagnostics.ProcessStartInfo]::new($launcher)
     $startInfo.WorkingDirectory = $tempRoot
     $startInfo.UseShellExecute = $false
@@ -96,6 +121,7 @@ try {
     if ($exitCode -ne 0 -or $networkAccepted -or $canaryBefore -ne $canaryAfter) {
         throw 'SYNTHETIC_VM_PROBE_FAILED'
     }
+    Write-ProbeStage 'synthetic-result-pass'
     [pscustomobject]@{ status = 'PASS_SYNTHETIC_ONLY'; launcherExitCode = $exitCode; canaryUnchanged = $true; canaryAclProtected = $true; loopbackListenerSawNoConnection = $true; codexLaunched = $false; independentHostAttestation = $false } | ConvertTo-Json -Compress
 } finally {
     if ($listener) { $listener.Stop() }
@@ -104,9 +130,8 @@ try {
         Remove-Item -LiteralPath (Join-Path 'Cert:\CurrentUser\Root' $certificate.Thumbprint) -Force -ErrorAction SilentlyContinue
     }
     foreach ($pin in $pinPaths) { Remove-Item -LiteralPath $pin -Force -ErrorAction SilentlyContinue }
-    $env:TEMP = $oldTemp
-    $env:TMP = $oldTmp
     if ([IO.Directory]::Exists($tempRoot) -and $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
+

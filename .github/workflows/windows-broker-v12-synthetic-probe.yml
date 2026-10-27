@@ -19,6 +19,7 @@ jobs:
           persist-credentials: false
 
       - name: Run disposable synthetic-only AppContainer probe
+        timeout-minutes: 12
         shell: pwsh
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -39,5 +40,19 @@ jobs:
           exit /b %errorlevel%
           "@ | Set-Content -LiteralPath $batch -Encoding ascii
 
-          & $env:ComSpec /d /c $batch
-          if ($LASTEXITCODE -ne 0) { throw "Synthetic VM probe failed: $LASTEXITCODE" }
+          # Run the complete setup/probe in a child process. Job timeout is the
+          # hard outer bound; this watchdog also handles a stuck certificate
+          # provider or PowerShell cmdlet before the launcher is reached.
+          $psi = [Diagnostics.ProcessStartInfo]::new($env:ComSpec)
+          $psi.ArgumentList.Add('/d')
+          $psi.ArgumentList.Add('/c')
+          $psi.ArgumentList.Add($batch)
+          $psi.UseShellExecute = $false
+          $process = [Diagnostics.Process]::Start($psi)
+          if (-not $process.WaitForExit(600000)) {
+            $process.Kill($true)
+            [void]$process.WaitForExit(15000)
+            throw 'SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT'
+          }
+          if ($process.ExitCode -ne 0) { throw "Synthetic VM probe failed: $($process.ExitCode)" }
+

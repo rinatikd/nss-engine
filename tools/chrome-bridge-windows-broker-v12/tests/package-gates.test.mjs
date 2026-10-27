@@ -6,6 +6,8 @@ const policy = await readFile(new URL('../policy.mjs', import.meta.url), 'utf8')
 const schema = await readFile(new URL('../attestation.schema.json.in', import.meta.url), 'utf8');
 const workflow = await readFile(new URL('../.github/workflows/tests.yml', import.meta.url), 'utf8');
 const plan = await readFile(new URL('../VM_TEST_PLAN.md', import.meta.url), 'utf8');
+const syntheticProbe = await readFile(new URL('./Run-SyntheticVmProbe.ps1', import.meta.url), 'utf8');
+const syntheticWorkflow = await readFile(new URL('../native-synthetic-probe-workflow.yml', import.meta.url), 'utf8');
 
 test('v2 claim schema is valid JSON and explicitly describes untrusted claims', () => {
   const parsed = JSON.parse(schema);
@@ -37,3 +39,16 @@ test('VM plan contains exactly the required eight scenario headings and evidence
   ]) assert.ok(plan.includes(title), `missing ${title}`);
   assert.match(plan, /Any missing measurement.*yields \*\*BLOCKED\/FAIL\*\*/);
 });
+
+test('synthetic hosted probe bounds compiler and whole-step hangs and never targets Codex', () => {
+  assert.match(syntheticProbe, /WaitForExit\(\$TimeoutSec \* 1000\)/);
+  assert.match(syntheticProbe, /\$process\.Kill\(\$true\)/);
+  assert.match(syntheticProbe, /WORKER_COMPILE/);
+  assert.match(syntheticProbe, /LAUNCHER_COMPILE/);
+  assert.match(syntheticWorkflow, /timeout-minutes:\s*12/);
+  assert.match(syntheticWorkflow, /WaitForExit\(600000\)/);
+  assert.match(syntheticWorkflow, /\$process\.Kill\(\$true\)/);
+  assert.doesNotMatch(syntheticProbe, /\$env:(?:TEMP|TMP)\s*=\s*\$tempRoot/);
+  assert.doesNotMatch(syntheticProbe, /codex\.exe|codex\.cmd|CODEX_HOME|OPENAI_API_KEY/i);
+});
+
