@@ -48,6 +48,9 @@ test('synthetic hosted probe bounds compiler and whole-step hangs and never targ
   assert.doesNotMatch(syntheticProbe, /RedirectStandard(?:Output|Error)|ReadToEndAsync/);
   assert.match(syntheticProbe, /vctip child can outlive cl\.exe/);
   assert.match(syntheticProbe, /X509Store/);
+  assert.match(syntheticProbe, /X509Certificate2\]::new\(\$certificate\.RawData\)/);
+  assert.match(syntheticProbe, /open-user-root-store/);
+  assert.match(syntheticProbe, /add-public-ephemeral-certificate/);
   assert.doesNotMatch(syntheticProbe, /Import-Certificate|Export-Certificate/);
   assert.match(syntheticWorkflow, /timeout-minutes:\s*12/);
   assert.match(syntheticWorkflow, /WaitForExit\(600000\)/);

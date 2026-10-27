@@ -83,10 +83,14 @@ try {
     Write-ProbeStage 'create-ephemeral-certificate'
     $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=ChromeBridge disposable synthetic worker' -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -NotAfter (Get-Date).AddHours(2)
     Write-ProbeStage 'add-ephemeral-certificate-to-user-root'
+    $publicCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData)
     $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new([Security.Cryptography.X509Certificates.StoreName]::Root, [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
     try {
+        Write-ProbeStage 'open-user-root-store'
         $rootStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-        $rootStore.Add($certificate)
+        Write-ProbeStage 'add-public-ephemeral-certificate'
+        $rootStore.Add($publicCertificate)
+        Write-ProbeStage 'public-ephemeral-certificate-added'
     } finally { $rootStore.Close() }
     Write-ProbeStage 'sign-synthetic-worker'
     $signature = Set-AuthenticodeSignature -FilePath $worker -Certificate $certificate -HashAlgorithm SHA256
@@ -125,9 +129,11 @@ try {
             $store = [Security.Cryptography.X509Certificates.X509Store]::new($storeName, [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
             try {
                 $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                $store.Remove($certificate)
+                if ($storeName -eq [Security.Cryptography.X509Certificates.StoreName]::My) { $store.Remove($certificate) }
+                else { $store.Remove($publicCertificate) }
             } catch { } finally { $store.Close() }
         }
+        if ($publicCertificate) { $publicCertificate.Dispose() }
     }
     foreach ($pin in $pinPaths) { Remove-Item -LiteralPath $pin -Force -ErrorAction SilentlyContinue }
     if ([IO.Directory]::Exists($tempRoot) -and $tempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) {
