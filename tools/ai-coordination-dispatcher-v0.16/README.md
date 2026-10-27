@@ -32,6 +32,10 @@ python -m pip install -r requirements-interface.txt
 python mcp_bridge.py --transport streamable-http
 ```
 
+Для точного воспроизведения проверенного окружения используйте
+`python -m pip install -r requirements-interface.lock` (29 зафиксированных зависимостей).
+Подробная диагностика внешних условий — `CONNECTIVITY.md`.
+
 MCP слушает только loopback на порту 8766, путь `/mcp`. Также поддерживается stdio:
 
 ```bash
