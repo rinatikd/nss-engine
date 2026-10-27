@@ -16,3 +16,5 @@ run_workspace.py связывает UI/MCP с JS ledger. Пример: python ru
 Архив не содержит авторизации, cookies, API-ключей, runtime-бинарников, моделей и пользовательской SQLite. Эти данные через чат не переносить. Секреты и привязки между аккаунтами не переносятся. Live-процессы и пути старой /workspace не являются переносимым сервисом.
 
 Платные API запрещены: бюджет0. Windows CODEX_DISABLED и production Bridge не менять. Настоящий ChatGPT app/Tunnel требует владельца аккаунта: tunnelID, runtimekey Read+Use и разрешённый app. Их нет в архиве; внешнее подключение не подтверждено.
+
+INSTALL_CLOUD.sh и START_SKILL.md сохраняют несекретные инструкции настройки текущей облачной среды. Пути относятся к старой машине и требуют адаптации. Сетевые домены: api.openai.com, chatgpt.com, developers.openai.com, ollama.com, registry.ollama.ai и dd20bb891979d25aebc8bec07b2b3bbc.r2.cloudflarestorage.com. Требования: CONTROL_PLANE_TUNNEL_ID и защищённый A2A_TUNNEL_RUNTIME_KEY → CONTROL_PLANE_API_KEY (Tunnels Read+Use). Значения отсутствуют. Черновик настройки не доказывает применение сети или подключение app.

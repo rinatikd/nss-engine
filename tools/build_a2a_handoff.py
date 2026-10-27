@@ -28,7 +28,7 @@ def main():
             raise ValueError('Unexpected source link')
         files['repository/' + name] = subprocess.check_output(['git', 'show', commit + ':' + name], cwd=ROOT)
     for name in ('HANDOFF_RU.md', 'SOURCE_INVENTORY.md', 'VALIDATION.md',
-                 'CONTINUATION_PROMPT.txt', 'LATEST_TESTS.txt'):
+                 'CONTINUATION_PROMPT.txt', 'LATEST_TESTS.txt', 'INSTALL_CLOUD.sh', 'START_SKILL.md'):
         files[name] = files['repository/docs/handoff/' + name]
     files['BUILD_INFO.txt'] = ('repository=rinatikd/nss-engine\nbranch=agent/codex/a2a-interface-mcp-v016\n'
                                + 'commit=' + commit + '\nworking_tree=' + str(dirty).lower() + '\n').encode()
