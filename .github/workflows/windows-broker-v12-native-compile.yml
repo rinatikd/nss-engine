@@ -1,12 +1,6 @@
 name: Windows Broker v0.12 native compile only
 
 on:
-  push:
-    branches:
-      - agent/chatgpt/40-windows-broker-v12
-    paths:
-      - 'tools/chrome-bridge-windows-broker-v12/**'
-      - '.github/workflows/windows-broker-v12-native-compile.yml'
   pull_request:
     paths:
       - 'tools/chrome-bridge-windows-broker-v12/**'
