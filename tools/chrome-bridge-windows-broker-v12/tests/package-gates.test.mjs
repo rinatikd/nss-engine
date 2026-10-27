@@ -46,8 +46,9 @@ test('synthetic hosted probe bounds compiler and whole-step hangs and never targ
   assert.match(syntheticProbe, /WORKER_COMPILE/);
   assert.match(syntheticProbe, /LAUNCHER_COMPILE/);
   assert.match(syntheticWorkflow, /timeout-minutes:\s*12/);
-  assert.match(syntheticWorkflow, /WaitForExit\(600000\)/);
-  assert.match(syntheticWorkflow, /\$process\.Kill\(\$true\)/);
+  assert.match(syntheticWorkflow, /Enter-VsDevShell/);
+  assert.match(syntheticWorkflow, /& \$probeScript -DisposableVmAcknowledged/);
+  assert.doesNotMatch(syntheticWorkflow, /\$env:ComSpec|WaitForExit\(600000\)/);
   assert.doesNotMatch(syntheticProbe, /\$env:(?:TEMP|TMP)\s*=\s*\$tempRoot/);
   assert.doesNotMatch(syntheticProbe, /codex\.exe|codex\.cmd|CODEX_HOME|OPENAI_API_KEY/i);
 });
