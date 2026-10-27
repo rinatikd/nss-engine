@@ -4,14 +4,14 @@ Date: 2026-10-27 (Asia/Qyzylorda)
 
 ## Source revision and scope
 
-This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest published source head before this report refresh: `fe1e56f1db176a97852d1815854d069b31219dd6`. No Codex process, model, production service, credential, tunnel, active CODEX_HOME, or `CODEX_DISABLED` setting was changed. A harmless `codex_submit` request in the active ChatGPT session returned `CODEX_DISABLED: isolated local execution policy required`; no job was created.
+This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest published source head under validation: `73f220aa9afed6b0ea122bc749c514ba970de785`. No Codex process, model, production service, credential, tunnel, active CODEX_HOME, or `CODEX_DISABLED` setting was changed. A harmless `codex_submit` request in the active ChatGPT session returned `CODEX_DISABLED: isolated local execution policy required`; no job was created.
 
 ## Local validation
 
 - **PASS: 28, FAIL: 0** Node source/unit tests; rerun locally on 2026-10-27, including a regression test for compiler and whole-step watchdogs. Eight tests were skipped because no approved independent host observation is available.
-- **PASS:** Windows Server 2025/MSVC compile-only run `40452633516` compiled `test_launcher.cpp` and `synthetic_worker.cpp`; it launched neither binary. Prior compile-only run `40449939764` also passed.
-- **FAIL / BLOCKED:** synthetic run `40451830379` ended with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT`. Its logs show worker compilation completed in about 11 seconds and ephemeral certificate creation completed. The last phase marker is `trust-ephemeral-certificate`, immediately before `Export-Certificate` and `Import-Certificate`; the stall is isolated to that certificate export/trust block. No signed worker or launcher run was reached. Runs `40452509992` and `40452633521` still report `in_progress` with no retrievable logs and are not counted as passes.
-- **NOT YET VALIDATED:** current local patch replaces `Export-Certificate` / `Import-Certificate` with direct `X509Store` operations, separates export and store-add phase markers, keeps the 10-minute outer process watchdog, and retains per-compile watchdogs plus normal runner TEMP/TMP. PowerShell 5.1 AST parse and local Node tests pass; this patch has not run on hosted Windows yet.
+- **PASS:** Windows Server 2025/MSVC compile-only run `40454265656` compiled `test_launcher.cpp` and `synthetic_worker.cpp`; it launched neither binary. Source checks `40454265654` also passed. Prior compile-only runs passed as well.
+- **FAIL / BLOCKED:** synthetic run `40451830379` ended with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT`. Its logs show worker compilation completed in about 11 seconds and certificate creation completed. The last marker was `trust-ephemeral-certificate`, immediately before `Export-Certificate` and `Import-Certificate`; the stall is isolated to that export/trust block. No signed worker or launcher run was reached.
+- **IN PROGRESS / NOT A PASS:** runs `40453483251` (head `8bdd523`) and `40454265636` (head `73f220a`) remain `in_progress` with no retrievable logs. Current head uses direct `X509Store` operations, removes unnecessary certificate-file export, and retains process/step watchdogs. This Windows change is still unverified.
 - **SKIP: 8** Windows integration test placeholders; **BLOCKED: 8** independent host-observed VM scenarios.
 - **FAIL: 0** in the latest local Node test run. This does not validate native runtime behavior.
 
@@ -41,9 +41,9 @@ These are source observations, not proof. The exact Wintrust helper ABI is docum
 | 7 | Child-process escape | BLOCKED | Process-create telemetry, Job count and descendant inventory |
 | 8 | Crash cleanup/rollback | BLOCKED | Deterministic crash pausepoints and external recovery controller are not implemented |
 
-`VM_EXECUTION_RUNBOOK.md` contains the future commands, observer evidence design, and the precise current execution gate. No native VM workflow was dispatched. The root GitHub workflow is manual source-only and has not been run.
+`VM_EXECUTION_RUNBOOK.md` contains the future commands, observer evidence design, and the precise current execution gate. The hosted workflow runs reported above are synthetic-only probes and are not independent host attestation. The separate root GitHub workflow remains manual source-only.
 
 ## Decision and unresolved risks
 
-**PARTIAL; NO-GO for local Codex execution or production activation.** Source tests and compile-only checks pass. The synthetic probe has not reached launcher execution; certificate-store setup stalled in a hosted run. All eight independent host-observed scenarios and crash-recovery validation remain blocked. The ChatGPT-to-local-CLI call is confirmed fail-closed by `CODEX_DISABLED`. A compile success, launcher self-report, or JSON attestation does not prove isolation and does not authorize changing that gate.
+**PARTIAL; NO-GO for local Codex execution or production activation.** Source tests and compile-only checks pass. No hosted synthetic probe has produced a successful launcher result; one stalled in certificate export/trust and the current run has no retrievable result. All eight independent host-observed scenarios and crash-recovery validation remain blocked. The ChatGPT-to-local-CLI call is confirmed fail-closed by `CODEX_DISABLED`. A compile success, launcher self-report, or JSON attestation does not prove isolation and does not authorize changing that gate.
 
