@@ -45,6 +45,8 @@ test('synthetic hosted probe bounds compiler and whole-step hangs and never targ
   assert.match(syntheticProbe, /\$process\.Kill\(\$true\)/);
   assert.match(syntheticProbe, /WORKER_COMPILE/);
   assert.match(syntheticProbe, /LAUNCHER_COMPILE/);
+  assert.doesNotMatch(syntheticProbe, /RedirectStandard(?:Output|Error)|ReadToEndAsync/);
+  assert.match(syntheticProbe, /vctip child can outlive cl\.exe/);
   assert.match(syntheticWorkflow, /timeout-minutes:\s*12/);
   assert.match(syntheticWorkflow, /Enter-VsDevShell/);
   assert.match(syntheticWorkflow, /& \$probeScript -DisposableVmAcknowledged/);

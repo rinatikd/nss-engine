@@ -37,23 +37,16 @@ function Invoke-BoundedCompiler([string]$Compiler, [string[]]$Arguments, [string
     $psi = [Diagnostics.ProcessStartInfo]::new($Compiler)
     $psi.WorkingDirectory = $WorkingDirectory
     $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
+    # Do not redirect compiler pipes: MSVC's vctip child can outlive cl.exe
+    # and hold inherited pipe handles open, which would block ReadToEnd forever.
+    $psi.CreateNoWindow = $false
     foreach ($argument in $Arguments) { $psi.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::Start($psi)
-    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-    $stderrTask = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit($TimeoutSec * 1000)) {
         try { $process.Kill($true) } catch { }
         [void]$process.WaitForExit(10000)
         throw "${Stage}_WATCHDOG_TIMEOUT"
     }
-    $process.WaitForExit()
-    $stdout = $stdoutTask.GetAwaiter().GetResult()
-    $stderr = $stderrTask.GetAwaiter().GetResult()
-    if ($stdout) { [Console]::Out.Write($stdout); [Console]::Out.Flush() }
-    if ($stderr) { [Console]::Error.Write($stderr); [Console]::Error.Flush() }
     if ($process.ExitCode -ne 0) { throw "${Stage}_FAILED:$($process.ExitCode)" }
 }
 
