@@ -78,7 +78,7 @@ async def verify(db, executor_model, reviewer_model, timeout):
         selected[role] = model
     version = local_json("/api/version").get("version")
     params = StdioServerParameters(command=sys.executable, args=[
-        str(Path(__file__).parent / "mcp_bridge.py"), "--db", db])
+        str(Path(__file__).parent / "unified_runtime.py"), "--db", db, "--ui-port", "18765"])
     started = time.monotonic()
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
@@ -93,6 +93,15 @@ async def verify(db, executor_model, reviewer_model, timeout):
             if health["paid_api_allowed"] is not False:
                 raise ValueError("Paid API policy changed")
             await call("dispatcher_start_local_worker", {"executor_model": executor_model, "reviewer_model": reviewer_model})
+            ui = http.client.HTTPConnection("127.0.0.1", 18765, timeout=5)
+            try:
+                ui.request("GET", "/api/state")
+                response = ui.getresponse()
+                ui_state = json.loads(response.read(1_000_000))
+                if response.status != 200 or not ui_state["worker"]["running"]:
+                    raise ValueError("UI cannot observe the MCP-started worker")
+            finally:
+                ui.close()
             submitted = await call("dispatcher_submit_task", {"request_id": uuid.uuid4().hex, "prompt": PROMPT, "rubric": RUBRIC, "max_revisions": 1})
             task_id = submitted["task_id"]
             try:
@@ -116,7 +125,8 @@ async def verify(db, executor_model, reviewer_model, timeout):
     return {"check": "real-ollama-mcp-executor-reviewer", "passed": False,
             "ollama_version": version, "installed_models": selected,
             "mcp_tools": [t.name for t in catalog.tools], "elapsed_seconds": round(time.monotonic() - started, 2),
-            "paid_model_api_calls": 0, "chatgpt_web_app_verified": False, "task": task}
+            "paid_model_api_calls": 0, "chatgpt_web_app_verified": False,
+            "ui_observed_mcp_worker": True, "task": task}
 
 
 def main():

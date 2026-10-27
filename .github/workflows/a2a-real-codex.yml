@@ -1,0 +1,100 @@
+name: A2A real Codex local model
+
+on:
+  push:
+    branches: [agent/codex/a2a-interface-mcp-v016]
+    paths:
+      - .github/workflows/a2a-real-codex.yml
+      - tools/a2a-js-v040-reviewed/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codex-local-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_NO_CLOUD: '1'
+      OLLAMA_NUM_PARALLEL: '1'
+      OLLAMA_MAX_LOADED_MODELS: '1'
+      OLLAMA_CONTEXT_LENGTH: '8192'
+      OLLAMA_MAX_TRANSFER_STREAMS: '1'
+    defaults:
+      run:
+        working-directory: tools/a2a-js-v040-reviewed
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Offline transport and CLI regression tests
+        run: node --test tests/*.test.mjs
+      - name: Install verified native Codex CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --max-time 180 \
+            https://registry.npmjs.org/@openai/codex/-/codex-0.163.0-linux-x64.tgz \
+            -o "$RUNNER_TEMP/codex.tgz"
+          python - <<'PY'
+          import base64,hashlib,os,pathlib
+          data=(pathlib.Path(os.environ['RUNNER_TEMP'])/'codex.tgz').read_bytes()
+          expected='uwRaOsrYogLQhcxAM/GoeWrw0QIWEMRo7c9gM8sKAviVkZQHlu9kRLJ5PkufbV+ABGjyZgIwiFdJ0LCJ0N6e8w=='
+          if base64.b64encode(hashlib.sha512(data).digest()).decode()!=expected:
+              raise SystemExit('Codex npm distribution integrity mismatch')
+          PY
+          mkdir -p "$RUNNER_TEMP/codex-native"
+          tar -xzf "$RUNNER_TEMP/codex.tgz" -C "$RUNNER_TEMP/codex-native"
+          native="$RUNNER_TEMP/codex-native/package/vendor/x86_64-unknown-linux-musl/codex/codex"
+          test -x "$native"
+          "$native" --version
+          echo "A2A_CODEX_EXECUTABLE=$native" >> "$GITHUB_ENV"
+      - name: Install verified official Ollama
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --max-time 300 \
+            https://github.com/ollama/ollama/releases/download/v0.40.11/ollama-linux-amd64.tar.zst \
+            -o "$RUNNER_TEMP/ollama.tar.zst"
+          echo "7bedab90dd122661be78798e9f0edf37fccf0cccf2699d2c58ea1a3afdc04b6d  $RUNNER_TEMP/ollama.tar.zst" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/ollama"
+          tar --zstd -xf "$RUNNER_TEMP/ollama.tar.zst" -C "$RUNNER_TEMP/ollama"
+          rm -- "$RUNNER_TEMP/ollama.tar.zst"
+          echo "$RUNNER_TEMP/ollama/bin" >> "$GITHUB_PATH"
+      - name: Start local model server and pull model
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OLLAMA_MODELS="$RUNNER_TEMP/ollama-models"
+          ollama serve > "$RUNNER_TEMP/ollama-server.log" 2>&1 &
+          python - <<'PY'
+          import http.client,time
+          for _ in range(30):
+              c=http.client.HTTPConnection('127.0.0.1',11434,timeout=1)
+              try:
+                  c.request('GET','/api/version')
+                  if c.getresponse().status==200:break
+              except OSError:pass
+              finally:c.close()
+              time.sleep(1)
+          else:raise SystemExit('Ollama did not become ready')
+          PY
+          timeout 420 ollama pull qwen2.5:3b
+      - name: Real HTTP JSON-RPC to Codex CLI to local model
+        run: node verify-real-codex.mjs
+        env:
+          A2A_CODEX_MODEL: qwen2.5:3b
+          A2A_EVIDENCE_FILE: ${{ runner.temp }}/real-codex-evidence.json
+      - name: Retain synthetic real CLI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2a-real-codex-evidence
+          path: ${{ runner.temp }}/real-codex-evidence.json
+          if-no-files-found: warn
+          retention-days: 7

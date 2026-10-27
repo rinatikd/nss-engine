@@ -124,3 +124,33 @@ test('timeout terminates the Unix process group instead of waiting indefinitely 
   await assert.rejects(new CodexCliAdapter({ executable, cwd: dir, timeoutMs: 1000 }).send({ text: 'synthetic' }), /CODEX_TIMEOUT_OUTCOME_UNKNOWN/);
   assert.ok(Date.now() - started < 5000, 'timeout plus termination grace must bound the wait');
 });
+
+test('local Codex mode is explicit and cannot broaden permission or choose a cloud model', () => {
+  for (const settings of [{provider:'other'}, {provider:'ollama-local',model:'cloud-model'},
+    {provider:'ollama-local',model:'qwen2.5:3b',sandbox:'workspace-write'},
+    {provider:'ollama-local',model:'qwen2.5:3b',approval:'on-request'},
+    {provider:'ollama-local',model:'qwen2.5:3b',localPort:0}]) {
+    assert.throws(()=>new CodexCliAdapter({cwd:process.cwd(),...settings}));
+  }
+});
+
+test('local mode isolates config and inherited model credentials, fixes loopback provider and disables tools', async t => {
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'a2a-local-args-'));
+  t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const executable=path.join(dir,'capture-local.mjs');
+  await fs.writeFile(executable,`#!/usr/bin/env node\nimport fs from 'node:fs';for await(const c of process.stdin){}const args=process.argv.slice(2);fs.writeFileSync(${JSON.stringify(path.join(dir,'capture.json'))},JSON.stringify({args,base:process.env.CODEX_OSS_BASE_URL,config:process.env.CODEX_HOME,marker:process.env.A2A_SYNTHETIC_PARENT_CREDENTIAL,openai:!!process.env.OPENAI_API_KEY,anthropic:!!process.env.ANTHROPIC_API_KEY}));fs.writeFileSync(args[args.indexOf('--output-last-message')+1],'synthetic fixture');\n`);
+  await fs.chmod(executable,0o755);
+  const previous=process.env.A2A_SYNTHETIC_PARENT_CREDENTIAL;process.env.A2A_SYNTHETIC_PARENT_CREDENTIAL='must-not-reach-child';
+  try {
+    await new CodexCliAdapter({executable,cwd:dir,provider:'ollama-local',model:'qwen2.5:3b',localPort:12345}).send({text:'fixture'});
+  } finally {if(previous===undefined)delete process.env.A2A_SYNTHETIC_PARENT_CREDENTIAL;else process.env.A2A_SYNTHETIC_PARENT_CREDENTIAL=previous;}
+  const value=JSON.parse(await fs.readFile(path.join(dir,'capture.json'),'utf8'));
+  assert.equal(value.base,'http://127.0.0.1:12345/v1');assert.equal(value.marker,undefined);
+  assert.equal(value.openai,false);assert.equal(value.anthropic,false);
+  assert.ok(value.args.includes('--oss')&&value.args.includes('--ignore-user-config')&&value.args.includes('--ignore-rules'));
+  assert.equal(value.args[value.args.indexOf('--local-provider')+1],'ollama');
+  assert.ok(value.args.includes('web_search="disabled"'));
+  assert.ok(value.args.includes('tools.experimental_request_user_input.enabled=false'));
+  assert.ok(value.args.includes('tools.update_plan.enabled=false'));
+  await assert.rejects(fs.access(value.config),'isolated child home is removed after the invocation');
+});

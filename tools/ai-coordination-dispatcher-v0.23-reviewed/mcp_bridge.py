@@ -14,15 +14,20 @@ from codex_sandbox_probe import run_readonly_sandbox_probe
 from web_app import Application
 
 
-def create_bridge(db, port=8766):
-    app = Application(db)
+def create_bridge(db, port=8766, *, application=None):
+    """Build MCP tools over one application; its creator owns shutdown when injected."""
+    if application is not None and Path(application.db).resolve() != Path(db).resolve():
+        raise ValueError("Shared Application must use the same database")
+    owns_application = application is None
+    app = Application(db) if owns_application else application
 
     @asynccontextmanager
     async def lifespan(server):
         try:
             yield
         finally:
-            app.close()
+            if owns_application:
+                app.close()
 
     bridge = FastMCP("NSS A2A Dispatcher", host="127.0.0.1", port=port,
                      json_response=True, stateless_http=True, lifespan=lifespan,
@@ -113,7 +118,7 @@ def create_bridge(db, port=8766):
 
     @bridge.tool(annotations=write, structured_output=True)
     def dispatcher_stop_worker() -> dict[str, Any]:
-        """Stop this MCP server's worker after its current step; queued tasks remain in SQLite."""
+        """Stop the shared application worker after its current step; queued tasks remain in SQLite."""
         return app.stop()
 
     return bridge, app

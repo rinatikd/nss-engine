@@ -19,7 +19,8 @@ if (adapterKind === 'codex-cli') {
   if (!cwd || !path.isAbsolute(cwd)) { console.error('Set A2A_CODEX_CWD to an absolute workspace path.'); process.exit(2); }
   adapter = new CodexCliAdapter({ name: recipient, executable: process.env.A2A_CODEX_EXECUTABLE ?? 'codex', cwd,
     model: process.env.A2A_CODEX_MODEL, timeoutMs, sandbox: process.env.A2A_CODEX_SANDBOX ?? 'read-only',
-    approval: process.env.A2A_CODEX_APPROVAL ?? 'never' });
+    approval: process.env.A2A_CODEX_APPROVAL ?? 'never', provider: process.env.A2A_CODEX_PROVIDER ?? 'configured',
+    localPort: Number(process.env.A2A_CODEX_LOCAL_PORT ?? 11434) });
 } else if (adapterKind === 'http') {
   const adapterUrl = process.env.A2A_ADAPTER_URL;
   if (!adapterUrl) { console.error('Set A2A_ADAPTER_URL for HTTP adapter.'); process.exit(2); }
