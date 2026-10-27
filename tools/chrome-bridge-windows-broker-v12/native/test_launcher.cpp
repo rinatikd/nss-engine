@@ -178,7 +178,7 @@ bool VerifyTrustAndPinnedLeaf(HANDLE file, const std::wstring& path, const wchar
   data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL | WTD_REVOCATION_CHECK_NONE;
   data.pFile = &fileInfo;
   GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-  const LONG status = WinVerifyTrust(INVALID_HANDLE_VALUE, &action, &data);
+  const LONG status = WinVerifyTrust(nullptr, &action, &data);
   bool trusted = status == ERROR_SUCCESS;
   if (trusted) {
     using GetProvData = CRYPT_PROVIDER_DATA* (WINAPI*)(HANDLE);
@@ -202,7 +202,7 @@ bool VerifyTrustAndPinnedLeaf(HANDLE file, const std::wstring& path, const wchar
     if (hashAlg) BCryptCloseAlgorithmProvider(hashAlg, 0);
   }
   data.dwStateAction = WTD_STATEACTION_CLOSE;
-  const LONG closeStatus = WinVerifyTrust(INVALID_HANDLE_VALUE, &action, &data);
+  const LONG closeStatus = WinVerifyTrust(nullptr, &action, &data);
   return trusted && closeStatus == ERROR_SUCCESS;
 }
 
