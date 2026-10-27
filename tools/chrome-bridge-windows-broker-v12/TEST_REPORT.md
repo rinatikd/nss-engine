@@ -4,14 +4,14 @@ Date: 2026-10-27 (Asia/Qyzylorda)
 
 ## Source revision and scope
 
-This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest published source head under validation: `73f220aa9afed6b0ea122bc749c514ba970de785`. No Codex process, model, production service, credential, tunnel, active CODEX_HOME, or `CODEX_DISABLED` setting was changed. A harmless `codex_submit` request in the active ChatGPT session returned `CODEX_DISABLED: isolated local execution policy required`; no job was created.
+This report accompanies draft PR #51, stacked on v0.11 PR #49. Latest code head under validation: `429cd003d74eb5bc295a84982e63e304cbc9fd01`. No Codex process, model, production service, credential, tunnel, active CODEX_HOME, or `CODEX_DISABLED` setting was changed. A harmless `codex_submit` request in the active ChatGPT session returned `CODEX_DISABLED: isolated local execution policy required`; no job was created.
 
 ## Local validation
 
 - **PASS: 28, FAIL: 0** Node source/unit tests; rerun locally on 2026-10-27, including a regression test for compiler and whole-step watchdogs. Eight tests were skipped because no approved independent host observation is available.
-- **PASS:** Windows Server 2025/MSVC compile-only run `40454265656` compiled `test_launcher.cpp` and `synthetic_worker.cpp`; it launched neither binary. Source checks `40454265654` also passed. Prior compile-only runs passed as well.
+- **PASS:** Windows Server 2025/MSVC compile-only run `40456020513` compiled `test_launcher.cpp` and `synthetic_worker.cpp`; it launched neither binary. Source checks `40456020555` also passed. Neither job launched a native binary.
 - **FAIL / BLOCKED:** synthetic run `40451830379` ended with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT`. Its logs show worker compilation completed in about 11 seconds and certificate creation completed. The last marker was `trust-ephemeral-certificate`, immediately before `Export-Certificate` and `Import-Certificate`; the stall is isolated to that export/trust block. No signed worker or launcher run was reached.
-- **IN PROGRESS / NOT A PASS:** runs `40453483251` (head `8bdd523`) and `40454265636` (head `73f220a`) remain `in_progress` with no retrievable logs. Current head uses direct `X509Store` operations, removes unnecessary certificate-file export, and retains process/step watchdogs. This Windows change is still unverified.
+- **IN PROGRESS / NOT A PASS:** current synthetic run `40456020612` (head `429cd00`) remains `in_progress` more than 15 minutes after starting; the logs endpoint still returns `404 BlobNotFound`. It uses a public-only test certificate, separate Root-store open/add phase markers, and bounded process/step watchdogs. Earlier direct-store run `40454265636` failed with `SYNTHETIC_PROBE_OUTER_WATCHDOG_TIMEOUT`; its final phase marker was before Root-store addition. The current run has no outcome and is not counted as a pass.
 - **SKIP: 8** Windows integration test placeholders; **BLOCKED: 8** independent host-observed VM scenarios.
 - **FAIL: 0** in the latest local Node test run. This does not validate native runtime behavior.
 
@@ -45,5 +45,5 @@ These are source observations, not proof. The exact Wintrust helper ABI is docum
 
 ## Decision and unresolved risks
 
-**PARTIAL; NO-GO for local Codex execution or production activation.** Source tests and compile-only checks pass. No hosted synthetic probe has produced a successful launcher result; one stalled in certificate export/trust and the current run has no retrievable result. All eight independent host-observed scenarios and crash-recovery validation remain blocked. The ChatGPT-to-local-CLI call is confirmed fail-closed by `CODEX_DISABLED`. A compile success, launcher self-report, or JSON attestation does not prove isolation and does not authorize changing that gate.
+**PARTIAL; NO-GO for local Codex execution or production activation.** Source tests and compile-only checks pass. No hosted synthetic probe has produced a successful launcher result; attempts stalled in certificate Root-store setup and the latest run has no retrievable result. All eight independent host-observed scenarios and crash-recovery validation remain blocked. The ChatGPT-to-local-CLI call is confirmed fail-closed by `CODEX_DISABLED`. User authorization to remove the project flag does not establish a verified runner. A compile success, launcher self-report, or JSON attestation does not prove isolation.
 
