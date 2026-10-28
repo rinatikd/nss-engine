@@ -1,3 +1,4 @@
+Real managed local tunnel/UI/MCP/nativeCodex/Ollama CI40616780857 PASS atf5dbeaa:12outputtokens,tools=[],onecall/onecompletion,9owned processes/0survivors,exit0. Hosted app/Tunnel/Windows isolation remain NOT VERIFIED.
 Latest full integrated suite after executable-identity fix: 256 Python PASS, 0 FAIL (25.170s); 7 managed boundary tests PASS.
 Current full integrated Python suite: 255 PASS, 0 FAIL (26.138s), after managed observer integration.
 Snapshot verification 28.10.2026 (UTC+5):
