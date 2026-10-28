@@ -1,0 +1,13 @@
+{
+  "id": "T001",
+  "title": "Пример: модуль приветствия",
+  "brief": "Напиши функцию greet(name) на JavaScript, которая возвращает строку «Привет, <name>!». Для пустого имени вернуть «Привет, мир!».",
+  "acceptance": ["Есть файл src/greet.js с экспортом greet", "Есть тесты на node:test в test/greet.test.js", "Нет внешних зависимостей"],
+  "assignee": "gpt",
+  "reviewer": "gemini",
+  "output_files": true,
+  "max_rounds": 4,
+  "pass_score": 8,
+  "deps": [],
+  "status": "todo"
+}

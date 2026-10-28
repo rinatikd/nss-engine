@@ -91,6 +91,10 @@ class RepoGuardTests(unittest.TestCase):
 
     def test_bridge_source_json_allowlist_is_exact_and_keeps_secret_checks(self):
         paths = [
+            'tools/chrome-bridge-rc1/source-manifest.json',
+            'tools/chrome-bridge-rc1/baseline-source/hub/template/agents.json',
+            'tools/chrome-bridge-rc1/baseline-source/hub/template/batches/B001.example.json',
+            'tools/chrome-bridge-rc1/baseline-source/hub/template/tasks/T001.json',
             'tools/chrome-bridge-rc1/update-manifest.json',
             'tools/chrome-bridge-rc1/overlay/package.json',
             'tools/chrome-bridge-rc1/overlay/plugin.json',

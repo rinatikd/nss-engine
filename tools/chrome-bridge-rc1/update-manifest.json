@@ -890,7 +890,7 @@
     "server/stdio.mjs": "0a6a6737fb566a767e288268f66f38a575ae21f423fac14f7b657ae3eb48cdad",
     "scripts/verify-live.mjs": "4d8246acaf0fa7f6cf69633bbe415a73b5cf38549475c717a60a5aa11aaba500",
     "scripts/windows-local.mjs": "64d6fbda09266804afff0ef85461c20c621436e635a905fac0cb70b0e5ae7203",
-    "tests/extension-dispatch-authorization.test.mjs": "6c4fb5805e42c34d155c79f9dfe45f264eddd82409bf9b07d5ed62ee1c175c92",
+    "tests/extension-dispatch-authorization.test.mjs": "b793247ad4668295c6327ac2479f57eaad861103d56a6f2d78afa4f1fc0f2cd5",
     "tests/config-loading.test.mjs": "700c67192e85b38b6c52091ffaf41571fcd633bd2dbe078651ef72ea5d1437b0",
     "tests/live-acceptance.test.mjs": "aa30234e512d1b6eda99a56c8fa6b2beabc4ed41e80a6931cb63fbf394530382",
     "tests/discovery-protocol.test.mjs": "b45702eab0aa13dc53305851e608c01f0e267d14aef820d35a982537879cb1cc",
@@ -902,6 +902,7 @@
     "tests/send-concurrency.test.mjs": "1f5b16db23e18e9b051a3b56cacba26ab2fc1c23ee4f84c6d05f0cfa6f2c54fd",
     "extension/control.js": "7b39bc721768be7656a0005cfbc061379374f7f96d474a16c3b346dfd09836eb",
     "extension/manifest.json": "f891d15511e10c1a8a613c8532498556abdf7c99850fed80cc6f9199dd91dd28",
-    "extension/page.js": "b59c698bbf31f1a9dc532da11761cbd03a4246a776c26cfc1f403283cf1ff2d2"
+    "extension/page.js": "3f33e32f9862e8f1d2b0659cb61d0528e614e29f3f83521224ba43d5781181e2",
+    "CONTROL_PERMISSIONS.md": "c4b82e13218f1137ef5b0c97b7e8c823997d23a91337d672b21f9eeeb7bad5fb"
   }
 }

@@ -1,0 +1,24 @@
+:root{--bg:#f7f7f5;--fg:#1c1c1a;--mut:#6b6b66;--line:#d9d9d3;--card:#fff;--acc:#1f5eff;--bad:#b3261e;--ok:#1b7f3b}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ececE8;--mut:#9a9a93;--line:#34342f;--card:#1f1f1c;--acc:#6b93ff;--bad:#ff8a80;--ok:#6fdc8c}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:24px 16px 64px}
+h1{margin:.1em 0 .3em;font-size:28px}h2{font-size:16px;margin:0 0 10px}
+.eyebrow{font-size:12px;letter-spacing:.08em;color:var(--mut);margin:0}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:16px 0}
+label{display:block;margin:8px 0;font-size:13px;color:var(--mut)}
+label.check{display:flex;gap:8px;align-items:flex-start;color:var(--fg);font-size:14px}
+input:not([type=checkbox]),select,textarea{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+textarea{font:12px/1.4 ui-monospace,Consolas,monospace}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}.row>label{flex:1;min-width:200px}
+button{padding:8px 14px;border-radius:8px;border:1px solid var(--acc);background:var(--acc);color:#fff;font:inherit;cursor:pointer}
+button.secondary{background:transparent;color:var(--acc)}button.danger{background:var(--bad);border-color:var(--bad)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.hint{color:var(--mut);font-size:13px}
+ul{list-style:none;padding:0;margin:10px 0}li{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:14px}
+.tag{font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--line);color:var(--mut);margin-left:6px}
+.approval{border:2px solid var(--acc);border-radius:10px;padding:10px;margin:8px 0}.approval pre{white-space:pre-wrap;word-break:break-word;margin:6px 0}
+pre#log{max-height:200px;overflow:auto;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap;margin:0}
+details{margin:16px 0}
+[hidden]{display:none!important}
+
+progress#taskProgress{width:100%;height:16px;accent-color:var(--acc)}

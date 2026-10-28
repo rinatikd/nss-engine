@@ -3,3 +3,9 @@
 !overlay/package.json
 !overlay/plugin.json
 !overlay/extension/manifest.json
+
+# Authored source template and baseline integrity inventory.
+!source-manifest.json
+!baseline-source/hub/template/agents.json
+!baseline-source/hub/template/batches/B001.example.json
+!baseline-source/hub/template/tasks/T001.json

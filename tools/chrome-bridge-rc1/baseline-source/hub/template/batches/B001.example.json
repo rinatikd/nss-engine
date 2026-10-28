@@ -1,0 +1,15 @@
+{
+  "id": "B001",
+  "template": {
+    "title": "Перевод карточки {{name}}",
+    "brief": "Переведи описание товара «{{name}}» на английский, сохрани тон и длину.\nИсходник:\n{{source}}",
+    "acceptance": ["Смысл сохранён", "Нет добавленных фактов"],
+    "output_files": false,
+    "output_path": "translations/{{name}}.md",
+    "max_rounds": 3
+  },
+  "items": [ { "name": "lamp", "source": "Настольная лампа с регулировкой яркости." } ],
+  "assignees": ["gpt"],
+  "reviewers": ["gemini"],
+  "max_parallel": 1
+}

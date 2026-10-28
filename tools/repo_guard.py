@@ -7,6 +7,10 @@ ROOT=Path(__file__).resolve().parents[1]
 GIT=['git','-c','safe.directory='+ROOT.as_posix()]
 BANNED_SUFFIX={'.dwg','.dxf','.dwt','.dws','.rvt','.rfa','.rte','.rft','.ifc','.nwc','.nwd','.zip','.7z','.rar','.tar','.gz','.bz2','.xz','.whl','.nupkg','.dll','.exe','.pdb','.so','.dylib','.lib','.a','.pyc','.pyo','.db','.sqlite','.sqlite3','.dmp','.dump','.bak','.tmp','.log','.err','.jsonl','.ndjson','.pem','.key','.pfx','.p12'}
 SOURCE_JSON = {
+ 'tools/chrome-bridge-rc1/source-manifest.json',
+ 'tools/chrome-bridge-rc1/baseline-source/hub/template/agents.json',
+ 'tools/chrome-bridge-rc1/baseline-source/hub/template/batches/B001.example.json',
+ 'tools/chrome-bridge-rc1/baseline-source/hub/template/tasks/T001.json',
  'tools/chrome-bridge-rc1/update-manifest.json',
  'tools/chrome-bridge-rc1/overlay/package.json',
  'tools/chrome-bridge-rc1/overlay/plugin.json',

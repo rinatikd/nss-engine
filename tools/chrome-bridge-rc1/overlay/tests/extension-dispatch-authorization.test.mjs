@@ -53,6 +53,73 @@ test('a live command can dispatch once; a disconnected control channel fails clo
   });
 });
 
+async function contenteditableFixture(change) {
+  const saved = new Map();
+  const replace = (key, value) => { saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key)); Object.defineProperty(globalThis, key, { configurable: true, writable: true, value }); };
+  let value = '', revoked = false, clicks = 0;
+  const edits = [];
+  const composer = { isContentEditable: true, get innerText() { return value; }, getClientRects: () => [1],
+    focus() { document.activeElement = composer; }, dispatchEvent() {}, contains: node => node === composer };
+  const selection = { anchorNode: composer, focusNode: composer, removeAllRanges() {}, addRange() {} };
+  const button = { disabled: false, getClientRects: () => [1], getAttribute: () => null, click() { clicks++; } };
+  let selectedComposer = composer;
+  replace('HTMLTextAreaElement', class {});
+  replace('HTMLInputElement', class {});
+  replace('location', { origin: 'https://claude.ai', pathname: '/chat/fixture-12345678' });
+  replace('chrome', { runtime: { sendMessage: async () => ({ allowed: !revoked }) } });
+  replace('DataTransfer', class { setData() {} });
+  replace('ClipboardEvent', class {});
+  replace('getSelection', () => selection);
+  replace('document', { activeElement: null,
+    querySelectorAll: selector => selector === '#composer' ? [selectedComposer] : selector === '#send' ? [button] : selector === '#stop' && clicks ? [button] : [],
+    createRange: () => ({ selectNodeContents() {} }),
+    execCommand(action, _ui, text) { edits.push({ action, revoked }); if (action === 'insertText') value = text; },
+  });
+  replace('setTimeout', (fn, ms) => {
+    if (ms === 150) change?.({ revoke: () => { revoked = true; }, selection, composer,
+      replaceComposer: () => { selectedComposer = { ...composer }; } });
+    queueMicrotask(fn); return 0;
+  });
+  try {
+    const result = await pageAction('agent_send', { controlExpires: Date.now() + 60_000,
+      controlAuthorization: 'nonce', expectedOrigin: location.origin, expectedConversationId: 'fixture-12345678',
+      text: 'fixture prompt', adapter: { composer: '#composer', send: '#send', stop: '#stop', reply: '#reply' } }, location.origin);
+    return { result, edits, value, clicks };
+  } finally { for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; } }
+}
+
+test('contenteditable fallback cannot edit after Stop revokes the command', async () => {
+  const observed = await contenteditableFixture(({ revoke }) => revoke());
+  assert.match(observed.result.error, /Control denied/);
+  assert.deepEqual(observed.edits, [{ action: 'delete', revoked: false }]);
+  assert.equal(observed.value, '');
+  assert.equal(observed.clicks, 0);
+});
+
+test('contenteditable fallback refuses changed conversation, composer, focus or selection', async () => {
+  for (const change of [
+    () => { location.pathname = '/chat/another-12345678'; },
+    ({ replaceComposer }) => replaceComposer(),
+    () => { document.activeElement = {}; },
+    ({ selection }) => { selection.anchorNode = {}; },
+    ({ selection }) => { selection.focusNode = {}; },
+  ]) {
+    const observed = await contenteditableFixture(change);
+    assert.ok(observed.result.error);
+    assert.deepEqual(observed.edits, [{ action: 'delete', revoked: false }]);
+    assert.equal(observed.value, '');
+    assert.equal(observed.clicks, 0);
+  }
+});
+
+test('contenteditable fallback inserts and dispatches when authorization and composer stay live', async () => {
+  const observed = await contenteditableFixture();
+  assert.equal(observed.result.sent, true);
+  assert.deepEqual(observed.edits, [{ action: 'delete', revoked: false }, { action: 'insertText', revoked: false }]);
+  assert.equal(observed.value, 'fixture prompt');
+  assert.equal(observed.clicks, 1);
+});
+
 // Load the actual control listener with inert UI/Chrome APIs; never connect to a bridge.
 async function controlHarness() {
   const { readFile } = await import('node:fs/promises');

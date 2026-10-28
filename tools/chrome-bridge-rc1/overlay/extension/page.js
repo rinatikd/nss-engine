@@ -162,7 +162,17 @@ export async function pageAction(name, args, expectedOrigin) {
           composer.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
         } catch { /* перейдём к insertText */ }
         await sleep(150);
-        if (!textOf(composer)) document.execCommand('insertText', false, text);
+        if (!textOf(composer)) {
+          // The asynchronous paste fallback must not outlive Stop or type into
+          // a different conversation/selection after the user moves focus.
+          await control();
+          if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) throw Error('Conversation changed before fallback insertion');
+          const selection = getSelection();
+          if (single(A.composer) !== composer || document.activeElement !== composer ||
+              !selection || !composer.contains(selection.anchorNode) || !composer.contains(selection.focusNode) || textOf(composer))
+            throw Error('Composer or selection changed before fallback insertion');
+          document.execCommand('insertText', false, text);
+        }
       }
       await sleep(300);
       if (textOf(composer) !== text.trim()) throw Error('Prompt text verification failed');

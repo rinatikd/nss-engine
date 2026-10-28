@@ -1,0 +1,109 @@
+name: Chrome Bridge acceptance
+
+on:
+  push:
+    branches: ['agent/codex/chrome-bridge-rc1']
+    paths:
+      - 'tools/chrome-bridge-rc1/**'
+      - '.github/workflows/chrome-bridge-acceptance.yml'
+      - '.gitattributes'
+  pull_request:
+    paths:
+      - 'tools/chrome-bridge-rc1/**'
+      - '.github/workflows/chrome-bridge-acceptance.yml'
+      - '.gitattributes'
+
+permissions:
+  contents: read
+
+jobs:
+  kit:
+    name: Source acceptance (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      CHROME_BRIDGE_NATIVE_V07: '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Select isolated candidate directory
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/chrome-bridge-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.node }}
+        run: printf 'CANDIDATE_DIR=%s\n' "$CANDIDATE_DIR" >> "$GITHUB_ENV"
+      # Only allowlisted original sources and the overlay are reconstructed.
+      # Native isolation and real provider acceptance remain outside this CI.
+      - name: Test updater and source builder with synthetic fixtures
+        run: node --test tools/chrome-bridge-rc1/apply-update.test.mjs tools/chrome-bridge-rc1/build-source-candidate.test.mjs
+      - name: Verify source inventories, SHA256, provenance, and JavaScript syntax
+        run: node tools/chrome-bridge-rc1/check-package.mjs
+      - name: Reconstruct source-only candidate without the original ZIP
+        run: node tools/chrome-bridge-rc1/build-source-candidate.mjs --output "$CANDIDATE_DIR"
+      - name: Run full candidate Node test suite
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: node --test tests/*.test.mjs
+      - name: Parse PowerShell scripts without executing them
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $scripts = @(Get-ChildItem -LiteralPath tools/chrome-bridge-rc1/overlay -Filter '*.ps1' -Recurse -File)
+          if ($scripts.Count -ne 5) { throw "Expected 5 overlay PowerShell scripts, found $($scripts.Count)" }
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              $parseErrors | ForEach-Object { Write-Host $_.ToString() }
+              throw "PowerShell syntax failed: $($script.Name)"
+            }
+            Write-Host "Parsed $($script.Name)"
+          }
+          Write-Host "Parsed $($scripts.Count) PowerShell scripts without executing them."
+
+  synthetic-mv3:
+    name: Synthetic MV3 browser acceptance (Ubuntu, Node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      CHROME_BRIDGE_NATIVE_V07: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Select isolated candidate directory
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/chrome-bridge-mv3-${{ github.run_id }}-${{ github.run_attempt }}
+        run: printf 'CANDIDATE_DIR=%s\n' "$CANDIDATE_DIR" >> "$GITHUB_ENV"
+      - name: Verify checked-in source provenance
+        run: node tools/chrome-bridge-rc1/check-package.mjs
+      - name: Reconstruct isolated source-only candidate
+        run: node tools/chrome-bridge-rc1/build-source-candidate.mjs --output "$CANDIDATE_DIR"
+      - name: Install pinned Playwright dependency
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Install Playwright Chromium and Linux dependencies
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npx --no-install playwright install --with-deps chromium
+      # Fresh temporary profile; all HTTPS page requests are routed to local
+      # synthetic DOM fixtures by the test. No user sessions or provider APIs.
+      - name: Run synthetic three-origin Chrome extension lifecycle
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: xvfb-run -a node tests/three-origin-e2e.mjs
