@@ -904,6 +904,8 @@
     "extension/manifest.json": "f891d15511e10c1a8a613c8532498556abdf7c99850fed80cc6f9199dd91dd28",
     "extension/page.js": "f20779fec1f7f1f08869d1c24213e1f1731752f11b83532a3ee53cd1b0a6dd05",
     "CONTROL_PERMISSIONS.md": "c4b82e13218f1137ef5b0c97b7e8c823997d23a91337d672b21f9eeeb7bad5fb",
-    "tests/wait-conversation.test.mjs": "8d8a0a58b184d2730768e14ab46f96672beb88aef99ef73cd5731125609e0747"
+    "tests/wait-conversation.test.mjs": "8d8a0a58b184d2730768e14ab46f96672beb88aef99ef73cd5731125609e0747",
+    "tests/codex-runtime.test.mjs": "47cb6f5e16340118fa7b880bc21c1ee5345fb631d69708d5d12735c9c2d7b09d",
+    "tests/three-origin-e2e.mjs": "50e53e8afb7295060dab8e14aa2af5a635efb8b1fc2afd3528efbdf9b80f347f"
   }
 }

@@ -49,17 +49,23 @@ jobs:
       - name: Verify source inventories, SHA256, provenance, and JavaScript syntax
         run: node tools/chrome-bridge-rc1/check-package.mjs
       - name: Reconstruct source-only candidate without the original ZIP
+        id: reconstruct
         run: node tools/chrome-bridge-rc1/build-source-candidate.mjs --output "$CANDIDATE_DIR"
       - name: Run full candidate Node test suite
         working-directory: ${{ env.CANDIDATE_DIR }}
         run: node "$GITHUB_WORKSPACE/tools/chrome-bridge-rc1/ci-diagnostics.mjs" node-tests
+      - name: Run isolated Windows setup and preview wrappers
+        if: always() && runner.os == 'Windows' && steps.reconstruct.outcome == 'success'
+        shell: powershell
+        run: ./tools/chrome-bridge-rc1/windows-smoke.ps1
       - name: Parse PowerShell scripts without executing them
         if: always() && runner.os == 'Windows'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $scripts = @(Get-ChildItem -LiteralPath tools/chrome-bridge-rc1/overlay -Filter '*.ps1' -Recurse -File)
-          if ($scripts.Count -ne 5) { throw "Expected 5 overlay PowerShell scripts, found $($scripts.Count)" }
+          $scripts += @(Get-Item -LiteralPath tools/chrome-bridge-rc1/windows-smoke.ps1)
+          if ($scripts.Count -ne 6) { throw "Expected 6 PowerShell scripts, found $($scripts.Count)" }
           foreach ($script in $scripts) {
             $tokens = $null
             $parseErrors = $null
