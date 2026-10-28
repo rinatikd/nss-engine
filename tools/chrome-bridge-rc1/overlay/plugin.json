@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "chrome-bridge",
+  "version": "0.2.1-rc.1",
+  "description": "Local Chrome MCP bridge with explicitly permitted website origins and locally confirmed interactions.",
+  "author": {
+    "name": "Rinat Dautbekov"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Chrome Bridge",
+        "shortDescription": "Chrome for engineering work",
+        "longDescription": "Connect Codex, Claude Code and other agents to permitted Chrome tabs and AI chat sites through a local MCP bridge. Web ChatGPT requires a separately provisioned and verified authenticated HTTPS endpoint or supported secure tunnel.",
+        "developerName": "Rinat Dautbekov",
+        "capabilities": []
+      }
+    }
+  }
+}

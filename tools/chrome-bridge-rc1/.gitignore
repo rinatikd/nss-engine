@@ -1,0 +1,5 @@
+# Exact source/configuration files; local runtime JSON remains excluded.
+!update-manifest.json
+!overlay/package.json
+!overlay/plugin.json
+!overlay/extension/manifest.json

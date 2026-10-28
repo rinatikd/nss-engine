@@ -6,6 +6,12 @@ from pathlib import Path, PurePosixPath
 ROOT=Path(__file__).resolve().parents[1]
 GIT=['git','-c','safe.directory='+ROOT.as_posix()]
 BANNED_SUFFIX={'.dwg','.dxf','.dwt','.dws','.rvt','.rfa','.rte','.rft','.ifc','.nwc','.nwd','.zip','.7z','.rar','.tar','.gz','.bz2','.xz','.whl','.nupkg','.dll','.exe','.pdb','.so','.dylib','.lib','.a','.pyc','.pyo','.db','.sqlite','.sqlite3','.dmp','.dump','.bak','.tmp','.log','.err','.jsonl','.ndjson','.pem','.key','.pfx','.p12'}
+SOURCE_JSON = {
+ 'tools/chrome-bridge-rc1/update-manifest.json',
+ 'tools/chrome-bridge-rc1/overlay/package.json',
+ 'tools/chrome-bridge-rc1/overlay/plugin.json',
+ 'tools/chrome-bridge-rc1/overlay/extension/manifest.json',
+}
 BANNED_DIR={'.git','.venv','venv','env','runtime','node_modules','__pycache__','bin','obj','runs','evidence','history','graphify-out','dumps','dump','secrets','local-backups','.aws','.ssh','.codex','.claude','.cursor','.gemini'}
 PATTERNS={
  'private-key':re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'),
@@ -47,7 +53,7 @@ def main():
   if mode not in ('100644','100755'):problems.append((path,'nonportable-link-or-submodule'));continue
   if pp.suffix.lower() in BANNED_SUFFIX or any(x in BANNED_DIR for x in lower[:-1]):problems.append((path,'excluded-artifact'))
   if name=='.env' or name.startswith('.env.') or name in ('auth.json','credentials.json','secrets.json','.git-credentials','.netrc'):problems.append((path,'credential-file'))
-  if pp.suffix.lower()=='.json' and path!='skills-lock.json' and not path.startswith('.agents/skills/'):problems.append((path,'local-json-or-dump'))
+  if pp.suffix.lower()=='.json' and path not in SOURCE_JSON and path!='skills-lock.json' and not path.startswith('.agents/skills/'):problems.append((path,'local-json-or-dump'))
   if pp.suffix.lower()=='.csv' and name!='catalog.csv':problems.append((path,'local-csv-or-dump'))
   data=git('cat-file','blob',oid);total+=len(data)
   if len(data)>2*1024*1024:problems.append((path,'blob-over-2MiB'))

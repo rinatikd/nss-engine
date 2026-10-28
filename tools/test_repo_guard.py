@@ -89,6 +89,23 @@ class RepoGuardTests(unittest.TestCase):
         self.assertEqual(self.guard('--tree', 'HEAD').returncode, 0)
         self.assertEqual(self.guard('--staged').returncode, 1)
 
+    def test_bridge_source_json_allowlist_is_exact_and_keeps_secret_checks(self):
+        paths = [
+            'tools/chrome-bridge-rc1/update-manifest.json',
+            'tools/chrome-bridge-rc1/overlay/package.json',
+            'tools/chrome-bridge-rc1/overlay/plugin.json',
+            'tools/chrome-bridge-rc1/overlay/extension/manifest.json',
+        ]
+        for path in paths:
+            with self.subTest(path=path):
+                self.stage(b'{}', path)
+                self.assertEqual(self.guard('--staged').returncode, 0)
+                self.stage(self.assignment('AlphaBravoCharlieDelta'), path)
+                self.assertEqual(self.guard('--staged').returncode, 1)
+                self.git('rm', '--cached', '--', path)
+        self.stage(b'{}', 'tools/chrome-bridge-rc1/overlay/config.json')
+        self.assertEqual(self.guard('--staged').returncode, 1)
+
     def test_artifact_and_json_policy_is_unchanged(self):
         for path, data, expected in [
             ('drawing.dwg', b'ordinary source text', 1),
