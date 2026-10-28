@@ -1,8 +1,10 @@
-Snapshot verification 2026-10-27:
-243 Python tests PASS, 0 FAIL, 0 SKIP (24.355s), current integrated source after MCP catalog update.
-46 JavaScript backend tests PASS, 0 FAIL, 0 SKIP.
-8 UI behavior tests PASS, 0 FAIL, 0 SKIP.
-Portable NSS Engine checks passed before latest UI/MCP linkage; source guard rerun for this handoff.
-Earlier real-model CI PASS: 40520744532 (shared UI/MCP executor/reviewer), 40521441115 (actual Codex/Ollama HTTP path).
-Current full MCP-to-Codex-to-Ollama path PASS: run40564442342, commit37de6a5,50s, mcp_verified=true,11 measured outputtokens, tools=[], paid APIcalls0. This is real inference via MCP, not ChatGPT hosted app verification.
-Unfinished optional Tunnel/CLI binding is isolated under tools/handoff-wip and excluded from these test counts.
+Snapshot verification 28.10.2026 (UTC+5):
+249 Python regressions PASS, 0 FAIL, existing integrated suite (25.801s).
+48 JavaScript backend tests PASS, 0 FAIL, 0 SKIP (2.338s).
+9 UI behavior tests PASS, 0 FAIL, 0 SKIP.
+5 additional managed acceptance boundary tests PASS separately (1.004s).
+Actual hosted ChatGPT/Tunnel, live inference after these changes, and Windows isolation: NOT VERIFIED by these runs.
+The real managed-launcher CI workflow has been prepared; its result must be inspected separately.
+Retain semantic failure: real-model math CI40564442377 at37de6a5 was REJECTED; wrong numeric answer was not approved.
+Earlier real-path PASS evidence remains historical, scoped to the tested paths: 40520744532,40521441115,40564442342.
+See PROGRESS_20261028.md for current changes and limits. Optional local Tunnel/CLI binding is now integrated; tools/handoff-wip remains historical material.

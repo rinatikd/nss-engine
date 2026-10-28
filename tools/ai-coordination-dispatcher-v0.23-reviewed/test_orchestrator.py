@@ -346,6 +346,24 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(json.loads(reply["text"]), verdict)
         self.assertEqual(reply["provider"], "ollama")
 
+    def test_local_sampling_is_explicit_for_both_roles_and_recorded(self):
+        def respond(payload):
+            return 200, dict(message={"content": "synthetic response"}, done=True,
+                             done_reason="stop", model=payload["model"],
+                             prompt_eval_count=10, eval_count=3)
+        with local_fixture(respond) as (port, calls):
+            replies = [OllamaAgent(role, "sampling-fixture", port).invoke({"prompt": "Fixed fixture"})
+                       for role in ("executor", "reviewer", "executor")]
+        # Assert the actual HTTP boundary, not attributes of the implementation.
+        # Fixture replies establish transport only, never deterministic real inference.
+        for payload, reply in zip(calls, replies):
+            self.assertEqual(payload["options"].get("temperature"), 0)
+            self.assertEqual(payload["options"].get("seed"), 0)
+            self.assertEqual(payload["options"]["num_predict"], 1024)
+            self.assertEqual(reply["generation_options"], payload["options"])
+            self.assertEqual(reply["usage"], {"input_tokens": 10, "output_tokens": 3})
+            self.assertEqual(reply["text"], "synthetic response")
+
     def test_local_model_truncation_is_quarantined(self):
         self.submit(mode="local")
         with local_fixture(lambda _: (200, dict(message={"content": "partial"}, done=True, done_reason="length"))) as (port, _):

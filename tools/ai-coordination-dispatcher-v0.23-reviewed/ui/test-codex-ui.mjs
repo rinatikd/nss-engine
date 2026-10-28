@@ -54,3 +54,13 @@ test('missing selected task does not mark a healthy backend unavailable',async()
   assert.equal(f.get('codex-detail-id').textContent,'missing');assert.equal(f.get('codex-cancel').disabled,true);
   assert.match(f.get('codex-task-status').textContent,/Task not found/);
 });
+
+
+test('unavailable local model explains why submitted tasks will wait',async()=>{
+  const f=fixture();const pending=f.run('refreshCodex()');
+  f.pending[0].resolve({configured:true,available:true,local_model_available:false});await new Promise(setImmediate);
+  f.pending[1].resolve({tasks:[]});await pending;
+  assert.equal(f.run('codexAvailable'),true);
+  assert.match(f.get('codex-health-detail').textContent,/модель.*недоступна/i);
+  assert.match(f.get('codex-health-detail').textContent,/очереди/);
+});

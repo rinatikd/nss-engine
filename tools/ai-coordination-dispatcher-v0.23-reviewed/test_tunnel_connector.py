@@ -27,6 +27,32 @@ class TunnelConnectorTests(unittest.TestCase):
         tunnel='tunnel_a1b2_'+'z9'*16
         self.assertEqual(json.loads(c.build_profile('/tmp/a.sqlite','/tmp','/usr/bin/python',tunnel))['control_plane']['tunnel_id'],tunnel)
 
+    def test_optional_local_codex_profile_binds_only_explicit_native_path_and_model(self):
+        import shlex
+        with tempfile.TemporaryDirectory(prefix='native codex space ') as folder:
+            root=Path(folder);native=root/'codex native';native.write_bytes(b'\x7fELF-fixture-never-executed');native.chmod(0o700)
+            profile=json.loads(c.build_profile(str(root/'db.sqlite'),str(root),'/usr/bin/python','tunnel_'+'0'*32,
+                                               codex_executable=str(native),codex_model='qwen2.5:7b'))
+            command=shlex.split(profile['mcp']['commands'][0]['command'])
+            self.assertEqual(command[-4:],['--codex-executable',str(native),'--codex-model','qwen2.5:7b'])
+            default=json.loads(c.build_profile(str(root/'db.sqlite'),str(root),'/usr/bin/python','tunnel_'+'0'*32))
+            self.assertNotIn('--codex-executable',default['mcp']['commands'][0]['command'])
+            # Existing prepared profiles cannot silently gain a different backend/model.
+            self.assertNotEqual(profile,default)
+
+    def test_local_codex_rejects_nonlinux_wrappers_links_and_unpinned_models(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);native=root/'codex';native.write_bytes(b'\x7fELF-fixture');native.chmod(0o700)
+            wrapper=root/'codex.sh';wrapper.write_text('#!/bin/sh\nexit 0');wrapper.chmod(0o700)
+            link=root/'linked';link.symlink_to(native)
+            for path in (str(wrapper),str(link),'relative-codex',str(root/'missing')):
+                with self.subTest(path=path), self.assertRaises(ValueError):c.codex_arguments(path)
+            with patch('tunnel_connector.platform.system',return_value='Windows'), self.assertRaises(ValueError):
+                c.codex_arguments(str(native))
+            for model in ('gpt-cloud','qwen2.5:3b --yolo','qwen2.5:7b'):
+                with self.subTest(model=model), self.assertRaises(ValueError):c.codex_arguments(None,model)
+            with self.assertRaises(ValueError):c.codex_arguments(str(native),'other-local-model')
+
     def test_relative_or_missing_identifier_fails_before_writing(self):
         for tunnel in ('', 'REPLACE_WITH_REAL_TUNNEL_ID', 'tunnel_synthetic_fixture',
                        'tunnel_'+'A'*32, 'tunnel_xxx_'+'0'*32, 'tunnel_xxxxx_'+'0'*32, 'tunnel_'+'0'*31):
@@ -67,6 +93,15 @@ class TunnelConnectorTests(unittest.TestCase):
         clean=c.runtime_environment(env)
         self.assertEqual(clean,{'PATH':'fixture','HTTPS_PROXY':'http://session-proxy','CONTROL_PLANE_API_KEY':'fixture-secret'})
 
+    def test_ambient_rpc_binding_cannot_enable_codex_when_profile_omits_it(self):
+        env = {'PATH': 'fixture', 'HTTPS_PROXY': 'http://session-proxy',
+               'A2A_CODEX_RPC_URL': 'http://127.0.0.1:12345/',
+               'A2A_CODEX_RPC_TOKEN': 'TEST-ambient-backend-token'}
+        self.assertEqual(c.runtime_environment(env),
+                         {'PATH': 'fixture', 'HTTPS_PROXY': 'http://session-proxy'})
+        self.assertEqual(scrub_credentials(env),
+                         {'PATH': 'fixture', 'HTTPS_PROXY': 'http://session-proxy'})
+
     def test_mcp_child_receives_no_tunnel_or_openai_credentials(self):
         env={'CONTROL_PLANE_API_KEY':'runtime-fixture','OPENAI_API_KEY':'fixture','OPENAI_ADMIN_KEY':'adminfixture',
              'PATH':'fixture','HTTPS_PROXY':'http://session-proxy'}
@@ -79,18 +114,36 @@ class TunnelConnectorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             shutil.copy2(Path(__file__).with_name('tunnel_mcp_entry.py'),root/'tunnel_mcp_entry.py')
-            (root/'unified_runtime.py').write_text("import os,json,sys\nprint(json.dumps({'keys_present':[k for k in ('CONTROL_PLANE_API_KEY','OPENAI_API_KEY','OPENAI_ADMIN_KEY') if k in os.environ],'args':sys.argv[1:]}))\n")
-            env=dict(os.environ,CONTROL_PLANE_API_KEY='TEST-fixture-runtime',OPENAI_API_KEY='TEST-fixture-api',OPENAI_ADMIN_KEY='TEST-fixture-admin')
+            shutil.copy2(Path(__file__).with_name('tunnel_connector.py'),root/'tunnel_connector.py')
+            (root/'run_workspace.py').write_text("import os,json,sys\nprint(json.dumps({'keys_present':[k for k in ('CONTROL_PLANE_API_KEY','OPENAI_API_KEY','OPENAI_ADMIN_KEY','A2A_CODEX_RPC_URL','A2A_CODEX_RPC_TOKEN') if k in os.environ],'args':sys.argv[1:]}))\n")
+            env=dict(os.environ,CONTROL_PLANE_API_KEY='TEST-fixture-runtime',OPENAI_API_KEY='TEST-fixture-api',OPENAI_ADMIN_KEY='TEST-fixture-admin',A2A_CODEX_RPC_URL='http://127.0.0.1:12345/',A2A_CODEX_RPC_TOKEN='TEST-ambient-backend-token')
             result=subprocess.run([sys.executable,str(root/'tunnel_mcp_entry.py'),'--db',str(root/'db.sqlite'),'--ui-port','0'],env=env,capture_output=True,text=True,check=True,timeout=10)
             response=json.loads(result.stdout)
             self.assertEqual(response['keys_present'],[])
             self.assertEqual(response['args'],['--transport','stdio','--ui-port','0','--db',str(root/'db.sqlite')])
             self.assertNotIn('fixture-runtime',result.stdout)
 
+    def test_real_entrypoint_forwards_optional_codex_binding_to_workspace(self):
+        import os
+        import shutil
+        import sys
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            for name in ('tunnel_mcp_entry.py','tunnel_connector.py'):
+                shutil.copy2(Path(__file__).with_name(name),root/name)
+            (root/'run_workspace.py').write_text("import json,sys\nprint(json.dumps(sys.argv[1:]))\n")
+            native=root/'codex native';native.write_bytes(b'\x7fELF-fixture');native.chmod(0o700)
+            args=[sys.executable,str(root/'tunnel_mcp_entry.py'),'--db',str(root/'db.sqlite'),
+                  '--codex-executable',str(native),'--codex-model','qwen2.5:7b']
+            result=subprocess.run(args,capture_output=True,text=True,check=True,timeout=10)
+            forwarded=json.loads(result.stdout)
+            self.assertEqual(forwarded[-4:],['--codex-executable',str(native),'--codex-model','qwen2.5:7b'])
+            self.assertEqual(forwarded[:2],['--transport','stdio'])
+
     def test_hidden_key_is_only_in_child_environment_not_arguments_or_report(self):
         import io
         with tempfile.TemporaryDirectory() as folder:
-            source=Path(folder);(source/'unified_runtime.py').write_text('fixture');(source/'tunnel_mcp_entry.py').write_text('fixture')
+            source=Path(folder);(source/'run_workspace.py').write_text('fixture');(source/'tunnel_mcp_entry.py').write_text('fixture')
             args=['doctor','--client',str(source/'client'),'--db',str(source/'db.sqlite'),'--profile-dir',str(source/'profiles'),'--prompt-key']
             ready={'state':'LOCAL_PREREQUISITES_READY'}
             with patch.object(c,'__file__',str(source/'tunnel_connector.py')), patch.dict(c.os.environ,{'CONTROL_PLANE_TUNNEL_ID':'tunnel_00000000000000000000000000000000'},clear=True), patch.object(c.sys.stdin,'isatty',return_value=True), patch.object(c.getpass,'getpass',return_value='TEST-HIDDEN-RUNTIME'), patch.object(c,'inspect',return_value=ready), patch.object(c.subprocess,'run',return_value=subprocess.CompletedProcess([],0)) as run, patch('sys.stdout',new_callable=io.StringIO) as output:
@@ -101,14 +154,14 @@ class TunnelConnectorTests(unittest.TestCase):
 
     def test_noninteractive_key_prompt_refuses_fallback(self):
         with tempfile.TemporaryDirectory() as folder:
-            source=Path(folder);(source/'unified_runtime.py').write_text('fixture');(source/'tunnel_mcp_entry.py').write_text('fixture')
+            source=Path(folder);(source/'run_workspace.py').write_text('fixture');(source/'tunnel_mcp_entry.py').write_text('fixture')
             args=['run','--client',str(source/'client'),'--db',str(source/'db.sqlite'),'--profile-dir',str(source/'profiles'),'--prompt-key']
             with patch.object(c,'__file__',str(source/'tunnel_connector.py')), patch.dict(c.os.environ,{'CONTROL_PLANE_TUNNEL_ID':'tunnel_00000000000000000000000000000000'},clear=True), patch.object(c.sys.stdin,'isatty',return_value=False), patch.object(c.getpass,'getpass') as prompt, patch.object(c.subprocess,'call') as run, patch('builtins.print'):
                 self.assertEqual(c.main(args),2);prompt.assert_not_called();run.assert_not_called()
 
     def test_run_without_key_never_starts_daemon(self):
         with tempfile.TemporaryDirectory() as folder:
-            source=Path(folder);(source/'unified_runtime.py').write_text('fixture');(source/'tunnel_mcp_entry.py').write_text('fixture')
+            source=Path(folder);(source/'run_workspace.py').write_text('fixture');(source/'tunnel_mcp_entry.py').write_text('fixture')
             client=source/'client';client.write_text('fixture')
             args=['run','--client',str(client),'--db',str(source/'db.sqlite'),'--profile-dir',str(source/'profiles')]
             with patch.object(c,'__file__',str(source/'tunnel_connector.py')), patch.dict(c.os.environ,{'CONTROL_PLANE_TUNNEL_ID':'tunnel_00000000000000000000000000000000'},clear=True), patch.object(c.subprocess,'call') as run, patch('builtins.print'):

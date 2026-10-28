@@ -3,6 +3,7 @@ import argparse
 import getpass
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shlex
@@ -18,7 +19,8 @@ CONFIG_PREFIXES = ('CONTROL_PLANE_', 'MCP_', 'HARPOON_', 'HEALTH_', 'ADMIN_UI_',
 def runtime_environment(env):
     # Prevent ambient client settings from replacing the fixed stdio/loopback profile.
     result = {k: v for k, v in env.items() if not k.startswith(CONFIG_PREFIXES) and
-              k not in ('ALLOW_REMOTE_UI', 'OPEN_WEB_UI', 'OPENAI_API_KEY', 'OPENAI_ADMIN_KEY')}
+              k not in ('ALLOW_REMOTE_UI', 'OPEN_WEB_UI', 'OPENAI_API_KEY', 'OPENAI_ADMIN_KEY',
+                         'A2A_CODEX_RPC_URL', 'A2A_CODEX_RPC_TOKEN')}
     if KEY in env:
         result[KEY] = env[KEY]
     return result
@@ -32,13 +34,33 @@ def absolute(value):
     return path
 
 
-def build_profile(db, source, python, tunnel_id, ui_port=8765):
+def codex_arguments(executable=None, model='qwen2.5:3b'):
+    """Bind only a fixed native Linux local-model backend, never extra CLI switches."""
+    if model not in ('qwen2.5:3b', 'qwen2.5:7b'):
+        raise ValueError('Unsupported local Codex model')
+    if executable is None:
+        if model != 'qwen2.5:3b':
+            raise ValueError('A Codex model selection requires the native executable')
+        return []
+    if platform.system() != 'Linux':
+        raise ValueError('The optional local Codex backend is verified only on Linux')
+    path = absolute(executable)
+    if not path.is_file() or path.is_symlink() or not os.access(path, os.X_OK):
+        raise ValueError('An existing executable native Codex file is required')
+    with path.open('rb') as stream:
+        if stream.read(4) != b'\x7fELF':
+            raise ValueError('The local Codex backend requires a native Linux executable')
+    return ['--codex-executable', str(path), '--codex-model', model]
+
+
+def build_profile(db, source, python, tunnel_id, ui_port=8765, codex_executable=None, codex_model='qwen2.5:3b'):
     """JSON is also valid YAML; store no credential values in this profile."""
     if not re.fullmatch(r'tunnel_(?:[a-z0-9]{4}_)?[a-z0-9]{32}', tunnel_id or ''):
         raise ValueError('A real Platform tunnel ID is required')
     if not isinstance(ui_port, int) or not 0 <= ui_port <= 65535:
         raise ValueError('Invalid UI port')
     args = [str(absolute(python)), '-B', str(absolute(source) / 'tunnel_mcp_entry.py'), '--ui-port', str(ui_port), '--db', str(absolute(db))]
+    args.extend(codex_arguments(codex_executable, codex_model))
     command = subprocess.list2cmdline(args) if os.name == 'nt' else shlex.join(args)
     profile = {'config_version': 1,
                'control_plane': {'base_url': 'https://api.openai.com', 'tunnel_id': tunnel_id,
@@ -86,14 +108,16 @@ def main(argv=None):
     parser.add_argument('--client', required=True, help='Absolute path to verified official tunnel-client')
     parser.add_argument('--db', required=True, help='Same absolute SQLite path as the local UI')
     parser.add_argument('--ui-port', type=int, default=8765)
+    parser.add_argument('--codex-executable', help='Optional absolute tested0.163 native Linux Codex executable')
+    parser.add_argument('--codex-model', choices=('qwen2.5:3b', 'qwen2.5:7b'), default='qwen2.5:3b')
     parser.add_argument('--profile-dir', required=True, help='Private runtime directory, outside source control')
     parser.add_argument('--prompt-key', action='store_true', help='Read runtime key with hidden local prompt')
     args = parser.parse_args(argv)
     try:
         source = Path(__file__).resolve().parent
-        if not (source / 'tunnel_mcp_entry.py').is_file() or not (source / 'unified_runtime.py').is_file():
-            raise ValueError('Install the connector alongside unified_runtime.py and tunnel_mcp_entry.py')
-        expected = build_profile(args.db, str(source), sys.executable, os.getenv('CONTROL_PLANE_TUNNEL_ID', ''), args.ui_port)
+        if not (source / 'tunnel_mcp_entry.py').is_file() or not (source / 'run_workspace.py').is_file():
+            raise ValueError('Install the connector alongside run_workspace.py and tunnel_mcp_entry.py')
+        expected = build_profile(args.db, str(source), sys.executable, os.getenv('CONTROL_PLANE_TUNNEL_ID', ''), args.ui_port, args.codex_executable, args.codex_model)
         file = absolute(args.profile_dir) / (PROFILE + '.yaml')
         if args.action == 'prepare':
             prepare(file, expected)

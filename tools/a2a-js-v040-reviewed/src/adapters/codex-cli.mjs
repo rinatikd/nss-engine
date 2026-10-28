@@ -95,6 +95,10 @@ export class CodexCliAdapter {
         child.stdout.on('data', b => { stdout = boundedAppend(stdout, b.toString(), 1024 * 1024); });
         child.stderr.on('data', b => { stderr = boundedAppend(stderr, b.toString(), 256 * 1024); });
         child.once('error', e => { clearTimers(); if (!spawned) e.code = 'CODEX_NOT_STARTED'; reject(e); });
+        // The detached group is ours. Once its leader exits, no helper may
+        // outlive the invocation or retain pipes; do not cancel cleanup just
+        // because close() arrived before the timeout/abort force timer.
+        child.once('exit', () => { if (process.platform !== 'win32') terminate('SIGKILL'); });
         child.once('close', (code, signal) => { clearTimers(); resolve({ code, signal }); });
       });
       if (!spawned) throw new Error('CODEX_NOT_STARTED');

@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/a2a-real-codex.yml
       - tools/a2a-js-v040-reviewed/**
+      - tools/ai-coordination-dispatcher-v0.23-reviewed/**
   workflow_dispatch:
 
 permissions:
@@ -16,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_HOST: 127.0.0.1:11435
       OLLAMA_NO_CLOUD: '1'
       OLLAMA_NUM_PARALLEL: '1'
       OLLAMA_MAX_LOADED_MODELS: '1'
@@ -62,6 +63,26 @@ jobs:
           fi
           "$native" --version
           echo "A2A_CODEX_EXECUTABLE=$native" >> "$GITHUB_ENV"
+      - name: Install verified official local tunnel transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --max-time 180 \
+            https://github.com/openai/tunnel-client/releases/download/v0.0.18/tunnel-client-v0.0.18-linux-amd64.zip \
+            -o "$RUNNER_TEMP/tunnel-client.zip"
+          python - <<'PYCODE'
+          import hashlib,os,pathlib,zipfile
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          source=root/'tunnel-client.zip'
+          expected='3c82307316acd93c88a384b62af1d81d3f4cb0efa975f9c0bfaef922866a04c4'
+          if hashlib.sha256(source.read_bytes()).hexdigest()!=expected:
+              raise SystemExit('Official tunnel client integrity mismatch')
+          target=root/'tunnel-client'
+          with zipfile.ZipFile(source) as archive:
+              target.write_bytes(archive.read('tunnel-client'))
+          target.chmod(0o700)
+          PYCODE
+          echo "A2A_TUNNEL_CLIENT=$RUNNER_TEMP/tunnel-client" >> "$GITHUB_ENV"
       - name: Install verified official Ollama
         shell: bash
         run: |
@@ -83,7 +104,7 @@ jobs:
           python - <<'PY'
           import http.client,time
           for _ in range(30):
-              c=http.client.HTTPConnection('127.0.0.1',11434,timeout=1)
+              c=http.client.HTTPConnection('127.0.0.1',11435,timeout=1)
               try:
                   c.request('GET','/api/version')
                   if c.getresponse().status==200:break
@@ -93,11 +114,17 @@ jobs:
           else:raise SystemExit('Ollama did not become ready')
           PY
           timeout 420 ollama pull qwen2.5:3b
-      - name: Real HTTP JSON-RPC to Codex CLI to local model
-        run: node verify-real-codex.mjs
-        env:
-          A2A_CODEX_MODEL: qwen2.5:3b
-          A2A_EVIDENCE_FILE: ${{ runner.temp }}/real-codex-evidence.json
+      - name: Offline managed acceptance boundary regressions
+        working-directory: tools/ai-coordination-dispatcher-v0.23-reviewed
+        run: python -m unittest -v test_managed_acceptance.py
+      - name: Real managed tunnel UI MCP to Codex CLI to local model
+        working-directory: tools/ai-coordination-dispatcher-v0.23-reviewed
+        run: >-
+          python verify_managed_workspace.py
+          --codex-executable "$A2A_CODEX_EXECUTABLE"
+          --tunnel-client "$A2A_TUNNEL_CLIENT"
+          --output "$RUNNER_TEMP/real-codex-evidence.json"
+          --timeout 300
       - name: Retain synthetic real CLI evidence
         if: always()
         uses: actions/upload-artifact@v4

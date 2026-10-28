@@ -38,7 +38,7 @@ jobs:
       - name: Run offline tests
         run: python -m unittest discover -v -p 'test_*.py'
       - name: Verify browser response ordering and review display
-        run: node --test ui/test-ui.mjs
+        run: node --test ui/test-*.mjs
       - name: Install checksum-verified official Ollama
         shell: bash
         run: |

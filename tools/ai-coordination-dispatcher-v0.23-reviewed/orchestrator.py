@@ -290,7 +290,7 @@ class OllamaAgent:
             payload = {
                 "model": self.model, "stream": False,
                 "messages": [{"role": "user", "content": call["prompt"]}],
-                "options": {"num_predict": self.max_output_tokens},
+                "options": {"num_predict": self.max_output_tokens, "temperature": 0, "seed": 0},
             }
             if self.role == "reviewer":
                 payload["format"] = REVIEW_JSON_SCHEMA
@@ -305,7 +305,8 @@ class OllamaAgent:
         return dict(provider="ollama", authenticated=False, invocation_id="local-" + secrets.token_hex(16),
                     text=data.get("message", {}).get("content"), model=data.get("model"),
                     stop_reason="end_turn" if data.get("done") is True and data.get("done_reason") != "length" else "incomplete",
-                    usage={"input_tokens": data.get("prompt_eval_count"), "output_tokens": data.get("eval_count")})
+                    usage={"input_tokens": data.get("prompt_eval_count"), "output_tokens": data.get("eval_count")},
+                    generation_options=dict(payload["options"]))
 
 
 def local_configuration(env=None):

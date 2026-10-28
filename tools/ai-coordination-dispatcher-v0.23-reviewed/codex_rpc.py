@@ -139,7 +139,7 @@ class CodexRPCClient:
     def health(self):
         base = {'configured': self.port is not None, 'available': False, 'authentication_verified': False,
                 'worker_verified': False, 'execution_ready': False, 'paid_api_allowed': False,
-                'windows_execution_allowed': False, 'mode': 'local-text-only'}
+                'windows_execution_allowed': False, 'mode': 'local-text-only', 'local_model_available': None}
         try:
             value = self._request('GET', '/health')
             if not isinstance(value, dict) or value.get('ok') is not True:
@@ -154,7 +154,10 @@ class CodexRPCClient:
             result = self._rpc('tasks/list', {'pageSize': 1})
             if not isinstance(result, dict) or not isinstance(result.get('tasks'), list):
                 raise CodexRPCError('INVALID_HEALTH', 'Codex service protocol could not be verified.')
+            worker = value.get('local_worker')
+            model_available = worker.get('model_available') if isinstance(worker, dict) else None
             return {**base, 'available': True, 'authentication_verified': True, 'state': 'SERVICE_AVAILABLE',
+                    'local_model_available': model_available if type(model_available) is bool else None,
                     'reason': 'Local service is reachable; worker execution and isolation are not established by health.',
                     'local_worker': worker}
         except CodexRPCError as exc:

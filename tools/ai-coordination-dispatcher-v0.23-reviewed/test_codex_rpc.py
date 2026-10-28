@@ -26,7 +26,7 @@ class Fixture:
                 self.send_header('Content-Length', str(len(data)));self.end_headers();self.wfile.write(data)
             def do_GET(self):
                 outer.calls.append(('GET', self.path))
-                self.reply(200, {'ok': True})
+                self.reply(200, {'ok': True, **({'local_worker': {'model_available': outer.mode == 'model_available'}} if outer.mode in ('model_available', 'model_unavailable') else {})})
             def do_POST(self):
                 request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                 outer.calls.append(('POST', self.path, request))
@@ -81,6 +81,16 @@ class CodexRPCTests(unittest.TestCase):
         self.assertTrue(result['available']);self.assertTrue(result['authentication_verified'])
         self.assertFalse(result['worker_verified']);self.assertFalse(result['execution_ready'])
         self.assertFalse(result['paid_api_allowed']);self.assertNotIn(TOKEN,str(result))
+
+    def test_health_reports_model_availability_without_claiming_execution(self):
+        for mode, expected in (('model_available', True), ('model_unavailable', False)):
+            self.fixture.mode = mode
+            result = self.client.health()
+            self.assertIs(result['local_model_available'], expected)
+            self.assertTrue(result['available'])
+            self.assertFalse(result['execution_ready'])
+        self.fixture.mode = 'normal'
+        self.assertIsNone(self.client.health()['local_model_available'])
 
     def test_stable_id_case_and_conflict_are_preserved(self):
         first=self.client.submit('A'*32,'private task prompt')

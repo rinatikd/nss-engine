@@ -148,6 +148,7 @@ def main():
         observation = {"state": task["state"], "answer": task["answer"], "attempts": [{
             "role": a["role"], "state": a["state"], "text": (a.get("result") or {}).get("text"),
             "usage": (a.get("result") or {}).get("usage"),
+            "generation_options": (a.get("result") or {}).get("generation_options"),
         } for a in task["attempts"]]}
         # Fixed synthetic calculation only. Escape command delimiters/newlines in model data.
         message = json.dumps(observation, ensure_ascii=False)[:3500]

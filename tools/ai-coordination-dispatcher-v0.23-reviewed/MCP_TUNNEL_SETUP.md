@@ -1,66 +1,85 @@
-# ChatGPT Secure MCP Tunnel — runnable connector
+# ChatGPT Secure MCP Tunnel — общий UI/MCP и опциональный Codex
 
-The package now includes `tunnel_connector.py` and `tunnel_mcp_entry.py`. Use official `tunnel-client` v0.0.18. The connector binds the tunnel to `unified_runtime.py`: one Application controls the loopback UI and MCP worker. Do not start a separate `web_app.py` or `mcp_bridge.py` against this database.
+Используйте официальный tunnel-client 0.0.18 и проверенный Python 3.12+ environment. tunnel_connector.py создаёт фиксированный stdio-профиль; tunnel_mcp_entry.py запускает run_workspace.py. Один общий процесс владеет UI и MCP. Не запускайте дополнительно web_app.py или mcp_bridge.py на той же SQLite.
 
-## What remains account-side
+По умолчанию локальный Codex backend выключен. Его инструменты видны в MCP-каталоге, но health возвращает NOT_CONFIGURED. Для включения backend нужно явно привязать проверенный native Codex 0.163 через --codex-executable. Этот вариант проверен только на Linux, использует только локальный Ollama/Qwen и не снимает Windows CODEX_DISABLED.
 
-A real tunnel must exist in the target Platform organization and be associated with the intended ChatGPT workspace. The runtime principal needs Tunnels Read + Use. Creating/managing the tunnel needs separate Tunnels Manage privileges; this launcher never performs tunnel CRUD or uses an admin key.
+## Условия внешнего подключения
 
-Official v0.0.18 help points to:
+В целевой Platform организации должен существовать настоящий tunnelID, связанный с нужной рабочей областью ChatGPT. Runtime key требует Tunnels Read+Use; создание/изменение туннеля требует отдельно Manage. Launcher не создаёт туннели и не использует admin key.
 
-- Tunnels: https://platform.openai.com/settings/organization/tunnels
-- Runtime keys: https://platform.openai.com/settings/organization/api-keys
-- ChatGPT apps/connectors: https://chatgpt.com/#settings/Connectors
+Ссылки из официального клиента0.0.18:
 
-Create/authorize the private custom MCP app for the same tunnel while its daemon is running. Account UI labels and app confirmation policies must be verified in that account. Repository source publication does not install an app or share local machine access with another account.
+- https://platform.openai.com/settings/organization/tunnels
+- https://platform.openai.com/settings/organization/api-keys
+- https://chatgpt.com/#settings/Connectors
 
-## Prepare once
+Владелец аккаунта должен разрешить private custom MCP app для того же tunnel. Ключ вводится только в защищённые настройки среды либо локальный скрытый prompt, не в чат. Публикация исходников и локальный devproxy не регистрируют приложение ChatGPT.
 
-Use absolute paths. Keep the generated profile in a private runtime directory outside source control. Set the real, non-secret tunnel ID locally; the placeholder below must be replaced. Supported syntax is `tunnel_<32 lowercase letters or digits>` or `tunnel_<4-character lowercase/digit namespace>_<32 lowercase letters or digits>`. Syntax validation does not verify that the ID exists or belongs to the intended account. Do not send runtime/admin keys in chat.
+## Подготовка профиля
 
-PowerShell, from this package directory:
+Все пути абсолютные. Каталог профилей должен быть вне исходников, в приватном runtime-каталоге. CONTROL_PLANE_TUNNEL_ID — полный настоящий идентификатор: tunnel_<32 lowercase letters/digits> или tunnel_<4 lowercase letters/digits>_<32 lowercase letters/digits>. Проверка синтаксиса не доказывает принадлежность ID аккаунту.
 
-```powershell
-$python = (py -3.14 -c "import sys; print(sys.executable)").Trim()
-$client = 'C:\path\to\verified\tunnel-client.exe'
-$db = Join-Path $PWD 'state\interface.sqlite'
-$profiles = Join-Path $env:LOCALAPPDATA 'NSS-A2A\tunnel'
-$env:CONTROL_PLANE_TUNNEL_ID = 'REPLACE_WITH_REAL_PLATFORM_TUNNEL_ID'
-& $python -B tunnel_connector.py prepare --client $client --db $db --profile-dir $profiles
+Пример Linux, без Codex backend:
+
+```bash
+export CONTROL_PLANE_TUNNEL_ID='REPLACE_WITH_REAL_PLATFORM_TUNNEL_ID'
+python tunnel_connector.py prepare \
+  --client /absolute/path/tunnel-client \
+  --db /absolute/path/state.sqlite \
+  --profile-dir /absolute/private/path/tunnel-profile
 ```
 
-The launcher writes a canonical JSON document in `.yaml` format (JSON is valid YAML), using the fields shown by `tunnel-client profiles samples show sample_mcp_stdio_local`. The profile contains a fixed stdio command and `env:CONTROL_PLANE_API_KEY`, never a key value. Exclusive creation protects an existing profile from overwrite. Changing the source location, Python path, database, tunnel ID or UI port requires reviewing/replacing the old non-secret profile deliberately.
+Значение REPLACE... намеренно не проходит проверку. Замените его локально настоящим ID. Не придумывайте ID для hosted запуска.
 
-## Check and launch
+Чтобы явно включить локальный Codex, добавьте одинаковые параметры во все prepare/check/doctor/run команды:
 
-If a protected runtime environment already supplies `CONTROL_PLANE_API_KEY`, use:
-
-```powershell
-& $python -B tunnel_connector.py check --client $client --db $db --profile-dir $profiles
-& $python -B tunnel_connector.py doctor --client $client --db $db --profile-dir $profiles
-& $python -B tunnel_connector.py run --client $client --db $db --profile-dir $profiles
+```bash
+--codex-executable /absolute/path/to/verified/native/codex \
+--codex-model qwen2.5:3b
 ```
 
-For a local interactive terminal, add `--prompt-key` to `doctor` and `run`. Each process reads its runtime key in a hidden prompt, passes it only through the child environment, and never writes it into the profile or command arguments. Non-interactive prompt fallback is refused. The key is not persisted, so a new launcher process prompts again.
+Разрешены модели qwen2.5:3b и qwen2.5:7b. Нужны Node 22.13+, соседний каталог a2a-js-v040-reviewed и локально установленная модель в Ollama. ELF/путь/версия — проверки конфигурации, не доказательство издателя бинарника; оператор должен заранее проверить официальный архив и его checksum. Windows wrappers, symlinks и произвольные дополнительные CLI-параметры этим режимом не принимаются.
 
-`check` is offline except for the local `--version` subprocess. It reports only booleans and does not prove network authorization, binary publisher identity or ChatGPT discovery. `doctor` is an explicit official client preflight with a 45-second limit; raw output is suppressed because diagnostics can include local config details. `run` stays in the foreground; stop it with Ctrl+C. No model task is submitted by the launcher.
+Launcher генерирует JSON-as-YAML с фиксированным sibling entrypoint, env:CONTROL_PLANE_API_KEY и ephemeral loopback health/admin listener. Ключа в файле нет. Создание эксклюзивное: существующий профиль не перезаписывается. Изменение Python/source/db/UIport/tunnelID/Codex executable/model требует осознанного пересоздания профиля; check отвергает отличие от ожидаемого полного содержимого.
 
-Open the shared UI at `http://127.0.0.1:8765`. Set `--ui-port` consistently for prepare/check/doctor/run to choose another port. The tunnel's own health/admin listener requests an ephemeral loopback port, independent of this UI. Ambient client profile/MCP/remote-UI/logging settings are stripped so they cannot replace the fixed profile. Session HTTPS proxy and CA environment are preserved. The spawned MCP process removes tunnel runtime/admin and OpenAI fallback keys from its environment before importing the shared runtime; this avoids accidental credential inheritance, but is not a process isolation proof.
+## Проверка и запуск
 
-## Verify from ChatGPT
+С теми же путями и, если выбраны, Codex-параметрами:
 
-Discover the nine dispatcher tools, call `dispatcher_health`, and confirm the expected local models. Submit a synthetic task with a fresh 32-character hexadecimal `request_id`; UUIDv4 hex is one valid choice, not a requirement. Reuse identical ID and payload on uncertain retries: same payload returns EXISTS, changed payload returns CONFLICT. Read it with `dispatcher_get_task`, retaining the ID. The catalog intentionally has no task enumeration; task status does not expose original prompts/rubrics or worker requests.
-
-A successful local doctor, daemon health or command-line MCP test is not proof of a ChatGPT app call. Keep the daemon running during discovery and every app call. Only a completed submit/status exchange initiated through the actual ChatGPT app proves that connection. Starting a worker and sandbox smoke are write tools; inspect the app's confirmation settings. No Codex task is exposed by this MCP catalog; CODEX_DISABLED is unchanged. AI COMPLETED is not human acceptance or GitHub publication.
-
-Offline launcher tests: `python -m unittest -v test_tunnel_connector`. Actual account authentication and tunnel exchange remain separate checks.
-
-Offline validation performed here: 12 launcher tests PASS. Official v0.0.18 accepted the generated JSON-as-YAML through `profiles add --from-file` in an isolated temporary directory and rejected a malformed YAML control case. Neither command started a tunnel, contacted an account, or ran a model.
-
-## Проверка транспорта без внешнего аккаунта
-
-```sh
-python verify_local_tunnel.py --client /absolute/path/to/tunnel-client --timeout 40
+```bash
+python tunnel_connector.py check --client /absolute/path/tunnel-client --db /absolute/path/state.sqlite --profile-dir /absolute/private/path/tunnel-profile
+python tunnel_connector.py doctor --client /absolute/path/tunnel-client --db /absolute/path/state.sqlite --profile-dir /absolute/private/path/tunnel-profile --prompt-key
+python tunnel_connector.py run --client /absolute/path/tunnel-client --db /absolute/path/state.sqlite --profile-dir /absolute/private/path/tunnel-profile --prompt-key
 ```
 
-Проверено на Linux с настоящим tunnel-client0.0.18 dev proxy: локальный control plane → stdio unified runtime → MCP initialize/list_tools(9)/health/submit/get/cancel. Задача сохранена и отменена. Это проверка транспорта без модели и внешнего аккаунта; hosted_tunnel_verified и chatgpt_app_verified остаются false. Временные процессы/профиль/БД удаляются. Не используйте этот dev proxy вместо внешней защищённой регистрации.
+Если защищённая среда уже передаёт CONTROL_PLANE_API_KEY, --prompt-key не нужен. Иначе doctor и run независимо запрашивают ключ скрыто в интерактивном терминале. Значение передаётся только через child environment; не сохраняется в файле/argv/отчёте. Неинтерактивный fallback запрещён.
+
+check выполняет только локальную проверку профиля/версии/наличия ключа. LOCAL_PREREQUISITES_READY не доказывает авторизацию, сетевой доступ или ChatGPT discovery. doctor запускает явную официальную диагностику с timeout 45s и не публикует её сырой вывод. run работает foreground, Ctrl+C останавливает owned runtime. Сам launcher модельную задачу не отправляет.
+
+UI слушает loopback 8765 по умолчанию; --ui-port можно одинаково изменить во всех командах. Не запускайте второго владельца на том же порту/БД. Local Codex service, если включён, получает собственный loopback port и случайный bearer в памяти. Недоступный Ollama оставляет его очередь невыполненной; liveness не является доказательством реальной inference.
+
+Ambient CONTROL_PLANE/MCP/Harpoon/remoteUI/logging overrides удаляются перед стартом tunnel-client. HTTPS proxy и CA trust сохраняются. Перед exec workspace удаляются tunnel/OpenAI keys и A2A_CODEX_RPC_URL/TOKEN: профиль без явного CLI-флага не может случайно подключиться к чужому ранее настроенному backend. Явный CLI launcher генерирует собственную новую RPC привязку. Это ограничение конфигурации и наследования ключей, не доказательство процессной изоляции.
+
+## Проверка из ChatGPT
+
+Каталог содержит 13 инструментов: 9 dispatcher/review/diagnostics и 4 Codex health/submit/get/cancel. MCP намеренно не перечисляет все задачи и не запускает произвольные процессы.
+
+Для локального Ollama review-loop используйте dispatcher_health, dispatcher_start_local_worker, dispatcher_submit_task и dispatcher_get_task. Для подготовленного Codex service — dispatcher_codex_health, dispatcher_codex_submit_task и dispatcher_codex_get_task. Передавайте новый request_id из 32 hex-символов; сохраняйте и повторяйте тот же ID и payload при неопределённом ответе. Изменённый payload под тем же ID вызывает конфликт. В статусах нет исходного prompt/rubric/worker request. CLI completed не означает AI review, человеческое принятие или публикацию.
+
+Только submit/status обмен, инициированный настоящим ChatGPT custom app через работающий hosted daemon, подтверждает внешнее подключение. Doctor, daemon health, SDK или devproxy сами по себе этого не подтверждают. Confirmation policy write-инструментов настраивается в аккаунте ChatGPT отдельно.
+
+## Проверенные результаты 28.10.2026
+
+- 16 offline launcher tests PASS; два регрессионных теста сначала воспроизвели утечку ambient RPC binding и затем прошли после исправления.
+- Настоящий официальный tunnel-client 0.0.18 devproxy → stdio run_workspace → MCP: 13 инструментов, health/submit/get/cancel PASS без ключей и модельных вызовов.
+- Тот же транспорт проверен с явной привязкой настоящего native Codex 0.163. Backend configured/available/authenticated; без неё configured=false даже при ambient RPC переменных. Health не объявляет execution_ready или Windows готовыми. CLI запускался только для version/startup, реальной модели в этих двух тестах не было.
+- Оба локальных control-plane fixtures очищены, hosted_tunnel_verified=false и chatgpt_app_verified=false. Hosted/admin API-запросов 0; модельных и платных вызовов 0.
+
+Команда базового локального transport check:
+
+```bash
+python verify_local_tunnel.py --client /absolute/path/tunnel-client --timeout 40
+```
+
+Это bounded dev fixture с локальным control plane, не способ обходить отсутствующие hosted права или настройки аккаунта.
