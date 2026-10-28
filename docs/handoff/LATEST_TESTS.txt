@@ -2,9 +2,11 @@ Snapshot verification 28.10.2026 (UTC+5):
 249 Python regressions PASS, 0 FAIL, existing integrated suite (25.801s).
 48 JavaScript backend tests PASS, 0 FAIL, 0 SKIP (2.338s).
 9 UI behavior tests PASS, 0 FAIL, 0 SKIP.
-5 additional managed acceptance boundary tests PASS separately (1.004s).
+6 managed acceptance boundary tests PASS separately, including non-main-thread children and managed-kernel PID/PPID fallback.
 Actual hosted ChatGPT/Tunnel, live inference after these changes, and Windows isolation: NOT VERIFIED by these runs.
 The real managed-launcher CI workflow has been prepared; its result must be inspected separately.
 Retain semantic failure: real-model math CI40564442377 at37de6a5 was REJECTED; wrong numeric answer was not approved.
 Earlier real-path PASS evidence remains historical, scoped to the tested paths: 40520744532,40521441115,40564442342.
 See PROGRESS_20261028.md for current changes and limits. Optional local Tunnel/CLI binding is now integrated; tools/handoff-wip remains historical material.
+Real managed CI40615191425 FAILED final lifecycle observation; observer corrected after a failing real-process reproduction; waiting for fresh real acceptance CI. New CI result must be inspected.
+Real two-role model CI40615191408 PASS at a49901f: 8Mbit/s,86.4decimalGB,APPROVE with recommendations; fixed seed0/temperature0. This is a single synthetic-case result.

@@ -187,6 +187,37 @@ class OwnedProcesses:
         except (OSError, IndexError):
             return None
 
+    @staticmethod
+    def children(pid):
+        found, supported = set(), False
+        try:
+            tasks = list(Path(f'/proc/{pid}/task').iterdir())
+        except OSError:
+            tasks = []
+        for task in tasks:
+            try:
+                found.update(int(value) for value in (task / 'children').read_text().split())
+                supported = True
+            except OSError:
+                pass
+        if supported:
+            return found
+        # Some managed kernels omit task/children entirely. Read only the
+        # numeric PID/PPID relation from stat, then inspect names/start times
+        # only for descendants. No argv, environment or unrelated process
+        # details are stored, logged or used for cleanup.
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                text = (entry / 'stat').read_text()
+                tail = text[text.rfind(')') + 2:].split()
+                if int(tail[1]) == pid:
+                    found.add(int(entry.name))
+            except (OSError, ValueError, IndexError):
+                pass
+        return found
+
     def _watch(self):
         while not self.stop.wait(.025):
             process = self.process
@@ -202,10 +233,10 @@ class OwnedProcesses:
                 identity = self.identity(pid)
                 if identity:
                     self.seen[pid] = identity
-                try:
-                    pending.extend(int(value) for value in Path(f'/proc/{pid}/task/{pid}/children').read_text().split())
-                except OSError:
-                    pass
+                # Linux records children on the spawning task, not only the
+                # thread-group leader. Go can spawn the MCP backend from any
+                # runtime thread; inspect every owned task's child list.
+                pending.extend(self.children(pid))
 
     def close(self):
         self.stop.set()
@@ -230,7 +261,7 @@ class OwnedProcesses:
                 time.sleep(.2)
 
     def remaining(self):
-        return [pid for pid, identity in self.seen.items() if self.identity(pid) == identity]
+        return [pid for pid, identity in list(self.seen.items()) if self.identity(pid) == identity]
 
 
 def ui_request(port, route):

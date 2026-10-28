@@ -3,12 +3,63 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+import subprocess
+import sys
+import time
+import select
+import os
+import signal
 import unittest
 
-from verify_managed_workspace import RecordingProxy, measured_usage, request_record, validate_records
+from verify_managed_workspace import OwnedProcesses, RecordingProxy, measured_usage, request_record, validate_records
 
 
 class BoundaryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux /proc ownership observer')
+    def test_observer_tracks_children_created_by_non_main_thread(self):
+        fixture = r'''
+import subprocess,sys,threading
+ready=threading.Event()
+child=None
+def worker():
+    global child
+    child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'],
+                           stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    print(child.pid,flush=True)
+    ready.set()
+    child.wait()
+thread=threading.Thread(target=worker)
+thread.start()
+ready.wait()
+sys.stdin.readline()
+child.terminate()
+thread.join()
+'''
+        process = subprocess.Popen([sys.executable, '-c', fixture], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+        observer = OwnedProcesses()
+        observer.process = process
+        try:
+            self.assertTrue(select.select([process.stdout], [], [], 3)[0], 'Fixture did not start')
+            child = int(process.stdout.readline())
+            deadline = time.monotonic() + 1
+            while child not in observer.seen and time.monotonic() < deadline:
+                time.sleep(.025)
+            self.assertIn(child, observer.seen, 'Worker-thread child was invisible to the observer')
+        finally:
+            observer.close()
+            if process.poll() is None:
+                process.stdin.write(b'stop\n')
+                process.stdin.flush()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=3)
+            process.stdin.close()
+            process.stdout.close()
+
     def request(self, **changes):
         data = dict(model='qwen2.5:3b', tools=[])
         data.update(changes)
