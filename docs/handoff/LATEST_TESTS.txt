@@ -1,3 +1,4 @@
+Latest full integrated suite after executable-identity fix: 256 Python PASS, 0 FAIL (25.170s); 7 managed boundary tests PASS.
 Current full integrated Python suite: 255 PASS, 0 FAIL (26.138s), after managed observer integration.
 Snapshot verification 28.10.2026 (UTC+5):
 249 Python regressions PASS, 0 FAIL, existing integrated suite (25.801s).
@@ -11,3 +12,4 @@ Earlier real-path PASS evidence remains historical, scoped to the tested paths: 
 See PROGRESS_20261028.md for current changes and limits. Optional local Tunnel/CLI binding is now integrated; tools/handoff-wip remains historical material.
 Real managed CI40615191425 FAILED final lifecycle observation; observer corrected after a failing real-process reproduction; waiting for fresh real acceptance CI. New CI result must be inspected.
 Real two-role model CI40615191408 PASS at a49901f: 8Mbit/s,86.4decimalGB,APPROVE with recommendations; fixed seed0/temperature0. This is a single synthetic-case result.
+Managed acceptance CI40616110471 FAIL retained. Node24 main-thread naming reproduced; executable-identity fix under verification.

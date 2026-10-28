@@ -9,12 +9,27 @@ import time
 import select
 import os
 import signal
+import shutil
 import unittest
 
 from verify_managed_workspace import OwnedProcesses, RecordingProxy, measured_usage, request_record, validate_records
 
 
 class BoundaryTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux' and shutil.which('node'), 'Linux and Node runtime')
+    def test_process_identity_uses_executable_not_main_thread_name(self):
+        process = subprocess.Popen(['node', '-e', 'setTimeout(()=>{},30000)'],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL)
+        try:
+            time.sleep(.1)
+            identity = OwnedProcesses.identity(process.pid)
+            self.assertIsNotNone(identity)
+            self.assertEqual(identity[1], 'node')
+        finally:
+            process.terminate()
+            process.wait(timeout=3)
+
     @unittest.skipUnless(sys.platform == 'linux', 'Linux /proc ownership observer')
     def test_observer_tracks_children_created_by_non_main_thread(self):
         fixture = r'''

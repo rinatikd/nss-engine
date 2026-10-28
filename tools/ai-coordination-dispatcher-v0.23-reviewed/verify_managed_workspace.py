@@ -183,7 +183,10 @@ class OwnedProcesses:
         try:
             text = Path(f'/proc/{pid}/stat').read_text()
             tail = text[text.rfind(')') + 2:].split()
-            return tail[19], Path(f'/proc/{pid}/comm').read_text().strip()
+            # Node 24 renames its main task to "MainThread". comm is a
+            # thread label, not executable identity. Retain only the owned
+            # executable basename, never its private absolute path or argv.
+            return tail[19], Path(os.readlink(f'/proc/{pid}/exe')).name
         except (OSError, IndexError):
             return None
 
