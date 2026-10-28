@@ -52,9 +52,9 @@ jobs:
         run: node tools/chrome-bridge-rc1/build-source-candidate.mjs --output "$CANDIDATE_DIR"
       - name: Run full candidate Node test suite
         working-directory: ${{ env.CANDIDATE_DIR }}
-        run: node --test tests/*.test.mjs
+        run: node "$GITHUB_WORKSPACE/tools/chrome-bridge-rc1/ci-diagnostics.mjs" node-tests
       - name: Parse PowerShell scripts without executing them
-        if: runner.os == 'Windows'
+        if: always() && runner.os == 'Windows'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -106,4 +106,4 @@ jobs:
       # synthetic DOM fixtures by the test. No user sessions or provider APIs.
       - name: Run synthetic three-origin Chrome extension lifecycle
         working-directory: ${{ env.CANDIDATE_DIR }}
-        run: xvfb-run -a node tests/three-origin-e2e.mjs
+        run: node "$GITHUB_WORKSPACE/tools/chrome-bridge-rc1/ci-diagnostics.mjs" synthetic-mv3

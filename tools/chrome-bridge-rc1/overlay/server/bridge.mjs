@@ -115,9 +115,17 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     const st = a.wait;
     if (!st) throw Error('Nothing was sent to this agent: call agent_send first.');
     if (st.result) return st.result;
+    if (!CHAT_ORIGINS.has(st.origin) || typeof st.conversationFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(st.conversationFingerprint))
+      throw Error('WAIT_CONTEXT_UNAVAILABLE: original conversation identity is unavailable; inspect the chat and do not resubmit automatically.');
     const deadline = Date.now() + timeoutSec * 1000;
     for (;;) {
       const p = await enqueue('agent_peek', { tabId: a.tabId });
+      let sameConversation = false;
+      try {
+        sameConversation = p?.context?.verified === true && p.context.origin === st.origin &&
+          conversationFingerprint(p.context.origin, p.context.conversationId, journalKey) === st.conversationFingerprint;
+      } catch { /* Missing or invalid page context must fail closed. */ }
+      if (!sameConversation) throw Error('WAIT_CONTEXT_CHANGED_OR_UNVERIFIED: tab no longer verifies the original conversation; inspect the chat and do not resubmit automatically.');
       const now = Date.now();
       if (p.text !== st.lastText) { st.lastText = p.text; st.stableSince = now; }
       const fresh = p.count > st.baseline && p.text.length > 0;
@@ -147,7 +155,8 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     const previous = sendJournal.get(requestId);
     if (previous) {
       if (previous.agent !== name || previous.tabId !== a.tabId || previous.payloadFingerprint !== payloadFingerprint) throw Error('SEND_ID_CONFLICT');
-      if (previous.baseline !== null && !a.wait) a.wait = { baseline: previous.baseline, lastText: '', stableSince: Date.now(), result: null };
+      if (previous.baseline !== null && !a.wait) a.wait = { baseline: previous.baseline, origin: previous.origin,
+        conversationFingerprint: previous.conversationFingerprint, lastText: '', stableSince: Date.now(), result: null };
       return { sent: false, transportConfirmed: previous.transportConfirmed === true, deliveryStatus: previous.status,
         requestId, duplicate: true, origin: previous.origin, conversationFingerprint: previous.conversationFingerprint,
         hint: 'This requestId was already attempted. No new browser action was sent.' };
@@ -186,7 +195,8 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     try { sendJournal.settle(requestId, deliveryStatus, { baseline: r.baseline, transportConfirmed: !!r.confirmed }); }
     catch { /* The write-ahead UNKNOWN record still blocks this requestId from dispatching again. */ }
     a.sending = null;
-    a.wait = { baseline: r.baseline, lastText: '', stableSince: Date.now(), result: null };
+    a.wait = { baseline: r.baseline, origin: context.origin, conversationFingerprint: conversationFp,
+      lastText: '', stableSince: Date.now(), result: null };
     return { sent: true, transportConfirmed: !!r.confirmed, deliveryStatus, sendOutcome: outcome.state,
       origin: context.origin, conversationFingerprint: conversationFp,
       outcomeReasons: outcome.reasons, requestId,

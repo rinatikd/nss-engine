@@ -128,9 +128,13 @@ export async function pageAction(name, args, expectedOrigin) {
     if (name === 'agent_peek') {
       const list = replies();
       const last = list[list.length - 1];
+      // Read identity and reply in the same synchronous page execution so a
+      // navigation cannot be hidden between a separate context probe and peek.
+      const id = conversationId();
       return {
         count: list.length, text: last ? String(last.innerText || '').trim().slice(0, 100000) : '',
         generating: qa(A.stop).some(vis), composerFound: !!composerEl(), url: location.href,
+        context: { verified: !!id, origin: location.origin, conversationId: id },
       };
     }
 

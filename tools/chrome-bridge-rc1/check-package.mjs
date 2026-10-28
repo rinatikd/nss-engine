@@ -16,7 +16,7 @@ assert.equal(sourceManifest.schemaVersion, 1, 'Unsupported source manifest schem
 assert.ok(manifest.updatedFiles && typeof manifest.updatedFiles === 'object' &&
   !Array.isArray(manifest.updatedFiles), 'Missing updatedFiles map');
 const expected = Object.keys(manifest.updatedFiles).sort();
-assert.equal(expected.length, 29, 'RC1 must contain all 29 overlay files');
+assert.equal(expected.length, 30, 'RC1 must contain all 30 overlay files');
 
 function inventory(directory, prefix = '') {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
@@ -44,7 +44,7 @@ function verifyFiles(directory, files, label, count) {
   console.log(`Verified ${names.length} byte-exact ${label} SHA256 hashes and inventory.`);
   return names;
 }
-verifyFiles(overlay, manifest.updatedFiles, 'Overlay', 29);
+verifyFiles(overlay, manifest.updatedFiles, 'Overlay', 30);
 const original = verifyFiles(baseline, sourceManifest.baselineFiles, 'Baseline', 39);
 for (const relative of original) {
   assert.equal(sourceManifest.baselineFiles[relative], manifest.originalFiles?.[relative],
