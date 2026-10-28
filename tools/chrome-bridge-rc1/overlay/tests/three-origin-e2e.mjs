@@ -109,8 +109,14 @@ try {
   assert.equal(connected.connected, true);
 
   for (const p of providers) {
+    await control.bringToFront();
     const row = control.locator('#sites li').filter({ hasText: p.origin });
     await row.getByText('Grant control', { exact: true }).click();
+    await control.waitForFunction(origin => {
+      const row = [...document.querySelectorAll('#sites li')].find(li => li.dataset.origin === origin);
+      return row?.querySelector('[data-ttl]')?.textContent.startsWith('До окончания:') &&
+        document.querySelector('#log')?.textContent.includes('Control granted: ' + origin);
+    }, p.origin, { timeout: 5000 });
     const tab = (await rpc('browser_tabs')).find((t) => t.url === p.origin + p.path);
     assert.ok(tab, `missing ${p.name} fixture tab`);
     const binding = await rpc('agent_bind', { name: p.name, tabId: tab.tabId });

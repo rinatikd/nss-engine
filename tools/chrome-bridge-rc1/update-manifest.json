@@ -884,7 +884,7 @@
     "README_RU.md": "647cfec4cbc2a222f6abd7e6b30120fd338fc654422168427474e893492b9183",
     "Verify-Live.ps1": "b0aae99301b3fa8f939f25177294f28960746214df62bf1ff138b79357e90aab",
     "plugin.json": "ad8eaf299e50c389cc05d42e4db6c9b3dea189b91a5dc5c67b6b37a27e7d5f63",
-    "server/bridge.mjs": "25c3e4edc35853b3ec25a2e12428b33f4b1a20a038cb947266e5b127adff2a62",
+    "server/bridge.mjs": "99069b12fa9f2d86f497d9a4de34c18c77282d330adabc17e94bcf39d8f71fff",
     "server/check-discovery.mjs": "667b7da294aefcccc957ecafac337b81f42e70205602191df1534e837eb81938",
     "server/rpc-envelope.mjs": "afa745a11f3f743a5dfe493eac6fc68041194228babd3cfb1882766225f4b235",
     "server/stdio.mjs": "0a6a6737fb566a767e288268f66f38a575ae21f423fac14f7b657ae3eb48cdad",
@@ -900,12 +900,13 @@
     "tests/bridge-envelope.test.mjs": "d795b132c2e9f962accf0e6d10efd7882f24a51efc9666802d36836560e29a10",
     "tests/direct-codex-mcp.test.mjs": "e057ffff1f8d7e423b4add22dbf61003a79ccbf63a06a5d559f9a2233da71912",
     "tests/send-concurrency.test.mjs": "1f5b16db23e18e9b051a3b56cacba26ab2fc1c23ee4f84c6d05f0cfa6f2c54fd",
-    "extension/control.js": "7b39bc721768be7656a0005cfbc061379374f7f96d474a16c3b346dfd09836eb",
+    "extension/control.js": "62f975af225b8d1983164e5c7a07be95e01043851e017464a5310e71220a093b",
     "extension/manifest.json": "f891d15511e10c1a8a613c8532498556abdf7c99850fed80cc6f9199dd91dd28",
     "extension/page.js": "f20779fec1f7f1f08869d1c24213e1f1731752f11b83532a3ee53cd1b0a6dd05",
     "CONTROL_PERMISSIONS.md": "c4b82e13218f1137ef5b0c97b7e8c823997d23a91337d672b21f9eeeb7bad5fb",
     "tests/wait-conversation.test.mjs": "8d8a0a58b184d2730768e14ab46f96672beb88aef99ef73cd5731125609e0747",
     "tests/codex-runtime.test.mjs": "47cb6f5e16340118fa7b880bc21c1ee5345fb631d69708d5d12735c9c2d7b09d",
-    "tests/three-origin-e2e.mjs": "50e53e8afb7295060dab8e14aa2af5a635efb8b1fc2afd3528efbdf9b80f347f"
+    "tests/three-origin-e2e.mjs": "ecd534e0746e10cb61dc53e116eaea8d5b354603f14ea4b3bbe3e5e3becfca6c",
+    "tests/control-handshake.test.mjs": "284e8be5af6be5ffc7599ce4392f6706edb9f16d37db30ca753f4e97630851f1"
   }
 }

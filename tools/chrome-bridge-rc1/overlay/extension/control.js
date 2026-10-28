@@ -33,7 +33,16 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 const timestamp = () => new Intl.DateTimeFormat('ru-RU', {timeZone:'Asia/Almaty', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}).format(new Date());
 function taskStatus(label, value, detail='') { $('taskState').textContent=label; $('taskProgress').value=value; $('taskTimes').textContent=timestamp() + (detail ? ' · '+detail : ''); }
-function refreshGrantLabels() { for (const [origin, expires] of grants.grants) { const row=[...$('sites').children].find(li=>li.dataset.origin===origin); if (!row) continue; const ttl=row.querySelector('[data-ttl]'); if (ttl) ttl.textContent='До окончания: '+Math.max(0,Math.ceil((expires-Date.now())/60000))+' мин'; } }
+function refreshGrantLabels() {
+  for (const row of $('sites').children || []) {
+    const expires = grants.grants.get(row.dataset.origin);
+    const ttl = row.querySelector('[data-ttl]');
+    if (ttl) ttl.textContent = expires > Date.now()
+      ? 'До окончания: ' + Math.ceil((expires - Date.now()) / 60000) + ' мин' : 'Нет активного разрешения';
+    const button = row.querySelector('[data-control-grant]');
+    if (button) button.disabled = !running || !grants.epoch;
+  }
+}
 setInterval(refreshGrantLabels,30000);
 const observedOrigins = new Map();
 chrome.tabs.onUpdated.addListener((id, change) => {
@@ -94,6 +103,7 @@ async function renderSites() {
     if (CONTROL_ORIGINS[origin]) {
       const grant = document.createElement('button');
       grant.textContent = 'Grant control';
+      grant.dataset.controlGrant = '';
       grant.onclick = (event) => {
         try {
           if (!running || !event.isTrusted) throw Error('Connect first; local click required');
@@ -340,14 +350,18 @@ async function handle(command) {
 async function loop(gen) {
   while (running && gen === generation) {
     try {
-      const { command, epoch } = await post('/bridge/poll', {}, 30000);
-      if (!epoch || grants.epoch !== epoch) grants.reset(epoch || null);
+      const { command, epoch } = await post('/bridge/poll', grants.epoch ? {} : { hello: true }, 30000);
       if (!running || gen !== generation) break;
+      if (!epoch || grants.epoch !== epoch) grants.reset(epoch || null);
+      refreshGrantLabels();
       setStatus('Подключено · ожидание команд');
       if (!command && $('taskProgress').value !== 100) taskStatus('Ожидание команд',0);
       if (command) await handle(command);
     } catch (e) {
       if (!running || gen !== generation) break;
+      injectedControls.clear();
+      grants.reset();
+      refreshGrantLabels();
       setStatus('Ошибка: ' + e.message);
       await sleep(2000);
     }
@@ -357,6 +371,7 @@ function stop() {
   running = false;
   injectedControls.clear();
   grants.reset();
+  refreshGrantLabels();
   generation++;
   pollAbort?.abort();
   for (const a of [...approvals.values()]) a.deny();
@@ -372,6 +387,7 @@ $('connect').onclick = async () => {
   // Удержание Web Lock помогает Chrome не «замораживать» вкладку в фоне.
   navigator.locks.request('chrome-bridge-control', () => new Promise((r) => { releaseLock = r; }));
   running = true;
+  refreshGrantLabels();
   pollAbort = new AbortController();
   loop(generation);
 };

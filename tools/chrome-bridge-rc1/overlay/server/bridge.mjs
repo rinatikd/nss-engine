@@ -318,6 +318,9 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         if (out === null) { res.writeHead(202); res.end(); } else json(res, 200, out);
       } else if (url.pathname === '/bridge/poll') {
         lastSeen = Date.now();
+        // Initialize local grants before the first long poll can park or
+        // dispatch a command. Legacy empty polls retain their queue behavior.
+        if (body?.hello === true) return json(res, 200, { command: null, epoch });
         if (activeId === null && queue.length) {
           const command = queue.shift();
           activeId = command.id;

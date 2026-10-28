@@ -113,3 +113,35 @@ jobs:
       - name: Run synthetic three-origin Chrome extension lifecycle
         working-directory: ${{ env.CANDIDATE_DIR }}
         run: node "$GITHUB_WORKSPACE/tools/chrome-bridge-rc1/ci-diagnostics.mjs" synthetic-mv3
+
+  package-source:
+    name: Package accepted source candidate
+    needs: [kit, synthetic-mv3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Select clean package directory
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/chrome-bridge-package-${{ github.run_id }}-${{ github.run_attempt }}
+        run: printf 'CANDIDATE_DIR=%s\n' "$CANDIDATE_DIR" >> "$GITHUB_ENV"
+      # Build afresh after acceptance so test state, browser profiles and npm
+      # dependencies cannot enter the downloadable source artifact.
+      - name: Reconstruct clean allowlisted source candidate
+        run: node tools/chrome-bridge-rc1/build-source-candidate.mjs --output "$CANDIDATE_DIR"
+      - name: Upload accepted source candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chrome-Bridge-0.2.1-rc.1-source
+          path: ${{ env.CANDIDATE_DIR }}/
+          retention-days: 30
+          if-no-files-found: error
+          include-hidden-files: false
