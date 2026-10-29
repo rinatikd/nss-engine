@@ -55,7 +55,7 @@ try{
  // Establish the browser connection through the real authenticated protocol.
  await (await post('/bridge/poll',{hello:true},config.browserToken)).json();
  const binding=await tool('agent_bind',{name:'claude',tabId:7});assert.ok(!binding.isError);
- baseline=sample();
+ baseline=sample();peakRss=baseline.rss;
  while(Date.now()<deadline){
   const id='soak_'+iterations,text='synthetic local endurance '+iterations;
   const sent=await tool('agent_ask',{name:'claude',text,requestId:id,timeoutSec:1});
