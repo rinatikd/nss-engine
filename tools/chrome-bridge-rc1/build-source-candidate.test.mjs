@@ -4,10 +4,48 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import vm from 'node:vm';
 import {spawnSync} from 'node:child_process';
 
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const windowsOnly = process.platform === 'win32' ? false : 'Requires native Windows filesystem semantics';
+
+function configureBrowserFixture(t, controlSource) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-endpoint-'));
+  t.after(() => fs.rmSync(dir, {recursive: true, force: true}));
+  const controlFile = path.join(dir, 'control.js');
+  fs.writeFileSync(controlFile, controlSource);
+  const source = fs.readFileSync(new URL('./overlay/tests/three-origin-e2e.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('  const controlJs =');
+  const end = source.indexOf('\n  const channel =', start);
+  assert.ok(start >= 0 && end > start, 'fixture configuration block must be present');
+  const base = 'http://127.0.0.1:49152';
+  const manifest = {};
+  vm.runInNewContext(source.slice(start, end), {fs, path, assert, extensionDir: dir,
+    manifestPath: path.join(dir, 'manifest.json'), manifest, base,
+    providers: [{origin: 'https://claude.ai'}]});
+  return {control: fs.readFileSync(controlFile, 'utf8'), manifest};
+}
+
+test('browser fixture uses its owned server with standard and isolated package ports', t => {
+  for (const port of [17381, 17383, 17384]) {
+    for (const newline of ['\n', '\r\n']) {
+      const {control, manifest} = configureBrowserFixture(t, `const BRIDGE = 'http://127.0.0.1:${port}';${newline}// preserved${newline}`);
+      assert.match(control, /const BRIDGE = 'http:\/\/127\.0\.0\.1:49152';/);
+      assert.ok(control.endsWith(`// preserved${newline}`));
+      assert.deepEqual(Array.from(manifest.host_permissions), ['http://127.0.0.1:49152/*', 'https://claude.ai/*']);
+    }
+  }
+});
+
+test('browser fixture refuses missing, ambiguous and invalid loopback declarations', t => {
+  for (const source of ['', "const BRIDGE = 'http://127.0.0.1:0';\n",
+    "const BRIDGE = 'http://127.0.0.1:65536';\n",
+    "const BRIDGE = 'https://example.com';\n",
+    "const BRIDGE = 'http://127.0.0.1:17381';\n".repeat(2)]) {
+    assert.throws(() => configureBrowserFixture(t, source), /fixture/);
+  }
+});
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'source candidate Кириллица-'));

@@ -47,15 +47,23 @@ try {
   bridge = bridgeFor({});
   await listen(bridge);
   const port = bridge.address().port;
-  assert.notEqual(port, 17381);
   const base = `http://127.0.0.1:${port}`;
   const controlJs = path.join(extensionDir, 'control.js');
-  fs.writeFileSync(controlJs, fs.readFileSync(controlJs, 'utf8').replace('http://127.0.0.1:17381', base));
+  const controlSource = fs.readFileSync(controlJs, 'utf8');
+  const bridgeDeclarations = [...controlSource.matchAll(/^const BRIDGE = '(http:\/\/127\.0\.0\.1:(\d{1,5}))';\r?$/gm)];
+  assert.equal(bridgeDeclarations.length, 1, 'fixture requires exactly one loopback BRIDGE declaration');
+  const [, , configuredPort] = bridgeDeclarations[0];
+  assert.ok(Number(configuredPort) > 0 && Number(configuredPort) <= 65535, 'fixture bridge port must be valid');
+  const configuredControl = controlSource.replace(bridgeDeclarations[0][0], `const BRIDGE = '${base}';`);
+  assert.ok(configuredControl.includes(`const BRIDGE = '${base}';`), 'fixture must use its own listening server');
+  fs.writeFileSync(controlJs, configuredControl);
   manifest.host_permissions = [base + '/*', ...providers.map((p) => p.origin + '/*')];
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
+  const channel = process.env.CHROME_BRIDGE_E2E_CHANNEL || 'chromium';
+  assert.ok(['chromium', 'msedge'].includes(channel), 'Use Playwright Chromium or Microsoft Edge for automated unpacked-extension loading');
   context = await chromium.launchPersistentContext(path.join(runDir, 'profile'), {
-    channel: 'chromium', headless: false, viewport: { width: 1100, height: 800 },
+    channel, headless: false, viewport: { width: 1100, height: 800 },
     args: [`--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`, '--window-position=-1200,-1200'],
   });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 15000 });
