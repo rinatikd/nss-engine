@@ -36,10 +36,14 @@ export async function pageAction(name, args, expectedOrigin) {
           location.origin !== expectedOrigin || !(args.controlExpires > Date.now())) throw Error('Control denied: local re-grant required');
       if (!args.controlAuthorization) throw Error('Control denied: live command authorization required');
       const permission = await chrome.runtime.sendMessage({ type: 'chrome-bridge-control-check', authorization: args.controlAuthorization });
-      if (permission?.allowed !== true) throw Error('Control denied: command stopped, expired or revoked');
+      if (permission?.allowed !== true || location.origin !== expectedOrigin ||
+          !(args.controlExpires > Date.now()) || (args.commandExpires && !(args.commandExpires > Date.now())))
+        throw Error('Control denied: command stopped, expired or revoked');
     };
     if (['browser_click', 'browser_fill', 'agent_send'].includes(name)) await control();
     if (location.origin !== expectedOrigin) throw Error('Tab navigated to another origin');
+    if (['browser_click', 'browser_fill'].includes(name) && location.href !== args.expectedUrl)
+      throw Error('Tab navigated after approval');
 
     if (name === 'exists') return { found: !!one(args.selector), loaded: document.readyState === 'complete' };
 
@@ -193,6 +197,14 @@ export async function pageAction(name, args, expectedOrigin) {
       if (!btn) throw Error('Unique enabled send button required');
       await control();
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) throw Error('Conversation changed before dispatch; do not retry automatically');
+      // Authorization crosses an asynchronous extension boundary. Recheck the
+      // exact draft and button synchronously before the irreversible click.
+      if (single(A.composer) !== composer || textOf(composer) !== text.trim())
+        throw Error('Composer or draft changed before dispatch; do not retry automatically');
+      const currentButtons = qa(A.send).filter(vis);
+      if (currentButtons.length !== 1 || currentButtons[0] !== btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true')
+        throw Error('Unique enabled send button changed before dispatch');
+      if (qa(A.stop).some(vis)) throw Error('Agent is still generating');
       btn.click();
       await sleep(1200);
       const confirmed = qa(A.stop).some(vis) || replies().length > baseline;

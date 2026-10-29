@@ -54,7 +54,7 @@ export async function verifyLive({ config, port = 17381, agent, sendTest = false
       if (!response.ok) fail('LOCAL_BRIDGE_HTTP_REJECTED');
       let envelope;
       try { envelope = await response.json(); } catch { fail('MCP_RESPONSE_INVALID'); }
-      if (envelope.jsonrpc !== '2.0' || envelope.id !== id || envelope.error || !Object.hasOwn(envelope, 'result')) fail('MCP_RESPONSE_REJECTED');
+      if (envelope?.jsonrpc !== '2.0' || envelope.id !== id || Object.hasOwn(envelope, 'error') || !Object.hasOwn(envelope, 'result')) fail('MCP_RESPONSE_REJECTED');
       return envelope.result;
     }
     async function tool(name, args = {}) {
@@ -142,7 +142,9 @@ async function main() {
     const temporary = output + '.' + crypto.randomUUID() + '.tmp';
     const descriptor = fs.openSync(temporary, 'wx', 0o600);
     try {
-      fs.writeSync(descriptor, JSON.stringify(report, null, 2) + '\n');
+      // writeSync may legally write only part of the buffer. Persist the entire
+      // report before dispatch so the stable request ID survives interruption.
+      fs.writeFileSync(descriptor, JSON.stringify(report, null, 2) + '\n');
       fs.fsyncSync(descriptor);
     } finally { fs.closeSync(descriptor); }
     fs.renameSync(temporary, output);

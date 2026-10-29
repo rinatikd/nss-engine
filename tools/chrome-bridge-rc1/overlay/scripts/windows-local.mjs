@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../server/bridge.mjs';
 
@@ -24,10 +25,24 @@ async function main() {
   const port = Number(process.env.CHROME_BRIDGE_PORT || 17381);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new LocalError('CHROME_BRIDGE_PORT must be an integer from 1 to 65535.');
   if (command === 'setup') {
+    if (extensionId && process.env.CHROME_BRIDGE_EXTENSION_ID && process.env.CHROME_BRIDGE_EXTENSION_ID !== extensionId) throw new LocalError('CHROME_BRIDGE_EXTENSION_ID conflicts with the requested extension ID.');
     const config = loadConfig(stateDir);
     if (extensionId) {
       config.extensionId = extensionId;
-      fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+      // Keep the existing private state intact if writing the new pin fails.
+      const temporary = file + '.' + crypto.randomUUID() + '.tmp';
+      let descriptor;
+      try {
+        descriptor = fs.openSync(temporary, 'wx', 0o600);
+        fs.writeFileSync(descriptor, JSON.stringify(config, null, 2) + '\n');
+        fs.fsyncSync(descriptor);
+        fs.closeSync(descriptor);
+        descriptor = undefined;
+        fs.renameSync(temporary, file);
+      } finally {
+        if (descriptor !== undefined) fs.closeSync(descriptor);
+        try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
     }
     console.log('Local configuration ready. Existing tokens preserved. No MCP registration changed.');
     if (!extensionPattern.test(config.extensionId || '')) {
@@ -57,7 +72,7 @@ async function main() {
     if (!response.ok) throw new LocalError('Local bridge rejected the diagnostic request. Check port and private configuration.');
     let rpc;
     try { rpc = await response.json(); } catch { throw new LocalError('Local endpoint did not return valid MCP JSON.'); }
-    if (rpc.id !== 'doctor' || rpc.error || rpc.result?.isError) throw new LocalError('Local MCP diagnostic failed.');
+    if (rpc?.jsonrpc !== '2.0' || rpc.id !== 'doctor' || Object.hasOwn(rpc, 'error') || !Object.hasOwn(rpc, 'result') || rpc.result?.isError) throw new LocalError('Local MCP diagnostic failed.');
     const content = rpc.result?.content?.find(item => item.type === 'text')?.text;
     let status;
     try { status = JSON.parse(content); } catch { throw new LocalError('Local MCP diagnostic returned an unexpected status.'); }

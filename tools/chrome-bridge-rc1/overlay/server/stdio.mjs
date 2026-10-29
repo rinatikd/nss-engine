@@ -9,8 +9,22 @@ export function runStdio({ input = process.stdin, output = process.stdout, diagn
   const lines = readline.createInterface({ input });
   let inflight = 0;
   let closed = false;
+  // A failing write's callback can precede asynchronous stream destruction.
+  // Retain the handler through that error/close event, then release both listeners.
+  const initiallyDestroyed = output.destroyed;
+  let outputFailed = false, outputTerminated = false, completed = false;
+  const cleanupOutput = () => {
+    output.off('error', onOutputError);
+    output.off('close', onOutputError);
+  };
+  const onOutputError = () => { outputTerminated = true; if (completed) cleanupOutput(); };
+  output.on('error', onOutputError);
+  output.on('close', onOutputError);
   const write = value => new Promise((resolve, reject) => {
-    output.write(JSON.stringify(value) + '\n', error => error ? reject(error) : resolve());
+    output.write(JSON.stringify(value) + '\n', error => {
+      if (error) { outputFailed = true; reject(error); }
+      else resolve();
+    });
   });
   const rpcError = (id, code, message) => write({ jsonrpc: '2.0', id, error: { code, message } });
   return new Promise(resolve => {
@@ -45,6 +59,9 @@ export function runStdio({ input = process.stdin, output = process.stdout, diagn
           const reply = JSON.parse(body);
           if (!reply || reply.jsonrpc !== '2.0' || reply.id !== msg.id ||
               Object.hasOwn(reply, 'result') === Object.hasOwn(reply, 'error')) throw Error('Invalid bridge response');
+          if (Object.hasOwn(reply, 'error') && (!reply.error || typeof reply.error !== 'object' ||
+              Array.isArray(reply.error) || !Number.isInteger(reply.error.code) ||
+              typeof reply.error.message !== 'string')) throw Error('Invalid bridge error');
           // Re-serialize so upstream whitespace cannot break stdio line framing.
           await write(reply);
         } catch {
@@ -53,6 +70,9 @@ export function runStdio({ input = process.stdin, output = process.stdout, diagn
         }
       })().catch(() => { diagnostics.write('Bridge stdio output failed.\n'); }).finally(() => { inflight--; maybeDone(); });
     });
+  }).finally(() => {
+    completed = true;
+    if (!outputFailed || outputTerminated || initiallyDestroyed) cleanupOutput();
   });
 }
 

@@ -1,4 +1,4 @@
-# Chrome Bridge 0.2.1-rc.1 — кандидат для локальной приёмки
+# Chrome Bridge 0.2.1-rc.2 — кандидат для локальной приёмки
 
 Дата: 28.10.2026. Основа — Chrome-Bridge-Handoff-20261028-RELEASE.zip,
 SHA256 b1dc2efc8479be8e6e7af18b9b05f36f7e0d38ed2fc9f5b1829c1fbfe3d208f3.

@@ -20,5 +20,5 @@
   "background": {
     "service_worker": "background.js"
   },
-  "version_name": "0.2.1-rc.1"
+  "version_name": "0.2.1-rc.2"
 }

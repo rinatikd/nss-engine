@@ -11,7 +11,7 @@ import { classifySend, SendState } from './send-outcome.mjs';
 import { validateRpcEnvelope } from './rpc-envelope.mjs';
 
 export { tools };
-export const VERSION = '0.2.1-rc.1';
+export const VERSION = '0.2.1-rc.2';
 export const PORT = Number(process.env.CHROME_BRIDGE_PORT || 17381);
 const SUPPORTED = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const CHAT_ORIGINS = new Set(['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com']);
@@ -112,6 +112,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
 
   async function agentWait(name, timeoutSec = 50) {
     const a = agent(name);
+    if (a.sending) throw Error('Agent send is in progress; wait for its result before calling agent_wait.');
     const st = a.wait;
     if (!st) throw Error('Nothing was sent to this agent: call agent_send first.');
     if (st.result) return st.result;
@@ -225,7 +226,12 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       const a = agent(name), keys = [`name:${name}`, `tab:${a.tabId}`];
       if (keys.some(key => agentMutations.has(key)) || [...agents.values()].some(other => other.tabId === a.tabId && other.sending)) throw Error('Agent operation is in progress; chat cannot change.');
       for (const key of keys) agentMutations.add(key);
-      try { await enqueue('agent_new_chat', { tabId: a.tabId }); a.wait = null; return { ok: true }; }
+      try {
+        await enqueue('agent_new_chat', { tabId: a.tabId });
+        // Navigation changes the conversation shared by every name for this tab.
+        for (const other of agents.values()) if (other.tabId === a.tabId) other.wait = null;
+        return { ok: true };
+      }
       finally { for (const key of keys) agentMutations.delete(key); }
     },
     agent_send: ({ name, text, requestId }) => agentSend(name, text, requestId),

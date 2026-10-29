@@ -23,8 +23,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     const command = injectedControls.get(message.authorization);
     if (!command || sender.id !== chrome.runtime.id || sender.tab?.id !== command.tabId ||
         sender.origin !== command.origin) return false;
+    const commandGeneration = generation, commandEpoch = grants.epoch;
     const site = await siteOf(sender.url);
-    if (!site || site.origin !== command.origin || !running || Date.now() >= command.expires ||
+    if (!site || site.origin !== command.origin || !running || generation !== commandGeneration ||
+        grants.epoch !== commandEpoch || Date.now() >= command.expires ||
         injectedControls.get(message.authorization) !== command) return false;
     grants.require(command.origin);
     return true;
@@ -45,7 +47,11 @@ function refreshGrantLabels() {
 }
 setInterval(refreshGrantLabels,30000);
 const observedOrigins = new Map();
+const tabNavigations = new Map();
 chrome.tabs.onUpdated.addListener((id, change) => {
+  if (!change.url && change.status !== 'loading') return;
+  tabNavigations.set(id, (tabNavigations.get(id) || 0) + 1);
+  for (const [nonce, command] of injectedControls) if (command.tabId === id) injectedControls.delete(nonce);
   if (!change.url) return;
   const origin = new URL(change.url).origin;
   const previous = observedOrigins.get(id);
@@ -249,6 +255,19 @@ async function agentTab(tabId) {
 async function execute(cmd) {
   if (Date.now() > cmd.expires) throw Error('Command expired');
   const { name, args } = cmd;
+  const commandGeneration = generation, commandEpoch = grants.epoch;
+  const commandNavigation = tabNavigations.get(args.tabId) || 0;
+  const requireControl = (origin) => {
+    if (!running || generation !== commandGeneration || grants.epoch !== commandEpoch || Date.now() >= cmd.expires)
+      throw Error('Command stopped, expired or connection changed');
+    if ((tabNavigations.get(args.tabId) || 0) !== commandNavigation)
+      throw Error('Tab navigated before control action; do not retry automatically');
+    return grants.require(origin);
+  };
+  const injectCurrent = (tabId, origin, action, actionArgs) => {
+    if (CONTROL_ACTIONS.has(action)) requireControl(origin);
+    return inject(tabId, origin, action, actionArgs);
+  };
 
   if (name === 'browser_tabs') {
     const out = [];
@@ -260,7 +279,7 @@ async function execute(cmd) {
   }
   if (name === 'browser_open') {
     if (!(await siteOf(args.url))) throw Error('Origin not permitted: add this website in Chrome Bridge');
-    grants.require(new URL(args.url).origin);
+    requireControl(new URL(args.url).origin);
     const t = await chrome.tabs.create({ url: args.url, active: !!args.active });
     return { tabId: t.id, url: args.url };
   }
@@ -286,7 +305,7 @@ async function execute(cmd) {
     if (!$('actions').checked) throw Error('Actions disabled in control tab');
     if (!running) throw Error('Stopped');
     const { tab, site } = await tabAndSite(args.tabId);
-    grants.require(site.origin);
+    requireControl(site.origin);
     const d = await inject(tab.id, site.origin, 'describe', { selector: args.selector });
     const lines = [`Страница: ${tab.url}`, `Селектор: ${args.selector}`, `Элемент: <${d.tag}${d.type ? ' type=' + d.type : ''}> «${d.text}»`];
     if (d.href) lines.push('Ссылка: ' + d.href);
@@ -294,7 +313,7 @@ async function execute(cmd) {
     if (name === 'browser_fill') lines.push('Текст: ' + args.text.slice(0, 300) + (args.text.length > 300 ? '…' : ''));
     await askApproval(name === 'browser_click' ? 'Нажатие' : 'Ввод текста', lines.join('\n'), cmd.expires);
     if (!running || Date.now() > cmd.expires) throw Error('Command stopped or expired');
-    return inject(tab.id, site.origin, name, { ...args, commandExpires: cmd.expires, expect: { tag: d.tag, text: d.text } });
+    return injectCurrent(tab.id, site.origin, name, { ...args, commandExpires: cmd.expires, expectedUrl: tab.url, expect: { tag: d.tag, text: d.text } });
   }
 
   // ---- агентские чаты ----
@@ -310,7 +329,7 @@ async function execute(cmd) {
   }
   if (name === 'agent_new_chat') {
     const { tab, site, adapter } = await agentTab(args.tabId);
-    grants.require(site.origin);
+    requireControl(site.origin);
     if (!adapter.newChatUrl || new URL(adapter.newChatUrl).origin !== new URL(tab.url).origin) throw Error('Adapter has no same-origin newChatUrl');
     await chrome.tabs.update(tab.id, { url: adapter.newChatUrl });
     await sleep(500);
@@ -321,7 +340,7 @@ async function execute(cmd) {
   if (['agent_send', 'agent_peek', 'agent_selftest'].includes(name)) {
     const { tab, site, adapter } = await agentTab(args.tabId);
     if (name === 'agent_send') { const s = findSecret(args.text); if (s) throw Error('Refusing to send: text looks like it contains a secret (' + s + ')'); }
-    const result = await inject(tab.id, site.origin, name, { ...args, adapter, commandExpires: cmd.expires });
+    const result = await injectCurrent(tab.id, site.origin, name, { ...args, adapter, commandExpires: cmd.expires });
     return result?.text ? { ...result, text: redact(result.text) } : result;
   }
   throw Error('Unknown command: ' + name);
@@ -352,7 +371,10 @@ async function loop(gen) {
     try {
       const { command, epoch } = await post('/bridge/poll', grants.epoch ? {} : { hello: true }, 30000);
       if (!running || gen !== generation) break;
-      if (!epoch || grants.epoch !== epoch) grants.reset(epoch || null);
+      if (!epoch || grants.epoch !== epoch) {
+        injectedControls.clear();
+        grants.reset(epoch || null);
+      }
       refreshGrantLabels();
       setStatus('Подключено · ожидание команд');
       if (!command && $('taskProgress').value !== 100) taskStatus('Ожидание команд',0);

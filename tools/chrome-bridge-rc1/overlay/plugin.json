@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "chrome-bridge",
-  "version": "0.2.1-rc.1",
+  "version": "0.2.1-rc.2",
   "description": "Local Chrome MCP bridge with explicitly permitted website origins and locally confirmed interactions.",
   "author": {
     "name": "Rinat Dautbekov"
