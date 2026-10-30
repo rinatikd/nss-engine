@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 const kit = path.dirname(fileURLToPath(import.meta.url));
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const metadataName = 'CANDIDATE_READY.json';
+const checksumName = 'SHA256SUMS.txt';
 
 function relative(root, name) {
   if (typeof name !== 'string' || !name || name.includes('\\') || name.includes(':') ||
@@ -60,14 +61,14 @@ function manifest(name, field) {
 function validateOutputNames(content) {
   const names = [...content.keys()].map(name => name.toLowerCase());
   const unique = new Set(names);
-  const marker = metadataName.toLowerCase();
-  if (unique.size !== names.length || unique.has(marker)) throw Error('INVALID_MANIFEST_COLLISION');
+  const markers = [metadataName, checksumName].map(name => name.toLowerCase());
+  if (unique.size !== names.length || markers.some(name => unique.has(name))) throw Error('INVALID_MANIFEST_COLLISION');
   for (const name of names) {
     const parts = name.split('/');
     while (parts.length > 1) {
       parts.pop();
       const ancestor = parts.join('/');
-      if (unique.has(ancestor) || ancestor === marker) throw Error('INVALID_MANIFEST_COLLISION');
+      if (unique.has(ancestor) || markers.includes(ancestor)) throw Error('INVALID_MANIFEST_COLLISION');
     }
   }
 }
@@ -110,6 +111,9 @@ try {
     nativeWindowsVerified: false, liveWebsitesVerified: false, createdAt: new Date().toISOString(),
   };
   fs.writeFileSync(path.join(output, metadataName), JSON.stringify(ready, null, 2) + '\n', {flag: 'wx'});
+  const checksums = [...content.keys(), metadataName].sort().map(name =>
+    `${digest(fs.readFileSync(relative(output, name)))}  ${name}\n`).join('');
+  fs.writeFileSync(path.join(output, checksumName), checksums, {flag: 'wx'});
   console.log(JSON.stringify({...ready, output}, null, 2));
 } catch (error) {
   console.error(/^(Use |SOURCE_|INVALID_|OUTPUT_|UNSUPPORTED_|BASELINE_|UPDATE_)/.test(error.message)

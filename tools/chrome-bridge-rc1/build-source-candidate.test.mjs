@@ -116,6 +116,14 @@ test('builds exact source-only bytes with Unicode/spaces and no original archive
   assert.equal(ready.liveWebsitesVerified, false);
   assert.equal(Object.hasOwn(ready, 'originalArchiveSha256'), false);
   assert.equal(JSON.parse(result.stdout).SOURCE_ONLY_CANDIDATE, true);
+  const entries = fs.readFileSync(path.join(f.output, 'SHA256SUMS.txt'), 'utf8').trimEnd().split('\n');
+  assert.equal(entries.length, ready.files + 1);
+  for (const line of entries) {
+    const [, expected, name] = line.match(/^([a-f0-9]{64})  (.+)$/);
+    assert.equal(hash(fs.readFileSync(path.join(f.output, name))), expected);
+  }
+  assert.ok(entries.some(line => line.endsWith('  CANDIDATE_READY.json')));
+  assert.ok(!entries.some(line => line.endsWith('  SHA256SUMS.txt')));
 });
 
 test('does not copy unlisted private state or historical reports from either source tree', t => {
@@ -127,7 +135,7 @@ test('does not copy unlisted private state or historical reports from either sou
   }
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(fs.readdirSync(f.output).sort(), ['CANDIDATE_READY.json', 'server.mjs', 'unchanged.txt', 'данные с пробелами']);
+  assert.deepEqual(fs.readdirSync(f.output).sort(), ['CANDIDATE_READY.json', 'SHA256SUMS.txt', 'server.mjs', 'unchanged.txt', 'данные с пробелами']);
   for (const root of [f.kit, f.baseline, f.overlay]) assert.equal(fs.existsSync(path.join(root, '.env')), true);
 });
 
@@ -171,12 +179,12 @@ for (const outputLocation of ['inside kit', 'kit parent']) {
   });
 }
 
-for (const name of ['../escape', 'C:/escape', 'folder\\escape', 'CANDIDATE_READY.json', 'server.mjs/child', 'SERVER.MJS']) {
+for (const name of ['../escape', 'C:/escape', 'folder\\escape', 'CANDIDATE_READY.json', 'SHA256SUMS.txt', 'server.mjs/child', 'SERVER.MJS']) {
   test(`invalid/colliding manifest path ${name} is refused before output`, t => {
     const f = fixture(t);
     f.updateManifest.updatedFiles[name] = hash('updated server');
     // Supply files when possible so collision tests exercise the merged output tree.
-    if (name === 'CANDIDATE_READY.json' || name === 'SERVER.MJS') fs.writeFileSync(path.join(f.overlay, name), 'updated server');
+    if (['CANDIDATE_READY.json', 'SHA256SUMS.txt', 'SERVER.MJS'].includes(name)) fs.writeFileSync(path.join(f.overlay, name), 'updated server');
     if (name === 'server.mjs/child') {
       delete f.updateManifest.updatedFiles['server.mjs'];
       fs.unlinkSync(path.join(f.overlay, 'server.mjs'));

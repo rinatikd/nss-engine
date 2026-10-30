@@ -30,11 +30,11 @@
 ## Установка
 
 1. Распакуйте архив, например в `C:\Engineering\chrome-bridge`.
-2. `powershell -NoProfile -ExecutionPolicy Bypass -File .\Setup-Windows.ps1` — создаст ключи в `%USERPROFILE%\.chrome-bridge\config.json` и покажет ключ браузера. Не отправляйте ключи в чаты.
+2. Используйте отдельное состояние RC2 и `Setup-Windows.ps1 -ExtensionId <ID> -CopyBrowserToken` по [актуальной инструкции](RELEASE_CANDIDATE_RU.md). Токен копируется локально в буфер, не печатается и не передаётся в чаты.
 3. В отдельном окне PowerShell: `...\Start-Bridge.ps1`, оставьте открытым.
 4. Chrome → `chrome://extensions` → режим разработчика → «Загрузить распакованное расширение» → папка `extension`. Если обновляете с 0.1.0, нажмите «Обновить» у расширения.
 5. Значок расширения → вкладка управления: вставьте ключ браузера, **Подключить**.
-6. `...\Connect-Agents.ps1` — зарегистрирует мост в Codex и/или Claude Code. Запустите новую сессию агента.
+6. `Connect-Agents.ps1` — только предпросмотр; регистрация требует явного `-Apply` или отдельного имени RC2 по актуальной инструкции. Затем откройте новую сессию клиента.
 
 ## Сайты и режимы
 
@@ -86,7 +86,7 @@ node C:\...\hub\hub.mjs status | agents | run T001 | batch batches\B001.json | r
 ## Проверки
 
 - `node --test tests/*.test.mjs` — мост и разбор вердиктов/файлов.
-- `xvfb-run -a node tests/e2e.mjs` (нужен playwright) — настоящий Chromium с расширением против имитации двух чат-сайтов: подключение, `agent_ask`, одобрения, цикл ревью в 2 раунда, batch, release, переспрос вердикта, остановка.
+- `npm run e2e` (нужен Playwright 1.64.1 и его Chromium; Linux также требует дисплей, например `xvfb-run -a npm run e2e`) — синтетический MV3 lifecycle трёх сайтов, подавление дубля и восстановление после перезапуска. Реальные сайты не используются.
 - Не проверено: живые ChatGPT/Gemini/Claude (селекторы, капчи, ограничения), PowerShell на Windows.
 
 ## Ограничения и ответственность
@@ -97,6 +97,6 @@ node C:\...\hub\hub.mjs status | agents | run T001 | batch batches\B001.json | r
 - Подключение веб-ChatGPT/облачных клиентов: нужен защищённый HTTPS-туннель, публикующий только `/mcp` с проверкой ключа агента; `/bridge/*` публиковать нельзя.
 - Остановка: «Остановить» в окне, Ctrl+C в окне моста; «Отозвать все сайты» снимает разрешения. Удаление: `codex mcp remove chrome-bridge`, `claude mcp remove chrome-bridge`.
 
-Local Codex CLI integration and connector registration: see [integration-reports/codex-connector.md](integration-reports/codex-connector.md). The three `codex_*` tools require an operator-owned isolated runner; execution is disabled by default. Existing browser agents are unchanged.
+Local Codex CLI integration and connector registration: see [RELEASE_CANDIDATE_RU.md](RELEASE_CANDIDATE_RU.md). The three `codex_*` tools require an operator-owned isolated runner; execution is disabled by default. Existing browser agents are unchanged.
 
 Three-origin control and safe activation: see [CONTROL_PERMISSIONS.md](CONTROL_PERMISSIONS.md). Control requires explicit local approval for claude.ai, gemini.google.com or chat.deepseek.com and explicit re-grant after expiry, origin change or restart; other origins remain read-only. This policy supersedes older unrestricted chat/action instructions above.
