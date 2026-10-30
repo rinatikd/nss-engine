@@ -33,7 +33,7 @@ namespace AGPT.Cad
                     && savedSource != null
                     && (savedSource.StartsWith("ModelSpace block ", StringComparison.Ordinal)
                         || savedSource.StartsWith("ModelSpace text ", StringComparison.Ordinal)
-                        || savedSource.StartsWith("UserConfiguredDefault18C", StringComparison.Ordinal)
+                        || savedSource.StartsWith("UserConfiguredDefault", StringComparison.Ordinal)
                         || savedSource.StartsWith("GeneratedIdentifier", StringComparison.Ordinal)))
                     RemoveFact(result.Values, key);
             }
@@ -186,10 +186,9 @@ namespace AGPT.Cad
             if (key == "ZONE_NAME") return text;
             if (key == "GOTV")
             {
-                if (string.Equals(text, GasAgentCatalog.SupportedAgent, StringComparison.OrdinalIgnoreCase)
-                    || System.Text.RegularExpressions.Regex.IsMatch(text, @"^Хладон\s*227[еe][аa]$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                if (System.Text.RegularExpressions.Regex.IsMatch(text, @"^Хладон\s*227[еe][аa]$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                     return GasAgentCatalog.SupportedAgent;
-                return text; // Explicit unsupported agents remain facts; downstream validation decides applicability.
+                return RoomGasPolicy.Resolve(text, false); // Canonicalize aliases before comparing source candidates.
             }
             if (!NumericData.TryParseFinite(text, out double number)
                 || (key == "H" && number <= 0) || (key == "FH" && number < 0)) return null;

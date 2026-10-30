@@ -175,7 +175,12 @@ namespace AGPT
                 if (string.IsNullOrWhiteSpace(guid)) guid = Guid.NewGuid().ToString();
                 string name = Read("ZONE_NAME");
                 if (string.IsNullOrWhiteSpace(name)) name = "Помещение " + guid.Substring(0, Math.Min(8, guid.Length));
-                var input = new GasZoneInput { Name = name, Gotv = Read("GOTV"), Height = roomHeight,
+                string explicitAgent = Read("GOTV");
+                bool disputedAgent = discovered.UnresolvedFields.Contains("GOTV")
+                    || (Read("GOTV_UNRESOLVED") == "1" && string.IsNullOrWhiteSpace(explicitAgent));
+                string gasAgent = RoomGasPolicy.Resolve(explicitAgent, disputedAgent);
+                bool usedGasDefault = string.IsNullOrWhiteSpace(explicitAgent) && !string.IsNullOrWhiteSpace(gasAgent);
+                var input = new GasZoneInput { Name = name, Gotv = gasAgent, Height = roomHeight,
                     OpeningsArea = Number("FH"), MinimumTemperature = temperature };
                 if (input.Gotv == GasAgentCatalog.SupportedAgent)
                 {
@@ -203,7 +208,8 @@ namespace AGPT
                 boundary.Layer = "AGPT-ZONE";
                 // Facts with unknown values are removed, not supplied as numeric defaults.
                 SetData(boundary, "AGPT", ("KIND", "ZONE"), ("GUID", guid), ("ZONE_NAME", name),
-                    ("GOTV", input.Gotv), ("H", input.Height.HasValue ? NumericData.Format(input.Height.Value) : null),
+                    ("GOTV", input.Gotv), ("GOTV_UNRESOLVED", string.IsNullOrWhiteSpace(input.Gotv) ? "1" : null),
+                    ("H", input.Height.HasValue ? NumericData.Format(input.Height.Value) : null),
                     ("FH", input.OpeningsArea.HasValue ? NumericData.Format(input.OpeningsArea.Value) : null),
                     ("TM", input.MinimumTemperature.HasValue ? NumericData.Format(input.MinimumTemperature.Value) : null),
                     ("TM_UNRESOLVED", input.MinimumTemperature.HasValue ? null : "1"),
@@ -221,6 +227,7 @@ namespace AGPT
                 {
                     string source = Read(key + "__SOURCE");
                     if (key == "H") source = "ManualOverride";
+                    if (key == "GOTV" && usedGasDefault) source = RoomGasPolicy.DefaultSource;
                     if (key == "TM" && usedTemperatureDefault) source = RoomTemperaturePolicy.DefaultSource;
                     if (key == "ZONE_NAME" && string.IsNullOrWhiteSpace(Read("ZONE_NAME"))) source = "GeneratedIdentifier";
                     if (source.Length > 180) source = source.Substring(0, 180);
@@ -228,6 +235,7 @@ namespace AGPT
                 }
                 tr.Commit();
                 editor.WriteMessage("\n[AGPT_ZONE] " + name + ": предлагается " + suggestion.UnitName + "; " + suggestion.Reason);
+                if (usedGasDefault) editor.WriteMessage("\nГОТВ: HFC-227ea — настройка по умолчанию пользователя.");
                 if (usedTemperatureDefault) editor.WriteMessage("\nМинимальная температура: 18 °C — настройка по умолчанию пользователя. Изменение: AGPT_TEMPERATURE.");
                 editor.WriteMessage("\nПлощадь по этому масштабу: " + NumericData.Format(squareMetres) + " м². "
                     + (missing.Count == 0 ? "Исходные данные получены из модели." : "Контур сохранён; расчётные исходные данные пока неполны."));
@@ -327,7 +335,7 @@ namespace AGPT
                 if (string.IsNullOrWhiteSpace(guid)) guid = Guid.NewGuid().ToString();
                 EnsureStorage(db, transaction, "AGPT", "AGPT-ZONE");
                 polyline.UpgradeOpen(); polyline.Layer = "AGPT-ZONE";
-                SetData(polyline, "AGPT", ("KIND", "ZONE"), ("GUID", guid), ("ZONE_NAME", name), ("GOTV", gotv),
+                SetData(polyline, "AGPT", ("KIND", "ZONE"), ("GUID", guid), ("ZONE_NAME", name), ("GOTV", gotv), ("GOTV_UNRESOLVED", null),
                     ("VP", NumericData.Format(volume)), ("H", NumericData.Format(h)), ("FH", NumericData.Format(fh)),
                     ("TM", NumericData.Format(tm)), ("TM_UNRESOLVED", null), ("CN", NumericData.Format(cn)), ("RHO0", NumericData.Format(rho)),
                     ("K4", null), ("K4_INPUT_MODE", null), ("VTR", null),
