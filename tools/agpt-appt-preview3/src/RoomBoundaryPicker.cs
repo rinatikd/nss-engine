@@ -20,20 +20,6 @@ namespace AGPT.Cad
             if (db == null) throw new ArgumentNullException(nameof(db));
             isNew = false;
 
-            var selection = new PromptEntityOptions("\nВыберите контур или [Углы] <Углы>: ");
-            selection.SetRejectMessage("\nВыберите полилинию контура.");
-            selection.AddAllowedClass(typeof(Polyline), true);
-            selection.Keywords.Add("Углы");
-            selection.AllowNone = true;
-            var selected = editor.GetEntity(selection);
-            if (selected.Status == PromptStatus.OK)
-            {
-                if (selected.ObjectId.Database != db) return null;
-                return tr.GetObject(selected.ObjectId, OpenMode.ForRead) as Polyline;
-            }
-            if (selected.Status != PromptStatus.None && selected.Status != PromptStatus.Keyword)
-                return null;
-
             // Use WCS for the corner prompts and their rubber-band base points. Restore
             // the user's UCS for every exit, including cancellation and prompt exceptions.
             var points = new List<Point3d>();
@@ -44,8 +30,9 @@ namespace AGPT.Cad
                 while (true)
                 {
                     var options = new PromptPointOptions(points.Count == 0
-                        ? "\nПервый угол помещения: "
+                        ? "\nЩёлкните первый угол помещения мышью или выберите "
                         : "\nСледующий угол помещения (Enter — замкнуть): ");
+                    if (points.Count == 0) options.Keywords.Add("Contour", "Контур", "Контур");
                     options.AllowNone = true;
                     if (points.Count > 0)
                     {
@@ -54,6 +41,15 @@ namespace AGPT.Cad
                         options.UseDashedLine = true;
                     }
                     var result = editor.GetPoint(options);
+                    if (result.Status == PromptStatus.Keyword && points.Count == 0)
+                    {
+                        var selection = new PromptEntityOptions("\nВыберите существующую замкнутую полилинию помещения: ");
+                        selection.SetRejectMessage("\nТребуется полилиния контура.");
+                        selection.AddAllowedClass(typeof(Polyline), true);
+                        var selected = editor.GetEntity(selection);
+                        if (selected.Status != PromptStatus.OK || selected.ObjectId.Database != db) return null;
+                        return tr.GetObject(selected.ObjectId, OpenMode.ForRead) as Polyline;
+                    }
                     if (result.Status == PromptStatus.None)
                     {
                         if (points.Count == 0) return null;

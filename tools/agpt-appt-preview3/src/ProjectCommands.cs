@@ -163,7 +163,7 @@ namespace AGPT
                     var profile = GasAgentCatalog.GetReferenceProfile(input.Gotv);
                     input.Concentration = profile.Concentration; input.Density = profile.VaporDensity;
                 }
-                var missing = input.Validate();
+                var missing = input.DescribeModelIssues();
                 bool unitVerified = suggestion.IsVerified && ((int)db.Insunits == 0 || declared.HasValue);
                 if (!unitVerified) missing.Add("масштаб не подтверждён: " + suggestion.Reason);
                 string missingSummary = string.Join("; ", missing.Select(issue => issue.Split(':')[0]));

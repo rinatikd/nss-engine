@@ -122,6 +122,22 @@ namespace AGPT.Shared
             return errors;
         }
 
+        public List<string> DescribeModelIssues()
+        {
+            var issues = new List<string>();
+            bool knownAgent = string.Equals(Gotv?.Trim(), GasAgentCatalog.SupportedAgent, StringComparison.Ordinal);
+            foreach (string error in Validate())
+            {
+                if (!knownAgent && (error.StartsWith("Концентрация", StringComparison.Ordinal)
+                    || error.StartsWith("Плотность", StringComparison.Ordinal))) continue;
+                issues.Add(error.Replace("укажите название.", "наименование отсутствует в модели.")
+                    .Replace("выберите вещество.", "вид вещества не найден в данных модели.")
+                    .Replace("укажите числовое значение.", "значение не найдено в данных модели.")
+                    .Replace("примените профиль ГОТВ.", "справочные данные профиля не определены."));
+            }
+            return issues;
+        }
+
         private static void ValidateNumber(List<string> errors, double? value, string field,
             Func<double, bool> withinDomain, string domainMessage, string missingMessage = null)
         {

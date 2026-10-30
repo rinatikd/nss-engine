@@ -183,6 +183,34 @@ public class GasZoneInputTests
         input.Gotv = agent;
         Assert.Contains("только для HFC-227ea", Assert.Single(input.Validate()));
     }
+    [Fact]
+    public void AutomaticDiagnosticsDoNotRequestManualDataOrDuplicateDerivedMissingFields()
+    {
+        var input = new GasZoneInput { Name = "Room" };
+        var issues = input.DescribeModelIssues();
+        Assert.Equal(4, issues.Count);
+        Assert.All(issues, issue => {
+            Assert.DoesNotContain("укажите", issue);
+            Assert.DoesNotContain("выберите", issue);
+            Assert.DoesNotContain("примените", issue);
+        });
+    }
+
+    [Fact]
+    public void AutomaticDiagnosticsPreserveInvalidGeometryInputExplanation()
+    {
+        var input = ValidInput();
+        input.Height = -1;
+        Assert.Contains("больше 0", Assert.Single(input.DescribeModelIssues()));
+    }
+
+    [Fact]
+    public void MissingReferenceDataDescribesProfileStateInsteadOfRequestingAnEntry()
+    {
+        var input = ValidInput();
+        input.Concentration = input.Density = null;
+        Assert.All(input.DescribeModelIssues(), issue => Assert.Contains("профиля не определены", issue));
+    }
 }
 
 public class PipeVolumeCalculatorTests

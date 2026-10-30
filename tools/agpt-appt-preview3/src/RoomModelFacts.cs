@@ -13,7 +13,7 @@ namespace AGPT.Cad
         public List<string> Issues { get; } = new();
     }
 
-    /// <summary>Read explicit room attributes in ModelSpace without changing the drawing.</summary>
+    /// <summary>Read explicit room attributes and labelled text in ModelSpace without changing the drawing.</summary>
     public static class RoomModelFacts
     {
         public static RoomFactsResult Read(Database db, Transaction tr, Polyline boundary,
@@ -31,6 +31,7 @@ namespace AGPT.Cad
                 if (result.Values.TryGetValue(key + "__SOURCE", out string savedSource)
                     && savedSource != null
                     && (savedSource.StartsWith("ModelSpace block ", StringComparison.Ordinal)
+                        || savedSource.StartsWith("ModelSpace text ", StringComparison.Ordinal)
                         || savedSource.StartsWith("GeneratedIdentifier", StringComparison.Ordinal)))
                     RemoveFact(result.Values, key);
             }
@@ -39,12 +40,48 @@ namespace AGPT.Cad
             if (!TryPolygon(boundary, result.Issues, out var polygon, out double tolerance)) return result;
             var candidates = new Dictionary<string, Dictionary<string, List<string>>>(StringComparer.Ordinal);
             var invalid = new HashSet<string>(StringComparer.Ordinal);
+            void AddCandidate(string key, string value, string provenance)
+            {
+                if (!candidates.TryGetValue(key, out var values))
+                    candidates.Add(key, values = new Dictionary<string, List<string>>(StringComparer.Ordinal));
+                if (!values.TryGetValue(value, out var sources)) values.Add(value, sources = new List<string>());
+                sources.Add(provenance);
+            }
+            void ReadText(string text, Point3d position, string provenance)
+            {
+                // Text at an edge cannot be assigned to one room, so do not interpret it.
+                if (Locate(polygon, position, tolerance) != 1) return;
+                var parsed = RoomTextFacts.Parse(text);
+                foreach (string key in parsed.InvalidFields) invalid.Add(key);
+                foreach (string issue in parsed.Issues) result.Issues.Add(issue + " [" + provenance + "]");
+                foreach (var fact in parsed.Values)
+                {
+                    string value = Normalize(fact.Key, fact.Value);
+                    if (value == null)
+                    {
+                        invalid.Add(fact.Key);
+                        result.Issues.Add(fact.Key + ": некорректное исходное значение: " + provenance + ".");
+                    }
+                    else AddCandidate(fact.Key, value, provenance);
+                }
+            }
             var table = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var source = (BlockTableRecord)tr.GetObject(table[BlockTableRecord.ModelSpace], OpenMode.ForRead);
             foreach (ObjectId id in source)
             {
-                if (tr.GetObject(id, OpenMode.ForRead) is not BlockReference block
-                    || AlbumOutput.IsGenerated(block)) continue;
+                if (tr.GetObject(id, OpenMode.ForRead) is not Entity entity
+                    || AlbumOutput.IsGenerated(entity)) continue;
+                if (entity is DBText text)
+                {
+                    ReadText(text.TextString, text.Position, "ModelSpace text " + text.Handle);
+                    continue;
+                }
+                if (entity is MText mtext)
+                {
+                    ReadText(mtext.Text, mtext.Location, "ModelSpace text " + mtext.Handle);
+                    continue;
+                }
+                if (entity is not BlockReference block) continue;
                 int location = Locate(polygon, block.Position, tolerance);
                 if (location < 0) continue;
                 foreach (ObjectId attributeId in block.AttributeCollection)
@@ -67,10 +104,7 @@ namespace AGPT.Cad
                         result.Issues.Add(key + ": некорректное исходное значение: " + provenance + ".");
                         continue;
                     }
-                    if (!candidates.TryGetValue(key, out var values))
-                        candidates.Add(key, values = new Dictionary<string, List<string>>(StringComparer.Ordinal));
-                    if (!values.TryGetValue(value, out var sources)) values.Add(value, sources = new List<string>());
-                    sources.Add(provenance);
+                    AddCandidate(key, value, provenance);
                 }
             }
             foreach (string key in invalid) RemoveFact(result.Values, key);
@@ -79,7 +113,7 @@ namespace AGPT.Cad
                 if (field.Value.Count != 1)
                 {
                     RemoveFact(result.Values, field.Key);
-                    result.Issues.Add(field.Key + ": противоречивые значения в исходных атрибутах помещения; поле не заполнено.");
+                    result.Issues.Add(field.Key + ": противоречивые значения в исходных атрибутах или подписях помещения; поле не заполнено.");
                     continue;
                 }
                 if (invalid.Contains(field.Key)) continue;
@@ -89,7 +123,7 @@ namespace AGPT.Cad
                         && !string.Equals(Normalize(field.Key, result.Values[field.Key]), value.Key, StringComparison.Ordinal))
                     {
                         RemoveFact(result.Values, field.Key);
-                        result.Issues.Add(field.Key + ": сохранённое значение противоречит исходному атрибуту помещения; поле не заполнено.");
+                        result.Issues.Add(field.Key + ": сохранённое значение противоречит исходному атрибуту или подписи помещения; поле не заполнено.");
                         continue;
                     }
                     // Preserve an equivalent explicit legacy value; adopt current source provenance.
@@ -128,7 +162,7 @@ namespace AGPT.Cad
             if (key == "GOTV")
             {
                 if (string.Equals(text, GasAgentCatalog.SupportedAgent, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(text, "Хладон 227ea", StringComparison.OrdinalIgnoreCase))
+                    || System.Text.RegularExpressions.Regex.IsMatch(text, @"^Хладон\s*227[еe][аa]$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                     return GasAgentCatalog.SupportedAgent;
                 return text; // Explicit unsupported agents remain facts; downstream validation decides applicability.
             }
