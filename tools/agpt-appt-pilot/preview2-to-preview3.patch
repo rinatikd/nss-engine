@@ -1,0 +1,415 @@
+diff --git a/AGPT.csproj b/AGPT.csproj
+--- a/AGPT.csproj
++++ b/AGPT.csproj
+@@ -11,7 +11,7 @@
+     <OutputType>Library</OutputType>
+     <RootNamespace>AGPT</RootNamespace>
+     <AssemblyName>AGPT</AssemblyName>
+-    <Version>1.1.0-preview.2</Version>
++    <Version>1.1.0-preview.3</Version>
+     <LangVersion>latest</LangVersion>
+     <Nullable>disable</Nullable>
+     <UseWindowsForms>true</UseWindowsForms>
+@@ -47,6 +47,7 @@
+     <Compile Include="src\APPT_Plugin_Drawings.cs" />
+     <Compile Include="src\PluginInit.cs" />
+     <Compile Include="src\ProjectCommands.cs" />
++    <Compile Include="src\AlbumOutput.cs" />
+     <Compile Include="src\CadPlanCapture.cs" />
+     <Compile Include="src\ProjectPlanRenderer.cs" />
+     <Compile Include="src\CadProjectSettings.cs" />
+diff --git a/core/AGPT.InputCore.csproj b/core/AGPT.InputCore.csproj
+--- a/core/AGPT.InputCore.csproj
++++ b/core/AGPT.InputCore.csproj
+@@ -1,7 +1,7 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+   <PropertyGroup>
+     <TargetFramework>net8.0</TargetFramework>
+-    <Version>1.1.0-preview.2</Version>
++    <Version>1.1.0-preview.3</Version>
+     <Nullable>disable</Nullable>
+     <ImplicitUsings>disable</ImplicitUsings>
+     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+@@ -11,5 +11,6 @@
+     <Compile Include="../src/ProjectGeometry.cs" Link="ProjectGeometry.cs" />
+     <Compile Include="../src/Pagination.cs" Link="Pagination.cs" />
+     <Compile Include="../src/ProjectMetadata.cs" Link="ProjectMetadata.cs" />
++    <Compile Include="../src/TaggingPolicy.cs" Link="TaggingPolicy.cs" />
+   </ItemGroup>
+ </Project>
+diff --git a/bundle/AGPT.bundle/PackageContents.xml b/bundle/AGPT.bundle/PackageContents.xml
+--- a/bundle/AGPT.bundle/PackageContents.xml
++++ b/bundle/AGPT.bundle/PackageContents.xml
+@@ -5,7 +5,7 @@
+   ProductType="Application"
+   Name="AGPT"
+   Description="AGPT/APPT — газовое и порошковое пожаротушение"
+-  AppVersion="1.0.0"
++  AppVersion="1.1.0"
+   Author="AGPT"
+   ProductCode="{A7B3C1D2-E4F5-6789-ABCD-EF0123456789}"
+   UpgradeCode="{A7B3C1D2-E4F5-6789-ABCD-EF0123456780}"
+diff --git a/src/PluginInit.cs b/src/PluginInit.cs
+--- a/src/PluginInit.cs
++++ b/src/PluginInit.cs
+@@ -14,7 +14,7 @@
+ {
+     public class PluginInit : IExtensionApplication
+     {
+-        public const string Version = "1.1.0-preview.2";
++        public const string Version = "1.1.0-preview.3";
+ 
+         public void Initialize()
+         {
+diff --git a/src/ProjectCommands.cs b/src/ProjectCommands.cs
+--- a/src/ProjectCommands.cs
++++ b/src/ProjectCommands.cs
+@@ -62,12 +62,15 @@
+         private static string Value(Dictionary<string, string> data, string key) =>
+             data.TryGetValue(key, out string value) ? value : "";
+ 
+-        private static void RequireTaggable(Entity entity, string app, params string[] allowedKinds)
+-        {
++        internal static void RequireTaggable(Entity entity, string app, params string[] allowedKinds)
++        {
++            if (AGPT.Cad.AlbumOutput.IsGenerated(entity))
++                throw new InvalidOperationException("Объект принадлежит сформированному альбому. Выберите исходный контур или устройство.");
+             // Inspect every application's classification, including third-party tags.
+             // Never turn an existing zone, pipe or device into a different object kind.
+             using var buffer = entity.XData;
+             string currentApp = "";
++            var tags = new List<(string Application, string Key, string Value)>();
+             if (buffer != null)
+                 foreach (TypedValue item in buffer)
+                 {
+@@ -77,27 +80,9 @@
+                     string text = item.Value as string;
+                     int separator = text?.IndexOf('=') ?? -1;
+                     if (separator <= 0) continue;
+-                    string key = text.Substring(0, separator), value = text.Substring(separator + 1);
+-                    bool classification = key == "KIND" || key == "ZONE_NAME" || key == "SEG_TYPE" || key == "CABLE_MARK";
+-                    if (!classification) continue;
+-                    if (currentApp != app)
+-                        throw new InvalidOperationException("Объект уже размечен другим приложением: " + currentApp + ". Выберите отдельный объект.");
+-                    bool compatible = key == "KIND" ? allowedKinds.Contains(value)
+-                        : key == "ZONE_NAME" ? allowedKinds.Contains("ZONE")
+-                        : key == "CABLE_MARK" ? allowedKinds.Contains("CABLE") : false;
+-                    if (!compatible)
+-                        throw new InvalidOperationException("Объект уже используется как зона, трубопровод, оборудование либо трасса другого типа.");
++                    tags.Add((currentApp, text.Substring(0, separator), text.Substring(separator + 1)));
+                 }
+-            // Layer-only legacy objects must not silently change their purpose either.
+-            foreach (string prefix in new[] { "AGPT", "APPT" })
+-            {
+-                string layer = entity.Layer.ToUpperInvariant();
+-                if (layer == prefix + "-ZONE" && (prefix != app || !allowedKinds.Contains("ZONE"))
+-                    || layer == prefix + "-PIPE"
+-                    || layer == prefix + "-CABLE" && (prefix != app || !allowedKinds.Contains("CABLE"))
+-                    || layer == prefix + "-EQ" && (prefix != app || !allowedKinds.Any(k => k == "MODULE" || k == "EQUIPMENT")))
+-                    throw new InvalidOperationException("Назначение существующего слоя несовместимо с командой: " + entity.Layer);
+-            }
++            TaggingPolicy.RequireTaggable(app, entity.Layer, tags, allowedKinds);
+         }
+ 
+         private static void EnsureStorage(Database db, Transaction transaction, string app, string layer)
+diff --git a/src/APPT_Plugin_Drawings.cs b/src/APPT_Plugin_Drawings.cs
+--- a/src/APPT_Plugin_Drawings.cs
++++ b/src/APPT_Plugin_Drawings.cs
+@@ -610,7 +610,7 @@
+             foreach (ObjectId id in ms)
+             {
+                 var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+-                if (ent == null) continue;
++                if (ent == null || AGPT.Cad.AlbumOutput.IsGenerated(ent)) continue;
+                 string kind = XD.Get(ent, "KIND");
+                 string zoneName = XD.Get(ent, "ZONE_NAME");
+                 string volumeText = XD.Get(ent, "VP");
+@@ -694,7 +694,7 @@
+                     }
+                     if (string.IsNullOrWhiteSpace(pd.Cipher) || string.IsNullOrWhiteSpace(pd.ObjectName))
+                         throw new InvalidOperationException("Для альбома нужны шифр и наименование объекта.");
+-                    SheetGen.FullAlbum(ms, tr, pd);
++                    AGPT.Cad.AlbumOutput.Replace(ms, tr, "APPT", () => SheetGen.FullAlbum(ms, tr, pd));
+                     tr.Commit();
+                     ed.WriteMessage("\n[APPT_ALBUM] Построено листов: " + pd.SheetCount);
+ 
+@@ -794,9 +794,11 @@
+                     var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                     var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+ 
+-                    var pl = (Polyline)tr.GetObject(boundary.ObjectId, OpenMode.ForWrite);
++                    var pl = (Polyline)tr.GetObject(boundary.ObjectId, OpenMode.ForRead);
++                    AGPT.ProjectCommands.RequireTaggable(pl, DL.App, "ZONE");
+                     if (!pl.Closed || pl.NumberOfVertices < 3 || pl.Area <= 0)
+                         throw new InvalidOperationException("Зона требует замкнутый контур с положительной площадью.");
++                    pl.UpgradeOpen();
+                     pl.Layer = DL.Zone;
+ 
+                     var z = new ZoneCalc { Name = name, Vp = vp, Vn = vn, K1 = coefficients[0], K2 = coefficients[1], K3 = coefficients[2], K4 = k4, ModuleMark = moduleInput.StringResult.Trim() };
+diff --git a/src/AGPT_Plugin_Drawings.cs b/src/AGPT_Plugin_Drawings.cs
+--- a/src/AGPT_Plugin_Drawings.cs
++++ b/src/AGPT_Plugin_Drawings.cs
+@@ -1949,7 +1949,7 @@
+             foreach (ObjectId id in ms)
+             {
+                 var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+-                if (ent == null) continue;
++                if (ent == null || AGPT.Cad.AlbumOutput.IsGenerated(ent)) continue;
+                 string kind = XD.Get(ent, "KIND");
+                 string zoneName = XD.Get(ent, "ZONE_NAME");
+                 string volumeText = XD.Get(ent, "VP");
+@@ -2633,7 +2633,7 @@
+                     var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                     var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+ 
+-                    SheetGen.FullAlbum(ms, tr, pd);
++                    AGPT.Cad.AlbumOutput.Replace(ms, tr, "AGPT", () => SheetGen.FullAlbum(ms, tr, pd));
+                     tr.Commit();
+                     ed.WriteMessage("\n[AGPT_ALBUM] Альбом построен по оси X (шаг 500 мм). ZOOM → E");
+                     ed.WriteMessage("\nСформировано листов: " + pd.AlbumSheetCount + ". Состав и номера — в ведомости общих данных.");
+diff --git a/src/CadPlanCapture.cs b/src/CadPlanCapture.cs
+--- a/src/CadPlanCapture.cs
++++ b/src/CadPlanCapture.cs
+@@ -25,7 +25,7 @@
+             foreach (ObjectId objectId in source)
+             {
+                 var entity = tr.GetObject(objectId, OpenMode.ForRead) as Entity;
+-                if (entity == null) continue;
++                if (entity == null || AGPT.Cad.AlbumOutput.IsGenerated(entity)) continue;
+                 string handle = entity.Handle.ToString();
+                 try
+                 {
+diff --git a/src/TaggingPolicy.cs b/src/TaggingPolicy.cs
+new file mode 100644
+--- /dev/null
++++ b/src/TaggingPolicy.cs
+@@ -0,0 +1,40 @@
++using System;
++using System.Collections.Generic;
++using System.Linq;
++
++namespace AGPT.Shared
++{
++    // Shared classification rules; the CAD adapter reads all applications' XData.
++    public static class TaggingPolicy
++    {
++        public static void RequireTaggable(string app, string layer,
++            IEnumerable<(string Application, string Key, string Value)> tags, params string[] allowedKinds)
++        {
++            foreach (var tag in tags)
++            {
++                if (tag.Application == "AGPT_ALBUM_OUTPUT")
++                    throw new InvalidOperationException("Объект принадлежит сформированному альбому; его нельзя использовать как исходные данные.");
++                string key = tag.Key;
++                bool classification = key == "KIND" || key == "ZONE_NAME" || key == "SEG_TYPE" || key == "CABLE_MARK";
++                if (!classification) continue;
++                if (tag.Application != app)
++                    throw new InvalidOperationException("Объект уже размечен другим приложением: " + tag.Application + ". Выберите отдельный объект.");
++                bool compatible = key == "KIND" ? allowedKinds.Contains(tag.Value)
++                    : key == "ZONE_NAME" ? allowedKinds.Contains("ZONE")
++                    : key == "CABLE_MARK" ? allowedKinds.Contains("CABLE") : false;
++                if (!compatible)
++                    throw new InvalidOperationException("Объект уже используется как зона, трубопровод, оборудование либо трасса другого типа.");
++            }
++            // Layer-only legacy objects retain their existing purpose.
++            foreach (string prefix in new[] { "AGPT", "APPT" })
++            {
++                string normalizedLayer = layer.ToUpperInvariant();
++                if (normalizedLayer == prefix + "-ZONE" && (prefix != app || !allowedKinds.Contains("ZONE"))
++                    || normalizedLayer == prefix + "-PIPE"
++                    || normalizedLayer == prefix + "-CABLE" && (prefix != app || !allowedKinds.Contains("CABLE"))
++                    || normalizedLayer == prefix + "-EQ" && (prefix != app || !allowedKinds.Any(k => k == "MODULE" || k == "EQUIPMENT")))
++                    throw new InvalidOperationException("Назначение существующего слоя несовместимо с командой: " + layer);
++            }
++        }
++    }
++}
+diff --git a/src/AlbumOutput.cs b/src/AlbumOutput.cs
+new file mode 100644
+--- /dev/null
++++ b/src/AlbumOutput.cs
+@@ -0,0 +1,95 @@
++using System;
++using System.Collections.Generic;
++using Autodesk.AutoCAD.DatabaseServices;
++
++namespace AGPT.Cad
++{
++    /// <summary>Owns generated album entities; the caller owns and commits the transaction.</summary>
++    public static class AlbumOutput
++    {
++        private const string ApplicationName = "AGPT_ALBUM_OUTPUT";
++
++        public static void Replace(BlockTableRecord ms, Transaction tr, string system, Action render)
++        {
++            ValidateSystem(system);
++            if (ms == null) throw new ArgumentNullException(nameof(ms));
++            if (tr == null) throw new ArgumentNullException(nameof(tr));
++            if (render == null) throw new ArgumentNullException(nameof(render));
++            if (ms.Database == null) throw new ArgumentException("Target must belong to a database.", nameof(ms));
++            var blocks = (BlockTable)tr.GetObject(ms.Database.BlockTableId, OpenMode.ForRead);
++            if (ms.ObjectId != blocks[BlockTableRecord.ModelSpace])
++                throw new ArgumentException("Album output must be generated in ModelSpace.", nameof(ms));
++
++            // Read all ownership markers before changing anything. Never infer ownership from layers.
++            var existing = new HashSet<ObjectId>();
++            var previous = new List<ObjectId>();
++            foreach (ObjectId id in ms)
++            {
++                existing.Add(id);
++                if (tr.GetObject(id, OpenMode.ForRead) is Entity entity && IsOwned(entity, system))
++                    previous.Add(id);
++            }
++
++            EnsureApplication(ms.Database, tr);
++            foreach (ObjectId id in previous)
++                ((Entity)tr.GetObject(id, OpenMode.ForWrite)).Erase();
++
++            // Do not catch render/tagging failures: caller disposal must roll back the whole replacement.
++            render();
++            foreach (ObjectId id in ms)
++            {
++                if (existing.Contains(id)) continue;
++                if (tr.GetObject(id, OpenMode.ForWrite) is Entity entity) Mark(entity, system);
++            }
++        }
++
++        /// <summary>Exclude even malformed ownership markers from source-data collection.</summary>
++        public static bool IsGenerated(Entity entity)
++        {
++            if (entity == null) return false;
++            using var data = entity.GetXDataForApplication(ApplicationName);
++            return data != null;
++        }
++
++        /// <summary>Only an exact, valid marker authorizes replacement of an entity.</summary>
++        public static bool IsOwned(Entity entity, string system)
++        {
++            ValidateSystem(system);
++            if (entity == null) return false;
++            using var data = entity.GetXDataForApplication(ApplicationName);
++            if (data == null) return false;
++            var values = data.AsArray();
++            return values.Length == 2
++                && values[0].TypeCode == (int)DxfCode.ExtendedDataRegAppName
++                && values[0].Value is string app && app == ApplicationName
++                && values[1].TypeCode == (int)DxfCode.ExtendedDataAsciiString
++                && values[1].Value is string owner && owner == "SYSTEM=" + system;
++        }
++
++        private static void ValidateSystem(string system)
++        {
++            if (system != "AGPT" && system != "APPT")
++                throw new ArgumentException("Expected AGPT or APPT system.", nameof(system));
++        }
++
++        private static void EnsureApplication(Database db, Transaction tr)
++        {
++            var table = (RegAppTable)tr.GetObject(db.RegAppTableId, OpenMode.ForRead);
++            if (table.Has(ApplicationName)) return;
++            table.UpgradeOpen();
++            var application = new RegAppTableRecord { Name = ApplicationName };
++            table.Add(application);
++            tr.AddNewlyCreatedDBObject(application, true);
++        }
++
++        private static void Mark(Entity entity, string system)
++        {
++            // Supplying this application's segment replaces only that segment; AutoCAD preserves
++            // all other registered applications' XData on the entity.
++            using var data = new ResultBuffer(
++                new TypedValue((int)DxfCode.ExtendedDataRegAppName, ApplicationName),
++                new TypedValue((int)DxfCode.ExtendedDataAsciiString, "SYSTEM=" + system));
++            entity.XData = data;
++        }
++    }
++}
+diff --git a/tests/TaggingPolicyTests.cs b/tests/TaggingPolicyTests.cs
+new file mode 100644
+--- /dev/null
++++ b/tests/TaggingPolicyTests.cs
+@@ -0,0 +1,84 @@
++using System;
++using AGPT.Shared;
++using Xunit;
++
++public class TaggingPolicyTests
++{
++    [Theory]
++    [InlineData("AGPT")]
++    [InlineData("APPT")]
++    public void GeneratedAlbumCannotBecomeSourceGeometry(string system)
++    {
++        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable(
++            system, "0", new[] { ("AGPT_ALBUM_OUTPUT", "SYSTEM", system) }, "ZONE"));
++    }
++
++    [Theory]
++    [InlineData("AGPT", "KIND", "ZONE")]
++    [InlineData("AGPT", "ZONE_NAME", "Room")]
++    [InlineData("APPT", "KIND", "CABLE")]
++    [InlineData("APPT", "CABLE_MARK", "Cable mark")]
++    [InlineData("APPT", "SEG_TYPE", "branch")]
++    [InlineData("ThirdParty", "KIND", "ZONE")]
++    public void PowderZoneCannotRepurposeClassifiedObjects(string owner, string key, string value)
++    {
++        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable(
++            "APPT", "0", new[] { (owner, key, value) }, "ZONE"));
++    }
++
++    [Theory]
++    [InlineData("AGPT-ZONE")]
++    [InlineData("agpt-zone")]
++    [InlineData("APPT-CABLE")]
++    [InlineData("APPT-PIPE")]
++    [InlineData("AGPT-PIPE")]
++    [InlineData("APPT-EQ")]
++    public void PowderZoneCannotRepurposeLayerOnlyLegacyObjects(string layer)
++    {
++        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable(
++            "APPT", layer, Array.Empty<(string, string, string)>(), "ZONE"));
++    }
++
++    [Fact]
++    public void PowderZoneCanTagAnUnusedContourOrUpdateItsExistingZone()
++    {
++        TaggingPolicy.RequireTaggable("APPT", "Room boundary", Array.Empty<(string, string, string)>(), "ZONE");
++        TaggingPolicy.RequireTaggable("APPT", "appt-zone", new[] {
++            ("APPT", "KIND", "ZONE"), ("APPT", "ZONE_NAME", "Room"),
++            ("OtherApp", "COMMENT", "Unrelated data remains allowed") }, "ZONE");
++        TaggingPolicy.RequireTaggable("APPT", "APPT-ZONE", Array.Empty<(string, string, string)>(), "ZONE");
++    }
++
++    [Fact]
++    public void EveryApplicationIsCheckedEvenWhenOwnZoneTagsArePresent()
++    {
++        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable("APPT", "APPT-ZONE", new[] {
++            ("APPT", "KIND", "ZONE"), ("AGPT", "KIND", "ZONE") }, "ZONE"));
++    }
++
++    [Theory]
++    [InlineData("AGPT", "AGPT-ZONE", "ZONE")]
++    [InlineData("AGPT", "AGPT-CABLE", "CABLE")]
++    [InlineData("APPT", "APPT-CABLE", "CABLE")]
++    [InlineData("APPT", "APPT-EQ", "MODULE")]
++    [InlineData("APPT", "APPT-EQ", "EQUIPMENT")]
++    public void ExistingInputCommandsRetainCompatibleUpdates(string app, string layer, string kind)
++    {
++        TaggingPolicy.RequireTaggable(app, layer, new[] { (app, "KIND", kind) }, kind);
++    }
++
++    [Fact]
++    public void LegacyCableAndZoneTagsRetainTheirCompatibilityWithoutKind()
++    {
++        TaggingPolicy.RequireTaggable("AGPT", "AGPT-CABLE", new[] { ("AGPT", "CABLE_MARK", "Cable") }, "CABLE");
++        TaggingPolicy.RequireTaggable("AGPT", "AGPT-ZONE", new[] { ("AGPT", "ZONE_NAME", "Room") }, "ZONE");
++    }
++
++    [Fact]
++    public void DeviceUpdateAllowsEitherExistingDeviceKindButRejectsPipes()
++    {
++        TaggingPolicy.RequireTaggable("APPT", "APPT-EQ", new[] { ("APPT", "KIND", "MODULE") }, "MODULE", "EQUIPMENT");
++        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable("APPT", "APPT-PIPE",
++            Array.Empty<(string, string, string)>(), "MODULE", "EQUIPMENT"));
++    }
++}
