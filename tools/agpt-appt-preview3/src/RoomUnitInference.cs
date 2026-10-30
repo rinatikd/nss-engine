@@ -80,7 +80,9 @@ namespace AGPT.Shared
 
             if (declared.HasValue)
                 return new RoomUnitSuggestion(declared.Value, RoomUnitConfidence.Declared, true,
-                    "Масштаб подтверждён объявленными единицами чертежа.");
+                    dimensions.Length == 1
+                        ? "Объявленные единицы INSUNITS согласуются с явными размерными данными."
+                        : "Применены объявленные единицы INSUNITS. Соответствие геометрии реальным размерам независимо не проверено.");
 
             if (dimensions.Length == 1)
                 return new RoomUnitSuggestion(dimensions[0], RoomUnitConfidence.DimensionEvidence, true,

@@ -130,7 +130,7 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
         (stage / 'RELEASE_INFO.json').write_text(json.dumps({
-            'version': '1.1.0-preview.8', 'commit': args.commit,
+            'version': '1.1.0-preview.9', 'commit': args.commit,
             'nativeAutoCADVerified': False, 'engineeringAcceptanceVerified': False,
             'privateCadResourcesIncluded': False,
             'status': 'pilot-candidate',

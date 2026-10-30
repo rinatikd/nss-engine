@@ -235,9 +235,14 @@ namespace AGPT
                 }
                 tr.Commit();
                 editor.WriteMessage("\n[AGPT_ZONE] " + name + ": предлагается " + suggestion.UnitName + "; " + suggestion.Reason);
+                double widthMetres = (bounds.MaxPoint.X - bounds.MinPoint.X) * suggestion.MetresPerUnit;
+                double depthMetres = (bounds.MaxPoint.Y - bounds.MinPoint.Y) * suggestion.MetresPerUnit;
+                string Compact(double value) => value.ToString("G6", System.Globalization.CultureInfo.InvariantCulture);
+                editor.WriteMessage("\nКоэффициент: " + Compact(suggestion.MetresPerUnit) + " м/ед. чертежа. Габариты XY: "
+                    + Compact(widthMetres) + " × " + Compact(depthMetres) + " м (ограничивающий прямоугольник).");
                 if (usedGasDefault) editor.WriteMessage("\nГОТВ: HFC-227ea — настройка по умолчанию пользователя.");
                 if (usedTemperatureDefault) editor.WriteMessage("\nМинимальная температура: 18 °C — настройка по умолчанию пользователя. Изменение: AGPT_TEMPERATURE.");
-                editor.WriteMessage("\nПлощадь по этому масштабу: " + NumericData.Format(squareMetres) + " м². "
+                editor.WriteMessage("\nПлощадь при принятом масштабе: " + NumericData.Format(squareMetres) + " м². "
                     + (missing.Count == 0 ? "Исходные данные получены из модели." : "Контур сохранён; расчётные исходные данные пока неполны."));
                 foreach (string issue in discovered.Issues.Concat(missing)) editor.WriteMessage("\n[Данные модели] " + issue);
             }
