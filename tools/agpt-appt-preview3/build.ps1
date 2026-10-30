@@ -26,6 +26,46 @@ function Publish-Directory([string]$Source, [string]$Destination) {
     }
 }
 
+function Get-AcadBundleHost([version[]]$Versions) {
+    if ($Versions.Count -ne 3) { throw 'Expected all three AutoCAD API reference versions.' }
+    $selected = $null
+    foreach ($version in $Versions) {
+        if ($null -eq $version -or $version.Major -ne 25 -or $version.Minor -notin @(0, 1)) {
+            throw "Unsupported AutoCAD API version $version; expected R25.0/R25.1."
+        }
+        $series = 'R' + $version.Major + '.' + $version.Minor
+        if ($null -ne $selected -and $selected -ne $series) {
+            throw 'All three AutoCAD API references must use the same major/minor version.'
+        }
+        $selected = $series
+    }
+    $year = if ($selected -eq 'R25.0') { '2025' } else { '2026' }
+    return [pscustomobject]@{
+        Year = $year
+        Series = $selected
+        ModuleName = './Contents/Windows/' + $year + '/AGPT.dll'
+    }
+}
+
+function Read-BundleManifest([string]$Path) {
+    $document = New-Object System.Xml.XmlDocument
+    # Load bytes using the XML declaration/BOM, including on Windows PowerShell 5.1.
+    $document.Load($Path)
+    return ,$document
+}
+
+function Set-BundleHostManifest([xml]$Manifest, $HostInfo) {
+    $requirements = @($Manifest.SelectNodes('//RuntimeRequirements'))
+    $entries = @($Manifest.SelectNodes('//ComponentEntry'))
+    if ($requirements.Count -eq 0) { throw 'Bundle has no runtime requirements.' }
+    if ($entries.Count -eq 0) { throw 'Bundle has no module entries.' }
+    foreach ($runtime in $requirements) {
+        $runtime.SetAttribute('SeriesMin', $HostInfo.Series)
+        $runtime.SetAttribute('SeriesMax', $HostInfo.Series)
+    }
+    foreach ($entry in $entries) { $entry.SetAttribute('ModuleName', $HostInfo.ModuleName) }
+}
+
 function Assert-SourceResources {
     $directory = Join-Path $root 'blocks'
     if (!(Test-Path -LiteralPath $directory -PathType Container)) {
@@ -88,14 +128,12 @@ try {
     }
     if ([string]::IsNullOrWhiteSpace($AcadDir)) { throw 'Specify an AutoCAD 2025/2026 directory.' }
     $AcadDir = (Resolve-Path -LiteralPath $AcadDir).Path
-    foreach ($name in @('AcCoreMgd.dll', 'AcDbMgd.dll', 'AcMgd.dll')) {
+    $apiVersions = @(foreach ($name in @('AcCoreMgd.dll', 'AcDbMgd.dll', 'AcMgd.dll')) {
         $reference = Join-Path $AcadDir $name
         if (!(Test-Path -LiteralPath $reference -PathType Leaf)) { throw "Missing AutoCAD reference: $reference" }
-        $version = [Reflection.AssemblyName]::GetAssemblyName($reference).Version
-        if ($version.Major -ne 25 -or $version.Minor -notin @(0, 1)) {
-            throw "Unsupported AutoCAD API version $version in $name; expected R25.0/R25.1."
-        }
-    }
+        [Reflection.AssemblyName]::GetAssemblyName($reference).Version
+    })
+    $bundleHost = Get-AcadBundleHost -Versions $apiVersions
     $dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop).Source
     $sdkVersion = & $dotnet --version
     if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^([89]|[1-9][0-9]+)\.') {
@@ -129,13 +167,15 @@ try {
         # Retain only the single runtime path referenced by PackageContents.xml.
         $windows = Join-Path $scratch 'Contents\Windows'
         if (Test-Path -LiteralPath $windows) { Remove-Item -LiteralPath $windows -Recurse -Force }
-        $module = Join-Path $windows '2026'
+        $module = Join-Path $windows $bundleHost.Year
         [IO.Directory]::CreateDirectory($module) | Out-Null
         Get-ChildItem -LiteralPath $release | Copy-Item -Destination $module -Recurse
         Assert-Resources $module
-        [xml]$manifest = Get-Content -LiteralPath (Join-Path $scratch 'PackageContents.xml') -Raw
+        $manifestPath = Join-Path $scratch 'PackageContents.xml'
+        [xml]$manifest = Read-BundleManifest -Path $manifestPath
+        Set-BundleHostManifest -Manifest $manifest -HostInfo $bundleHost
+        $manifest.Save($manifestPath)
         $entries = @($manifest.SelectNodes('//ComponentEntry'))
-        if ($entries.Count -eq 0) { throw 'Bundle has no module entries.' }
         foreach ($entry in $entries) {
             $modulePath = [IO.Path]::GetFullPath((Join-Path $scratch ([string]$entry.ModuleName)))
             if (!$modulePath.StartsWith($scratch + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or

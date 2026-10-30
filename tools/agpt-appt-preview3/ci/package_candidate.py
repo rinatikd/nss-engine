@@ -22,6 +22,7 @@ SOURCE_ALLOWLIST = frozenset({
     'ci/acquire_autocad_refs.py',
     'ci/package_candidate.py',
     'ci/test-resource-preflight.ps1',
+    'ci/test-bundle-host.ps1',
     'core/AGPT.InputCore.csproj',
     'install_bundle.bat',
     'src/AGPT_Plugin_Drawings.cs',
