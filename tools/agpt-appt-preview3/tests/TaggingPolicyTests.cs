@@ -81,4 +81,58 @@ public class TaggingPolicyTests
         Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable("APPT", "APPT-PIPE",
             Array.Empty<(string, string, string)>(), "MODULE", "EQUIPMENT"));
     }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("AGPT-PIPE")]
+    [InlineData("agpt-pipe")]
+    public void GasPipeCanUpdateItsOwnSourceGeometry(string layer)
+    {
+        TaggingPolicy.RequireTaggable("AGPT", layer, new[] {
+            ("AGPT", "KIND", "PIPE"), ("AGPT", "SEG_TYPE", "branch"),
+            ("OtherApp", "COMMENT", "Unrelated metadata") }, "PIPE");
+        TaggingPolicy.RequireTaggable("AGPT", layer, new[] { ("AGPT", "SEG_TYPE", "main") }, "PIPE");
+        TaggingPolicy.RequireTaggable("AGPT", layer, Array.Empty<(string, string, string)>(), "PIPE");
+    }
+
+    [Theory]
+    [InlineData("AGPT", "KIND", "ZONE")]
+    [InlineData("AGPT", "ZONE_NAME", "Room")]
+    [InlineData("AGPT", "KIND", "MODULE")]
+    [InlineData("AGPT", "KIND", "CABLE")]
+    [InlineData("AGPT", "CABLE_MARK", "Cable")]
+    [InlineData("APPT", "KIND", "PIPE")]
+    [InlineData("APPT", "SEG_TYPE", "branch")]
+    [InlineData("OtherApp", "KIND", "PIPE")]
+    [InlineData("AGPT_ALBUM_OUTPUT", "SYSTEM", "AGPT")]
+    public void GasPipeCannotRepurposeConflictingOrGeneratedObjects(string owner, string key, string value)
+    {
+        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable("AGPT", "0", new[] {
+            ("AGPT", "KIND", "PIPE"), (owner, key, value) }, "PIPE"));
+    }
+
+    [Theory]
+    [InlineData("AGPT-ZONE")]
+    [InlineData("AGPT-CABLE")]
+    [InlineData("AGPT-EQ")]
+    [InlineData("APPT-PIPE")]
+    public void GasPipeCannotRepurposeOtherLegacyLayers(string layer)
+    {
+        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable(
+            "AGPT", layer, Array.Empty<(string, string, string)>(), "PIPE"));
+    }
+
+    [Theory]
+    [InlineData("AGPT", "ZONE")]
+    [InlineData("AGPT", "CABLE")]
+    [InlineData("APPT", "PIPE")]
+    public void SourcePipeMetadataIsReservedForGasPipeUpdates(string app, string allowedKind)
+    {
+        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable(
+            app, "0", new[] { (app, "KIND", "PIPE") }, allowedKind));
+        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable(
+            app, "0", new[] { (app, "SEG_TYPE", "branch") }, allowedKind));
+        Assert.Throws<InvalidOperationException>(() => TaggingPolicy.RequireTaggable(
+            app, "AGPT-PIPE", Array.Empty<(string, string, string)>(), allowedKind));
+    }
 }

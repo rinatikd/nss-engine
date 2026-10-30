@@ -14,7 +14,7 @@ namespace AGPT
 {
     public class PluginInit : IExtensionApplication
     {
-        public const string Version = "1.1.0-preview.4";
+        public const string Version = "1.1.0-preview.5";
 
         public void Initialize()
         {
@@ -30,7 +30,7 @@ namespace AGPT
                     ed.WriteMessage("\n  --- АГПТ (газ) ---");
                     ed.WriteMessage("\n  AGPT_ALBUM  AGPT_ZONE  AGPT_MODULE  AGPT_PIPE  AGPT_CALC");
                     ed.WriteMessage("\n  AGPT_CABLE — учёт кабельной трассы по существующей линии");
-                    ed.WriteMessage("\n  AGPT_HYDRO2  AGPT_AXO2");
+                    ed.WriteMessage("\n  AGPT_HYDRO2  AGPT_AXO2  AGPT_PIPE_DATA");
                     ed.WriteMessage("\n  AGPT_FRAME  AGPT_FRAME_LOAD  — рамка A3+штамп (блок)");
                     ed.WriteMessage("\n  AGPT_UGO_LIST  AGPT_UGO_IMPORT  AGPT_UGO_IMPORT_ALL  — УГО R-CAD");
                     ed.WriteMessage("\n  --- АППТ (порошок) ---");

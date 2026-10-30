@@ -1165,8 +1165,9 @@ namespace AGPT.Drawings
 
     public class ZoneCalc
     {
-        public string Name;
-        public double Vp, H, Fh, Tm, Cn, Rho0, K4, Vtr;
+        public string Name, Guid;
+        public int PipeCount;
+        public double Vp, H, Fh, Tm, Cn, Rho0, Vtr;
         public string Gotv = "HFC-227ea";
         public double Mp, Mg, Fc;
         public int ModuleVol;
@@ -1221,7 +1222,6 @@ namespace AGPT.Drawings
             if (z.Cn <= 0 || z.Cn >= 100) z.Cn = 7.2;
             if (z.Rho0 <= 0) z.Rho0 = 7.28;
             if (z.H <= 0) z.H = 2.4;
-            if (z.K4 <= 0) z.K4 = 1.0;
 
             double TmK = z.Tm + 273.15;
             if (z.Tm < GasZoneInput.MinimumTemperatureC) TmK = 298.15;
@@ -1245,8 +1245,8 @@ namespace AGPT.Drawings
             // если Vтр задан как объём пара/смеси — в эталоне Mтр ≈ Vтр·ρ1·коэфф.; берём max
             mTr = Math.Max(mTr, z.Vtr * rho1 * 2.5);
 
-            // Mg = K1 · (Mp·K4 + Mтр), округление вверх до целых кг (как в альбоме: 9, 10, 11, 14 кг)
-            double mgRaw = K1 * (z.Mp * z.K4 + mTr);
+            // Supplied reference equation has no additional K4 multiplier; pipe volume is derived from source geometry.
+            double mgRaw = K1 * (z.Mp + mTr);
             z.Mg = Math.Ceiling(mgRaw);
 
             // КСИД (упрощённо): требуемая площадь сбросных устройств
@@ -1896,7 +1896,7 @@ namespace AGPT.Drawings
 
         static void RequireZoneFields(Entity entity)
         {
-            string[] required = { "ZONE_NAME", "VP", "H", "FH", "TM", "CN", "RHO0", "K4", "VTR", "GOTV" };
+            string[] required = { "ZONE_NAME", "VP", "H", "FH", "TM", "CN", "RHO0", "GOTV" };
             var missing = required.Where(key => string.IsNullOrWhiteSpace(XD.Get(entity, key))).ToArray();
             if (missing.Length > 0)
                 throw new InvalidOperationException("Зона " + entity.Handle + ": отсутствуют поля "
@@ -1905,19 +1905,13 @@ namespace AGPT.Drawings
 
         static void ValidateZone(ZoneCalc zone, Entity entity)
         {
-            // Reject inputs that would otherwise trigger legacy correction defaults in Calc.Mass.
-            var invalid = new List<string>();
-            if (zone.Vp <= 0) invalid.Add("VP > 0");
-            if (zone.H <= 0) invalid.Add("H > 0");
-            if (zone.Fh < 0) invalid.Add("FH >= 0");
-            if (zone.Tm < GasZoneInput.MinimumTemperatureC) invalid.Add("TM >= -73.15 °C (область текущего расчёта)");
-            if (zone.Cn <= 0 || zone.Cn >= 100) invalid.Add("0 < CN < 100");
-            if (zone.Rho0 <= 0) invalid.Add("RHO0 > 0");
-            if (zone.K4 <= 0) invalid.Add("K4 > 0");
-            if (zone.Vtr < 0) invalid.Add("VTR >= 0");
+            var invalid = new GasZoneInput { Name = zone.Name, Gotv = zone.Gotv, Height = zone.H,
+                OpeningsArea = zone.Fh, MinimumTemperature = zone.Tm,
+                Concentration = zone.Cn, Density = zone.Rho0 }.Validate();
+            if (!double.IsFinite(zone.Vp) || zone.Vp <= 0) invalid.Add("VP > 0");
             if (invalid.Count > 0)
-                throw new InvalidOperationException("Зона " + entity.Handle + ": недопустимые исходные данные: "
-                    + string.Join("; ", invalid) + ". Повторите AGPT_ZONE.");
+                throw new InvalidOperationException("Зона " + entity.Handle + ": " + string.Join("; ", invalid)
+                    + ". Повторите AGPT_ZONE и примените справочный профиль.");
         }
 
         public static ProjectData FromModel(Database db, Transaction tr)
@@ -1967,18 +1961,16 @@ namespace AGPT.Drawings
                     var z = new ZoneCalc
                     {
                         Name = XD.Get(ent, "ZONE_NAME"),
+                        Guid = XD.Get(ent, "GUID"),
                         Vp = RequireDouble(ent, "VP"),
                         H = RequireDouble(ent, "H"),
                         Fh = RequireDouble(ent, "FH"),
                         Tm = RequireDouble(ent, "TM"),
                         Cn = RequireDouble(ent, "CN"),
                         Rho0 = RequireDouble(ent, "RHO0"),
-                        K4 = RequireDouble(ent, "K4"),
-                        Vtr = RequireDouble(ent, "VTR"),
                         Gotv = XD.Get(ent, "GOTV")
                     };
                     ValidateZone(z, ent);
-                    Calc.Mass(z);
                     pd.Zones.Add(z);
                 }
                 if (!string.IsNullOrWhiteSpace(kind) && kind != "ZONE" && kind != "CABLE")
@@ -2030,7 +2022,10 @@ namespace AGPT.Drawings
                         Id = XD.Get(ent, "SEG_ID") ?? "E",
                         Type = XD.Get(ent, "SEG_TYPE") ?? "branch",
                         Dy = (int)XD.GetD(ent, "DY", 20),
-                        L = XD.GetD(ent, "L"),
+                        L = ent is Curve sourcePipe && AGPT.Stage3.DrawingUnits.TryGetMetresPerUnit(db, out double pipeScale)
+                            ? PlanUnits.LengthInMetres(Math.Abs(sourcePipe.GetDistanceAtParameter(sourcePipe.EndParam)
+                                - sourcePipe.GetDistanceAtParameter(sourcePipe.StartParam)), pipeScale)
+                            : throw new InvalidOperationException("Для трубы нужны геометрия Curve и определённые единицы."),
                         Dp = XD.GetD(ent, "DP"),
                         POut = XD.GetD(ent, "POUT"),
                         Npsh = XD.GetD(ent, "NPSH"),
@@ -2042,6 +2037,16 @@ namespace AGPT.Drawings
                     pd.Pipes.Add(pipe);
                     bill.Add("Труба", "Ду" + pipe.Dy.ToString(), "м", pipe.L);
                 }
+            }
+            var pipeVolumes = AGPT.Cad.CadGasPipeVolumes.Read(db, tr);
+            foreach (var zone in pd.Zones)
+            {
+                if (string.IsNullOrWhiteSpace(zone.Guid) || !pipeVolumes.Volumes.ContainsKey(zone.Guid))
+                    throw new InvalidOperationException("Зона без корректного GUID: повторите AGPT_ZONE.");
+                zone.Vtr = pipeVolumes.Volumes[zone.Guid];
+                zone.PipeCount = pipeVolumes.Counts[zone.Guid];
+                Calc.Mass(zone);
+                if (zone.PipeCount == 0) pd.Plan.Issues.Add("Зона " + zone.Name + ": учтено 0 участков трубопровода; Vтр=0. Модель сети ещё не подтверждена.");
             }
             int position = 1;
             foreach (var item in bill.Rows)

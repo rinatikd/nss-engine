@@ -3,34 +3,84 @@ using System.Collections.Generic;
 
 namespace AGPT.Shared
 {
-    /// <summary>Agents supported by the current calculation implementation; no physical presets.</summary>
+    /// <summary>Immutable data from the supplied project calculation sheet, not a universal normative profile.</summary>
+    public sealed class GasAgentReferenceProfile
+    {
+        internal GasAgentReferenceProfile(string agent, double concentration, double vaporDensity,
+            double referenceTemperatureC, double referencePressureKPa, string sourceLabel, string sourceKind)
+        {
+            Agent = agent;
+            Concentration = concentration;
+            VaporDensity = vaporDensity;
+            ReferenceTemperatureC = referenceTemperatureC;
+            ReferencePressureKPa = referencePressureKPa;
+            SourceLabel = sourceLabel;
+            SourceKind = sourceKind;
+        }
+
+        public string Agent { get; }
+        /// <summary>Concentration in volume percent for the supplied project reference only.</summary>
+        public double Concentration { get; }
+        /// <summary>Vapor density in kg/m³ at the stated reference temperature and pressure.</summary>
+        public double VaporDensity { get; }
+        public double ReferenceTemperatureC { get; }
+        public double ReferencePressureKPa { get; }
+        public string SourceLabel { get; }
+        public string SourceKind { get; }
+    }
+
+    /// <summary>Supported agents and project reference data; applicability to other materials is not established.</summary>
     public static class GasAgentCatalog
     {
         public const string SupportedAgent = "HFC-227ea";
+        private static readonly GasAgentReferenceProfile Hfc227eaReference = new GasAgentReferenceProfile(
+            SupportedAgent, 7.2, 7.28, 20, 101.3,
+            "Предоставленный проектный эталон: лист расчёта ГОТВ", "ProjectReference");
 
         public static IReadOnlyList<string> Options { get; } = Array.AsReadOnly(new[]
         {
             SupportedAgent
         });
-    }
 
-    public static class K4InputModes
-    {
-        public const string UnitMultiplier = "UNIT_MULTIPLIER";
-        public const string MethodValue = "METHOD_VALUE";
-
-        public static string Restore(string savedMode, double? savedValue)
+        public static GasAgentReferenceProfile GetReferenceProfile(string agent)
         {
-            if (savedMode == MethodValue) return MethodValue;
-            if (savedMode == UnitMultiplier) return savedValue == 1 ? UnitMultiplier : null;
-            if (!string.IsNullOrWhiteSpace(savedMode)) return null;
-            // Legacy numeric data is displayed, not evidence of methodology approval.
-            if (!savedValue.HasValue || !double.IsFinite(savedValue.Value)) return null;
-            return savedValue == 1 ? UnitMultiplier : MethodValue;
+            if (!string.Equals(agent?.Trim(), SupportedAgent, StringComparison.Ordinal))
+                throw new ArgumentException("Проектный профиль доступен только для HFC-227ea.", nameof(agent));
+            return Hfc227eaReference;
         }
     }
 
-    /// <summary>Explicit zone inputs; validation checks the prototype's input domain only.</summary>
+    /// <summary>Internal pipe volume in m³ from measured length in metres and internal diameter in millimetres.</summary>
+    public static class PipeVolumeCalculator
+    {
+        public static double Compute(double lengthMetres, double innerDiameterMm)
+        {
+            if (!double.IsFinite(lengthMetres) || lengthMetres <= 0)
+                throw new ArgumentOutOfRangeException(nameof(lengthMetres), "Длина должна быть конечным положительным числом в метрах.");
+            if (!double.IsFinite(innerDiameterMm) || innerDiameterMm <= 0)
+                throw new ArgumentOutOfRangeException(nameof(innerDiameterMm), "Внутренний диаметр должен быть конечным положительным числом в миллиметрах.");
+            var diameterMetres = innerDiameterMm / 1000;
+            var volume = Math.PI / 4 * diameterMetres * diameterMetres * lengthMetres;
+            if (!double.IsFinite(volume) || volume <= 0)
+                throw new OverflowException("Объём трубы выходит за диапазон представимых положительных чисел.");
+            return volume;
+        }
+
+        public static double Sum(IEnumerable<(double LengthMetres, double InnerDiameterMm)> segments)
+        {
+            if (segments == null) throw new ArgumentNullException(nameof(segments));
+            double total = 0;
+            foreach (var segment in segments)
+            {
+                total += Compute(segment.LengthMetres, segment.InnerDiameterMm);
+                if (!double.IsFinite(total))
+                    throw new OverflowException("Суммарный объём труб превышает диапазон конечных чисел.");
+            }
+            return total;
+        }
+    }
+
+    /// <summary>Explicit zone inputs checked against the prototype domain and supplied project profile.</summary>
     public sealed class GasZoneInput
     {
         public const double MinimumTemperatureC = -73.15;
@@ -41,8 +91,6 @@ namespace AGPT.Shared
         public double? MinimumTemperature { get; set; }
         public double? Concentration { get; set; }
         public double? Density { get; set; }
-        public double? K4 { get; set; }
-        public double? PipeVolume { get; set; }
 
         public List<string> Validate()
         {
@@ -59,18 +107,26 @@ namespace AGPT.Shared
             ValidateNumber(errors, MinimumTemperature, "Минимальная температура Tм", x => x >= MinimumTemperatureC,
                 "должна быть не ниже −73,15 °C (граница прототипа).");
             ValidateNumber(errors, Concentration, "Концентрация Cн", x => x > 0 && x < 100,
-                "должна быть больше 0 и меньше 100 %.");
-            ValidateNumber(errors, Density, "Плотность ρ₀", x => x > 0, "должна быть больше 0 кг/м³.");
-            ValidateNumber(errors, K4, "Коэффициент K4", x => x > 0, "должен быть больше 0.");
-            ValidateNumber(errors, PipeVolume, "Объём труб Vтр", x => x >= 0, "должен быть не меньше 0 м³.");
+                "должна быть больше 0 и меньше 100 %.", "примените профиль ГОТВ.");
+            ValidateNumber(errors, Density, "Плотность ρ₀", x => x > 0, "должна быть больше 0 кг/м³.", "примените профиль ГОТВ.");
+            if (string.Equals(Gotv?.Trim(), GasAgentCatalog.SupportedAgent, StringComparison.Ordinal))
+            {
+                var profile = GasAgentCatalog.GetReferenceProfile(Gotv);
+                if (Concentration.HasValue && double.IsFinite(Concentration.Value) &&
+                    Concentration.Value > 0 && Concentration.Value < 100 && Concentration.Value != profile.Concentration)
+                    errors.Add("Концентрация Cн: используйте значение из проектного профиля HFC-227ea (7,2 % об.).");
+                if (Density.HasValue && double.IsFinite(Density.Value) &&
+                    Density.Value > 0 && Density.Value != profile.VaporDensity)
+                    errors.Add("Плотность ρ₀: используйте значение из проектного профиля HFC-227ea (7,28 кг/м³ при +20 °C и 101,3 кПа).");
+            }
             return errors;
         }
 
         private static void ValidateNumber(List<string> errors, double? value, string field,
-            Func<double, bool> withinDomain, string domainMessage)
+            Func<double, bool> withinDomain, string domainMessage, string missingMessage = null)
         {
             if (!value.HasValue)
-                errors.Add(field + ": укажите числовое значение.");
+                errors.Add(field + ": " + (missingMessage ?? "укажите числовое значение."));
             else if (!double.IsFinite(value.Value))
                 errors.Add(field + ": требуется конечное число.");
             else if (!withinDomain(value.Value))

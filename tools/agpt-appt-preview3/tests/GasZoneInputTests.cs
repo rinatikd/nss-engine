@@ -8,8 +8,8 @@ public class GasZoneInputTests
     private static GasZoneInput ValidInput() => new GasZoneInput
     {
         Name = "Серверная", Gotv = "HFC-227ea", Height = 3,
-        OpeningsArea = 0, MinimumTemperature = 20, Concentration = 7,
-        Density = 7.28, K4 = 1, PipeVolume = 0
+        OpeningsArea = 0, MinimumTemperature = 20, Concentration = 7.2,
+        Density = 7.28
     };
 
     public static IEnumerable<object[]> NumericFields()
@@ -19,14 +19,20 @@ public class GasZoneInputTests
         yield return new object[] { nameof(GasZoneInput.MinimumTemperature), "Минимальная температура Tм" };
         yield return new object[] { nameof(GasZoneInput.Concentration), "Концентрация Cн" };
         yield return new object[] { nameof(GasZoneInput.Density), "Плотность ρ₀" };
-        yield return new object[] { nameof(GasZoneInput.K4), "Коэффициент K4" };
-        yield return new object[] { nameof(GasZoneInput.PipeVolume), "Объём труб Vтр" };
     }
 
     [Fact]
     public void EmptyInputReportsEachRequiredField()
     {
-        Assert.Equal(9, new GasZoneInput().Validate().Count);
+        Assert.Equal(7, new GasZoneInput().Validate().Count);
+    }
+
+    [Fact]
+    public void ZoneCreationHasNoManualK4OrPipeVolumeInputs()
+    {
+        Assert.Null(typeof(GasZoneInput).GetProperty("K4"));
+        Assert.Null(typeof(GasZoneInput).GetProperty("PipeVolume"));
+        Assert.Empty(ValidInput().Validate());
     }
 
     [Theory]
@@ -39,7 +45,8 @@ public class GasZoneInputTests
             typeof(GasZoneInput).GetProperty(property).SetValue(input, value);
             var error = Assert.Single(input.Validate());
             Assert.StartsWith(label + ":", error);
-            Assert.Contains(value.HasValue ? "конечное число" : "укажите числовое значение", error);
+            bool referenceField = property == nameof(GasZoneInput.Concentration) || property == nameof(GasZoneInput.Density);
+            Assert.Contains(value.HasValue ? "конечное число" : referenceField ? "примените профиль" : "укажите числовое значение", error);
         }
     }
 
@@ -52,14 +59,11 @@ public class GasZoneInputTests
     [InlineData(nameof(GasZoneInput.Concentration), 100)]
     [InlineData(nameof(GasZoneInput.Density), 0)]
     [InlineData(nameof(GasZoneInput.Density), -1)]
-    [InlineData(nameof(GasZoneInput.K4), 0)]
-    [InlineData(nameof(GasZoneInput.K4), -1)]
-    [InlineData(nameof(GasZoneInput.PipeVolume), -0.01)]
     public void OutOfDomainInputReportsOneField(string property, double value)
     {
         var input = ValidInput();
         typeof(GasZoneInput).GetProperty(property).SetValue(input, value);
-        Assert.Single(input.Validate());
+        Assert.DoesNotContain("проектного профиля", Assert.Single(input.Validate()));
     }
 
     [Fact]
@@ -69,12 +73,6 @@ public class GasZoneInputTests
         input.Height = double.Epsilon;
         input.OpeningsArea = 0;
         input.MinimumTemperature = -73.15;
-        input.Concentration = double.Epsilon;
-        input.Density = double.Epsilon;
-        input.K4 = double.Epsilon;
-        input.PipeVolume = 0;
-        Assert.Empty(input.Validate());
-        input.Concentration = Math.BitDecrement(100);
         Assert.Empty(input.Validate());
     }
 
@@ -82,7 +80,7 @@ public class GasZoneInputTests
     public void LargeFiniteValuesHaveNoInventedUpperBound()
     {
         var input = ValidInput();
-        input.Height = input.OpeningsArea = input.MinimumTemperature = input.Density = input.K4 = input.PipeVolume = double.MaxValue;
+        input.Height = input.OpeningsArea = input.MinimumTemperature = double.MaxValue;
         Assert.Empty(input.Validate());
     }
 
@@ -98,14 +96,80 @@ public class GasZoneInputTests
     }
 
     [Fact]
-    public void CatalogContainsOnlyImplementedAgentAndNoPhysicalPresets()
+    public void CatalogContainsOnlyImplementedAgentAndDoesNotDefaultZoneInputs()
     {
         Assert.Equal(new[] { "HFC-227ea" }, GasAgentCatalog.Options);
         Assert.Equal("HFC-227ea", GasAgentCatalog.SupportedAgent);
         Assert.Null(new GasZoneInput().Concentration);
         Assert.Null(new GasZoneInput().Density);
-        Assert.Null(new GasZoneInput().K4);
         Assert.Null(new GasZoneInput().Gotv);
+    }
+
+    [Fact]
+    public void ReferenceProfilePreservesExactProjectDataAndProvenance()
+    {
+        var profile = GasAgentCatalog.GetReferenceProfile("HFC-227ea");
+        Assert.Equal("HFC-227ea", profile.Agent);
+        Assert.Equal(7.2, profile.Concentration);
+        Assert.Equal(7.28, profile.VaporDensity);
+        Assert.Equal(20, profile.ReferenceTemperatureC);
+        Assert.Equal(101.3, profile.ReferencePressureKPa);
+        Assert.Equal("Предоставленный проектный эталон: лист расчёта ГОТВ", profile.SourceLabel);
+        Assert.Equal("ProjectReference", profile.SourceKind);
+        Assert.Same(profile, GasAgentCatalog.GetReferenceProfile(" HFC-227ea "));
+    }
+
+    [Fact]
+    public void ReferenceProfileIsSealedAndHasOnlyReadOnlyProperties()
+    {
+        var profile = GasAgentCatalog.GetReferenceProfile("HFC-227ea");
+        Assert.True(profile.GetType().IsSealed);
+        Assert.Empty(profile.GetType().GetConstructors());
+        Assert.All(profile.GetType().GetProperties(), property => Assert.False(property.CanWrite));
+        Assert.Throws<NotSupportedException>(() => ((IList<string>)GasAgentCatalog.Options)[0] = "HFC-125");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("HFC-125")]
+    [InlineData("hfc-227ea")]
+    public void ReferenceProfileRejectsUnsupportedAgent(string agent)
+    {
+        Assert.Throws<ArgumentException>(() => GasAgentCatalog.GetReferenceProfile(agent));
+    }
+
+    [Theory]
+    [InlineData(nameof(GasZoneInput.Concentration), 7)]
+    [InlineData(nameof(GasZoneInput.Concentration), double.Epsilon)]
+    [InlineData(nameof(GasZoneInput.Concentration), 99.99999999999999)]
+    [InlineData(nameof(GasZoneInput.Density), 7.2)]
+    [InlineData(nameof(GasZoneInput.Density), double.Epsilon)]
+    [InlineData(nameof(GasZoneInput.Density), double.MaxValue)]
+    public void FiniteInDomainManualValuesMustMatchReferenceProfile(string property, double value)
+    {
+        var input = ValidInput();
+        typeof(GasZoneInput).GetProperty(property).SetValue(input, value);
+        var error = Assert.Single(input.Validate());
+        Assert.Contains("используйте значение из проектного профиля HFC-227ea", error);
+    }
+
+    [Fact]
+    public void ProfileMatchingDoesNotSilentlyRoundNearbyValues()
+    {
+        var profile = GasAgentCatalog.GetReferenceProfile("HFC-227ea");
+        foreach (var value in new[] { Math.BitDecrement(profile.Concentration), Math.BitIncrement(profile.Concentration) })
+        {
+            var input = ValidInput();
+            input.Concentration = value;
+            Assert.Contains("проектного профиля", Assert.Single(input.Validate()));
+        }
+        foreach (var value in new[] { Math.BitDecrement(profile.VaporDensity), Math.BitIncrement(profile.VaporDensity) })
+        {
+            var input = ValidInput();
+            input.Density = value;
+            Assert.Contains("проектного профиля", Assert.Single(input.Validate()));
+        }
     }
 
     [Theory]
@@ -119,24 +183,52 @@ public class GasZoneInputTests
         input.Gotv = agent;
         Assert.Contains("только для HFC-227ea", Assert.Single(input.Validate()));
     }
-    [Theory]
-    [InlineData("METHOD_VALUE", 1, "METHOD_VALUE")]
-    [InlineData("METHOD_VALUE", 2, "METHOD_VALUE")]
-    [InlineData("UNIT_MULTIPLIER", 1, "UNIT_MULTIPLIER")]
-    [InlineData("UNIT_MULTIPLIER", 2, null)]
-    [InlineData("unknown", 1, null)]
-    [InlineData(null, 1, "UNIT_MULTIPLIER")]
-    [InlineData("", 2, "METHOD_VALUE")]
-    public void RestoringK4ModePreservesExplicitChoiceAndRejectsInconsistency(string mode, double value, string expected)
+}
+
+public class PipeVolumeCalculatorTests
+{
+    [Fact]
+    public void InternalDiameterInMillimetresAndLengthInMetresProduceCubicMetres()
     {
-        Assert.Equal(expected, K4InputModes.Restore(mode, value));
+        Assert.Equal(0.003141592653589793, PipeVolumeCalculator.Compute(10, 20), 15);
+        Assert.Equal(Math.PI / 4, PipeVolumeCalculator.Compute(1, 1000), 15);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void SegmentDimensionsMustBeFiniteAndPositive(double value)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => PipeVolumeCalculator.Compute(value, 20));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PipeVolumeCalculator.Compute(10, value));
     }
 
     [Fact]
-    public void MissingOrInvalidLegacyK4DoesNotChooseAMode()
+    public void SegmentOverflowIsRejected()
     {
-        Assert.Null(K4InputModes.Restore(null, null));
-        Assert.Null(K4InputModes.Restore(null, double.NaN));
-        Assert.Null(K4InputModes.Restore(null, double.PositiveInfinity));
+        Assert.Throws<OverflowException>(() => PipeVolumeCalculator.Compute(double.MaxValue, double.MaxValue));
+        Assert.Throws<OverflowException>(() => PipeVolumeCalculator.Compute(1, double.Epsilon));
+    }
+
+    [Fact]
+    public void SumUsesEachSegmentsActualInternalDiameter()
+    {
+        Assert.Equal(0.00471238898038469,
+            PipeVolumeCalculator.Sum(new[] { (10.0, 20.0), (5.0, 20.0) }), 15);
+        Assert.Equal(0, PipeVolumeCalculator.Sum(Array.Empty<(double, double)>()));
+    }
+
+    [Fact]
+    public void SumRejectsMissingSegmentsInvalidDimensionsAndTotalOverflow()
+    {
+        Assert.Throws<ArgumentNullException>(() => PipeVolumeCalculator.Sum(null));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PipeVolumeCalculator.Sum(new[] { (1.0, 20.0), (-1.0, 20.0) }));
+        Assert.Throws<OverflowException>(() => PipeVolumeCalculator.Sum(new[]
+        {
+            (1e308, 1000.0), (1e308, 1000.0), (1e308, 1000.0)
+        }));
     }
 }

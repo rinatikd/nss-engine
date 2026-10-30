@@ -27,6 +27,7 @@
         <Command Local="AGPT_MODULE" Global="AGPT_MODULE" />
         <Command Local="AGPT_NOZZLE" Global="AGPT_NOZZLE" />
         <Command Local="AGPT_PIPE" Global="AGPT_PIPE" />
+        <Command Local="AGPT_PIPE_DATA" Global="AGPT_PIPE_DATA" />
         <Command Local="AGPT_AUTO" Global="AGPT_AUTO" />
         <Command Local="AGPT_KSID" Global="AGPT_KSID" />
         <Command Local="AGPT_ACC" Global="AGPT_ACC" />

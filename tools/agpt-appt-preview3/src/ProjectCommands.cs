@@ -106,7 +106,8 @@ namespace AGPT
         private static void SetData(Entity entity, string app, params (string key, string value)[] pairs)
         {
             var data = Data(entity, app);
-            foreach (var pair in pairs) data[pair.key] = pair.value;
+            foreach (var pair in pairs)
+                if (pair.value == null) data.Remove(pair.key); else data[pair.key] = pair.value;
             var values = new List<TypedValue> { new TypedValue((int)DxfCode.ExtendedDataRegAppName, app) };
             values.AddRange(data.Select(pair => new TypedValue((int)DxfCode.ExtendedDataAsciiString, pair.Key + "=" + pair.Value)));
             using var buffer = new ResultBuffer(values.ToArray());
@@ -150,7 +151,6 @@ namespace AGPT
                 string name = input.Name, gotv = input.Gotv;
                 double h = input.Height.Value, fh = input.OpeningsArea.Value, tm = input.MinimumTemperature.Value;
                 double cn = input.Concentration.Value, rho = input.Density.Value;
-                double k4 = input.K4.Value, vtr = input.PipeVolume.Value;
                 double volume = PlanUnits.AreaVolume(area, h, scale);
                 string guid = Value(Data(polyline, "AGPT"), "GUID");
                 if (string.IsNullOrWhiteSpace(guid)) guid = Guid.NewGuid().ToString();
@@ -159,10 +159,11 @@ namespace AGPT
                 SetData(polyline, "AGPT", ("KIND", "ZONE"), ("GUID", guid), ("ZONE_NAME", name), ("GOTV", gotv),
                     ("VP", NumericData.Format(volume)), ("H", NumericData.Format(h)), ("FH", NumericData.Format(fh)),
                     ("TM", NumericData.Format(tm)), ("CN", NumericData.Format(cn)), ("RHO0", NumericData.Format(rho)),
-                    ("K4", NumericData.Format(k4)), ("K4_INPUT_MODE", form.K4InputMode), ("VTR", NumericData.Format(vtr)),
+                    ("K4", null), ("K4_INPUT_MODE", null), ("VTR", null),
+                    ("GAS_PROFILE", "HFC227EA-PROJECT-REFERENCE-1"), ("GAS_PROFILE_SOURCE", "ProjectReference"),
                     ("PLAN_UNIT", db.Insunits.ToString()), ("METRES_PER_UNIT", NumericData.Format(scale)),
                     ("VP_UNIT", "m3"), ("H_UNIT", "m"), ("FH_UNIT", "m2"), ("TM_UNIT", "degC"),
-                    ("CN_UNIT", "%"), ("RHO0_UNIT", "kg/m3"), ("K4_UNIT", "1"), ("VTR_UNIT", "m3"));
+                    ("CN_UNIT", "%"), ("RHO0_UNIT", "kg/m3"), ("K4_UNIT", null), ("VTR_UNIT", null));
                 transaction.Commit();
                 editor.WriteMessage("\n[AGPT_ZONE] " + name + ": Vp=" + NumericData.Format(volume) + " м³; GUID=" + guid);
             }

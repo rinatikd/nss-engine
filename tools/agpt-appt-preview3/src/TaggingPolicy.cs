@@ -10,6 +10,7 @@ namespace AGPT.Shared
         public static void RequireTaggable(string app, string layer,
             IEnumerable<(string Application, string Key, string Value)> tags, params string[] allowedKinds)
         {
+            bool gasPipeUpdate = app == "AGPT" && allowedKinds.Contains("PIPE");
             foreach (var tag in tags)
             {
                 if (tag.Application == "AGPT_ALBUM_OUTPUT")
@@ -19,9 +20,9 @@ namespace AGPT.Shared
                 if (!classification) continue;
                 if (tag.Application != app)
                     throw new InvalidOperationException("Объект уже размечен другим приложением: " + tag.Application + ". Выберите отдельный объект.");
-                bool compatible = key == "KIND" ? allowedKinds.Contains(tag.Value)
+                bool compatible = key == "KIND" ? allowedKinds.Contains(tag.Value) && (tag.Value != "PIPE" || gasPipeUpdate)
                     : key == "ZONE_NAME" ? allowedKinds.Contains("ZONE")
-                    : key == "CABLE_MARK" ? allowedKinds.Contains("CABLE") : false;
+                    : key == "CABLE_MARK" ? allowedKinds.Contains("CABLE") : gasPipeUpdate;
                 if (!compatible)
                     throw new InvalidOperationException("Объект уже используется как зона, трубопровод, оборудование либо трасса другого типа.");
             }
@@ -30,7 +31,7 @@ namespace AGPT.Shared
             {
                 string normalizedLayer = layer.ToUpperInvariant();
                 if (normalizedLayer == prefix + "-ZONE" && (prefix != app || !allowedKinds.Contains("ZONE"))
-                    || normalizedLayer == prefix + "-PIPE"
+                    || normalizedLayer == prefix + "-PIPE" && (prefix != app || !gasPipeUpdate)
                     || normalizedLayer == prefix + "-CABLE" && (prefix != app || !allowedKinds.Contains("CABLE"))
                     || normalizedLayer == prefix + "-EQ" && (prefix != app || !allowedKinds.Any(k => k == "MODULE" || k == "EQUIPMENT")))
                     throw new InvalidOperationException("Назначение существующего слоя несовместимо с командой: " + layer);

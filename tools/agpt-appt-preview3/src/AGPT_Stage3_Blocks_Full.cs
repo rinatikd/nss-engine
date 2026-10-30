@@ -148,7 +148,6 @@ namespace AGPT.Stage3
         public double Tm { get; set; } = 20;
         public double Cn { get; set; } = 7.2;
         public double Rho0 { get; set; } = 7.28;
-        public double K4 { get; set; } = 1.0;
         public string Gotv { get; set; } = "HFC-227ea";
         public string InstallType { get; set; } = "with_pipes";
         public double Mp { get; set; }
@@ -275,7 +274,7 @@ namespace AGPT.Stage3
     // =========================================================================
     public static class MassCalc
     {
-        public static void Compute(ZoneData z, double vTr = 0.002, double k1 = 1.05, double tPod = 10)
+        public static void Compute(ZoneData z, double vTr, double k1 = 1.05, double tPod = 10)
         {
             double rho1 = z.Rho0 * (293.15 / (z.Tm + 273.15));
             double delta = z.Vp > 0 ? z.Fh / z.Vp : 0;
@@ -283,7 +282,7 @@ namespace AGPT.Stage3
             if (double.IsNaN(k2) || double.IsInfinity(k2)) k2 = 0;
             z.Mp = z.Vp * rho1 * (1 + k2) * Math.Log(100.0 / (100.0 - z.Cn));
             double mTr = vTr * rho1 * 2.5;
-            z.Mg = k1 * (z.Mp * z.K4 + mTr);
+            z.Mg = k1 * (z.Mp + mTr);
         }
 
         public static int SuggestVol(double mg)
@@ -677,10 +676,27 @@ namespace AGPT.Stage3
         public void Pipe()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
             var db = doc.Database; var ed = doc.Editor;
 
             if (!DrawingUnits.TryGetMetresPerUnit(db, out double metresPerUnit))
             { ed.WriteMessage("\n[PIPE] " + DrawingUnits.UnsupportedMessage); return; }
+
+            var zoneOptions = new PromptEntityOptions("\nЗащищаемая зона сегмента: ");
+            zoneOptions.SetRejectMessage("\nВыберите исходную полилинию зоны AGPT-ZONE.");
+            zoneOptions.AddAllowedClass(typeof(Polyline), true);
+            var zoneResult = ed.GetEntity(zoneOptions);
+            if (zoneResult.Status != PromptStatus.OK) return;
+            string zoneGuid;
+            using (var transaction = db.TransactionManager.StartTransaction())
+            {
+                var zone = transaction.GetObject(zoneResult.ObjectId, OpenMode.ForRead) as Polyline;
+                zoneGuid = zone == null ? null : XD.Get(zone, "GUID");
+                if (zone == null || !zone.Closed || zone.Layer != C.LZone || XD.Get(zone, "KIND") != "ZONE"
+                    || AGPT.Cad.AlbumOutput.IsGenerated(zone) || !System.Guid.TryParse(zoneGuid, out var parsedZoneGuid)
+                    || parsedZoneGuid == System.Guid.Empty)
+                { ed.WriteMessage("\n[PIPE] Нужен исходный замкнутый контур AGPT-ZONE с KIND=ZONE и действительным GUID."); return; }
+            }
 
             var ko = new PromptKeywordOptions("\nТип [main/branch/drop]", "main branch drop");
             ko.Keywords.Default = "branch";
@@ -695,16 +711,29 @@ namespace AGPT.Stage3
             if (!new[] { 15, 20, 25, 32, 40, 50, 65, 80 }.Contains(dy))
             { ed.WriteMessage("\n[PIPE] Допустимые Ду: 15/20/25/32/40/50/65/80 мм."); return; }
 
+            var innerOptions = new PromptDoubleOptions("\nФактический внутренний диаметр трубы, мм: ")
+            { AllowNegative = false, AllowZero = false, AllowNone = false };
+            var innerResult = ed.GetDouble(innerOptions);
+            if (innerResult.Status != PromptStatus.OK) return;
+            double innerDiameterMm = innerResult.Value;
+            if (!double.IsFinite(innerDiameterMm) || innerDiameterMm <= 0)
+            { ed.WriteMessage("\n[PIPE] Укажите конечный положительный внутренний диаметр в мм по данным трубы."); return; }
+
             var p1 = ed.GetPoint("\nНачало сегмента: ");
             if (p1.Status != PromptStatus.OK) return;
             var p2 = ed.GetPoint("\nКонец сегмента: ");
             if (p2.Status != PromptStatus.OK) return;
 
+            if (Math.Abs(p1.Value.Z - p2.Value.Z) > 1e-9)
+            { ed.WriteMessage("\n[PIPE] Команда создаёт горизонтальный участок 2D-плана; точки должны иметь одинаковую высоту."); return; }
             double len;
             try { len = AGPT.Shared.PlanUnits.LengthInMetres(p1.Value.DistanceTo(p2.Value), metresPerUnit); }
             catch (ArgumentException ex)
             { ed.WriteMessage("\n[PIPE] Некорректная длина: " + ex.Message); return; }
-            var seg = new PipeSegData { SegType = segType, Dy = dy, L = len };
+            try { AGPT.Shared.PipeVolumeCalculator.Compute(len, innerDiameterMm); }
+            catch (System.Exception ex) when (ex is ArgumentException || ex is OverflowException)
+            { ed.WriteMessage("\n[PIPE] " + ex.Message); return; }
+            var seg = new PipeSegData { SegType = segType, Dy = dy, L = len, ZoneGuid = zoneGuid };
             var style = C.PipeStyle[segType];
 
             using (var tr = db.TransactionManager.StartTransaction())
@@ -722,6 +751,9 @@ namespace AGPT.Stage3
 
                 XD.Set(pl,
                     ("SEG_ID", seg.SegId), ("SEG_TYPE", seg.SegType),
+                    ("ZONE_GUID", seg.ZoneGuid),
+                    ("INNER_D_MM", innerDiameterMm.ToString("R", CultureInfo.InvariantCulture)),
+                    ("INNER_D_FOR_DY", dy.ToString(CultureInfo.InvariantCulture)),
                     ("DY", dy.ToString(CultureInfo.InvariantCulture)), ("L", len.ToString("R", CultureInfo.InvariantCulture)),
                     ("PLAN_UNIT", db.Insunits.ToString()), ("METRES_PER_UNIT", metresPerUnit.ToString("R", CultureInfo.InvariantCulture)),
                     ("L_UNIT", "m"), ("DY_UNIT", "mm"),
@@ -741,42 +773,23 @@ namespace AGPT.Stage3
         public void Calc()
         {
             var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
             var db = doc.Database; var ed = doc.Editor;
-
-            using (var tr = db.TransactionManager.StartTransaction())
+            try
             {
-                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
-                int n = 0;
-                foreach (ObjectId id in ms)
+                using var tr = db.TransactionManager.StartTransaction();
+                var project = AGPT.Drawings.Collect.FromModel(db, tr);
+                foreach (string issue in project.Plan.Issues) ed.WriteMessage("\n[AGPT] " + issue);
+                foreach (var z in project.Zones)
                 {
-                    var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                    if (ent == null || ent.Layer != C.LZone || !(ent is Polyline)) continue;
-                    if (string.IsNullOrEmpty(XD.Get(ent, "GUID"))) continue;
-
-                    var z = new ZoneData
-                    {
-                        Guid = XD.Get(ent, "GUID"),
-                        Name = XD.Get(ent, "ZONE_NAME") ?? "?",
-                        Vp = XD.GetD(ent, "VP"),
-                        H = XD.GetD(ent, "H", 3),
-                        Fh = XD.GetD(ent, "FH"),
-                        Cn = XD.GetD(ent, "CN", 7.2),
-                        Rho0 = XD.GetD(ent, "RHO0", 7.28)
-                    };
-                    if (z.Vp <= 0) continue;
-
-                    MassCalc.Compute(z);
-                    z.Fc = KsidCalc.Compute(z);
-                    int vol = MassCalc.SuggestVol(z.Mg);
                     double ksidSize = KsidCalc.SuggestKsidSize(z.Fc);
-
-                    ed.WriteMessage($"\n[{z.Name}] Vp={z.Vp:F1} → Mg={z.Mg:F2} кг → модуль {vol} л | Fc={z.Fc:F4} м² → КСИД {(ksidSize > 0 ? ksidSize.ToString("F2") + " м²" : "не нужен")}");
-                    n++;
+                    ed.WriteMessage($"\n[{z.Name}] Vp={z.Vp:F1} м³ | участков={z.PipeCount} | Vтр={z.Vtr:F6} м³ → Mg={z.Mg:F2} кг → модуль {z.ModuleVol} л | Fc={z.Fc:F4} м² → КСИД {(ksidSize > 0 ? ksidSize.ToString("F2") + " м²" : "не нужен")}");
                 }
-                tr.Commit();
-                ed.WriteMessage($"\nЗон: {n}");
+                ed.WriteMessage($"\nЗон: {project.Zones.Count}");
             }
+            catch (System.Exception ex) when (ex is ArgumentException || ex is FormatException
+                || ex is InvalidOperationException || ex is OverflowException)
+            { ed.WriteMessage("\n[AGPT_CALC] Расчёт остановлен: " + ex.Message); }
         }
 
         // ----- SPEC (свод по XData) -----

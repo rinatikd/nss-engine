@@ -678,7 +678,7 @@ namespace AGPT.Stage4v2
             foreach (ObjectId id in ms)
             {
                 var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                if (ent == null) continue;
+                if (ent == null || AGPT.Cad.AlbumOutput.IsGenerated(ent)) continue;
 
                 // Трубы
                 if (ent.Layer == K.LPipe || XD.Get(ent, "SEG_TYPE") != null)
@@ -692,9 +692,7 @@ namespace AGPT.Stage4v2
                         if (dyValue != Math.Truncate(dyValue) || dyValue <= 0 || dyValue > int.MaxValue)
                             throw new ArgumentException("Ду должен быть положительным целым числом миллиметров.");
                         int dy = (int)dyValue;
-                        double len = XD.Get(ent, "L") == null
-                            ? AGPT.Shared.PlanUnits.LengthInMetres(pl.Length, metresPerUnit)
-                            : XD.GetFiniteD(ent, "L");
+                        double len = AGPT.Cad.CadGasPipeVolumes.ActualLength(db, ent, metresPerUnit);
                         if (dy <= 0 || len <= 0) throw new ArgumentException("Неположительная длина или Ду участка.");
                         g.AddEdge(id, p1, p2, st, dy, len);
                     }
@@ -1059,11 +1057,13 @@ namespace AGPT.Stage4v2
                 foreach (var e in g.Edges.Values)
                 {
                     var ent = (Entity)tr.GetObject(e.EntId, OpenMode.ForWrite);
+                    string innerDiameterForDy = XD.Get(ent, "INNER_D_FOR_DY");
+                    if (!double.TryParse(innerDiameterForDy, NumberStyles.Float, CultureInfo.InvariantCulture,
+                        out double confirmedDy) || !double.IsFinite(confirmedDy) || confirmedDy != e.Dy)
+                        ed.WriteMessage($"\n[PIPE {ent.Handle}] Ду={e.Dy} отличается от Ду подтверждённого внутреннего диаметра или подтверждение отсутствует. Уточните фактический внутренний диаметр через AGPT_PIPE_DATA перед расчётом объёма труб.");
                     XD.Set(ent,
                         ("HYDRO_STATUS", "PROTOTYPE"),
                         ("L_UNIT", "m"), ("DY_UNIT", "mm"),
-                        ("PLAN_UNIT", db.Insunits.ToString()),
-                        ("METRES_PER_UNIT", g.MetresPerDrawingUnit.ToString("R", CultureInfo.InvariantCulture)),
                         ("DY", e.Dy.ToString(CultureInfo.InvariantCulture)),
                         ("DP", e.Dp.ToString("F4", CultureInfo.InvariantCulture)),
                         ("Q", e.Q.ToString("F4", CultureInfo.InvariantCulture)),

@@ -11,8 +11,6 @@ namespace AGPT.Cad
     {
         private readonly TextBox nameInput = new TextBox();
         private readonly ComboBox agentInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
-        private readonly ComboBox k4Mode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
-        public string K4InputMode => k4Mode.SelectedIndex == 0 ? K4InputModes.UnitMultiplier : K4InputModes.MethodValue;
         private readonly Dictionary<string, TextBox> numbers = new Dictionary<string, TextBox>();
         private readonly Label errors = new Label { AutoSize = true, ForeColor = Color.Firebrick, MaximumSize = new Size(980, 0) };
         private readonly Label volume = new Label { AutoSize = true };
@@ -49,29 +47,32 @@ namespace AGPT.Cad
             int agentIndex = agentInput.Items.IndexOf(savedAgent);
             agentInput.SelectedIndex = agentIndex;
             AddRow(table, "ГОТВ — выбрать из списка", agentInput,
-                "HFC-227ea — Хладон 227ea. В текущем прототипе есть допущения для этого вещества. Другие ГОТВ пока не поддержаны; выбор не подставляет концентрацию и плотность."
+                "HFC-227ea — Хладон 227ea. В текущем прототипе есть допущения для этого вещества. Другие ГОТВ пока не поддержаны. Концентрация и плотность заполняются из явно выбранного справочного профиля предоставленного проекта."
                 + (savedAgent.Length > 0 && agentIndex < 0 ? " Сохранённое значение: " + savedAgent + "; автоматическая замена не выполнена." : ""));
             AddNumber(table, "H", "Высота помещения H, м", Read("H"), "Высота защищаемого помещения. Используется для объёма и поправки на проёмы. Требуется конечное H > 0; нормативный верхний предел здесь не установлен.");
             numbers["H"].TextChanged += (sender, args) => UpdateVolume();
             AddRow(table, "Расчётный объём, м³", volume, "Площадь выбранного контура × высота. Заполняется автоматически после ввода высоты.");
             AddNumber(table, "FH", "Площадь проёмов FH, м²", Read("FH"), "Суммарная площадь негерметичных проёмов, учитываемых принятой методикой. FH ≥ 0. Ноль указывайте только при отсутствии учитываемых проёмов.");
             AddNumber(table, "TM", "Минимальная температура, °C", Read("TM"), "Минимальная расчётная температура по проекту. Нижний предел −73,15 °C относится только к текущему алгоритму; рабочий диапазон ГОТВ уточняют по технической документации.");
-            AddNumber(table, "CN", "Концентрация Cn, об. %", Read("CN"), "Нормативная огнетушащая концентрация — по применимой методике и пожарной нагрузке. Программа проверяет 0 < Cn < 100; это не рекомендуемый инженерный диапазон.");
-            AddNumber(table, "RHO0", "Плотность паров ρ₀, кг/м³", Read("RHO0"), "Плотность паров ГОТВ при +20 °C и атмосферном давлении 101,3 кПа. Возьмите из технической документации/принятой методики. Требуется ρ₀ > 0; плотность жидкости сюда не вводят.");
-            k4Mode.Items.AddRange(new object[] { "Не изменять Mp: K4 = 1", "Ввести K4 по принятой методике" });
-            AddRow(table, "Как учитывать K4", k4Mode,
-                "При K4 = 1 произведение Mp × K4 равно Mp. Это математический выбор без дополнительного множителя, а не нормативная рекомендация. Выбирайте только при соответствии принятой методике.");
-            AddNumber(table, "K4", "Множитель K4", Read("K4"), "Безразмерный множитель Mp в формуле прототипа Mg = ceil(1,05 × (Mp × K4 + Mтр)). Нормативное назначение и диапазон в имеющихся источниках не подтверждены. Требуется конечное K4 > 0; значение 1 автоматически не назначается.");
-            numbers["K4"].ReadOnly = true;
-            k4Mode.SelectedIndexChanged += (sender, args) => {
-                numbers["K4"].ReadOnly = k4Mode.SelectedIndex != 1;
-                if (k4Mode.SelectedIndex == 0) numbers["K4"].Text = "1";
-            };
-            double? savedK4 = NumericData.TryParseFinite(Read("K4"), out double parsedK4) ? parsedK4 : null;
-            string restoredMode = K4InputModes.Restore(Read("K4_INPUT_MODE"), savedK4);
-            if (restoredMode == K4InputModes.UnitMultiplier) k4Mode.SelectedIndex = 0;
-            else if (restoredMode == K4InputModes.MethodValue) k4Mode.SelectedIndex = 1;
-            AddNumber(table, "VTR", "Объём трубопроводов Vтр, м³", Read("VTR"), "Внутренний объём распределительных трубопроводов по их размерам и длинам. Vтр ≥ 0; 1 литр = 0,001 м³. Прототип использует его для оценки остатка ГОТВ, модель требует инженерной проверки.");
+            AddNumber(table, "CN", "Концентрация Cн, об. %", Read("CN"), "Справочное значение из выбранного профиля. Вручную не вводится. Для HFC-227ea в предоставленном проектном эталоне указано 7,2. Применимость профиля к другим объектам отдельно проверяется.");
+            AddNumber(table, "RHO0", "Плотность паров ρ₀, кг/м³", Read("RHO0"), "Справочное значение профиля при +20 °C и атмосферном давлении 101,3 кПа. Вручную не вводится; не путать с плотностью жидкости.");
+            numbers["CN"].ReadOnly = true;
+            numbers["RHO0"].ReadOnly = true;
+            numbers["CN"].BackColor = numbers["RHO0"].BackColor = SystemColors.Control;
+            numbers["CN"].TabStop = numbers["RHO0"].TabStop = false;
+            var applyProfile = new Button { Text = "Применить профиль", AutoSize = true };
+            void ApplyProfile()
+            {
+                if (!(agentInput.SelectedItem is string agent)) { errors.Text = "Сначала выберите ГОТВ."; return; }
+                var profile = GasAgentCatalog.GetReferenceProfile(agent);
+                numbers["CN"].Text = NumericData.Format(profile.Concentration);
+                numbers["RHO0"].Text = NumericData.Format(profile.VaporDensity);
+                errors.Text = "";
+            }
+            applyProfile.Click += (sender, args) => ApplyProfile();
+            agentInput.SelectedIndexChanged += (sender, args) => ApplyProfile();
+            AddRow(table, "Справочный профиль", applyProfile, "Источник: предоставленный проектный эталон, лист расчёта ГОТВ. Это не универсальная норма для любой пожарной нагрузки. Старые отличающиеся значения изменяются только после явного применения профиля.");
+            AddRow(table, "Объём трубопроводов", new Label { AutoSize = true, Text = "Вычисляется по модели сети" }, "При расчёте суммируются объёмы участков выбранной зоны по фактическим длинам и внутренним диаметрам труб. Не вводится в параметры помещения.");
             scroll.Controls.Add(table);
             layout.Controls.Add(scroll, 0, 1);
             var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
@@ -119,17 +120,18 @@ namespace AGPT.Cad
         private void Save(object sender, EventArgs args)
         {
             var parseErrors = new List<string>();
-            if (k4Mode.SelectedIndex < 0) parseErrors.Add("K4: явно выберите способ учёта множителя.");
             double? Number(string key)
             {
                 if (string.IsNullOrWhiteSpace(numbers[key].Text)) return null;
                 if (NumericData.TryParseFinite(numbers[key].Text, out double value)) return value;
-                parseErrors.Add(numbers[key].AccessibleName + ": требуется конечное число (например, 2,5).");
+                parseErrors.Add(numbers[key].AccessibleName + (key == "CN" || key == "RHO0"
+                    ? ": повреждено справочное значение; примените профиль ГОТВ."
+                    : ": требуется конечное число (например, 2,5)."));
                 return null;
             }
             var input = new GasZoneInput { Name = nameInput.Text.Trim(), Gotv = agentInput.SelectedItem as string,
                 Height = Number("H"), OpeningsArea = Number("FH"), MinimumTemperature = Number("TM"),
-                Concentration = Number("CN"), Density = Number("RHO0"), K4 = Number("K4"), PipeVolume = Number("VTR") };
+                Concentration = Number("CN"), Density = Number("RHO0") };
             parseErrors.AddRange(input.Validate());
             if (parseErrors.Count > 0) { errors.Text = string.Join("\n", parseErrors); return; }
             if (!double.IsFinite(area * input.Height.Value) || area * input.Height.Value <= 0)
