@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AGPT/APPT v1.0 — AutoCAD 2025/2026 (.NET 8)
+  Сборка: build.bat
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <OutputType>Library</OutputType>
+    <RootNamespace>AGPT</RootNamespace>
+    <AssemblyName>AGPT</AssemblyName>
+    <Version>1.1.0-preview.3</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <AcadDir Condition="'$(AcadDir)' == ''">C:\Program Files\Autodesk\AutoCAD 2026</AcadDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="AcCoreMgd">
+      <HintPath>$(AcadDir)\AcCoreMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcDbMgd">
+      <HintPath>$(AcadDir)\AcDbMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcMgd">
+      <HintPath>$(AcadDir)\AcMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="src\AGPT_Stage3_Blocks_Full.cs" />
+    <Compile Include="src\AGPT_Stage4_Hydro_Axo_v2.cs" />
+    <Compile Include="src\AGPT_Plugin_Drawings.cs" />
+    <Compile Include="src\APPT_Plugin_Drawings.cs" />
+    <Compile Include="src\PluginInit.cs" />
+    <Compile Include="src\ProjectCommands.cs" />
+    <Compile Include="src\AlbumOutput.cs" />
+    <Compile Include="src\CadPlanCapture.cs" />
+    <Compile Include="src\ProjectPlanRenderer.cs" />
+    <Compile Include="src\CadProjectSettings.cs" />
+    <Compile Include="src\ProjectSettingsCommands.cs" />
+    <ProjectReference Include="core\AGPT.InputCore.csproj" />
+    <None Update="blocks\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="CheckAcadRefs" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(AcadDir)\AcCoreMgd.dll')"
+             Text="AutoCAD DLLs not found at $(AcadDir). Pass /p:AcadDir=..." />
+    <Error Condition="!Exists('$(AcadDir)\AcDbMgd.dll')" Text="Missing $(AcadDir)\AcDbMgd.dll" />
+    <Error Condition="!Exists('$(AcadDir)\AcMgd.dll')" Text="Missing $(AcadDir)\AcMgd.dll" />
+  </Target>
+
+</Project>

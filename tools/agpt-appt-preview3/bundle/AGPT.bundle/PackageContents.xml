@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage
+  SchemaVersion="1.0"
+  AutodeskProduct="AutoCAD"
+  ProductType="Application"
+  Name="AGPT"
+  Description="AGPT/APPT — газовое и порошковое пожаротушение"
+  AppVersion="1.1.0"
+  Author="AGPT"
+  ProductCode="{A7B3C1D2-E4F5-6789-ABCD-EF0123456789}"
+  UpgradeCode="{A7B3C1D2-E4F5-6789-ABCD-EF0123456780}"
+>
+  <CompanyDetails Name="AGPT" Url="https://augpt.online/" />
+  <RuntimeRequirements OS="Win64" Platform="AutoCAD*" SeriesMin="R25.0" SeriesMax="R25.1" />
+
+  <Components Description="AGPT/APPT 2025-2026">
+    <RuntimeRequirements OS="Win64" Platform="AutoCAD*" SeriesMin="R25.0" SeriesMax="R25.1" />
+    <ComponentEntry
+      AppName="AGPT"
+      ModuleName="./Contents/Windows/2026/AGPT.dll"
+      AppDescription="AGPT/APPT fire extinguishing design"
+      LoadOnAutoCADStartup="True"
+      LoadOnCommandInvocation="True"
+    >
+      <Commands GroupName="AGPT">
+        <Command Local="AGPT_ZONE" Global="AGPT_ZONE" />
+        <Command Local="AGPT_MODULE" Global="AGPT_MODULE" />
+        <Command Local="AGPT_NOZZLE" Global="AGPT_NOZZLE" />
+        <Command Local="AGPT_PIPE" Global="AGPT_PIPE" />
+        <Command Local="AGPT_AUTO" Global="AGPT_AUTO" />
+        <Command Local="AGPT_KSID" Global="AGPT_KSID" />
+        <Command Local="AGPT_ACC" Global="AGPT_ACC" />
+        <Command Local="AGPT_CALC" Global="AGPT_CALC" />
+        <Command Local="AGPT_HYDRO2" Global="AGPT_HYDRO2" />
+        <Command Local="AGPT_ALBUM" Global="AGPT_ALBUM" />
+        <Command Local="AGPT_SHEET_OD" Global="AGPT_SHEET_OD" />
+        <Command Local="AGPT_SHEET_SS" Global="AGPT_SHEET_SS" />
+        <Command Local="AGPT_SHEET_AXO" Global="AGPT_SHEET_AXO" />
+        <Command Local="AGPT_SHEET_SPEC" Global="AGPT_SHEET_SPEC" />
+        <Command Local="AGPT_SHEET_KZH" Global="AGPT_SHEET_KZH" />
+        <Command Local="AGPT_AXO2" Global="AGPT_AXO2" />
+        <Command Local="AGPT_AXO_SHEET" Global="AGPT_AXO_SHEET" />
+        <Command Local="AGPT_CALC_DRAW" Global="AGPT_CALC_DRAW" />
+        <Command Local="APPT_ALBUM" Global="APPT_ALBUM" />
+        <Command Local="APPT_ZONE" Global="APPT_ZONE" />
+        <Command Local="APPT_CALC" Global="APPT_CALC" />
+        <Command Local="APPT_SHEET_OD" Global="APPT_SHEET_OD" />
+        <Command Local="APPT_SHEET_CALC" Global="APPT_SHEET_CALC" />
+        <Command Local="APPT_SHEET_SPEC" Global="APPT_SHEET_SPEC" />
+      </Commands>
+    </ComponentEntry>
+  </Components>
+</ApplicationPackage>
