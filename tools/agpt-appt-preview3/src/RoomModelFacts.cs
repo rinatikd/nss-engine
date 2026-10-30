@@ -11,6 +11,7 @@ namespace AGPT.Cad
     {
         public Dictionary<string, string> Values { get; } = new(StringComparer.Ordinal);
         public List<string> Issues { get; } = new();
+        public HashSet<string> UnresolvedFields { get; } = new(StringComparer.Ordinal);
     }
 
     /// <summary>Read explicit room attributes and labelled text in ModelSpace without changing the drawing.</summary>
@@ -32,6 +33,7 @@ namespace AGPT.Cad
                     && savedSource != null
                     && (savedSource.StartsWith("ModelSpace block ", StringComparison.Ordinal)
                         || savedSource.StartsWith("ModelSpace text ", StringComparison.Ordinal)
+                        || savedSource.StartsWith("UserConfiguredDefault18C", StringComparison.Ordinal)
                         || savedSource.StartsWith("GeneratedIdentifier", StringComparison.Ordinal)))
                     RemoveFact(result.Values, key);
             }
@@ -42,6 +44,7 @@ namespace AGPT.Cad
             var invalid = new HashSet<string>(StringComparer.Ordinal);
             void AddCandidate(string key, string value, string provenance)
             {
+                if (IsManualOverride(result.Values, key)) return;
                 if (!candidates.TryGetValue(key, out var values))
                     candidates.Add(key, values = new Dictionary<string, List<string>>(StringComparer.Ordinal));
                 if (!values.TryGetValue(value, out var sources)) values.Add(value, sources = new List<string>());
@@ -52,10 +55,21 @@ namespace AGPT.Cad
                 // Text at an edge cannot be assigned to one room, so do not interpret it.
                 if (Locate(polygon, position, tolerance) != 1) return;
                 var parsed = RoomTextFacts.Parse(text);
-                foreach (string key in parsed.InvalidFields) invalid.Add(key);
-                foreach (string issue in parsed.Issues) result.Issues.Add(issue + " [" + provenance + "]");
+                foreach (string key in parsed.InvalidFields)
+                    if (!IsManualOverride(result.Values, key)) invalid.Add(key);
+                foreach (string issue in parsed.Issues)
+                {
+                    foreach (string key in parsed.InvalidFields)
+                    {
+                        if (IsManualOverride(result.Values, key)
+                            || !issue.StartsWith(key + ":", StringComparison.Ordinal)) continue;
+                        result.Issues.Add(issue + " [" + provenance + "]");
+                        break;
+                    }
+                }
                 foreach (var fact in parsed.Values)
                 {
+                    if (IsManualOverride(result.Values, fact.Key)) continue;
                     string value = Normalize(fact.Key, fact.Value);
                     if (value == null)
                     {
@@ -89,7 +103,8 @@ namespace AGPT.Cad
                     if (tr.GetObject(attributeId, OpenMode.ForRead) is not AttributeReference attribute
                         || AlbumOutput.IsGenerated(attribute)) continue;
                     string key = Field(attribute.Tag);
-                    if (key == null || string.IsNullOrWhiteSpace(attribute.TextString)) continue;
+                    if (key == null || IsManualOverride(result.Values, key)
+                        || string.IsNullOrWhiteSpace(attribute.TextString)) continue;
                     string provenance = "ModelSpace block " + block.Handle + ", attribute " + attribute.Handle + " (" + attribute.Tag + ")";
                     if (location == 0)
                     {
@@ -107,12 +122,17 @@ namespace AGPT.Cad
                     AddCandidate(key, value, provenance);
                 }
             }
-            foreach (string key in invalid) RemoveFact(result.Values, key);
+            foreach (string key in invalid)
+            {
+                RemoveFact(result.Values, key);
+                result.UnresolvedFields.Add(key);
+            }
             foreach (var field in candidates)
             {
                 if (field.Value.Count != 1)
                 {
                     RemoveFact(result.Values, field.Key);
+                    result.UnresolvedFields.Add(field.Key);
                     result.Issues.Add(field.Key + ": противоречивые значения в исходных атрибутах или подписях помещения; поле не заполнено.");
                     continue;
                 }
@@ -123,6 +143,7 @@ namespace AGPT.Cad
                         && !string.Equals(Normalize(field.Key, result.Values[field.Key]), value.Key, StringComparison.Ordinal))
                     {
                         RemoveFact(result.Values, field.Key);
+                        result.UnresolvedFields.Add(field.Key);
                         result.Issues.Add(field.Key + ": сохранённое значение противоречит исходному атрибуту или подписи помещения; поле не заполнено.");
                         continue;
                     }
@@ -137,6 +158,10 @@ namespace AGPT.Cad
 
         private static bool Known(Dictionary<string, string> values, string key) =>
             values.TryGetValue(key, out string value) && !string.IsNullOrWhiteSpace(value);
+
+        private static bool IsManualOverride(Dictionary<string, string> values, string key) =>
+            Known(values, key) && values.TryGetValue(key + "__SOURCE", out string source)
+            && string.Equals(source, "ManualOverride", StringComparison.Ordinal);
 
         private static void RemoveFact(Dictionary<string, string> values, string key)
         {

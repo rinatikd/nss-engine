@@ -40,6 +40,7 @@ SOURCE_ALLOWLIST = frozenset({
     'src/GasZoneForm.cs',
     'src/RoomUnitInference.cs',
     'src/RoomTextFacts.cs',
+    'src/RoomTemperaturePolicy.cs',
     'src/RoomPolygon.cs',
     'src/RoomBoundaryPicker.cs',
     'src/RoomModelFacts.cs',
@@ -62,6 +63,7 @@ SOURCE_ALLOWLIST = frozenset({
     'tests/GasZoneInputTests.cs',
     'tests/RoomUnitInferenceTests.cs',
     'tests/RoomTextFactsTests.cs',
+    'tests/RoomTemperaturePolicyTests.cs',
     'tests/RoomPolygonTests.cs',
 })
 

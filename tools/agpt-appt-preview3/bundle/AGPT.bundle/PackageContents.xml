@@ -25,6 +25,7 @@
       <Commands GroupName="AGPT">
         <Command Local="AGPT_ZONE" Global="AGPT_ZONE" />
         <Command Local="AGPT_ZONE_EDIT" Global="AGPT_ZONE_EDIT" />
+        <Command Local="AGPT_TEMPERATURE" Global="AGPT_TEMPERATURE" />
         <Command Local="AGPT_VERSION" Global="AGPT_VERSION" />
         <Command Local="AGPT_MODULE" Global="AGPT_MODULE" />
         <Command Local="AGPT_NOZZLE" Global="AGPT_NOZZLE" />
