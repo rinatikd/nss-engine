@@ -14,6 +14,22 @@ namespace AGPT.Shared
         });
     }
 
+    public static class K4InputModes
+    {
+        public const string UnitMultiplier = "UNIT_MULTIPLIER";
+        public const string MethodValue = "METHOD_VALUE";
+
+        public static string Restore(string savedMode, double? savedValue)
+        {
+            if (savedMode == MethodValue) return MethodValue;
+            if (savedMode == UnitMultiplier) return savedValue == 1 ? UnitMultiplier : null;
+            if (!string.IsNullOrWhiteSpace(savedMode)) return null;
+            // Legacy numeric data is displayed, not evidence of methodology approval.
+            if (!savedValue.HasValue || !double.IsFinite(savedValue.Value)) return null;
+            return savedValue == 1 ? UnitMultiplier : MethodValue;
+        }
+    }
+
     /// <summary>Explicit zone inputs; validation checks the prototype's input domain only.</summary>
     public sealed class GasZoneInput
     {

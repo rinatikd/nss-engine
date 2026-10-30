@@ -159,7 +159,7 @@ namespace AGPT
                 SetData(polyline, "AGPT", ("KIND", "ZONE"), ("GUID", guid), ("ZONE_NAME", name), ("GOTV", gotv),
                     ("VP", NumericData.Format(volume)), ("H", NumericData.Format(h)), ("FH", NumericData.Format(fh)),
                     ("TM", NumericData.Format(tm)), ("CN", NumericData.Format(cn)), ("RHO0", NumericData.Format(rho)),
-                    ("K4", NumericData.Format(k4)), ("VTR", NumericData.Format(vtr)),
+                    ("K4", NumericData.Format(k4)), ("K4_INPUT_MODE", form.K4InputMode), ("VTR", NumericData.Format(vtr)),
                     ("PLAN_UNIT", db.Insunits.ToString()), ("METRES_PER_UNIT", NumericData.Format(scale)),
                     ("VP_UNIT", "m3"), ("H_UNIT", "m"), ("FH_UNIT", "m2"), ("TM_UNIT", "degC"),
                     ("CN_UNIT", "%"), ("RHO0_UNIT", "kg/m3"), ("K4_UNIT", "1"), ("VTR_UNIT", "m3"));

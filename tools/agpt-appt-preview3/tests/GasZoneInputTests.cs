@@ -119,4 +119,24 @@ public class GasZoneInputTests
         input.Gotv = agent;
         Assert.Contains("только для HFC-227ea", Assert.Single(input.Validate()));
     }
+    [Theory]
+    [InlineData("METHOD_VALUE", 1, "METHOD_VALUE")]
+    [InlineData("METHOD_VALUE", 2, "METHOD_VALUE")]
+    [InlineData("UNIT_MULTIPLIER", 1, "UNIT_MULTIPLIER")]
+    [InlineData("UNIT_MULTIPLIER", 2, null)]
+    [InlineData("unknown", 1, null)]
+    [InlineData(null, 1, "UNIT_MULTIPLIER")]
+    [InlineData("", 2, "METHOD_VALUE")]
+    public void RestoringK4ModePreservesExplicitChoiceAndRejectsInconsistency(string mode, double value, string expected)
+    {
+        Assert.Equal(expected, K4InputModes.Restore(mode, value));
+    }
+
+    [Fact]
+    public void MissingOrInvalidLegacyK4DoesNotChooseAMode()
+    {
+        Assert.Null(K4InputModes.Restore(null, null));
+        Assert.Null(K4InputModes.Restore(null, double.NaN));
+        Assert.Null(K4InputModes.Restore(null, double.PositiveInfinity));
+    }
 }

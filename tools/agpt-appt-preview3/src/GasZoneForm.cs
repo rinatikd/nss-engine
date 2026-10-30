@@ -11,6 +11,8 @@ namespace AGPT.Cad
     {
         private readonly TextBox nameInput = new TextBox();
         private readonly ComboBox agentInput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
+        private readonly ComboBox k4Mode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
+        public string K4InputMode => k4Mode.SelectedIndex == 0 ? K4InputModes.UnitMultiplier : K4InputModes.MethodValue;
         private readonly Dictionary<string, TextBox> numbers = new Dictionary<string, TextBox>();
         private readonly Label errors = new Label { AutoSize = true, ForeColor = Color.Firebrick, MaximumSize = new Size(980, 0) };
         private readonly Label volume = new Label { AutoSize = true };
@@ -56,7 +58,19 @@ namespace AGPT.Cad
             AddNumber(table, "TM", "Минимальная температура, °C", Read("TM"), "Минимальная расчётная температура по проекту. Нижний предел −73,15 °C относится только к текущему алгоритму; рабочий диапазон ГОТВ уточняют по технической документации.");
             AddNumber(table, "CN", "Концентрация Cn, об. %", Read("CN"), "Нормативная огнетушащая концентрация — по применимой методике и пожарной нагрузке. Программа проверяет 0 < Cn < 100; это не рекомендуемый инженерный диапазон.");
             AddNumber(table, "RHO0", "Плотность паров ρ₀, кг/м³", Read("RHO0"), "Плотность паров ГОТВ при +20 °C и атмосферном давлении 101,3 кПа. Возьмите из технической документации/принятой методики. Требуется ρ₀ > 0; плотность жидкости сюда не вводят.");
+            k4Mode.Items.AddRange(new object[] { "Не изменять Mp: K4 = 1", "Ввести K4 по принятой методике" });
+            AddRow(table, "Как учитывать K4", k4Mode,
+                "При K4 = 1 произведение Mp × K4 равно Mp. Это математический выбор без дополнительного множителя, а не нормативная рекомендация. Выбирайте только при соответствии принятой методике.");
             AddNumber(table, "K4", "Множитель K4", Read("K4"), "Безразмерный множитель Mp в формуле прототипа Mg = ceil(1,05 × (Mp × K4 + Mтр)). Нормативное назначение и диапазон в имеющихся источниках не подтверждены. Требуется конечное K4 > 0; значение 1 автоматически не назначается.");
+            numbers["K4"].ReadOnly = true;
+            k4Mode.SelectedIndexChanged += (sender, args) => {
+                numbers["K4"].ReadOnly = k4Mode.SelectedIndex != 1;
+                if (k4Mode.SelectedIndex == 0) numbers["K4"].Text = "1";
+            };
+            double? savedK4 = NumericData.TryParseFinite(Read("K4"), out double parsedK4) ? parsedK4 : null;
+            string restoredMode = K4InputModes.Restore(Read("K4_INPUT_MODE"), savedK4);
+            if (restoredMode == K4InputModes.UnitMultiplier) k4Mode.SelectedIndex = 0;
+            else if (restoredMode == K4InputModes.MethodValue) k4Mode.SelectedIndex = 1;
             AddNumber(table, "VTR", "Объём трубопроводов Vтр, м³", Read("VTR"), "Внутренний объём распределительных трубопроводов по их размерам и длинам. Vтр ≥ 0; 1 литр = 0,001 м³. Прототип использует его для оценки остатка ГОТВ, модель требует инженерной проверки.");
             scroll.Controls.Add(table);
             layout.Controls.Add(scroll, 0, 1);
@@ -105,6 +119,7 @@ namespace AGPT.Cad
         private void Save(object sender, EventArgs args)
         {
             var parseErrors = new List<string>();
+            if (k4Mode.SelectedIndex < 0) parseErrors.Add("K4: явно выберите способ учёта множителя.");
             double? Number(string key)
             {
                 if (string.IsNullOrWhiteSpace(numbers[key].Text)) return null;
