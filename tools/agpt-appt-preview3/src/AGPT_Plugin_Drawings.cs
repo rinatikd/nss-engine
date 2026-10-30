@@ -46,9 +46,35 @@ namespace AGPT.Drawings
         public const double A2W = 594.0, A2H = 420.0;
         public const double Margin = 5.0;      // поле слева для подшивки — 20 мм по ГОСТ, упрощённо 5+20
         public const double BindLeft = 20.0;
-        /// <summary>Низ рабочей области (мм): штамп 55 + зазор. Контент не ниже oy+ContentBottom.</summary>
-        public const double ContentBottom = 68.0;
+        /// <summary>Низ рабочей области (мм): штамп, подписи и защитный зазор.</summary>
+        public const double ContentBottom = 72.0;
         public const double ContentTop = 290.0;
+    }
+
+    /// <summary>Рабочая область A3 над штампом, с внутренними отступами.</summary>
+    public static class SheetArea
+    {
+        public static void Bounds(Point3d origin, out double x0, out double y0, out double x1, out double y1)
+        {
+            x0 = origin.X + DL.BindLeft + 4;
+            y0 = origin.Y + DL.ContentBottom + 2;
+            x1 = origin.X + DL.A3W - DL.Margin - 4;
+            y1 = origin.Y + DL.ContentTop - 2;
+        }
+    }
+
+    /// <summary>Диагностика в активный документ без прерывания генерации.</summary>
+    public static class Diag
+    {
+        public static void Msg(string text)
+        {
+            try
+            {
+                var doc = Application.DocumentManager.MdiActiveDocument;
+                if (doc != null) doc.Editor.WriteMessage("\n[AGPT] " + text);
+            }
+            catch { }
+        }
     }
 
     // =========================================================================
@@ -1352,7 +1378,7 @@ namespace AGPT.Drawings
             Draw.Text(ms, tr, rx, o.Y + 265, 2.6, "2. Схема подключения оборудования", DL.Text);
 
             // Рамка таблицы клемм
-            Draw.Rect(ms, tr, rx, o.Y + 80, rx + 145, o.Y + 255, DL.Scheme, 7);
+            Draw.Rect(ms, tr, rx, o.Y + DL.ContentBottom + 36, rx + 145, o.Y + 255, DL.Scheme, 7);
             Draw.Text(ms, tr, rx + 4, o.Y + 245, 2.0, "МПТ-1-R3", DL.Text);
             Draw.Text(ms, tr, rx + 4, o.Y + 235, 1.7, "Цепь          Оборудование", DL.Text);
             Draw.Line(ms, tr, rx + 2, o.Y + 232, rx + 143, o.Y + 232, DL.Scheme);
@@ -1377,7 +1403,7 @@ namespace AGPT.Drawings
             }
 
             // Таблица цепей (AcDbTable)
-            double tx = o.X + 30, ty = o.Y + 100;
+            double tx = o.X + 30, ty = o.Y + DL.ContentBottom + 64;
             var chainRows = new List<string[]>
             {
                 new[] { "1", "АЛС1", "ИП 212-64-R3", "2", "алгоритм C" },
@@ -1393,9 +1419,9 @@ namespace AGPT.Drawings
             Draw.Table(ms, tr, tx, ty, new[] { 12.0, 28.0, 70.0, 18.0, 40.0 }, 4.5,
                 new[] { "№", "Цепь", "Оборудование", "Кол.", "Примечание" }, chainRows, DL.Table);
 
-            Draw.Text(ms, tr, o.X + 30, o.Y + 42, 2.0,
+            Draw.Text(ms, tr, o.X + 30, o.Y + DL.ContentBottom + 10, 2.0,
                 "Пуск: алгоритм C (2 ИП) → задержка ≥10 с → откл. вентиляции → ЗПУ → выпуск ≤10 с", DL.Text);
-            Draw.Text(ms, tr, o.X + 30, o.Y + 32, 1.8,
+            Draw.Text(ms, tr, o.X + 30, o.Y + DL.ContentBottom + 3, 1.8,
                 "Кабель: КПСнг(А)-FRLS 2×2×0,75. Питание I категория. Резерв модуля 100%.", DL.Text);
         }
 
@@ -1597,11 +1623,11 @@ namespace AGPT.Drawings
                 Draw.Text(ms, tr, o.X + 25, o.Y + 275, 2.5, "Расчётные зоны не заданы. Добавьте зоны AGPT_ZONE.", DL.Text);
 
             // Рабочая область строго над штампом
-            double xMin = o.X + DL.BindLeft + 4;
-            double yMin = o.Y + DL.ContentBottom + 4;
-            double yMax = o.Y + DL.ContentTop - 4;
+            SheetArea.Bounds(o, out double xMin, out double areaBottom, out double xMax, out double areaTop);
+            double yMin = areaBottom + 2;
+            double yMax = areaTop - 2;
             double workH = yMax - yMin;
-            double workW = DL.A3W - DL.BindLeft - DL.Margin - 10;
+            double workW = xMax - xMin - 2;
 
             // 2×2 ячейки фиксированного размера — без пересечений
             double gap = 6;
@@ -1765,9 +1791,9 @@ namespace AGPT.Drawings
             var o = Origin(idx);
             Draw.SheetFrame(ms, tr, o.X, o.Y, DL.A3W, DL.A3H, pd,
                 "План оборудования и трубопроводов АГПТ", (idx + 1).ToString(), pd.AlbumSheetCount.ToString());
+            SheetArea.Bounds(o, out double x0, out double y0, out double x1, out double y1);
             AGPT.Cad.ProjectPlanRenderer.Render(ms, tr, pd.Plan,
-                o.X + DL.BindLeft + 5, o.Y + DL.ContentBottom + 5,
-                DL.A3W - DL.BindLeft - DL.Margin - 10, DL.ContentTop - DL.ContentBottom - 15,
+                x0 + 1, y0 + 3, x1 - x0 - 2, y1 - y0 - 11,
                 "AGPT", showPipes: true, showCables: false);
         }
 
@@ -1875,9 +1901,9 @@ namespace AGPT.Drawings
             var o = Origin(idx);
             Draw.SheetFrame(ms, tr, o.X, o.Y, DL.A3W, DL.A3H, pd,
                 "План оборудования и кабельных трасс АГПТ", (idx + 1).ToString(), pd.AlbumSheetCount.ToString());
+            SheetArea.Bounds(o, out double x0, out double y0, out double x1, out double y1);
             AGPT.Cad.ProjectPlanRenderer.Render(ms, tr, pd.Plan,
-                o.X + DL.BindLeft + 5, o.Y + DL.ContentBottom + 5,
-                DL.A3W - DL.BindLeft - DL.Margin - 10, DL.ContentTop - DL.ContentBottom - 15,
+                x0 + 1, y0 + 3, x1 - x0 - 2, y1 - y0 - 11,
                 "AGPT", showPipes: false, showCables: true);
         }
     }
@@ -2197,43 +2223,49 @@ namespace AGPT.Drawings
         /// <summary>Импорт ключевых RC-UGO из Садик_UGO_source.dwg, если ещё нет в чертеже.</summary>
         public static void EnsureImported(Database db, Transaction tr)
         {
-            string path = ResourceLocator.FindBlockFile(
-                Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
-                "Садик_UGO_source.dwg", "Садик.dwg");
-            foreach (string c in new[] {
-                @"c:\Work\AGPT_Plugin\blocks\Садик_UGO_source.dwg",
-                @"C:\Work\AGPT_Plugin\blocks\Садик_UGO_source.dwg",
-                @"c:\Work\AGPT_Plugin\blocks\Садик.dwg"
-            })
-            {
-                if (path != null) break;
-                if (System.IO.File.Exists(c)) { path = c; break; }
-            }
-            if (path == null) return;
-
-            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
-            bool need = false;
-            foreach (string nm in ImportAllNames)
-            {
-                if (!bt.Has(nm)) { need = true; break; }
-            }
-            if (!need) return;
-
+            int imported = 0, existing = 0, failed = 0, missing = 0;
             try
             {
+                var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                foreach (string name in ImportAllNames)
+                    if (bt.Has(name)) existing++;
+                if (existing == ImportAllNames.Length)
+                {
+                    Diag.Msg("УГО: ключевые блоки уже в чертеже (" + existing + ").");
+                    return;
+                }
+
+                string path = ResourceLocator.FindBlockFile(
+                    Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
+                    "Садик_UGO_source.dwg", "Садик.dwg");
+                foreach (string candidate in new[] {
+                    @"c:\Work\AGPT_Plugin\blocks\Садик_UGO_source.dwg",
+                    @"C:\Work\AGPT_Plugin\blocks\Садик_UGO_source.dwg",
+                    @"c:\Work\AGPT_Plugin\blocks\Садик.dwg"
+                })
+                {
+                    if (path != null) break;
+                    if (File.Exists(candidate)) { path = candidate; break; }
+                }
+                if (path == null)
+                {
+                    Diag.Msg("УГО: источник блоков не найден; используются блоки чертежа и программные символы.");
+                    return;
+                }
+
                 using (var src = new Database(false, true))
                 {
                     src.ReadDwgFile(path, FileOpenMode.OpenForReadAndAllShare, true, "");
                     foreach (string blockName in ImportAllNames)
                     {
+                        if (bt.Has(blockName)) continue;
                         try
                         {
-                            if (bt.Has(blockName)) continue;
-                            ObjectId srcId = ObjectId.Null;
+                            ObjectId srcId;
                             using (var trSrc = src.TransactionManager.StartTransaction())
                             {
                                 var btSrc = (BlockTable)trSrc.GetObject(src.BlockTableId, OpenMode.ForRead);
-                                if (!btSrc.Has(blockName)) { trSrc.Commit(); continue; }
+                                if (!btSrc.Has(blockName)) { missing++; trSrc.Commit(); continue; }
                                 srcId = btSrc[blockName];
                                 trSrc.Commit();
                             }
@@ -2241,12 +2273,25 @@ namespace AGPT.Drawings
                             ids.Add(srcId);
                             var map = new IdMapping();
                             src.WblockCloneObjects(ids, db.BlockTableId, map, DuplicateRecordCloning.Replace, false);
+                            if (bt.Has(blockName)) imported++;
+                            else failed++;
                         }
-                        catch { }
+                        catch (System.Exception)
+                        {
+                            failed++;
+                        }
                     }
                 }
+                Diag.Msg("УГО: импорт=" + imported + ", уже есть=" + existing
+                    + ", нет в источнике=" + missing + ", ошибок=" + failed + ".");
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                // Do not expose source paths or arbitrary DWG exception text in the command line.
+                Diag.Msg("УГО: импорт недоступен (" + ex.GetType().Name + "); импорт=" + imported
+                    + ", уже есть=" + existing + ", нет в источнике=" + missing + ", ошибок=" + failed
+                    + ". Используются доступные блоки и программные символы.");
+            }
         }
 
         /// <summary>Список имён блоков в чертеже, похожих на УГО / R-CAD.</summary>

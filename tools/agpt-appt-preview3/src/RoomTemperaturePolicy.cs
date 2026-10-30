@@ -4,8 +4,8 @@ namespace AGPT.Shared
 {
     public static class RoomTemperaturePolicy
     {
-        public const double DefaultC = 18;
-        public const string DefaultSource = "UserConfiguredDefault18C";
+        public const double DefaultC = 20;
+        public const string DefaultSource = "UserConfiguredDefault20C";
 
         public static double? Resolve(double? explicitValue, bool hasUnresolvedSource)
         {

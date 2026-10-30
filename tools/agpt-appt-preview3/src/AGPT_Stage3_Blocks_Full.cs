@@ -768,6 +768,57 @@ namespace AGPT.Stage3
             }
         }
 
+        // Historical results only: legacy MG is also consumed by hydraulics as an input,
+        // so snapshots deliberately use separate keys and never assert current validity.
+        static void SaveCalculationSnapshots(Database db, Transaction tr,
+            IEnumerable<AGPT.Drawings.ZoneCalc> calculatedZones)
+        {
+            var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+            var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+            var sources = new Dictionary<System.Guid, Entity>();
+            foreach (ObjectId id in ms)
+            {
+                if (tr.GetObject(id, OpenMode.ForRead) is not Entity entity
+                    || AGPT.Cad.AlbumOutput.IsGenerated(entity)) continue;
+                if (!AGPT.Shared.ZoneIdentity.IsZone(XD.Get(entity, "KIND"), entity.Layer,
+                    C.LZone, XD.Get(entity, "ZONE_NAME"), XD.Get(entity, "VP"))) continue;
+                if (!System.Guid.TryParse(XD.Get(entity, "GUID"), out var guid)
+                    || guid == System.Guid.Empty || !sources.TryAdd(guid, entity))
+                    throw new InvalidOperationException("Снимок расчёта не сохранён: GUID исходной зоны отсутствует, некорректен или повторяется.");
+            }
+
+            var pending = new List<(Entity entity, AGPT.Drawings.ZoneCalc result)>();
+            var seen = new HashSet<System.Guid>();
+            foreach (var zone in calculatedZones)
+            {
+                if (!System.Guid.TryParse(zone.Guid, out var guid) || guid == System.Guid.Empty
+                    || !seen.Add(guid) || !sources.TryGetValue(guid, out var entity))
+                    throw new InvalidOperationException("Снимок расчёта не сохранён: результат не соответствует единственной исходной зоне.");
+                if (!double.IsFinite(zone.Mg) || zone.Mg <= 0
+                    || !double.IsFinite(zone.Mp) || zone.Mp <= 0
+                    || !double.IsFinite(zone.Fc) || zone.Fc < 0
+                    || zone.ModuleVol <= 0 || zone.ModuleCountWork <= 0 || zone.ModuleCountRes <= 0)
+                    throw new InvalidOperationException("Снимок расчёта не сохранён: недопустимый результат расчёта зоны.");
+                pending.Add((entity, zone));
+            }
+            if (pending.Count != sources.Count)
+                throw new InvalidOperationException("Снимок расчёта не сохранён: состав исходных зон и результатов различается.");
+
+            XD.EnsureApp(db, tr);
+            string timestamp = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            foreach (var (entity, zone) in pending)
+            {
+                entity.UpgradeOpen();
+                XD.Set(entity, ("CALC_SNAPSHOT", "1"), ("CALC_SNAPSHOT_UTC", timestamp),
+                    ("CALC_SNAPSHOT_MG", zone.Mg.ToString("R", CultureInfo.InvariantCulture)),
+                    ("CALC_SNAPSHOT_MP", zone.Mp.ToString("R", CultureInfo.InvariantCulture)),
+                    ("CALC_SNAPSHOT_FC", zone.Fc.ToString("R", CultureInfo.InvariantCulture)),
+                    ("CALC_SNAPSHOT_MODULE_VOL", zone.ModuleVol.ToString(CultureInfo.InvariantCulture)),
+                    ("CALC_SNAPSHOT_MODULE_WORK", zone.ModuleCountWork.ToString(CultureInfo.InvariantCulture)),
+                    ("CALC_SNAPSHOT_MODULE_RES", zone.ModuleCountRes.ToString(CultureInfo.InvariantCulture)));
+            }
+        }
+
         // ----- CALC (зона → Mg + КСИД) -----
         [CommandMethod("AGPT_CALC")]
         public void Calc()
@@ -779,6 +830,8 @@ namespace AGPT.Stage3
             {
                 using var tr = db.TransactionManager.StartTransaction();
                 var project = AGPT.Drawings.Collect.FromModel(db, tr);
+                SaveCalculationSnapshots(db, tr, project.Zones);
+                tr.Commit();
                 foreach (string issue in project.Plan.Issues) ed.WriteMessage("\n[AGPT] " + issue);
                 foreach (var z in project.Zones)
                 {
@@ -786,6 +839,8 @@ namespace AGPT.Stage3
                     ed.WriteMessage($"\n[{z.Name}] Vp={z.Vp:F1} м³ | участков={z.PipeCount} | Vтр={z.Vtr:F6} м³ → Mg={z.Mg:F2} кг → модуль {z.ModuleVol} л | Fc={z.Fc:F4} м² → КСИД {(ksidSize > 0 ? ksidSize.ToString("F2") + " м²" : "не нужен")}");
                 }
                 ed.WriteMessage($"\nЗон: {project.Zones.Count}");
+                if (project.Zones.Count > 0)
+                    ed.WriteMessage("\nСохранён исторический снимок CALC_SNAPSHOT_*; он может устареть при изменении модели. Актуальность не подтверждена: повторите AGPT_CALC для нового расчёта.");
             }
             catch (System.Exception ex) when (ex is ArgumentException || ex is FormatException
                 || ex is InvalidOperationException || ex is OverflowException)
@@ -809,7 +864,7 @@ namespace AGPT.Stage3
                 foreach (ObjectId id in ms)
                 {
                     var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                    if (ent == null) continue;
+                    if (ent == null || AGPT.Cad.AlbumOutput.IsGenerated(ent)) continue;
                     string kind = XD.Get(ent, "KIND");
                     if (string.IsNullOrEmpty(kind)) continue;
                     string mark = XD.Get(ent, "MARK") ?? kind;
@@ -827,7 +882,7 @@ namespace AGPT.Stage3
                 foreach (ObjectId id in ms)
                 {
                     var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                    if (ent == null || ent.Layer != C.LPipe) continue;
+                    if (ent == null || AGPT.Cad.AlbumOutput.IsGenerated(ent) || ent.Layer != C.LPipe) continue;
                     int dy = (int)XD.GetD(ent, "DY", 0);
                     double l = XD.GetD(ent, "L");
                     if (dy <= 0) continue;

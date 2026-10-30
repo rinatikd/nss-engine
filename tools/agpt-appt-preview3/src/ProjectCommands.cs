@@ -171,6 +171,14 @@ namespace AGPT
                 try { temperature = RoomTemperaturePolicy.Resolve(explicitTemperature, disputedTemperature); }
                 catch (ArgumentException ex) { temperature = null; discovered.Issues.Add("TM: " + ex.Message); }
                 bool usedTemperatureDefault = !explicitTemperature.HasValue && temperature.HasValue && !disputedTemperature;
+                double? explicitOpenings = Number("FH");
+                bool disputedOpenings = discovered.UnresolvedFields.Contains("FH")
+                    || (!string.IsNullOrWhiteSpace(Read("FH")) && !explicitOpenings.HasValue)
+                    || (Read("FH_UNRESOLVED") == "1" && !explicitOpenings.HasValue);
+                double? openings;
+                try { openings = RoomOpeningsPolicy.Resolve(explicitOpenings, disputedOpenings); }
+                catch (ArgumentException ex) { openings = null; discovered.Issues.Add("FH: " + ex.Message); }
+                bool usedOpeningsDefault = !explicitOpenings.HasValue && openings.HasValue && !disputedOpenings;
                 string guid = Read("GUID");
                 if (string.IsNullOrWhiteSpace(guid)) guid = Guid.NewGuid().ToString();
                 string name = Read("ZONE_NAME");
@@ -181,7 +189,7 @@ namespace AGPT
                 string gasAgent = RoomGasPolicy.Resolve(explicitAgent, disputedAgent);
                 bool usedGasDefault = string.IsNullOrWhiteSpace(explicitAgent) && !string.IsNullOrWhiteSpace(gasAgent);
                 var input = new GasZoneInput { Name = name, Gotv = gasAgent, Height = roomHeight,
-                    OpeningsArea = Number("FH"), MinimumTemperature = temperature };
+                    OpeningsArea = openings, MinimumTemperature = temperature };
                 if (input.Gotv == GasAgentCatalog.SupportedAgent)
                 {
                     var profile = GasAgentCatalog.GetReferenceProfile(input.Gotv);
@@ -211,6 +219,7 @@ namespace AGPT
                     ("GOTV", input.Gotv), ("GOTV_UNRESOLVED", string.IsNullOrWhiteSpace(input.Gotv) ? "1" : null),
                     ("H", input.Height.HasValue ? NumericData.Format(input.Height.Value) : null),
                     ("FH", input.OpeningsArea.HasValue ? NumericData.Format(input.OpeningsArea.Value) : null),
+                    ("FH_UNRESOLVED", input.OpeningsArea.HasValue ? null : "1"),
                     ("TM", input.MinimumTemperature.HasValue ? NumericData.Format(input.MinimumTemperature.Value) : null),
                     ("TM_UNRESOLVED", input.MinimumTemperature.HasValue ? null : "1"),
                     ("CN", input.Concentration.HasValue ? NumericData.Format(input.Concentration.Value) : null),
@@ -227,12 +236,14 @@ namespace AGPT
                 {
                     string source = Read(key + "__SOURCE");
                     if (key == "H") source = "ManualOverride";
+                    if (key == "FH" && usedOpeningsDefault) source = RoomOpeningsPolicy.DefaultSource;
                     if (key == "GOTV" && usedGasDefault) source = RoomGasPolicy.DefaultSource;
                     if (key == "TM" && usedTemperatureDefault) source = RoomTemperaturePolicy.DefaultSource;
                     if (key == "ZONE_NAME" && string.IsNullOrWhiteSpace(Read("ZONE_NAME"))) source = "GeneratedIdentifier";
                     if (source.Length > 180) source = source.Substring(0, 180);
                     SetData(boundary, "AGPT", (key + "__SOURCE", string.IsNullOrWhiteSpace(source) ? null : source));
                 }
+                RoomPresentationCommands.RefreshLabel(db, tr, boundary);
                 tr.Commit();
                 editor.WriteMessage("\n[AGPT_ZONE] " + name + ": предлагается " + suggestion.UnitName + "; " + suggestion.Reason);
                 double widthMetres = (bounds.MaxPoint.X - bounds.MinPoint.X) * suggestion.MetresPerUnit;
@@ -241,7 +252,8 @@ namespace AGPT
                 editor.WriteMessage("\nКоэффициент: " + Compact(suggestion.MetresPerUnit) + " м/ед. чертежа. Габариты XY: "
                     + Compact(widthMetres) + " × " + Compact(depthMetres) + " м (ограничивающий прямоугольник).");
                 if (usedGasDefault) editor.WriteMessage("\nГОТВ: HFC-227ea — настройка по умолчанию пользователя.");
-                if (usedTemperatureDefault) editor.WriteMessage("\nМинимальная температура: 18 °C — настройка по умолчанию пользователя. Изменение: AGPT_TEMPERATURE.");
+                if (usedOpeningsDefault) editor.WriteMessage("\nПлощадь проёмов FH: 0,011 м² — проектное допущение пользователя. Изменение: AGPT_OPENINGS.");
+                if (usedTemperatureDefault) editor.WriteMessage("\nМинимальная температура: 20 °C — настройка по умолчанию пользователя. Изменение: AGPT_TEMPERATURE.");
                 editor.WriteMessage("\nПлощадь при принятом масштабе: " + NumericData.Format(squareMetres) + " м². "
                     + (missing.Count == 0 ? "Исходные данные получены из модели." : "Контур сохранён; расчётные исходные данные пока неполны."));
                 foreach (string issue in discovered.Issues.Concat(missing)) editor.WriteMessage("\n[Данные модели] " + issue);
@@ -290,11 +302,60 @@ namespace AGPT
                     SetData(boundary, "AGPT", ("ROOM_STATUS", issues.Count == 0 ? "READY" : "INCOMPLETE"),
                         ("MISSING_FIELDS", issues.Count == 0 ? null : summary));
                 }
+                RoomPresentationCommands.RefreshLabel(db, tr, boundary);
                 tr.Commit();
                 editor.WriteMessage("\n[AGPT_TEMPERATURE] Сохранено " + NumericData.Format(temperature)
                     + " °C. Явная правка не будет сброшена автоматическим захватом.");
             }
             catch (System.Exception ex) { editor.WriteMessage("\n[AGPT_TEMPERATURE] " + ex.Message); }
+        }
+
+        [CommandMethod("AGPT_OPENINGS")]
+        public void ChangeRoomOpenings()
+        {
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var editor = doc.Editor; var db = doc.Database;
+            var selection = editor.GetEntity("\nВыберите контур помещения для изменения площади проёмов: ");
+            if (selection.Status != PromptStatus.OK) return;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                if (tr.GetObject(selection.ObjectId, OpenMode.ForRead) is not Polyline boundary
+                    || Stage3.XD.Get(boundary, "KIND") != "ZONE")
+                    throw new InvalidOperationException("Выберите размеченный контур AGPT_ZONE.");
+                RequireTaggable(boundary, "AGPT", "ZONE");
+                var data = Data(boundary, "AGPT");
+                double current = NumericData.TryParseFinite(Value(data, "FH"), out double known)
+                    && known >= 0 ? known : RoomOpeningsPolicy.DefaultAreaM2;
+                var options = new PromptDoubleOptions("\nПлощадь проёмов FH, м²: ") {
+                    AllowNegative = false, AllowZero = true, UseDefaultValue = true, DefaultValue = current
+                };
+                var result = editor.GetDouble(options);
+                if (result.Status != PromptStatus.OK) return;
+                double openingsArea = RoomOpeningsPolicy.Resolve(result.Value, false).Value;
+                boundary.UpgradeOpen();
+                SetData(boundary, "AGPT", ("FH", NumericData.Format(openingsArea)), ("FH_UNIT", "m2"),
+                    ("FH__SOURCE", "ManualOverride"), ("FH_UNRESOLVED", null));
+                if (Value(data, "ROOM_CAPTURE") == "1")
+                {
+                    double? Number(string key) => NumericData.TryParseFinite(Value(data, key), out double value) ? value : null;
+                    var updated = new GasZoneInput { Name = Value(data, "ZONE_NAME"), Gotv = Value(data, "GOTV"),
+                        Height = Number("H"), OpeningsArea = openingsArea, MinimumTemperature = Number("TM"),
+                        Concentration = Number("CN"), Density = Number("RHO0") };
+                    var issues = updated.DescribeModelIssues();
+                    if (Value(data, "UNIT_VERIFIED") != "1") issues.Add("масштаб не подтверждён");
+                    string summary = string.Join("; ", issues.Select(issue => issue.Split(':')[0]));
+                    if (summary.Length > 100) summary = summary.Substring(0, 100);
+                    SetData(boundary, "AGPT", ("ROOM_STATUS", issues.Count == 0 ? "READY" : "INCOMPLETE"),
+                        ("MISSING_FIELDS", issues.Count == 0 ? null : summary));
+                }
+                RoomPresentationCommands.RefreshLabel(db, tr, boundary);
+                tr.Commit();
+                editor.WriteMessage("\n[AGPT_OPENINGS] Сохранено " + NumericData.Format(openingsArea)
+                    + " м². Явная правка не будет сброшена автоматическим захватом.");
+            }
+            catch (System.Exception ex) { editor.WriteMessage("\n[AGPT_OPENINGS] " + ex.Message); }
         }
 
         [CommandMethod("AGPT_ZONE_EDIT")]
@@ -340,7 +401,7 @@ namespace AGPT
                 if (string.IsNullOrWhiteSpace(guid)) guid = Guid.NewGuid().ToString();
                 EnsureStorage(db, transaction, "AGPT", "AGPT-ZONE");
                 polyline.UpgradeOpen(); polyline.Layer = "AGPT-ZONE";
-                SetData(polyline, "AGPT", ("KIND", "ZONE"), ("GUID", guid), ("ZONE_NAME", name), ("GOTV", gotv), ("GOTV_UNRESOLVED", null),
+                SetData(polyline, "AGPT", ("KIND", "ZONE"), ("GUID", guid), ("ZONE_NAME", name), ("GOTV", gotv), ("GOTV_UNRESOLVED", null), ("FH_UNRESOLVED", null),
                     ("VP", NumericData.Format(volume)), ("H", NumericData.Format(h)), ("FH", NumericData.Format(fh)),
                     ("TM", NumericData.Format(tm)), ("TM_UNRESOLVED", null), ("CN", NumericData.Format(cn)), ("RHO0", NumericData.Format(rho)),
                     ("K4", null), ("K4_INPUT_MODE", null), ("VTR", null),
@@ -357,6 +418,8 @@ namespace AGPT
                         && NumericData.TryParseFinite(after, out double b) && a == b);
                     if (!equivalent) SetData(polyline, "AGPT", (key + "__SOURCE", "ManualOverride"));
                 }
+                SetData(polyline, "AGPT", ("AREA_M2", NumericData.Format(area * scale * scale)));
+                RoomPresentationCommands.RefreshLabel(db, transaction, polyline);
                 transaction.Commit();
                 editor.WriteMessage("\n[AGPT_ZONE] " + name + ": Vp=" + NumericData.Format(volume) + " м³; GUID=" + guid);
             }

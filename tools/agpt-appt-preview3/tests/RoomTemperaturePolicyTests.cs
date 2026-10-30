@@ -5,10 +5,10 @@ using Xunit;
 public class RoomTemperaturePolicyTests
 {
     [Fact]
-    public void MissingTemperatureUsesUsersEighteenDegreeDefault()
+    public void MissingTemperatureUsesUsersTwentyDegreeDefault()
     {
-        Assert.Equal(18, RoomTemperaturePolicy.DefaultC);
-        Assert.Equal(18, RoomTemperaturePolicy.Resolve(null, false));
+        Assert.Equal(20, RoomTemperaturePolicy.DefaultC);
+        Assert.Equal(20, RoomTemperaturePolicy.Resolve(null, false));
     }
 
     [Theory]
@@ -26,7 +26,7 @@ public class RoomTemperaturePolicyTests
     [Fact]
     public void DefaultSourceCanBeDistinguishedFromDrawingOrExplicitInput()
     {
-        Assert.Equal("UserConfiguredDefault18C", RoomTemperaturePolicy.DefaultSource);
+        Assert.Equal("UserConfiguredDefault20C", RoomTemperaturePolicy.DefaultSource);
         Assert.NotEqual("Default", RoomTemperaturePolicy.DefaultSource);
         Assert.NotEqual("Drawing", RoomTemperaturePolicy.DefaultSource);
     }
