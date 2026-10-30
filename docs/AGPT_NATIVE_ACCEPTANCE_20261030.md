@@ -39,3 +39,19 @@ Source candidate: 1453b6cfb187f5dcd87460515c520e8015a300d6. Evidence is supplied
 FH has no confirmed numeric default. The reference-project value 0.011 m² has been proposed for clarification only; it has not been assigned or described as a universal normative minimum. Do not infer approval from an unanswered question.
 
 Preview.8 capture and default application are confirmed by the supplied command log. Calculation, album generation, drawing quality and engineering acceptance remain unverified.
+
+## Preview.10 operator check (additional command history)
+
+Source candidate: 27a14cf56dbbc6a53d0aa9610e183c174018663e. Operator supplied command history; no cloud-hosted AutoCAD execution.
+
+- NETLOAD and AGPT_VERSION identify 1.1.0-preview.10 loaded from the operator's AutoCAD2026 runtime folder.
+- The first corner attempt was rejected with a self-intersection/touching-edge validation message. Coordinates and screen geometry were not supplied: neither an actual invalid boundary nor a false positive can be established from the log alone. This is not a successful native acceptance of that corner sequence.
+- A subsequent existing rectangle selected through the Contour option was accepted; height 3 metres was entered.
+- User-configured defaults HFC-227ea, FH=0.011 m² and 20°C were applied and labelled. The contour became READY for the implemented input checks.
+- AGPT_ZONE_LIST reported one source zone with S=0.4388697723300058 m², H=3m, Vp approximately1.31661m³ and the expected defaults. Its handle and READY status were present.
+- AGPT_CALC returned Mg=1kg, module40L and Fc=0m², reported zero pipe segments/Vtr=0 and explicitly warned that the network model was unconfirmed.
+- The command reported saving historical CALC_SNAPSHOT_* data. Actual stored XData persistence/reopen was not separately inspected.
+
+The declared millimetres gave XY bounds0.850718×0.515882metres. These are reported bounds, not independently verified physical room dimensions. This small test geometry explains the small input volume; the result does not validate an ordinary full-size room design or the engineering method. No automatic rescaling is justified by the log.
+
+Not demonstrated: actual on-plan label appearance/replacement, opening/temperature edits, snapshot persistence/reopen, real pipe/hydraulic calculation, UGO import, album generation or visual quality. Separate missing historical NssEngine startup-path errors preceded successful AGPT loading.
