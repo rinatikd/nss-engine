@@ -24,3 +24,18 @@ A new rectangle in an acadiso template has no engineering gas-agent choice or op
 The native capture/height/default-temperature workflow is partially accepted from operator evidence. Full automatic engineering design and final product acceptance remain open.
 
 A separate missing historical NssEngine.dll startup path appears in the log. Preview.7 loaded subsequently; that startup error is not evidence of a failed AGPT load in this test.
+
+## Preview.8 operator check (additional command history)
+
+Source candidate: 1453b6cfb187f5dcd87460515c520e8015a300d6. Evidence is supplied by the operator; the cloud agent did not execute AutoCAD.
+
+- NETLOAD initialized 1.1.0-preview.8 successfully despite the separate obsolete NssEngine startup-path error.
+- Corner picking completed. An empty height entry was rejected with a numeric-value prompt, then 3 metres was accepted.
+- HFC-227ea and 18°C defaults were applied and explicitly labelled as user settings.
+- The contour was stored with an incomplete status; FH was the only missing model-input field reported by AGPT_ZONE in this log. This does not establish readiness of network geometry or other commands.
+- Reported area: 0.8627861212340887 m², based on declared millimetres. Physical scale is still unverified: no known room dimension was provided.
+- No gas-agent, concentration, density, K4 or total-pipe-volume prompt occurred.
+
+FH has no confirmed numeric default. The reference-project value 0.011 m² has been proposed for clarification only; it has not been assigned or described as a universal normative minimum. Do not infer approval from an unanswered question.
+
+Preview.8 capture and default application are confirmed by the supplied command log. Calculation, album generation, drawing quality and engineering acceptance remain unverified.
