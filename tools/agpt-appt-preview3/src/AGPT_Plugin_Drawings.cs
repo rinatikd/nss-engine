@@ -1334,102 +1334,35 @@ namespace AGPT.Drawings
         // ----- Лист: Структурная схема + схема подключения -----
         public static void StructuralScheme(BlockTableRecord ms, Transaction tr, ProjectData pd, int idx)
         {
+            int count = AGPT.Cad.AlbumStructureRenderer.PageCount(pd);
+            pd.AlbumSheetCount = count;
+            for (int page = 0; page < count; page++) StructuralPage(ms, tr, pd, idx + page, page);
+        }
+
+        static void StructuralPage(BlockTableRecord ms, Transaction tr, ProjectData pd, int idx, int page)
+        {
             var o = Origin(idx);
             Draw.SheetFrame(ms, tr, o.X, o.Y, DL.A3W, DL.A3H, pd,
-                "Типовая структурная схема", (idx + 1).ToString(), pd.AlbumSheetCount.ToString());
-
-            // ---- Левая часть: структурная схема АУГП ----
-            Draw.Text(ms, tr, o.X + 25, o.Y + 278, 2.3,
-                "ТИПОВОЕ РЕШЕНИЕ. Адреса, связи и количества требуют задания и проверки по проекту.", DL.Text);
-            double cx = o.X + 120, cy = o.Y + 195;
-
-            void Box(double x, double y, double w, double h, string label, short col)
-            {
-                Draw.Rect(ms, tr, x - w / 2, y - h / 2, x + w / 2, y + h / 2, DL.Scheme, col);
-                Draw.Text(ms, tr, x - w / 2 + 1.5, y - 1.2, 1.9, label, DL.Scheme);
-            }
-            void Arr(double x0, double y0, double x1, double y1)
-            {
-                Draw.Line(ms, tr, x0, y0, x1, y1, DL.Scheme, 3);
-            }
-
-            Draw.Text(ms, tr, o.X + 30, o.Y + 265, 2.6, "1. Структурная схема АУГП", DL.Text);
-
-            Box(cx, cy + 45, 95, 16, "ППКУП / верхний уровень АПС", 3);
-            Arr(cx, cy + 37, cx, cy + 28);
-            Box(cx, cy + 20, 85, 14, "МПТ-1-R3 (ППУ АУГП)", 1);
-            Arr(cx - 28, cy + 13, cx - 70, cy + 4);
-            Arr(cx, cy + 13, cx, cy + 4);
-            Arr(cx + 28, cy + 13, cx + 70, cy + 4);
-
-            Box(cx - 70, cy - 4, 48, 12, "ИП ×2 (алг. C)", 3);
-            Box(cx, cy - 4, 40, 12, "УДП", 3);
-            Box(cx + 70, cy - 4, 55, 12, "Табло ОПОП ×3", 6);
-
-            Arr(cx, cy - 10, cx, cy - 20);
-            Box(cx - 35, cy - 28, 50, 12, "МГП рабочий", 1);
-            Box(cx + 35, cy - 28, 50, 12, "МГП резерв", 8);
-            Arr(cx - 35, cy - 34, cx - 35, cy - 42);
-            Arr(cx + 35, cy - 34, cx - 35, cy - 42);
-            Box(cx - 35, cy - 50, 75, 12, "Трубопровод → насадки", 5);
-
-            // ---- Правая часть: схема подключения (клеммы / цепи) ----
-            double rx = o.X + 250;
-            Draw.Text(ms, tr, rx, o.Y + 265, 2.6, "2. Схема подключения оборудования", DL.Text);
-
-            // Рамка таблицы клемм
-            Draw.Rect(ms, tr, rx, o.Y + DL.ContentBottom + 36, rx + 145, o.Y + 255, DL.Scheme, 7);
-            Draw.Text(ms, tr, rx + 4, o.Y + 245, 2.0, "МПТ-1-R3", DL.Text);
-            Draw.Text(ms, tr, rx + 4, o.Y + 235, 1.7, "Цепь          Оборудование", DL.Text);
-            Draw.Line(ms, tr, rx + 2, o.Y + 232, rx + 143, o.Y + 232, DL.Scheme);
-
-            string[][] links = {
-                new[] { "АЛС1", "ИП 212-64-R3 (1, 2)" },
-                new[] { "АЛС1", "УДП 513-11-A-R3" },
-                new[] { "АЛС1", "ОПОП «Газ уходи»" },
-                new[] { "АЛС1", "ОПОП «Газ не входи»" },
-                new[] { "АЛС1", "ОПОП «Автоматика откл.»" },
-                new[] { "Выход 1", "ЗПУ модуля рабочего" },
-                new[] { "Выход 2", "ЗПУ модуля резерва" },
-                new[] { "Питание", "ИВЭПР 24/2.5 RS-R3" },
-                new[] { "СДУ", "СДУ-М (давление)" },
-            };
-            double ly = o.Y + 220;
-            foreach (var row in links)
-            {
-                Draw.Text(ms, tr, rx + 4, ly, 1.7, row[0], DL.Text);
-                Draw.Text(ms, tr, rx + 40, ly, 1.7, row[1], DL.Text);
-                ly -= 12;
-            }
-
-            // Таблица цепей (AcDbTable)
-            double tx = o.X + 30, ty = o.Y + DL.ContentBottom + 64;
-            var chainRows = new List<string[]>
-            {
-                new[] { "1", "АЛС1", "ИП 212-64-R3", "2", "алгоритм C" },
-                new[] { "2", "АЛС1", "УДП 513-11-A-R3", "1", "ручной пуск" },
-                new[] { "3", "АЛС1", "ОПОП «Газ! Уходи!»", "1", "" },
-                new[] { "4", "АЛС1", "ОПОП «Газ! Не входи!»", "1", "" },
-                new[] { "5", "АЛС1", "ОПОП «Автоматика откл.»", "1", "" },
-                new[] { "6", "Выход 1", "ЗПУ модуля рабочего", "1", "ЭМУ QDQ 90N" },
-                new[] { "7", "Выход 2", "ЗПУ модуля резерва", "1", "100% резерв" },
-                new[] { "8", "Питание", "ИВЭПР 24/2.5 RS-R3", "1", "I кат." },
-                new[] { "9", "СДУ", "СДУ-М", "1", "давление" },
-            };
-            Draw.Table(ms, tr, tx, ty, new[] { 12.0, 28.0, 70.0, 18.0, 40.0 }, 4.5,
-                new[] { "№", "Цепь", "Оборудование", "Кол.", "Примечание" }, chainRows, DL.Table);
-
-            Draw.Text(ms, tr, o.X + 30, o.Y + DL.ContentBottom + 10, 2.0,
-                "Пуск: алгоритм C (2 ИП) → задержка ≥10 с → откл. вентиляции → ЗПУ → выпуск ≤10 с", DL.Text);
-            Draw.Text(ms, tr, o.X + 30, o.Y + DL.ContentBottom + 3, 1.8,
-                "Кабель: КПСнг(А)-FRLS 2×2×0,75. Питание I категория. Резерв модуля 100%.", DL.Text);
+                "Структурная схема состава по зонам", (idx + 1).ToString(), pd.AlbumSheetCount.ToString());
+            SheetArea.Bounds(o, out double x0, out double y0, out double x1, out double y1);
+            AGPT.Cad.AlbumStructureRenderer.Render(ms, tr, pd, page, x0, y0, x1 - x0, y1 - y0);
         }
 
         // ----- Лист: Аксонометрия (стиль эталона — 4 зоны, простые схемы с Ду/L) -----
         public static void Axonometry(BlockTableRecord ms, Transaction tr, ProjectData pd, int idx)
         {
-            for (int page = 0; page < PageCount(pd.Pipes.Count, 32); page++)
-                PipePage(ms, tr, pd, idx + page, page);
+            int count = AGPT.Cad.AlbumAxonometryRenderer.PageCount(pd.Plan);
+            pd.AlbumSheetCount = count;
+            for (int page = 0; page < count; page++) AxonometryPage(ms, tr, pd, idx + page, page);
+        }
+
+        static void AxonometryPage(BlockTableRecord ms, Transaction tr, ProjectData pd, int idx, int page)
+        {
+            var o = Origin(idx);
+            Draw.SheetFrame(ms, tr, o.X, o.Y, DL.A3W, DL.A3H, pd,
+                "Аксонометрическая проекция трубопроводов", (idx + 1).ToString(), pd.AlbumSheetCount.ToString());
+            SheetArea.Bounds(o, out double x0, out double y0, out double x1, out double y1);
+            AGPT.Cad.AlbumAxonometryRenderer.Render(ms, tr, pd.Plan, x0, y0, x1 - x0, y1 - y0, "AGPT", page);
         }
 
         static void PipePage(BlockTableRecord ms, Transaction tr, ProjectData pd, int idx, int page)
@@ -1453,7 +1386,7 @@ namespace AGPT.Drawings
         // ----- Лист: Спецификация -----
         public static void Specification(BlockTableRecord ms, Transaction tr, ProjectData pd, int idx)
         {
-            pd.AlbumSheetCount = PageCount(pd.Spec.Count, 32);
+            pd.AlbumSheetCount = AGPT.Cad.AlbumSpecificationRenderer.PageCount(pd);
             for (int page = 0; page < pd.AlbumSheetCount; page++) SpecificationPage(ms, tr, pd, idx + page, page);
         }
 
@@ -1466,26 +1399,7 @@ namespace AGPT.Drawings
                 pd.ObjectName, pd.Stage, pd.Company, pd.CompanyGsl, pd.CityYear,
                 pd.Gip, pd.Checked, pd.Drawn, pd.NormCtrl);
 
-            double x = o.X + DL.BindLeft + 3;
-            double y = o.Y + DL.A3H - 14;
-            Draw.Text(ms, tr, x, y, 2.8, "СПЕЦИФИКАЦИЯ (ГОСТ 21.110) — АГПТ", DL.Text);
-            y -= 5;
-
-            if (pd.Spec.Count == 0)
-            {
-                Draw.Text(ms, tr, x, y, 2.5,
-                    "В модели нет учтённого оборудования и трасс. Образцовые количества не подставляются.", DL.Text);
-                return;
-            }
-            var slice = Pagination.Partition(pd.Spec.Count, 32).ElementAt(page);
-            var rows = pd.Spec.Skip(slice.Start).Take(slice.Count).Select(r => new[] {
-                r.Pos.ToString(), r.Name, r.Mark, "", r.Unit,
-                NumericData.Format(r.Qty), "", r.Note ?? ""
-            }).ToList();
-            Draw.Table(ms, tr, x, y,
-                new[] { 10.0, 95.0, 40.0, 32.0, 12.0, 12.0, 14.0, 28.0 }, 4.8,
-                new[] { "Поз.", "Наименование и техническая характеристика", "Тип, марка", "Код", "Ед.", "Кол.", "Масса", "Примечание" },
-                rows, DL.Table);
+            AGPT.Cad.AlbumSpecificationRenderer.Render(ms, tr, pd, page, o);
         }
 
         // ----- Лист: Кабельный журнал -----
@@ -1677,6 +1591,48 @@ namespace AGPT.Drawings
                 "СП 485. Mg↑. Резерв 100%. Алгоритм C. Таблицы не пересекают штамп.", DL.Text);
         }
 
+        static void DataReadinessPage(BlockTableRecord ms, Transaction tr, ProjectData pd, int idx)
+        {
+            var o = Origin(idx);
+            Draw.SheetFrame(ms, tr, o.X, o.Y, DL.A3W, DL.A3H, pd,
+                "Состав исходных данных", (idx + 1).ToString(), pd.AlbumSheetCount.ToString());
+            Draw.Text(ms, tr, o.X + 25, o.Y + 277, 3, "ДАННЫЕ МОДЕЛИ И СОСТАВ АЛЬБОМА", DL.Text);
+            var rows = new List<string[]> {
+                new[] { "Помещения", pd.Zones.Count.ToString(), "AGPT_ZONE" },
+                new[] { "Размещённые устройства", pd.Plan.Devices.Count.ToString(), "AGPT_MODULE / AGPT_AUTO / AGPT_NOZZLE" },
+                new[] { "Трубопроводы", pd.Plan.Routes.Count(r => r.Kind == "PIPE").ToString(), "AGPT_PIPE / AGPT_PIPE_DATA" },
+                new[] { "Кабельные трассы", pd.Cables.Count.ToString(), "AGPT_CABLE" },
+                new[] { "Позиции спецификации", pd.Spec.Count.ToString(), "Собираются из размеченных элементов" }
+            };
+            Draw.Table(ms, tr, o.X + 25, o.Y + 265, new[] { 72.0, 25.0, 265.0 }, 9,
+                new[] { "Исходные данные", "Кол.", "Как заполнить" }, rows, DL.Table);
+            Draw.MText(ms, tr, o.X + 25, o.Y + 195, 365, 3,
+                "Пустая зона сама по себе не задаёт оборудование, трубопроводы и электрические связи."
+                + "\nАксонометрия использует геометрию труб DWG; при плоской сети высоты не придумываются."
+                + "\nСпецификация содержит размещённые элементы. Расчётная потребность в модулях дана отдельной ведомостью."
+                + "\nСтруктурная схема показывает записанный состав по зонам. Монтажные соединения и номера клемм не определяются по одному контуру."
+                + "\nОтсутствующие данные явно указаны на соответствующих листах.", DL.Text);
+        }
+
+        static void ModuleDemandPage(BlockTableRecord ms, Transaction tr, ProjectData pd, int idx, int page)
+        {
+            var o = Origin(idx);
+            Draw.SheetFrame(ms, tr, o.X, o.Y, DL.A3W, DL.A3H, pd,
+                "Расчётная потребность в модулях", (idx + 1).ToString(), pd.AlbumSheetCount.ToString());
+            Draw.Text(ms, tr, o.X + 25, o.Y + 278, 2.8, "РАСЧЁТНАЯ ПОТРЕБНОСТЬ — НЕ ВЕДОМОСТЬ РАЗМЕЩЕНИЯ", DL.Text);
+            var slice = Pagination.Partition(pd.Zones.Count, 20).ElementAt(page);
+            var rows = pd.Zones.Skip(slice.Start).Take(slice.Count).Select(z => new[] {
+                z.Name, z.Mg.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+                z.ModuleVol.ToString(), z.ModuleCountWork.ToString(), z.ModuleCountRes.ToString()
+            }).ToList();
+            if (rows.Count == 0) Draw.Text(ms, tr, o.X + 25, o.Y + 260, 2.8, "Расчётные зоны отсутствуют.", DL.Text);
+            else Draw.Table(ms, tr, o.X + 25, o.Y + 266, new[] { 160.0, 55.0, 50.0, 45.0, 45.0 }, 7,
+                new[] { "Зона", "Масса ГОТВ, кг", "Баллон, л", "Рабочие, шт.", "Резерв, шт." }, rows, DL.Table);
+            Draw.MText(ms, tr, o.X + 25, o.Y + 105, 365, 2.4,
+                "Данные получены существующим прототипным расчётом. Типоразмер и резерв требуют инженерного подтверждения."
+                + "\nНе включены автоматически в спецификацию размещения и не создают оборудование на плане.", DL.Text);
+        }
+
         // ----- Полный комплект (порядок как в альбоме Детский сад АГПТ) -----
         public static void FullAlbum(BlockTableRecord ms, Transaction tr, ProjectData pd)
         {
@@ -1693,18 +1649,18 @@ namespace AGPT.Drawings
             }
             Add("Титульный лист", i => TitleSheet(ms, tr, pd, i));
             Add("Титульный лист с подписями", i => TitleSheetSignedAt(ms, tr, pd, i));
-            // The index includes its own continuation sheets; solve until the register fits.
-            int generalPages = 1;
-            int otherPages = 7 + PageCount(pd.Zones.Count, 4) + PageCount(pd.Spec.Count, 32)
-                + PageCount(pd.Cables.Count, 32) + PageCount(pd.Pipes.Count, 32);
-            while (PageCount(otherPages + generalPages, 32) > generalPages) generalPages++;
-            for (int page = 0; page < generalPages; page++)
+            Add("Краткое техническое описание модулей", i => ModuleDescription(ms, tr, pd, i));
+            Add("Состав исходных данных и незаполненные разделы", i => DataReadinessPage(ms, tr, pd, i));
+            for (int page = 0; page < AGPT.Cad.AlbumStructureRenderer.PageCount(pd); page++)
             {
                 int p = page;
-                Add("Общие данные. Ведомость листов" + Continuation(p), i => GeneralDataPage(ms, tr, pd, i, p));
+                Add("Структурная схема состава по зонам" + Continuation(p), i => StructuralPage(ms, tr, pd, i, p));
             }
-            Add("Краткое техническое описание модулей", i => ModuleDescription(ms, tr, pd, i));
-            Add("Типовая структурная схема (проверить по проекту)", i => StructuralScheme(ms, tr, pd, i));
+            for (int page = 0; page < AGPT.Cad.AlbumAxonometryRenderer.PageCount(pd.Plan); page++)
+            {
+                int p = page;
+                Add("Аксонометрическая проекция трубопроводов" + Continuation(p), i => AxonometryPage(ms, tr, pd, i, p));
+            }
             Add("План оборудования и кабельных трасс АГПТ", i => PlanSheet(ms, tr, pd, i));
             Add("План оборудования и трубопроводов АГПТ", i => PlanModulesPipe(ms, tr, pd, i));
             for (int page = 0; page < PageCount(pd.Pipes.Count, 32); page++)
@@ -1718,7 +1674,7 @@ namespace AGPT.Drawings
                 Add("Расчёт газового пожаротушения" + Continuation(p), i => CalcPage(ms, tr, pd, i, p));
             }
             Add("Типовая схема монтажа оборудования", i => MountingScheme(ms, tr, pd, i));
-            for (int page = 0; page < PageCount(pd.Spec.Count, 32); page++)
+            for (int page = 0; page < AGPT.Cad.AlbumSpecificationRenderer.PageCount(pd); page++)
             {
                 int p = page;
                 Add("Спецификация оборудования" + Continuation(p), i => SpecificationPage(ms, tr, pd, i, p));
@@ -1727,6 +1683,20 @@ namespace AGPT.Drawings
             {
                 int p = page;
                 Add("Кабельный журнал АГПТ" + Continuation(p), i => CableJournalPage(ms, tr, pd, i, p));
+            }
+            for (int page = 0; page < PageCount(pd.Zones.Count, 20); page++)
+            {
+                int p = page;
+                Add("Расчётная потребность в модулях (не размещение)" + Continuation(p),
+                    i => ModuleDemandPage(ms, tr, pd, i, p));
+            }
+            int generalPages = 1;
+            while (PageCount(pages.Count + generalPages, 32) > generalPages) generalPages++;
+            for (int page = 0; page < generalPages; page++)
+            {
+                int p = page;
+                pages.Insert(2 + page, i => GeneralDataPage(ms, tr, pd, i, p));
+                pd.AlbumSheetTitles.Insert(2 + page, "Общие данные. Ведомость листов" + Continuation(p));
             }
             pd.AlbumSheetCount = pages.Count;
             for (int i = 0; i < pages.Count; i++)
@@ -2003,7 +1973,7 @@ namespace AGPT.Drawings
                     ValidateZone(z, ent);
                     pd.Zones.Add(z);
                 }
-                if (!string.IsNullOrWhiteSpace(kind) && kind != "ZONE" && kind != "CABLE")
+                if (!string.IsNullOrWhiteSpace(kind) && kind != "ZONE" && kind != "CABLE" && kind != "PIPE")
                 {
                     string label;
                     switch (kind)

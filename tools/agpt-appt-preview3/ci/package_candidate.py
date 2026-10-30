@@ -44,6 +44,12 @@ SOURCE_ALLOWLIST = frozenset({
     'src/RoomGasPolicy.cs',
     'src/RoomOpeningsPolicy.cs',
     'src/RoomPresentationCommands.cs',
+    'src/AlbumAxonometryRenderer.cs',
+    'src/AlbumStructureRenderer.cs',
+    'src/AlbumSpecificationRenderer.cs',
+    'src/AxonometricProjection.cs',
+    'src/SpecificationPageLayout.cs',
+    'REFERENCE_LAYOUT_RU.md',
     'src/RoomPolygon.cs',
     'src/RoomBoundaryPicker.cs',
     'src/RoomModelFacts.cs',
@@ -69,6 +75,8 @@ SOURCE_ALLOWLIST = frozenset({
     'tests/RoomTemperaturePolicyTests.cs',
     'tests/RoomGasPolicyTests.cs',
     'tests/RoomOpeningsPolicyTests.cs',
+    'tests/AxonometricProjectionTests.cs',
+    'tests/SpecificationPageLayoutTests.cs',
     'tests/RoomPolygonTests.cs',
 })
 
@@ -133,7 +141,7 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
         (stage / 'RELEASE_INFO.json').write_text(json.dumps({
-            'version': '1.1.0-preview.11', 'commit': args.commit,
+            'version': '1.1.0-preview.12', 'commit': args.commit,
             'nativeAutoCADVerified': False, 'engineeringAcceptanceVerified': False,
             'privateCadResourcesIncluded': False,
             'status': 'pilot-candidate',

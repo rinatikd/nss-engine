@@ -1,4 +1,4 @@
-name: AGPT preview.11 acceptance
+name: AGPT preview.12 acceptance
 
 on:
   push:
@@ -83,7 +83,7 @@ jobs:
       - name: Upload compiled plugin assemblies only
         uses: actions/upload-artifact@v4
         with:
-          name: agpt-preview11-AutoCAD${{ matrix.autocad }}
+          name: agpt-preview12-AutoCAD${{ matrix.autocad }}
           if-no-files-found: error
           path: |
             ${{ runner.temp }}/runtime/AutoCAD${{ matrix.autocad }}/AGPT.dll
@@ -100,22 +100,22 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
-          name: agpt-preview11-AutoCAD2025
+          name: agpt-preview12-AutoCAD2025
           path: ${{ runner.temp }}/runtime/AutoCAD2025
       - uses: actions/download-artifact@v4
         with:
-          name: agpt-preview11-AutoCAD2026
+          name: agpt-preview12-AutoCAD2026
           path: ${{ runner.temp }}/runtime/AutoCAD2026
       - name: Assemble pilot candidate
         run: >-
           python tools/agpt-appt-preview3/ci/package_candidate.py
           --runtime-root '${{ runner.temp }}/runtime'
-          --output '${{ runner.temp }}/AGPT-APPT-1.1.0-preview.11-pilot'
+          --output '${{ runner.temp }}/AGPT-APPT-1.1.0-preview.12-pilot'
           --commit '${{ github.sha }}'
       - name: Upload pilot candidate
         uses: actions/upload-artifact@v4
         with:
-          name: AGPT-APPT-1.1.0-preview.11-pilot
+          name: AGPT-APPT-1.1.0-preview.12-pilot
           if-no-files-found: error
           include-hidden-files: true
-          path: ${{ runner.temp }}/AGPT-APPT-1.1.0-preview.11-pilot/
+          path: ${{ runner.temp }}/AGPT-APPT-1.1.0-preview.12-pilot/
