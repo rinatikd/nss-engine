@@ -1896,6 +1896,10 @@ namespace AGPT.Drawings
 
         static void RequireZoneFields(Entity entity)
         {
+            if (XD.Get(entity, "ROOM_CAPTURE") == "1" && XD.Get(entity, "ROOM_STATUS") != "READY")
+                throw new InvalidOperationException("Помещение " + XD.Get(entity, "ZONE_NAME")
+                    + ": контур сохранён, но исходные данные модели неполны: " + XD.Get(entity, "MISSING_FIELDS")
+                    + ". Эти данные должны поступить из модели/профиля проекта; значения не подставляются.");
             string[] required = { "ZONE_NAME", "VP", "H", "FH", "TM", "CN", "RHO0", "GOTV" };
             var missing = required.Where(key => string.IsNullOrWhiteSpace(XD.Get(entity, key))).ToArray();
             if (missing.Length > 0)

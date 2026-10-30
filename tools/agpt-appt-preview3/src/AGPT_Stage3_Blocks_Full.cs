@@ -107,12 +107,12 @@ namespace AGPT.Stage3
                 case UnitsValue.Millimeters: metresPerUnit = 0.001; return true;
                 case UnitsValue.Centimeters: metresPerUnit = 0.01; return true;
                 case UnitsValue.Meters: metresPerUnit = 1.0; return true;
-                default: metresPerUnit = 0; return false;
+                default: return AGPT.Cad.CapturedPlanUnits.TryRead(db, out metresPerUnit);
             }
         }
 
         public const string UnsupportedMessage =
-            "Единицы плана не определены или не поддерживаются. Установите INSUNITS: миллиметры, сантиметры или метры; координаты должны соответствовать этим единицам.";
+            "Размерность плана не подтверждена. AGPT_ZONE предложит её по модели; для расчёта нужны достоверные единицы или размерные надписи с явными единицами.";
     }
 
     public static class Layers

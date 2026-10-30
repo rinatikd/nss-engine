@@ -57,6 +57,8 @@ namespace AGPT.Cad
             if (entity is not Curve curve) throw PipeError(entity, "нужна исходная линия или полилиния");
             if (!string.Equals(AGPT.Stage3.XD.Get(entity, "PLAN_UNIT"), db.Insunits.ToString(), StringComparison.Ordinal))
                 throw PipeError(entity, "единицы геометрии отсутствуют либо изменились; проверьте размеры");
+            if (!NumericData.TryParseFinite(AGPT.Stage3.XD.Get(entity, "METRES_PER_UNIT"), out double recordedScale)
+                || recordedScale != scale) throw PipeError(entity, "масштаб исходной геометрии не подтверждён для текущей модели");
             double nativeLength = Math.Abs(curve.GetDistanceAtParameter(curve.EndParam)
                 - curve.GetDistanceAtParameter(curve.StartParam));
             if (!double.IsFinite(nativeLength) || nativeLength <= 0)

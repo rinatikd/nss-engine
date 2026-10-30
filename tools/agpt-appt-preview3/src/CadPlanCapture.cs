@@ -13,13 +13,8 @@ namespace AGPT.Cad
         {
             if (db == null || tr == null || string.IsNullOrWhiteSpace(applicationName)) throw new ArgumentException("Database, transaction and application are required.");
             var model = new PlanModel();
-            switch (db.Insunits)
-            {
-                case UnitsValue.Millimeters: model.MetresPerUnit = .001; break;
-                case UnitsValue.Centimeters: model.MetresPerUnit = .01; break;
-                case UnitsValue.Meters: model.MetresPerUnit = 1; break;
-                default: model.Issues.Add("INSUNITS: единицы неизвестны; план не может быть выведен в масштабе."); break;
-            }
+            if (AGPT.Stage3.DrawingUnits.TryGetMetresPerUnit(db, out double capturedScale)) model.MetresPerUnit = capturedScale;
+            else model.Issues.Add("Размерность не подтверждена: предложение AGPT_ZONE ещё не является проверенным масштабом.");
             var table = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
             var source = (BlockTableRecord)tr.GetObject(table[BlockTableRecord.ModelSpace], OpenMode.ForRead);
             foreach (ObjectId objectId in source)

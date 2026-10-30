@@ -38,6 +38,11 @@ SOURCE_ALLOWLIST = frozenset({
     'src/ProjectCommands.cs',
     'src/GasZoneInput.cs',
     'src/GasZoneForm.cs',
+    'src/RoomUnitInference.cs',
+    'src/RoomPolygon.cs',
+    'src/RoomBoundaryPicker.cs',
+    'src/RoomModelFacts.cs',
+    'src/RoomUnitEvidence.cs',
     'src/CadGasPipeVolumes.cs',
     'src/GasPipeDataCommands.cs',
     'src/ProjectGeometry.cs',
@@ -54,6 +59,8 @@ SOURCE_ALLOWLIST = frozenset({
     'tests/RequiredProjectInputTests.cs',
     'tests/TaggingPolicyTests.cs',
     'tests/GasZoneInputTests.cs',
+    'tests/RoomUnitInferenceTests.cs',
+    'tests/RoomPolygonTests.cs',
 })
 
 
@@ -117,7 +124,7 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
         (stage / 'RELEASE_INFO.json').write_text(json.dumps({
-            'version': '1.1.0-preview.5', 'commit': args.commit,
+            'version': '1.1.0-preview.6', 'commit': args.commit,
             'nativeAutoCADVerified': False, 'engineeringAcceptanceVerified': False,
             'privateCadResourcesIncluded': False,
             'status': 'pilot-candidate',

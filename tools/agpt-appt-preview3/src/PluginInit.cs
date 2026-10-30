@@ -9,12 +9,13 @@ using Autodesk.AutoCAD.ApplicationServices;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
 
 [assembly: ExtensionApplication(typeof(AGPT.PluginInit))]
+[assembly: CommandClass(typeof(AGPT.PluginInit))]
 
 namespace AGPT
 {
     public class PluginInit : IExtensionApplication
     {
-        public const string Version = "1.1.0-preview.5";
+        public const string Version = "1.1.0-preview.6";
 
         public void Initialize()
         {
@@ -44,6 +45,13 @@ namespace AGPT
             {
                 Trace.TraceError("AGPT/APPT initialization logging failed: {0}", ex.GetType().Name);
             }
+        }
+
+        [CommandMethod("AGPT_VERSION")]
+        public void ShowVersion()
+        {
+            AcadApp.DocumentManager.MdiActiveDocument?.Editor.WriteMessage(
+                "\nAGPT/APPT " + Version + "\nDLL: " + typeof(PluginInit).Assembly.Location);
         }
 
         public void Terminate() { }

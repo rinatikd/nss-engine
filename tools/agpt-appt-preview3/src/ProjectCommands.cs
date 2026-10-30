@@ -120,6 +120,106 @@ namespace AGPT
             var document = Application.DocumentManager.MdiActiveDocument;
             if (document == null) return;
             var db = document.Database; var editor = document.Editor;
+            Polyline boundary = null;
+            bool isNew = false, registered = false;
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                boundary = AGPT.Cad.RoomBoundaryPicker.Pick(editor, tr, db, out isNew);
+                if (boundary == null) return;
+                if (!isNew)
+                {
+                    var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    if (boundary.OwnerId != blockTable[BlockTableRecord.ModelSpace])
+                        throw new InvalidOperationException("Выберите исходный контур в пространстве модели.");
+                    RequireTaggable(boundary, "AGPT", "ZONE");
+                }
+                if (!boundary.Closed || boundary.NumberOfVertices < 3
+                    || Math.Abs(boundary.Normal.X) > 1e-9 || Math.Abs(boundary.Normal.Y) > 1e-9)
+                    throw new InvalidOperationException("Нужен замкнутый горизонтальный контур минимум из трёх углов.");
+                if (isNew) RoomPolygon.Validate(Enumerable.Range(0, boundary.NumberOfVertices)
+                    .Select(i => { var p = boundary.GetPoint3dAt(i); return new PlanVertex(p.X, p.Y, p.Z); }).ToArray());
+                double area = boundary.Area;
+                if (!double.IsFinite(area) || area <= 0) throw new InvalidOperationException("Некорректная площадь помещения.");
+                var bounds = boundary.GeometricExtents;
+                double? declared = db.Insunits switch {
+                    UnitsValue.Millimeters => .001, UnitsValue.Centimeters => .01, UnitsValue.Meters => 1.0, _ => null
+                };
+                var suggestion = RoomUnitInference.Suggest(bounds.MaxPoint.X - bounds.MinPoint.X,
+                    bounds.MaxPoint.Y - bounds.MinPoint.Y, declared, AGPT.Cad.RoomUnitEvidence.Read(db, tr, boundary));
+                var existing = isNew ? new Dictionary<string, string>() : Data(boundary, "AGPT");
+                var discovered = AGPT.Cad.RoomModelFacts.Read(db, tr, boundary, existing);
+                var facts = discovered.Values;
+                string Read(string key) => facts.TryGetValue(key, out string value) ? value : "";
+                double? Number(string key) => NumericData.TryParseFinite(Read(key), out double value) ? value : null;
+                string guid = Read("GUID");
+                if (string.IsNullOrWhiteSpace(guid)) guid = Guid.NewGuid().ToString();
+                string name = Read("ZONE_NAME");
+                if (string.IsNullOrWhiteSpace(name)) name = "Помещение " + guid.Substring(0, Math.Min(8, guid.Length));
+                var input = new GasZoneInput { Name = name, Gotv = Read("GOTV"), Height = Number("H"),
+                    OpeningsArea = Number("FH"), MinimumTemperature = Number("TM") };
+                if (input.Gotv == GasAgentCatalog.SupportedAgent)
+                {
+                    var profile = GasAgentCatalog.GetReferenceProfile(input.Gotv);
+                    input.Concentration = profile.Concentration; input.Density = profile.VaporDensity;
+                }
+                var missing = input.Validate();
+                bool unitVerified = suggestion.IsVerified && ((int)db.Insunits == 0 || declared.HasValue);
+                if (!unitVerified) missing.Add("масштаб не подтверждён: " + suggestion.Reason);
+                string missingSummary = string.Join("; ", missing.Select(issue => issue.Split(':')[0]));
+                if (missingSummary.Length > 100) missingSummary = missingSummary.Substring(0, 100);
+                double squareMetres = area * suggestion.MetresPerUnit * suggestion.MetresPerUnit;
+                if (!double.IsFinite(squareMetres) || squareMetres <= 0) throw new InvalidOperationException("Площадь вне числового диапазона.");
+                string volumeText = null;
+                if (input.Height.HasValue && input.Height.Value > 0)
+                    volumeText = NumericData.Format(PlanUnits.AreaVolume(area, input.Height.Value, suggestion.MetresPerUnit));
+                EnsureStorage(db, tr, "AGPT", "AGPT-ZONE");
+                if (isNew)
+                {
+                    var blockTable = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                    var model = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                    model.AppendEntity(boundary); tr.AddNewlyCreatedDBObject(boundary, true); registered = true;
+                }
+                else boundary.UpgradeOpen();
+                boundary.Layer = "AGPT-ZONE";
+                // Facts with unknown values are removed, not supplied as numeric defaults.
+                SetData(boundary, "AGPT", ("KIND", "ZONE"), ("GUID", guid), ("ZONE_NAME", name),
+                    ("GOTV", input.Gotv), ("H", input.Height.HasValue ? NumericData.Format(input.Height.Value) : null),
+                    ("FH", input.OpeningsArea.HasValue ? NumericData.Format(input.OpeningsArea.Value) : null),
+                    ("TM", input.MinimumTemperature.HasValue ? NumericData.Format(input.MinimumTemperature.Value) : null),
+                    ("CN", input.Concentration.HasValue ? NumericData.Format(input.Concentration.Value) : null),
+                    ("RHO0", input.Density.HasValue ? NumericData.Format(input.Density.Value) : null),
+                    ("VP", volumeText), ("AREA_M2", NumericData.Format(squareMetres)),
+                    ("ROOM_CAPTURE", "1"), ("ROOM_STATUS", missing.Count == 0 ? "READY" : "INCOMPLETE"),
+                    ("MISSING_FIELDS", missing.Count == 0 ? null : missingSummary),
+                    ("UNIT_VERIFIED", unitVerified ? "1" : "0"), ("UNIT_CONFIDENCE", suggestion.Confidence.ToString()),
+                    ("PLAN_UNIT", db.Insunits.ToString()), ("METRES_PER_UNIT", NumericData.Format(suggestion.MetresPerUnit)),
+                    ("K4", null), ("K4_INPUT_MODE", null), ("VTR", null),
+                    ("GAS_PROFILE", input.Concentration.HasValue ? "HFC227EA-PROJECT-REFERENCE-1" : null),
+                    ("GAS_PROFILE_SOURCE", input.Concentration.HasValue ? "ProjectReference" : null));
+                foreach (string key in new[] { "ZONE_NAME", "H", "FH", "TM", "GOTV" })
+                {
+                    string source = Read(key + "__SOURCE");
+                    if (key == "ZONE_NAME" && string.IsNullOrWhiteSpace(Read("ZONE_NAME"))) source = "GeneratedIdentifier";
+                    if (source.Length > 180) source = source.Substring(0, 180);
+                    SetData(boundary, "AGPT", (key + "__SOURCE", string.IsNullOrWhiteSpace(source) ? null : source));
+                }
+                tr.Commit();
+                editor.WriteMessage("\n[AGPT_ZONE] " + name + ": предлагается " + suggestion.UnitName + "; " + suggestion.Reason);
+                editor.WriteMessage("\nПлощадь по этому масштабу: " + NumericData.Format(squareMetres) + " м². "
+                    + (missing.Count == 0 ? "Исходные данные получены из модели." : "Контур сохранён; расчётные исходные данные пока неполны."));
+                foreach (string issue in discovered.Issues.Concat(missing)) editor.WriteMessage("\n[Данные модели] " + issue);
+            }
+            catch (System.Exception ex) { editor.WriteMessage("\n[AGPT_ZONE] " + ex.Message); }
+            finally { if (isNew && !registered) boundary?.Dispose(); }
+        }
+
+        [CommandMethod("AGPT_ZONE_EDIT")]
+        public void ZoneEdit()
+        {
+            var document = Application.DocumentManager.MdiActiveDocument;
+            if (document == null) return;
+            var db = document.Database; var editor = document.Editor;
             if (!Stage3.DrawingUnits.TryGetMetresPerUnit(db, out double scale))
             { editor.WriteMessage("\n" + Stage3.DrawingUnits.UnsupportedMessage); return; }
             var options = new PromptEntityOptions("\nВыберите существующую замкнутую горизонтальную полилинию зоны: ");
@@ -160,6 +260,7 @@ namespace AGPT
                     ("VP", NumericData.Format(volume)), ("H", NumericData.Format(h)), ("FH", NumericData.Format(fh)),
                     ("TM", NumericData.Format(tm)), ("CN", NumericData.Format(cn)), ("RHO0", NumericData.Format(rho)),
                     ("K4", null), ("K4_INPUT_MODE", null), ("VTR", null),
+                    ("ROOM_STATUS", "READY"), ("MISSING_FIELDS", null), ("UNIT_VERIFIED", "1"),
                     ("GAS_PROFILE", "HFC227EA-PROJECT-REFERENCE-1"), ("GAS_PROFILE_SOURCE", "ProjectReference"),
                     ("PLAN_UNIT", db.Insunits.ToString()), ("METRES_PER_UNIT", NumericData.Format(scale)),
                     ("VP_UNIT", "m3"), ("H_UNIT", "m"), ("FH_UNIT", "m2"), ("TM_UNIT", "degC"),
