@@ -11,7 +11,7 @@
     <OutputType>Library</OutputType>
     <RootNamespace>AGPT</RootNamespace>
     <AssemblyName>AGPT</AssemblyName>
-    <Version>1.1.0-preview.3</Version>
+    <Version>1.1.0-preview.4</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
@@ -47,6 +47,7 @@
     <Compile Include="src\APPT_Plugin_Drawings.cs" />
     <Compile Include="src\PluginInit.cs" />
     <Compile Include="src\ProjectCommands.cs" />
+    <Compile Include="src\GasZoneForm.cs" />
     <Compile Include="src\AlbumOutput.cs" />
     <Compile Include="src\CadPlanCapture.cs" />
     <Compile Include="src\ProjectPlanRenderer.cs" />

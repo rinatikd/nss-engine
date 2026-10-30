@@ -1224,7 +1224,7 @@ namespace AGPT.Drawings
             if (z.K4 <= 0) z.K4 = 1.0;
 
             double TmK = z.Tm + 273.15;
-            if (TmK < 200) TmK = 298.15;
+            if (z.Tm < GasZoneInput.MinimumTemperatureC) TmK = 298.15;
 
             // ρ1 = ρ0 · (T0 / Tм) · K3
             double rho1 = z.Rho0 * (T0 / TmK) * K3;
@@ -1910,7 +1910,7 @@ namespace AGPT.Drawings
             if (zone.Vp <= 0) invalid.Add("VP > 0");
             if (zone.H <= 0) invalid.Add("H > 0");
             if (zone.Fh < 0) invalid.Add("FH >= 0");
-            if (zone.Tm + 273.15 < 200) invalid.Add("TM >= -73.15 °C (область текущего расчёта)");
+            if (zone.Tm < GasZoneInput.MinimumTemperatureC) invalid.Add("TM >= -73.15 °C (область текущего расчёта)");
             if (zone.Cn <= 0 || zone.Cn >= 100) invalid.Add("0 < CN < 100");
             if (zone.Rho0 <= 0) invalid.Add("RHO0 > 0");
             if (zone.K4 <= 0) invalid.Add("K4 > 0");

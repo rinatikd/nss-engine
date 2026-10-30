@@ -36,6 +36,8 @@ SOURCE_ALLOWLIST = frozenset({
     'src/PluginData.cs',
     'src/PluginInit.cs',
     'src/ProjectCommands.cs',
+    'src/GasZoneInput.cs',
+    'src/GasZoneForm.cs',
     'src/ProjectGeometry.cs',
     'src/ProjectMetadata.cs',
     'src/ProjectPlanRenderer.cs',
@@ -49,6 +51,7 @@ SOURCE_ALLOWLIST = frozenset({
     'tests/ProjectMetadataTests.cs',
     'tests/RequiredProjectInputTests.cs',
     'tests/TaggingPolicyTests.cs',
+    'tests/GasZoneInputTests.cs',
 })
 
 
@@ -112,7 +115,7 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
         (stage / 'RELEASE_INFO.json').write_text(json.dumps({
-            'version': '1.1.0-preview.3', 'commit': args.commit,
+            'version': '1.1.0-preview.4', 'commit': args.commit,
             'nativeAutoCADVerified': False, 'engineeringAcceptanceVerified': False,
             'privateCadResourcesIncluded': False,
             'status': 'pilot-candidate',

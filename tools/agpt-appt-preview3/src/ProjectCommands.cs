@@ -144,15 +144,13 @@ namespace AGPT
                 }
                 double area = polyline.Area;
                 if (!double.IsFinite(area) || area <= 0) throw new InvalidOperationException("Площадь контура должна быть положительной.");
-                if (!ReadText(editor, "\nНазвание зоны: ", out string name)
-                    || !ReadText(editor, "\nГОТВ (наименование/марка): ", out string gotv)
-                    || !ReadNumber(editor, "\nH — высота, м (>0): ", v => v > 0, out double h)
-                    || !ReadNumber(editor, "\nFH — площадь проёмов, м² (>=0): ", v => v >= 0, out double fh)
-                    || !ReadNumber(editor, "\nTM — минимальная температура, °C (>=-73.15; ограничение текущей расчётной методики прототипа): ", v => v >= -73.15, out double tm)
-                    || !ReadNumber(editor, "\nCn — нормативная концентрация, % (0<Cn<100): ", v => v > 0 && v < 100, out double cn)
-                    || !ReadNumber(editor, "\nRho0 — плотность ГОТВ, кг/м³ (>0): ", v => v > 0, out double rho)
-                    || !ReadNumber(editor, "\nK4 — коэффициент (>0): ", v => v > 0, out double k4)
-                    || !ReadNumber(editor, "\nVTR — объём трубопроводов, м³ (>=0): ", v => v >= 0, out double vtr)) return;
+                using var form = new AGPT.Cad.GasZoneForm(area * scale * scale, Data(polyline, "AGPT"));
+                if (Application.ShowModalDialog(form) != System.Windows.Forms.DialogResult.OK) return;
+                var input = form.Input;
+                string name = input.Name, gotv = input.Gotv;
+                double h = input.Height.Value, fh = input.OpeningsArea.Value, tm = input.MinimumTemperature.Value;
+                double cn = input.Concentration.Value, rho = input.Density.Value;
+                double k4 = input.K4.Value, vtr = input.PipeVolume.Value;
                 double volume = PlanUnits.AreaVolume(area, h, scale);
                 string guid = Value(Data(polyline, "AGPT"), "GUID");
                 if (string.IsNullOrWhiteSpace(guid)) guid = Guid.NewGuid().ToString();
