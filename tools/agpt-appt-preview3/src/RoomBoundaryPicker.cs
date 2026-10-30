@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using AcadApplication = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace AGPT.Cad
 {
     public static class RoomBoundaryPicker
     {
         private const double PointTolerance = 1e-7;
+        private const short AllObjectSnapModes = 16383;
 
         // Existing boundaries remain transaction-owned and open for read. A new boundary
         // is transient: the caller must dispose it or append/register it in its transaction.
@@ -24,9 +26,12 @@ namespace AGPT.Cad
             // the user's UCS for every exit, including cancellation and prompt exceptions.
             var points = new List<Point3d>();
             Matrix3d originalUcs = editor.CurrentUserCoordinateSystem;
+            object originalOsMode = AcadApplication.GetSystemVariable("OSMODE");
             try
             {
                 editor.CurrentUserCoordinateSystem = Matrix3d.Identity;
+                AcadApplication.SetSystemVariable("OSMODE", AllObjectSnapModes);
+                editor.WriteMessage("\nОбъектная привязка: все режимы включены на время выбора помещения.");
                 while (true)
                 {
                     var options = new PromptPointOptions(points.Count == 0
@@ -82,8 +87,12 @@ namespace AGPT.Cad
             }
             finally
             {
-                editor.CurrentUserCoordinateSystem = originalUcs;
-                editor.Regen();
+                try { AcadApplication.SetSystemVariable("OSMODE", originalOsMode); }
+                finally
+                {
+                    editor.CurrentUserCoordinateSystem = originalUcs;
+                    editor.Regen();
+                }
             }
 
             // Allocate only after all prompts finish, so cancellation owns no DBObject.
