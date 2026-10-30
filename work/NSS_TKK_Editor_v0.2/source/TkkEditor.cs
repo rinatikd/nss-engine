@@ -163,13 +163,6 @@ public sealed class TkkEditor:IExtensionApplication
         }
         return null;
     }
-    static double LongAxis(BlockReference reference,Transaction tr)
-    {
-        var definition=(BlockTableRecord)tr.GetObject(reference.BlockTableRecord,OpenMode.ForRead);Extents3d? bounds=null;
-        foreach(ObjectId id in definition){if(tr.GetObject(id,OpenMode.ForRead) is not Entity entity)continue;try{var ext=entity.GeometricExtents;if(bounds==null)bounds=ext;else{var b=bounds.Value;b.AddExtents(ext);bounds=b;}}catch{}}
-        if(bounds==null)return double.NaN;var e=bounds.Value;double w=e.MaxPoint.X-e.MinPoint.X,h=e.MaxPoint.Y-e.MinPoint.Y;
-        return Math.Min(w,h)<1e-8||Math.Max(w,h)/Math.Min(w,h)<1.15?double.NaN:(w>=h?0:Math.PI/2);
-    }
     static object Capture()
     {
         if(doc==null)throw new InvalidOperationException("Drawing closed");
@@ -201,7 +194,7 @@ public sealed class TkkEditor:IExtensionApplication
             {
                 double[]? center=e is Circle circle?P(circle.Center):Center((BlockReference)e,tr);
                 if(center==null)throw new InvalidDataException("Cannot locate well center: "+handle+"; use a block containing Circle/Ellipse or a Circle on the well layer");
-                descriptions.TryGetValue(handle,out var old);wells.Add(new{id=handle,xyz=center,reference,description=reference?(string.IsNullOrEmpty(old.text)?"Ранее запроектированный ККС-2":old.text):null,previous_number=reference?(old.number==0?int.MaxValue:old.number):0,long_axis=e is BlockReference block?LongAxis(block,tr):double.NaN});
+                descriptions.TryGetValue(handle,out var old);wells.Add(new{id=handle,xyz=center,reference,description=reference?(string.IsNullOrEmpty(old.text)?"Ранее запроектированный ККС-2":old.text):null,previous_number=reference?(old.number==0?int.MaxValue:old.number):0});
             }
         }
         if(wells.Count==0||routes.Count==0)throw new InvalidDataException("No supported wells/routes on NSS layers");
@@ -295,13 +288,12 @@ public sealed class TkkEditor:IExtensionApplication
             else{var sourceStyle=(MLeaderStyle)tr.GetObject(db.MLeaderstyle,OpenMode.ForRead);mlStyle=new MLeaderStyle();mlStyle.CopyFrom(sourceStyle);mlStyles.SetAt(mlStyleName,mlStyle);tr.AddNewlyCreatedDBObject(mlStyle,true);}
             mlStyle.LeaderLineWeight=LineWeight.LineWeight009;mlStyle.LeaderLineColor=Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci,7);mlStyle.TextColor=Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci,7);mlStyle.TextStyleId=styleId;mlStyle.TextHeight=1.25;mlStyle.EnableFrameText=false;
             using(var defaultText=mlStyle.DefaultMText){defaultText.BackgroundFill=false;defaultText.UseBackgroundColor=false;defaultText.BackgroundScaleFactor=1.0;defaultText.Color=Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci,7);mlStyle.DefaultMText=defaultText;}
-            var bt=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForRead);var model=(BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace],OpenMode.ForWrite);var current=new Dictionary<string,Entity>();var byHandle=new Dictionary<long,ObjectId>();var duplicates=new List<Entity>();
+            var bt=(BlockTable)tr.GetObject(db.BlockTableId,OpenMode.ForRead);var model=(BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace],OpenMode.ForWrite);var current=new Dictionary<string,Entity>();var duplicates=new List<Entity>();
             var legacyCaptions=new List<MText>();
-            foreach(ObjectId id in model){var entity=(Entity)tr.GetObject(id,OpenMode.ForRead);byHandle[entity.Handle.Value]=id;var tag=Tag(entity);if(tag!=null&&!current.TryAdd(tag.Value.key,entity))duplicates.Add(entity);else if(tag==null&&entity.Layer=="NSS_TKK_SPAN_LABELS_PROJECT"&&entity is MText oldCaption)legacyCaptions.Add(oldCaption);}
+            foreach(ObjectId id in model){var entity=(Entity)tr.GetObject(id,OpenMode.ForRead);var tag=Tag(entity);if(tag!=null&&!current.TryAdd(tag.Value.key,entity))duplicates.Add(entity);else if(tag==null&&entity.Layer=="NSS_TKK_SPAN_LABELS_PROJECT"&&entity is MText oldCaption)legacyCaptions.Add(oldCaption);}
             var kept=new HashSet<string>();var mleaderHandles=new List<string>();var spanTextHandles=new List<string>();
             var calloutLayer=(LayerTableRecord)tr.GetObject(layers["NSS_TKK_CALLOUTS"],OpenMode.ForWrite);calloutLayer.Color=Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci,7);
             var spanLayer=(LayerTableRecord)tr.GetObject(layers["NSS_TKK_SPAN_LABELS_PROJECT"],OpenMode.ForWrite);spanLayer.Color=Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci,7);
-            foreach(var orientation in result.GetProperty("well_rotations").EnumerateArray()){string handle=orientation.GetProperty("id").GetString()!;if(!long.TryParse(handle,System.Globalization.NumberStyles.HexNumber,null,out long value)||!byHandle.TryGetValue(value,out var objectId))continue;if(tr.GetObject(objectId,OpenMode.ForRead) is BlockReference well&&WellLayers.Contains(well.Layer)){well.UpgradeOpen();well.Rotation=orientation.GetProperty("rotation").GetDouble();}}
             foreach(ObjectId id in model){if(tr.GetObject(id,OpenMode.ForRead) is Entity route&&RouteLayers.Contains(route.Layer)&&route.LineWeight!=LineWeight.LineWeight090){route.UpgradeOpen();route.LineWeight=LineWeight.LineWeight090;}}
             MText Text(string content,Point3d location,bool centered,double rotation)=>new(){Contents=content,TextStyleId=styleId,TextHeight=1.25,Width=0,Location=location,Rotation=rotation,Attachment=centered?AttachmentPoint.MiddleCenter:AttachmentPoint.TopLeft,BackgroundFill=false,UseBackgroundColor=false,BackgroundScaleFactor=1.0,Color=Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci,7)};
             foreach(var item in result.GetProperty("leaders").EnumerateArray())

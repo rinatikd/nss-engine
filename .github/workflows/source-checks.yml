@@ -13,3 +13,34 @@ jobs:
       - run: python -m pip install -r requirements-test.txt
       - run: python tools/repo_guard.py --tree HEAD
       - run: python tools/run_portable_checks.py
+
+  contracts:
+    name: .NET 8 synthetic contracts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: python -m pip install -r requirements-test.txt
+      # Synthetic inputs only. This executes real C# -> Python contracts,
+      # not AutoCAD, a packaged Python runtime, or customer drawings.
+      - name: TKK worker contract and process lifecycle
+        run: |
+          nss_python_exe="$(python -c 'import sys; print(sys.executable)')"
+          dotnet run --project work/NSS_TKK_Editor_v0.2/tests/WorkerContractTests.csproj --configuration Release -- "$GITHUB_WORKSPACE/work/NSS_TKK_Editor_v0.2" --synthetic "$nss_python_exe"
+      - name: AutoDebug C# contracts and emitted fixture
+        run: dotnet run --project work/NSS_AutoDebug_v0423/contract_tests/ContractTests.csproj --configuration Release -- "$RUNNER_TEMP/nss-contract-fixture.json"
+      - name: AutoDebug Python contracts consume C# output
+        run: python work/NSS_AutoDebug_v0423/scripts/run_portable_tests.py --contract-fixture "$RUNNER_TEMP/nss-contract-fixture.json"

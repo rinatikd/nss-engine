@@ -108,21 +108,10 @@ def analyze(data):
         else:
             text=f'ОК-{numbers[key]} в проектируемой телефонной канализации'
         placed.append(dict(key='well:'+key,text=text,xyz=w['xyz'],layer='NSS_TKK_CALLOUTS',reference=w.get('reference',False),radius=w.get('radius',.315)))
-        if not w.get('reference') and math.isfinite(w.get('long_axis',float('nan'))):
-            point=Point(w['xyz'][:2]);closest=None
-            for route in routes:
-                points=route['points']
-                for a,b in zip(points,points[1:]):
-                    dx=b[0]-a[0];dy=b[1]-a[1];den=dx*dx+dy*dy
-                    if den<1e-12:continue
-                    t=max(0.0,min(1.0,((w['xyz'][0]-a[0])*dx+(w['xyz'][1]-a[1])*dy)/den))
-                    qx=a[0]+t*dx;qy=a[1]+t*dy;distance=math.hypot(w['xyz'][0]-qx,w['xyz'][1]-qy)
-                    if closest is None or distance<closest[0]:closest=(distance,math.atan2(dy,dx))
-            if closest is not None:well_rotations.append(dict(id=key,rotation=closest[1]-w['long_axis']))
         if key not in graph:warnings.append(dict(code='WELL_OFF_ROUTE',id=key))
     leaders,layout=place_leaders(placed,routes,captions)
     warnings=enrich_warnings(warnings,wells,routes,numbers)
-    return dict(phase='READY',job_id=data.get('job_id'),fingerprint=data.get('fingerprint'),numbering=numbers,spans=spans,captions=captions,leaders=leaders,well_rotations=well_rotations,layout_checks=layout,warnings=warnings,diagnostics=summary(warnings),source_geometry_changed=bool(well_rotations))
+    return dict(phase='READY',job_id=data.get('job_id'),fingerprint=data.get('fingerprint'),numbering=numbers,spans=spans,captions=captions,leaders=leaders,well_rotations=well_rotations,layout_checks=layout,warnings=warnings,diagnostics=summary(warnings),source_geometry_changed=False)
 
 def main():
     source,target=map(Path,sys.argv[1:3])

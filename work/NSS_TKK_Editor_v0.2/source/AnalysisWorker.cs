@@ -23,7 +23,7 @@ internal sealed class AnalysisWorker : IDisposable
 
     internal static string Hash(object snapshot) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(snapshot)));
 
-    internal AnalysisWorker(string root, object source, long generation, TimeSpan? timeout = null, string? scriptPath = null)
+    internal AnalysisWorker(string root, object source, long generation, TimeSpan? timeout = null, string? scriptPath = null, string? pythonExecutable = null)
     {
         Fingerprint=Hash(source);Generation=generation;Timeout=timeout??TimeSpan.FromMinutes(2);
         Folder=Path.Combine(root,"Runs",DateTime.UtcNow.ToString("yyyyMMdd_HHmmss")+"_"+Guid.NewGuid().ToString("N"));
@@ -32,7 +32,7 @@ internal sealed class AnalysisWorker : IDisposable
         var input=snapshot.EnumerateObject().ToDictionary(p=>p.Name,p=>(object)p.Value.Clone());
         input["job_id"]=Path.GetFileName(Folder);input["fingerprint"]=Fingerprint;
         string file=Path.Combine(Folder,"snapshot.json");AtomicJson.Write(file,input);
-        var start=new ProcessStartInfo(Path.Combine(root,"runtime","python.exe"))
+        var start=new ProcessStartInfo(pythonExecutable??Path.Combine(root,"runtime","python.exe"))
         {UseShellExecute=false,CreateNoWindow=true,RedirectStandardError=true,RedirectStandardOutput=true,WorkingDirectory=root};
         foreach(string arg in new[]{"-E","-s","-X","utf8",scriptPath??Path.Combine(root,"engine","tkk_editor_core.py"),file,Path.Combine(Folder,"result.json")})start.ArgumentList.Add(arg);
         process=Process.Start(start)??throw new IOException("Python did not start");
@@ -97,6 +97,7 @@ internal static class ResultContract
         Require(result.GetProperty("job_id").GetString()==job,"Wrong worker job identity");
         Require(result.GetProperty("fingerprint").GetString()==fingerprint,"Stale worker fingerprint");
         Require(result.GetProperty("source_geometry_changed").ValueKind==JsonValueKind.False,"Worker declared a geometry change");
+        Require(result.GetProperty("well_rotations").ValueKind==JsonValueKind.Array&&result.GetProperty("well_rotations").GetArrayLength()==0,"Worker requested source well rotations");
         var wells=snapshot.GetProperty("wells").EnumerateArray().ToDictionary(w=>w.GetProperty("id").GetString()!);
         var numbers=result.GetProperty("numbering").EnumerateObject().ToDictionary(p=>p.Name,p=>p.Value.GetInt32());
         Require(numbers.Keys.ToHashSet().SetEquals(wells.Keys),"Worker numbering does not cover the snapshot wells");

@@ -5,6 +5,148 @@ import cctv_core as c
 
 
 class T(unittest.TestCase):
+    def test_rejects_nonfinite_camera_before_replacing_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = os.path.join(d, "result.dxf")
+            with open(output, "wb") as f:
+                f.write(b"previous drawing")
+            with self.assertRaises(ValueError):
+                c.build_drawing([c.Camera("C1", float("nan"), 0, 0,
+                                          c.Lens(6.4, 1920, 3.2))], [], output)
+            with open(output, "rb") as f:
+                self.assertEqual(f.read(), b"previous drawing")
+
+    def test_generated_r12_is_ascii_with_unicode_text_escapes(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = os.path.join(d, "result.dxf")
+            c.build_drawing([c.Camera("ВН-1", 0, 0, 0, c.Lens(6.4, 1920, 3.2))], [], output)
+            with open(output, "rb") as f:
+                content = f.read()
+            self.assertTrue(content.isascii())
+            self.assertIn(b"\\U+0412\\U+041D-1", content)
+
+    def test_annotation_size_tracks_drawing_units(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = os.path.join(d, "result.dxf")
+            c.build_drawing([c.Camera("C1", 0, 0, 0, c.Lens(6.4, 1920, 3.2))], [], output, unit_scale=1)
+            pairs = list(c._pairs(output))
+            text = pairs[pairs.index((0, "TEXT")) + 1:]
+            self.assertEqual(next(v for k, v in text if k == 40), "0.25")
+            self.assertEqual(next(v for k, v in text if k == 20), "0.4")
+
+    def test_independent_dxf_reader_preserves_labels_geometry_and_attributes(self):
+        try:
+            import ezdxf
+            from ezdxf.lldxf.encoding import decode_dxf_unicode
+        except ImportError:
+            self.skipTest("Independent DXF check requires optional ezdxf")
+        with tempfile.TemporaryDirectory() as d:
+            output = os.path.join(d, "result.dxf")
+            camera = c.Camera("ВН-1", 1, 2, 0, c.Lens(6.4, 1920, 3.2), model="Модель")
+            c.build_drawing([camera], [((6, -20), (6, 20))], output, unit_scale=1)
+            doc = ezdxf.readfile(output)
+            auditor = doc.audit()
+            self.assertFalse(auditor.errors)
+            self.assertFalse(auditor.fixes)
+            space = doc.modelspace()
+            text = list(space.query("TEXT"))[0]
+            self.assertIn("ВН-1", decode_dxf_unicode(text.dxf.text))
+            self.assertAlmostEqual(text.dxf.height, 0.25)
+            self.assertAlmostEqual(text.dxf.insert.y, 2.4)
+            insert = list(space.query("INSERT"))[0]
+            self.assertEqual(decode_dxf_unicode(insert.get_attrib_text("MODEL")), "Модель")
+            self.assertEqual(tuple(insert.dxf.insert), (1, 2, 0))
+            fov = [e for e in space.query("POLYLINE") if e.dxf.layer == "CCTV_FOV"][0]
+            self.assertTrue(fov.is_closed)
+            self.assertTrue(all(v.dxf.location.x <= 6.000001 for v in fov.vertices))
+
+    def test_cli_invalid_input_preserves_existing_drawing_even_optimized(self):
+        with tempfile.TemporaryDirectory() as d:
+            plan = os.path.join(d, "plan.dxf")
+            cameras = os.path.join(d, "cameras.csv")
+            output = os.path.join(d, "result.dxf")
+            writer = c.DxfWriter()
+            writer.save(plan)
+            with open(plan, "rb") as f:
+                original_plan = f.read()
+            header = "name,x,y,rotation_deg,model,focal_mm,height_m,tilt_deg,bitrate_mbps\n"
+            valid = "C1,0,0,0,DS-2CD1143G2-I,2.8,3,0,4\n"
+            cases = [(header, []), (header + valid.replace(",2.8,", ",9,"), []),
+                     (header + valid.replace("C1,0,", "C1,nan,"), []),
+                     (header + valid, ["--unit", "-1"]),
+                     (header + valid, ["--days", "0"]),
+                     (header + valid, ["--level", "Other"]),
+                     (header + valid, ["--xlsx", output])]
+            for content, args in cases:
+                for optimized in (False, True):
+                    with self.subTest(content=content, args=args, optimized=optimized):
+                        with open(cameras, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        with open(output, "wb") as f:
+                            f.write(b"existing drawing")
+                        result = subprocess.run([sys.executable] + (["-O"] if optimized else []) +
+                            [os.path.join(os.path.dirname(__file__), "cctv_cli.py"), plan, cameras, output] + args,
+                            capture_output=True)
+                        self.assertNotEqual(result.returncode, 0)
+                        with open(output, "rb") as f:
+                            self.assertEqual(f.read(), b"existing drawing")
+            with open(cameras, "w", encoding="utf-8") as f:
+                f.write(header + valid)
+            result = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "cctv_cli.py"),
+                                     plan, cameras, plan], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            with open(plan, "rb") as f:
+                self.assertEqual(f.read(), original_plan)
+
+    def test_invalid_geometry_domains_preserve_existing_drawing(self):
+        camera = c.Camera("C1", 0, 0, 0, c.Lens(6.4, 1920, 3.2))
+        bad_override = c.Camera("C2", 0, 0, 0, c.Lens(6.4, 1920, 3.2),
+                                dori_override_m={**c.DORI, "Detect": float("inf")})
+        with tempfile.TemporaryDirectory() as d:
+            output = os.path.join(d, "result.dxf")
+            cases = [([camera], [], {"unit_scale": 0}),
+                     ([camera], [], {"unit_scale": float("nan")}),
+                     ([camera], [((0, 0), (float("inf"), 1))], {}),
+                     ([bad_override], [], {}),
+                     ([camera], [], {"dori_level": "Other"})]
+            for cameras, walls, kwargs in cases:
+                with self.subTest(kwargs=kwargs, walls=walls, cameras=cameras):
+                    with open(output, "wb") as f:
+                        f.write(b"previous drawing")
+                    with self.assertRaises(ValueError):
+                        c.build_drawing(cameras, walls, output, **kwargs)
+                    with open(output, "rb") as f:
+                        self.assertEqual(f.read(), b"previous drawing")
+        for args in ((0, 1920, 3.2), (6.4, 0, 3.2), (6.4, 1920, 0),
+                     (6.4, 1920, 3.2, 180), (6.4, 1920, 3.2, float("nan"))):
+            with self.subTest(lens=args), self.assertRaises(ValueError):
+                c.Lens(*args)
+
+    def test_derived_numeric_overflow_preserves_existing_drawing(self):
+        lens = c.Lens(6.4, 1920, 3.2)
+        camera = c.Camera("C1", 0, 0, 0, lens)
+        enormous_dori = {level: 1e308 for level in c.DORI}
+        cases = [([camera], 1e-320),
+                 ([c.Camera("C1", 0, 0, 0, lens, dori_override_m=enormous_dori)], 0.001),
+                 ([c.Camera("C1", 1e308, 0, 0, lens, dori_override_m=enormous_dori)], 1)]
+        with tempfile.TemporaryDirectory() as d:
+            output = os.path.join(d, "result.dxf")
+            for cameras, unit_scale in cases:
+                with self.subTest(unit_scale=unit_scale, camera=cameras[0]):
+                    with open(output, "wb") as f:
+                        f.write(b"previous drawing")
+                    with self.assertRaises(ValueError):
+                        c.build_drawing(cameras, [], output, unit_scale=unit_scale)
+                    with open(output, "rb") as f:
+                        self.assertEqual(f.read(), b"previous drawing")
+                    self.assertEqual(os.listdir(d), ["result.dxf"])
+
+    def test_storage_rejects_derived_overflow(self):
+        self.assertTrue(math.isfinite(c.storage_tb_per_day(1e308)))
+        camera = c.Camera("C1", 0, 0, 0, c.Lens(6.4, 1920, 3.2), bitrate_mbps=4)
+        with self.assertRaises(ValueError):
+            c.storage_total_tb([camera], 1e308, overhead=1e308)
+
     def test_hfov(self):
         self.assertAlmostEqual(c.Lens(6.4, 1920, 3.2).hfov_deg, 90.0, places=6)
 

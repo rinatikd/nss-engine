@@ -40,7 +40,7 @@ def check_preview(data, drawing=None):
         for point in pts:
             if (not isinstance(point, list) or len(point) != 2 or
                 any(isinstance(x, bool) or not isinstance(x, (int, float)) or
-                    not math.isfinite(x) or abs(x) > 1e9 for x in point)):
+                    abs(x) > 1e9 or not math.isfinite(x) for x in point)):
                 errors.append(prefix + "invalid_coordinate"); break
             normalized.append(point)
         if len(normalized) == len(pts):

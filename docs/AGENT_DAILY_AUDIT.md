@@ -66,3 +66,16 @@ PR #6 was merged normally into `main` as `7d003ada368833f6a825eb2ebf2d43f8b676a0
 PR #13 merged normally after both GitHub portable checks succeeded and independent review found no blocker. Main at that integration checkpoint: 48338c9a3d762dbda3a8a871e67e355929cc2c2e. Local main fast-forwarded cleanly and repo_guard --tree HEAD passed.
 
 The UTF-8 BOM reproduction failed on baseline with KeyError: name. After switching camera CSV decoding to utf-8-sig, BOM and plain UTF-8 fixtures produced identical 14,810-byte DXF output, stdout and stderr. Targeted CCTV tests: 15 PASS; full portable suite PASS; repo_guard staged/tree and diff check PASS. Native AutoCAD/private fixtures were not run. Issue #11 is closed.
+# 30.10.2026 — NSS-FINAL-01, новый цикл
+
+По поручению владельца возобновлена доработка редактора ТКК, CCTV и AutoDebug
+на отдельной ветке от проверенного remote main ac6eb04. Три внутренних агента
+реализовали подтверждённые исправления; отдельный рецензент обнаружил остаточное
+переполнение CCTV и повторно проверил его исправление. Координатор проверил
+интеграцию, автономные контракты и подготовил расширение CI.
+
+Новые правила не считаются распространёнными на main. Статус исходного
+кандидата и незавершённые native-гейты записаны в NSS_PRODUCTIZATION_20261030.md.
+Платные API не использовались; стоимость/токены внутренних агентов неизвестны.
+Работа AutoCAD текущей версией не выполнялась. Результат AutoDebug --prepare
+не выдан за успешный native-run. Прежние записи сохранены как исторические.

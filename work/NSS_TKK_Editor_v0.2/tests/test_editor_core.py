@@ -9,6 +9,15 @@ class EditorTests(unittest.TestCase):
         self.assertEqual(lengths(r),[60,60]);self.assertEqual(data,before)
         self.assertEqual(r['numbering']['A'],1);self.assertEqual(len(r['leaders']),3)
         for field in ('text_route_collisions','text_well_collisions','text_caption_collisions','text_text_collisions'):self.assertEqual(r['layout_checks'][field],0)
+    def test_legacy_long_axis_metadata_cannot_request_source_rotation(self):
+        data=fixture()
+        for well,axis in zip(data['wells'],(0.0,1.5707963267948966,-0.4)):
+            well['long_axis']=axis
+        before=copy.deepcopy(data)
+        result=analyze(data)
+        self.assertFalse(result['source_geometry_changed'])
+        self.assertEqual(result['well_rotations'],[])
+        self.assertEqual(data,before)
     def test_add_well_splits_span_and_reindexes(self):
         data=fixture();data['wells'].append(dict(id='D',xyz=[30,0,0]));r=analyze(data)
         self.assertEqual(lengths(r),[30,30,60]);self.assertEqual(r['numbering']['D'],25);self.assertEqual(len(set(r['numbering'].values())),4)

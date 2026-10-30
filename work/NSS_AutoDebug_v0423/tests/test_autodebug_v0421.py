@@ -5,12 +5,32 @@ from pathlib import Path
 import tempfile
 import unittest
 import uuid
+from unittest.mock import patch
+import ezdxf
 from nss_engine.dxf_audit_v042 import convert
 from ezdxf.addons import iterdxf
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('autodebug',ROOT/'scripts/autodebug_v0421.py')
 debug=importlib.util.module_from_spec(spec);spec.loader.exec_module(debug)
+
+
+class SyntheticFixtureTests(unittest.TestCase):
+    def test_missing_base_generates_new_fixture_without_writing_source_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'kit';root.mkdir()
+            run=Path(tmp)/'new_run';run.mkdir();target=run/'fixture_copy.dxf'
+            with patch.object(debug,'ROOT',root):
+                debug.fixture(target)
+            self.assertEqual(list(root.iterdir()),[])
+            doc=ezdxf.readfile(target)
+            self.assertEqual(len(doc.modelspace()),9)
+            self.assertEqual(len(doc.modelspace().query('LINE')),5)
+            self.assertEqual(doc.units,6)
+            before=target.read_bytes()
+            with patch.object(debug,'ROOT',root),self.assertRaises(FileExistsError):
+                debug.fixture(target)
+            self.assertEqual(target.read_bytes(),before)
 
 
 class AutoDebugCollectorTests(unittest.TestCase):

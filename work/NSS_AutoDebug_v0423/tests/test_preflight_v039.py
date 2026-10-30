@@ -17,6 +17,11 @@ class PreflightTests(unittest.TestCase):
         d=sample();d["routes"].append(d["routes"][0]);self.assertIn("route_1:duplicate_id",check_preview(d)["errors"])
     def test_nan(self):
         d=sample();d["routes"][0]["points"][1][0]=float("nan");self.assertFalse(check_preview(d)["ok"])
+    def test_huge_json_integer_is_rejected_without_crashing(self):
+        d=sample();d["routes"][0]["points"][1][0]=10**1000
+        with tempfile.TemporaryDirectory() as t:
+            p=Path(t)/"preview.json";p.write_text(json.dumps(d),encoding="utf8")
+            self.assertIn("route_0:invalid_coordinate",check_file(p)["errors"])
     def test_degenerate(self):
         d=sample();d["routes"][0]["points"]=[[1,1],[1,1]];self.assertFalse(check_preview(d)["ok"])
     def test_bad_count(self):

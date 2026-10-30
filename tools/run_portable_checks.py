@@ -24,7 +24,6 @@ def main():
       (ROOT/'tools',[],['test_repo_guard']),
       (tkk/'tests',[str(tkk/'engine')],['test_editor_core','test_equal_spacing','test_diagnostics','test_fes_numbering','test_span_labels','test_snapshot_validation']),
       (tkk/'modules/cctv',[],['test_cctv_core']),
-      (ROOT/'work/NSS_AutoDebug_v0423/tests',[str(ROOT/'work/NSS_AutoDebug_v0423')],['test_analyzer','test_v022','test_v023']),
       (ROOT/'tools/tests',[str(ROOT),str(ROOT/'tools')],['test_repo_guard','test_tkk_integrity','test_thermal_visibility']),
     ]
     for cwd,paths,modules in checks:
@@ -32,5 +31,8 @@ def main():
         env=os.environ.copy();env['PYTHONPATH']=os.pathsep.join([str(cwd)]+paths+([env['PYTHONPATH']] if env.get('PYTHONPATH') else []));env['PYTHONDONTWRITEBYTECODE']='1'
         result=subprocess.run([sys.executable,str(Path(__file__).resolve()),'--worker']+modules,cwd=cwd,env=env)
         if result.returncode:return result.returncode
+    debug=ROOT/'work/NSS_AutoDebug_v0423'
+    result=subprocess.run([sys.executable,str(debug/'scripts/run_portable_tests.py')],cwd=debug)
+    if result.returncode:return result.returncode
     print('Portable synthetic-data checks passed. Native host and private-fixture tests were not run.');return 0
 if __name__=='__main__':raise SystemExit(main())

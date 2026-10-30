@@ -1,6 +1,7 @@
 import copy
 import json
 import math
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -104,7 +105,7 @@ class ContractTests(unittest.TestCase):
             validate_entity(entity(type='LWPOLYLINE', vertices=[[0, 0, 0], [1, 0, 1]], bulges=[1, 0]))
 
     def test_cs_fixture_roundtrip(self):
-        path = Path(__file__).resolve().parents[1] / 'contract_fixture_v042.json'
+        path = Path(os.environ.get('NSS_CONTRACT_FIXTURE', Path(__file__).resolve().parents[1] / 'contract_fixture_v042.json'))
         if not path.exists():
             self.skipTest('C# fixture not generated; run contract_tests first')
         data = json.loads(path.read_text(encoding='utf8'))

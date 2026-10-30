@@ -102,7 +102,13 @@ def collect(run):
 
 def fixture(path):
     import ezdxf
-    doc=ezdxf.readfile(ROOT/'RuntimeFixture/runtime_fixture_v042.dxf')
+    from nss_engine.runtime_fixture_v042 import create_document
+    path=Path(path)
+    if path.exists():raise FileExistsError('fixture output must be new: '+str(path))
+    base=ROOT/'RuntimeFixture/runtime_fixture_v042.dxf'
+    # A source checkout has no bundled DXF. Build the same tiny base in memory;
+    # only the new run's fixture is saved, never RuntimeFixture or a user file.
+    doc=ezdxf.readfile(base) if base.is_file() else create_document()
     for layer in ('NSS_NETWORK','\u0412\u043e\u0434\u043e\u043f\u0440\u043e\u0432\u043e\u0434'):
         if layer not in doc.layers:doc.layers.new(layer)
     model=doc.modelspace()
@@ -233,8 +239,7 @@ def main():
     write(run/'status.json',state);print('RUN:',run,flush=True)
     write(ROOT/'LAST_RUN.json',dict(run=str(run)))
     try:
-        command(run,'python-tests.log',[sys.executable,'-E','-s','-X','utf8','-m','unittest','discover','-s','tests','-v'])
-        state['offline']['python']='PASSED'
+        contract_fixture=None
         dotnet=shutil.which('dotnet')
         if dotnet and not a.use_prebuilt:
             names=registration(state['run_id'])
@@ -242,21 +247,21 @@ def main():
             source.write_text('namespace NssEngine.Export; internal static class DebugRegistration { public const string EntryName="'+names['entry']+'"; public const string CommandName="'+names['command']+'"; }',encoding='utf8')
             command(run,'dotnet-build.log',[dotnet,'build','autocad/NssEngine.Export.csproj','-c','Release','-o',str(run/'plugin'),'-p:AutoCADDir='+str(a.autocad_dir),'-p:AssemblyName='+names['assembly'],'-p:NssDebugRegistrationFile='+str(source),'-p:NuGetAudit=false','--nologo'])
             dll=run/'plugin'/(names['assembly']+'.dll');state['entry_name']=names['entry'];state['assembly_name']=names['assembly'];state['offline']['build']='PASSED'
-            sdks=subprocess.run([dotnet,'--list-sdks'],capture_output=True,text=True).stdout
-            if any(line.startswith('10.') for line in sdks.splitlines()):
-                command(run,'contract-tests.log',[dotnet,'run','--project','contract_tests/ContractTests.csproj','-p:NuGetAudit=false','--','contract_fixture_v042.json'])
-                state['offline']['CSharp_contracts']='PASSED'
-                inspect=run/'assembly_registration.json'
-                command(run,'assembly-registration.log',[dotnet,'run','--project','contract_tests/ContractTests.csproj','-p:NuGetAudit=false','--','--inspect-assembly',str(dll),str(inspect)])
-                data=read(inspect)
-                if data['assembly']!=state['assembly_name'] or {e['name'] for e in data['entries']}!={names['entry'],names['command']} or len(data['entries'])!=2:raise ValueError('Unexpected or non-isolated AutoCAD registrations')
-                state['offline']['isolated_registration']='PASSED'
-            else:state['offline']['CSharp_contracts']='NOT_RUN_SDK10_UNAVAILABLE'
+            contract_fixture=run/'contract_fixture_v042.json'
+            command(run,'contract-tests.log',[dotnet,'run','--project','contract_tests/ContractTests.csproj','-p:NuGetAudit=false','--',str(contract_fixture)])
+            state['offline']['CSharp_contracts']='PASSED'
+            inspect=run/'assembly_registration.json'
+            command(run,'assembly-registration.log',[dotnet,'run','--project','contract_tests/ContractTests.csproj','-p:NuGetAudit=false','--','--inspect-assembly',str(dll),str(inspect)])
+            data=read(inspect)
+            if data['assembly']!=state['assembly_name'] or {e['name'] for e in data['entries']}!={names['entry'],names['command']} or len(data['entries'])!=2:raise ValueError('Unexpected or non-isolated AutoCAD registrations')
+            state['offline']['isolated_registration']='PASSED'
         else:
             dll=ROOT/'Deploy/NssEngine.AutoDebug.V0423.dll';expected=read(ROOT/'Deploy/SHA256.json')
             if sha(dll)!=expected[dll.name]:raise ValueError('Packaged DLL checksum mismatch')
             state['offline'].update(build='NOT_RUN_USING_VERIFIED_PREBUILT',CSharp_contracts='NOT_RUN')
             state.update(entry_name='NSS_AUTOTEST_FILE_V0423_PREBUILT',assembly_name='NssEngine.AutoDebug.V0423')
+        command(run,'python-tests.log',[sys.executable,'-E','-s','-X','utf8','scripts/run_portable_tests.py']+(['--contract-fixture',str(contract_fixture)] if contract_fixture else []))
+        state['offline']['python']='PASSED'
         source=run/'fixture_copy.dxf';fixture(source)
         state.update(phase='PREPARED',dll=str(dll),dll_sha256=sha(dll),fixture=str(source),fixture_sha256=sha(source))
         write(reports/'authorization.json',dict(run_id=state['run_id'],drawing=str(source),drawing_sha256=state['fixture_sha256'],dll_sha256=state['dll_sha256'],allowed_scope='synthetic_fixture_and_private_database'))

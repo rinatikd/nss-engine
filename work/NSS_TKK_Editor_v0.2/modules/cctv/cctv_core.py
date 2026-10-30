@@ -22,6 +22,11 @@ from typing import List, Tuple, Dict, Optional
 Point = Tuple[float, float]
 Segment = Tuple[Point, Point]
 
+def _finite(name: str, value: float, *, positive: bool = False, nonnegative: bool = False):
+    if not math.isfinite(value) or (positive and value <= 0) or (nonnegative and value < 0):
+        raise ValueError(f"{name}: invalid numeric value {value!r}")
+
+
 # DORI по IEC 62676-4 (пикселей на метр)
 DORI = {"Detect": 25.0, "Observe": 62.5, "Recognize": 125.0, "Identify": 250.0}
 
@@ -32,6 +37,14 @@ class Lens:
     h_pixels: int
     focal_mm: float
     hfov_override_deg: float = 0.0  # угол обзора по даташиту (если задан — вместо расчёта по матрице)
+
+    def __post_init__(self):
+        _finite("sensor_w_mm", self.sensor_w_mm, positive=True)
+        _finite("h_pixels", self.h_pixels, positive=True)
+        _finite("focal_mm", self.focal_mm, positive=True)
+        _finite("hfov_override_deg", self.hfov_override_deg, nonnegative=True)
+        if self.hfov_override_deg >= 180:
+            raise ValueError("hfov_override_deg must be less than 180")
 
     @property
     def hfov_deg(self) -> float:
@@ -54,6 +67,17 @@ class Camera:
     dori_override_m: Optional[Dict[str, float]] = None
 
 
+    def validate(self):
+        self.lens.__post_init__()
+        for name in ("x", "y", "rotation_deg", "height_m", "tilt_deg", "bitrate_mbps"):
+            _finite(name, getattr(self, name), nonnegative=name in ("height_m", "bitrate_mbps"))
+        if self.dori_override_m is not None:
+            for level in DORI:
+                if level not in self.dori_override_m:
+                    raise ValueError(f"Missing DORI distance: {level}")
+                _finite(f"DORI {level}", self.dori_override_m[level], positive=True)
+
+
 # ---------- оптика / DORI ----------
 
 def scene_width_m(hfov_deg: float, dist_m: float) -> float:
@@ -71,7 +95,8 @@ def dori_distances_m(lens: Lens, thresholds: Dict[str, float] = DORI) -> Dict[st
 
 def camera_dori_distances_m(camera: Camera) -> Dict[str, float]:
     """Use supplied manufacturer DORI distances when available, else pixel-density calculation."""
-    return camera.dori_override_m or dori_distances_m(camera.lens)
+    camera.validate()
+    return camera.dori_override_m if camera.dori_override_m is not None else dori_distances_m(camera.lens)
 
 
 # ---------- геометрия: лучи и стены ----------
@@ -120,11 +145,18 @@ def visibility_polygon(cam_xy: Point, rotation_deg: float, hfov_deg: float,
 # ---------- архив ----------
 
 def storage_tb_per_day(bitrate_mbps: float) -> float:
-    return bitrate_mbps * 86400 / 8 / 1e6
+    _finite("bitrate_mbps", bitrate_mbps, nonnegative=True)
+    result = bitrate_mbps * (86400 / 8 / 1e6)
+    _finite("daily storage", result, nonnegative=True)
+    return result
 
 
 def storage_total_tb(cams: List[Camera], days: int, overhead: float = 0.0) -> float:
-    return sum(storage_tb_per_day(c.bitrate_mbps) for c in cams) * days * (1 + overhead)
+    _finite("days", days, positive=True)
+    _finite("overhead", overhead, nonnegative=True)
+    result = sum(storage_tb_per_day(c.bitrate_mbps) for c in cams) * days * (1 + overhead)
+    _finite("total storage", result, nonnegative=True)
+    return result
 
 
 # ---------- DXF: чтение (ASCII) ----------
@@ -211,7 +243,22 @@ class DxfWriter:
         self.layers[name] = color
 
     def _e(self, code, val):
-        self.body.append(f"{code}\n{val}")
+        if isinstance(val, (int, float)):
+            _finite("DXF numeric value", val)
+        value = str(val)
+        if "\n" in value or "\r" in value or "\x00" in value:
+            raise ValueError("DXF values must not contain line breaks or NUL")
+        # Pre-R2007 DXF is not UTF-8. Unicode escapes preserve labels in any code page.
+        escaped = []
+        for ch in value:
+            if ord(ch) < 128:
+                escaped.append(ch)
+            else:
+                encoded = ch.encode("utf-16-be")
+                for i in range(0, len(encoded), 2):
+                    escaped.append(f"\\U+{int.from_bytes(encoded[i:i + 2], 'big'):04X}")
+        value = "".join(escaped)
+        self.body.append(f"{code}\n{value}")
 
     def line(self, a: Point, b: Point, layer: str):
         for c, v in ((0, "LINE"), (8, layer), (10, a[0]), (20, a[1]), (30, 0),
@@ -308,6 +355,14 @@ def build_drawing(cams: List[Camera], walls: List[Segment], out_path: str,
                   unit_scale: float = 0.001, dori_level: str = "Recognize",
                   background: Optional[List[Segment]] = None) -> Dict[str, List[Point]]:
     """Строит DXF: слои CCTV_CAM, CCTV_FOV, CCTV_DORI_<level>, фон стен. unit_scale: ед.чертежа -> м."""
+    _finite("unit_scale", unit_scale, positive=True)
+    if dori_level not in DORI:
+        raise ValueError(f"Unknown DORI level: {dori_level}")
+    for segments in (walls, background if background is not None else []):
+        for a, b in segments:
+            for point in (a, b):
+                for coord in point:
+                    _finite("wall coordinate", coord)
     w = DxfWriter()
     w.layer("CCTV_CAM", 1)
     w.layer("CCTV_FOV", 3)
@@ -319,15 +374,17 @@ def build_drawing(cams: List[Camera], walls: List[Segment], out_path: str,
     polys = {}
     for c in cams:
         dist = camera_dori_distances_m(c)
-        full = max(dist.values()) if False else dist["Detect"]
+        full = dist["Detect"]
         r_fov = full / unit_scale
+        _finite("FOV radius", r_fov, positive=True)
         poly = visibility_polygon((c.x, c.y), c.rotation_deg, c.lens.hfov_deg, r_fov, walls)
         w.polyline(poly, "CCTV_FOV")
         r_d = dist[dori_level] / unit_scale
+        _finite("DORI radius", r_d, positive=True)
         polyd = visibility_polygon((c.x, c.y), c.rotation_deg, c.lens.hfov_deg, r_d, walls)
         w.polyline(polyd, "CCTV_DORI")
         w.insert_camera(c, "CCTV_CAM", 1.0 / unit_scale * 0.15)
-        w.text((c.x, c.y + 400), 250, f"{c.name} {dori_level}<={dist[dori_level]:.1f}m", "CCTV_TEXT")
+        w.text((c.x, c.y + 0.4 / unit_scale), 0.25 / unit_scale, f"{c.name} {dori_level}<={dist[dori_level]:.1f}m", "CCTV_TEXT")
         polys[c.name] = poly
     w.save(out_path)
     return polys

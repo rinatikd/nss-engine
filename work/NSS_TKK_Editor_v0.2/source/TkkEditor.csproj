@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <AutoCADDir Condition="'$(AutoCADDir)' == ''">C:\Program Files\Autodesk\AutoCAD 2026</AutoCADDir>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
@@ -20,15 +21,15 @@
   </ItemGroup>
   <ItemGroup>
     <Reference Include="AcCoreMgd">
-      <HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcCoreMgd.dll</HintPath>
+      <HintPath>$(AutoCADDir)/AcCoreMgd.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="AcDbMgd">
-      <HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcDbMgd.dll</HintPath>
+      <HintPath>$(AutoCADDir)/AcDbMgd.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="AcMgd">
-      <HintPath>C:\Program Files\Autodesk\AutoCAD 2026\AcMgd.dll</HintPath>
+      <HintPath>$(AutoCADDir)/AcMgd.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

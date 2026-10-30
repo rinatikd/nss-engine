@@ -54,7 +54,8 @@ string json=JsonSerializer.Serialize(snapshot);
 SnapshotContractV042.ValidateSnapshotJson(json);Require(true);
 try{SnapshotContractV042.ValidateSnapshotJson(json.Replace("\"exported\":1","\"exported\":2"));throw new Exception("accepted inconsistent coverage");}catch(ArgumentException){passed++;}
 if(args.Length==1)File.WriteAllText(args[0],json);
-string preview=File.ReadAllText("RuntimeFixture/preview_v031.json");
+// Synthetic contract input: these checks must run without a drawing or host kit.
+string preview=JsonSerializer.Serialize(new{schema_version="0.31",kind="route_preview",units="unverified_raw_drawing_units",requires_engineer_approval=true,source_drawing="runtime_fixture_v042.dwg",routes=new[]{new{id="fixture",points=new[]{new[]{0d,0d},new[]{10d,0d}}}}});
 Require(PreviewContractV042.Parse(preview,"runtime_fixture_v042.dwg").Count==1);
 void RejectPreview(string data,string drawing="runtime_fixture_v042.dwg"){
     bool rejected=false;try{PreviewContractV042.Parse(data,drawing);}catch(System.Exception){rejected=true;}Require(rejected);

@@ -24,11 +24,22 @@ static class WorkerContractTests
     static int Main(string[] args)
     {
         string root=Path.GetFullPath(args[0]);
-        using var source=JsonDocument.Parse(File.ReadAllText(Path.Combine(root,"evidence/editor_fixture.json")));
-        using var worker=new AnalysisWorker(root,source.RootElement,41);
+        bool synthetic=args.Length>1&&args[1]=="--synthetic";
+        string? python=synthetic&&args.Length>2?Path.GetFullPath(args[2]):null;
+        if(python!=null&&!File.Exists(python))throw new FileNotFoundException("Synthetic worker Python executable does not exist",python);
+        AnalysisWorker Worker(object snapshot,long generation,TimeSpan? timeout=null,string? scriptPath=null)
+            =>new AnalysisWorker(root,snapshot,generation,timeout,scriptPath,python);
+        using var source=JsonDocument.Parse(synthetic ? """
+            {"job_id":"test","fingerprint":"test","protected":{"A":1},
+             "wells":[{"id":"A","xyz":[0,0,0]},{"id":"B","xyz":[60,0,0]},
+                      {"id":"C","xyz":[120,0,0]},{"id":"D","xyz":[0,30,0]},
+                      {"id":"E","xyz":[60,30,0]}],
+             "routes":[{"id":"r","points":[[0,0,0],[140,0,0]]}]}
+            """ : File.ReadAllText(Path.Combine(root,"evidence/editor_fixture.json")));
+        using var worker=Worker(source.RootElement,41);
         using var result=worker.Wait();
         var value=result.RootElement;
-        Check("real_snapshot_112_wells_109_spans",()=>{Require(value.GetProperty("leaders").GetArrayLength()==112,"Well count");Require(value.GetProperty("spans").GetArrayLength()==109,"Span count");Require(worker.Generation==41,"Generation not retained");});
+        Check(synthetic?"synthetic_snapshot_5_wells_2_spans":"real_snapshot_112_wells_109_spans",()=>{Require(value.GetProperty("leaders").GetArrayLength()==(synthetic?5:112),"Well count");Require(value.GetProperty("spans").GetArrayLength()==(synthetic?2:109),"Span count");Require(worker.Generation==41,"Generation not retained");});
         void Tamper(string name,Action<JsonObject> edit,string expected)=>Check(name,()=>
         {
             var node=JsonNode.Parse(value.GetRawText())!.AsObject();edit(node);
@@ -38,6 +49,7 @@ static class WorkerContractTests
         Tamper("stale_fingerprint_rejected",n=>n["fingerprint"]="old","Stale worker fingerprint");
         Tamper("wrong_job_rejected",n=>n["job_id"]="other","Wrong worker job");
         Tamper("geometry_change_rejected",n=>n["source_geometry_changed"]=true,"geometry change");
+        Tamper("undeclared_source_rotation_rejected",n=>n["well_rotations"]!.AsArray().Add(new JsonObject{["id"]="A",["rotation"]=1.0}),"source well rotations");
         Tamper("duplicate_numbers_rejected",n=>{var numbers=n["numbering"]!.AsObject();var keys=numbers.Select(p=>p.Key).Take(2).ToArray();numbers[keys[1]]=numbers[keys[0]]!.DeepClone();},"duplicate well numbers");
         Tamper("missing_well_rejected",n=>n["numbering"]!.AsObject().Remove(n["numbering"]!.AsObject().First().Key),"cover the snapshot wells");
         Tamper("missing_leader_rejected",n=>n["leaders"]!.AsArray().RemoveAt(0),"Missing well leaders");
@@ -67,13 +79,13 @@ static class WorkerContractTests
         Tamper("inverted_issue_bounds_rejected",n=>n["warnings"]![0]!["bounds"]![0]=n["warnings"]![0]!["bounds"]![2]!.GetValue<double>()+10,"Inverted issue bounds");
         Tamper("invalid_nearby_candidate_rejected",n=>
         {
-            var issue=n["warnings"]!.AsArray().First(i=>i!["endpoints"] is JsonArray endpoints&&endpoints.Count>0);
+            var issue=n["warnings"]!.AsArray().First(i=>i!["endpoints"] is JsonArray endpoints&&endpoints.Count>0&&endpoints[0]!["nearby_wells"] is JsonArray nearby&&nearby.Count>0);
             issue!["endpoints"]![0]!["nearby_wells"]![0]!["distance_m"]=-1;
         },"Invalid issue candidate");
         Check("worker_failure_is_diagnostic",()=>
         {
             using var bad=JsonDocument.Parse("{\"wells\":[],\"routes\":[],\"protected\":{\"A\":0}}");
-            using var failed=new AnalysisWorker(root,bad.RootElement,42);
+            using var failed=Worker(bad.RootElement,42);
             Reject(()=>failed.Wait().Dispose(),"positive integer");
         });
         // Exercise cancellation and timeout with a controlled script and the real runtime.
@@ -82,25 +94,25 @@ static class WorkerContractTests
         File.WriteAllText(sleeper,"import time\ntime.sleep(60)\n");
         Check("dispose_cancels_running_worker",()=>
         {
-            var active=new AnalysisWorker(root,source.RootElement,43,scriptPath:sleeper);int pid=active.ProcessId;active.Dispose();
+            var active=Worker(source.RootElement,43,scriptPath:sleeper);int pid=active.ProcessId;active.Dispose();
             bool running;try{using var child=Process.GetProcessById(pid);running=!child.HasExited;}catch(ArgumentException){running=false;}
             Require(!running,"Cancelled worker still running");active.Dispose();
         });
         Check("timeout_cancels_running_worker",()=>
         {
-            using var active=new AnalysisWorker(root,source.RootElement,44,TimeSpan.FromMilliseconds(150),sleeper);
+            using var active=Worker(source.RootElement,44,TimeSpan.FromMilliseconds(150),sleeper);
             try{active.Wait().Dispose();throw new Exception("No timeout");}catch(TimeoutException){}
         });
         Check("nonzero_worker_exit_rejected",()=>
         {
             string script=Path.Combine(temp,"exit.py");File.WriteAllText(script,"import sys\nsys.exit(7)\n");
-            using var active=new AnalysisWorker(root,source.RootElement,45,scriptPath:script);
+            using var active=Worker(source.RootElement,45,scriptPath:script);
             Reject(()=>active.Wait().Dispose(),"exit code 7");
         });
         Check("missing_worker_result_rejected",()=>
         {
             string script=Path.Combine(temp,"empty.py");File.WriteAllText(script,"pass\n");
-            using var active=new AnalysisWorker(root,source.RootElement,46,scriptPath:script);
+            using var active=Worker(source.RootElement,46,scriptPath:script);
             Reject(()=>active.Wait().Dispose(),"did not produce result.json");
         });
         bool success=checks.All(c=>JsonSerializer.Serialize(c).Contains("\"success\":true"));
