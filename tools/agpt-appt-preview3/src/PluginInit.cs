@@ -15,7 +15,7 @@ namespace AGPT
 {
     public class PluginInit : IExtensionApplication
     {
-        public const string Version = "1.1.0-preview.12";
+        public const string Version = "1.1.0-preview.13";
 
         public void Initialize()
         {

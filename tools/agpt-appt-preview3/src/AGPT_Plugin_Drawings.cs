@@ -2635,6 +2635,7 @@ namespace AGPT.Drawings
             var ed = doc.Editor;
             try
             {
+                if (!AGPT.Cad.ProjectSettingsCommands.EnsureConfigured(doc, "AGPT")) return;
                 ProjectData pd;
                 using (var tr = db.TransactionManager.StartTransaction())
                 {

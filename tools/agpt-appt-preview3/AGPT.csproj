@@ -11,7 +11,7 @@
     <OutputType>Library</OutputType>
     <RootNamespace>AGPT</RootNamespace>
     <AssemblyName>AGPT</AssemblyName>
-    <Version>1.1.0-preview.12</Version>
+    <Version>1.1.0-preview.13</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>

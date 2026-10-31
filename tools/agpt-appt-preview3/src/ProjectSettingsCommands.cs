@@ -24,20 +24,43 @@ namespace AGPT.Cad
             if (document == null) return;
             try
             {
-                ProjectMetadata metadata;
-                using (var transaction = document.Database.TransactionManager.StartTransaction())
-                    ProjectSettingsStore.TryRead(document.Database, transaction, system, out metadata);
-                using var form = new ProjectSettingsForm(system, metadata);
-                if (CadApplication.ShowModalDialog(form) != DialogResult.OK) return;
-                using (var transaction = document.Database.TransactionManager.StartTransaction())
-                {
-                    ProjectSettingsStore.Write(document.Database, transaction, system, form.Metadata);
-                    transaction.Commit();
-                }
-                document.Editor.WriteMessage("\n[" + system + "] Реквизиты сохранены в текущем чертеже. Сохраните DWG для записи на диск.");
+                EditForDocument(document, system, forceEdit: true);
             }
             catch (System.Exception ex)
             { document.Editor.WriteMessage("\n[" + system + "] Реквизиты проекта: " + ex.Message); }
+        }
+
+        public static bool EnsureConfigured(Autodesk.AutoCAD.ApplicationServices.Document document, string system)
+        {
+            if (document == null) return false;
+            return EditForDocument(document, system, forceEdit: false);
+        }
+
+        private static bool EditForDocument(Autodesk.AutoCAD.ApplicationServices.Document document,
+            string system, bool forceEdit)
+        {
+            ProjectMetadata metadata;
+            bool found;
+            using (var transaction = document.Database.TransactionManager.StartTransaction())
+                found = ProjectSettingsStore.TryRead(document.Database, transaction, system, out metadata);
+            if (!forceEdit && found && metadata.Validate(requireProjectFields: true).Count == 0) return true;
+            if (!forceEdit)
+                document.Editor.WriteMessage("\n[" + system + "] Для альбома нужны реквизиты текущего проекта. Заполните форму.");
+            using var form = new ProjectSettingsForm(system, metadata);
+            if (CadApplication.ShowModalDialog(form) != DialogResult.OK)
+            {
+                if (!forceEdit) document.Editor.WriteMessage("\n[" + system + "] Построение альбома отменено: реквизиты не подтверждены.");
+                return false;
+            }
+            if (CadApplication.DocumentManager.MdiActiveDocument != document)
+                throw new InvalidOperationException("Активный чертёж изменился. Повторите команду в нужном DWG.");
+            using (var transaction = document.Database.TransactionManager.StartTransaction())
+            {
+                ProjectSettingsStore.Write(document.Database, transaction, system, form.Metadata);
+                transaction.Commit();
+            }
+            document.Editor.WriteMessage("\n[" + system + "] Реквизиты сохранены в текущем чертеже. Сохраните DWG для записи на диск.");
+            return true;
         }
     }
 

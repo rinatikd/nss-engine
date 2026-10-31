@@ -675,6 +675,7 @@ namespace APPT.Drawings
             var ed = doc.Editor;
             try
             {
+                if (!AGPT.Cad.ProjectSettingsCommands.EnsureConfigured(doc, "APPT")) return;
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
                     XD.EnsureApp(db, tr);
