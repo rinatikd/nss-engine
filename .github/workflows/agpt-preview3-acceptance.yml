@@ -1,0 +1,126 @@
+name: AGPT preview.14 acceptance
+
+on:
+  push:
+    paths:
+      - 'tools/agpt-appt-preview3/**'
+      - '.github/workflows/agpt-preview3-acceptance.yml'
+  pull_request:
+    paths:
+      - 'tools/agpt-appt-preview3/**'
+      - '.github/workflows/agpt-preview3-acceptance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  purecore-tests:
+    name: Pure core tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Run host-independent xUnit tests
+        run: dotnet test tools/agpt-appt-preview3/tests/AGPT.InputTests.csproj --configuration Release
+
+  resource-preflight:
+    name: Resource preflight (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test actual CAD resource packaging
+        run: python tools/agpt-appt-preview3/ci/test_package_blocks.py
+      - name: Test source resource presence checks
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+            throw 'This acceptance check requires Windows PowerShell 5.1.'
+          }
+          & ./tools/agpt-appt-preview3/ci/test-resource-preflight.ps1
+      - name: Test host-specific bundle staging
+        shell: powershell
+        run: '& ./tools/agpt-appt-preview3/ci/test-bundle-host.ps1'
+
+  compile:
+    name: Compile for AutoCAD ${{ matrix.autocad }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - autocad: '2025'
+            api: '25.0.0'
+          - autocad: '2026'
+            api: '25.1.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Acquire pinned compile references
+        shell: pwsh
+        run: >-
+          python tools/agpt-appt-preview3/ci/acquire_autocad_refs.py
+          --version '${{ matrix.api }}'
+          --cache '${{ runner.temp }}/cache'
+          --output '${{ runner.temp }}/autocad-refs-${{ matrix.api }}'
+      - name: Compile plugin and core
+        shell: pwsh
+        run: >-
+          dotnet build tools/agpt-appt-preview3/AGPT.csproj
+          --configuration Release
+          -p:EnableWindowsTargeting=true
+          '-p:AcadDir=${{ runner.temp }}/autocad-refs-${{ matrix.api }}'
+          '-p:OutputPath=${{ runner.temp }}/runtime/AutoCAD${{ matrix.autocad }}/'
+      - name: Upload compiled plugin assemblies only
+        uses: actions/upload-artifact@v4
+        with:
+          name: agpt-preview14-AutoCAD${{ matrix.autocad }}
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/runtime/AutoCAD${{ matrix.autocad }}/AGPT.dll
+            ${{ runner.temp }}/runtime/AutoCAD${{ matrix.autocad }}/AGPT.InputCore.dll
+
+  package:
+    name: Package pilot candidate
+    needs: [purecore-tests, resource-preflight, compile]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: agpt-preview14-AutoCAD2025
+          path: ${{ runner.temp }}/runtime/AutoCAD2025
+      - uses: actions/download-artifact@v4
+        with:
+          name: agpt-preview14-AutoCAD2026
+          path: ${{ runner.temp }}/runtime/AutoCAD2026
+      - name: Assemble pilot candidate
+        run: >-
+          python tools/agpt-appt-preview3/ci/package_candidate.py
+          --runtime-root '${{ runner.temp }}/runtime'
+          --output '${{ runner.temp }}/AGPT-APPT-1.1.0-preview.14-pilot'
+          --commit '${{ github.sha }}'
+      - name: Upload pilot candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: AGPT-APPT-1.1.0-preview.14-pilot
+          if-no-files-found: error
+          include-hidden-files: true
+          path: ${{ runner.temp }}/AGPT-APPT-1.1.0-preview.14-pilot/
