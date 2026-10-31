@@ -1,4 +1,4 @@
-"""Assemble an allowlisted pilot candidate; never redistribute Autodesk or private CAD."""
+"""Assemble an allowlisted pilot candidate with optional explicitly supplied CAD resources."""
 import argparse
 import hashlib
 import json
@@ -21,6 +21,7 @@ SOURCE_ALLOWLIST = frozenset({
     'bundle/AGPT.bundle/PackageContents.xml',
     'ci/acquire_autocad_refs.py',
     'ci/package_candidate.py',
+    'ci/test_package_blocks.py',
     'ci/test-resource-preflight.ps1',
     'ci/test-bundle-host.ps1',
     'core/AGPT.InputCore.csproj',
@@ -77,12 +78,46 @@ SOURCE_ALLOWLIST = frozenset({
     'tests/RoomOpeningsPolicyTests.cs',
     'tests/AxonometricProjectionTests.cs',
     'tests/SpecificationPageLayoutTests.cs',
+    'tests/ResourceLocatorTests.cs',
     'tests/RoomPolygonTests.cs',
 })
+BLOCK_ALLOWLIST = frozenset({
+    'AGPT_Frame_A3.dwg', 'AGPT_Frame_A3.dxf', 'AGPT_UGO.dxf',
+    'MMH_Stamp.dwg', 'MMX_ШТАМП.dwg', 'ММХ_Штамп.dwg',
+    'Садик_UGO_source.dwg',
+})
+HOSTS = ('AutoCAD2025', 'AutoCAD2026')
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def block_files(root):
+    """Validate externally supplied assets; these never enter the source manifest."""
+    if root is None:
+        return {}
+    root = Path(root).absolute()
+    if any(p.is_symlink() for p in [root, *root.parents]) or not root.is_dir():
+        raise ValueError('Missing or symlink blocks root')
+    if {p.name for p in root.iterdir()} != BLOCK_ALLOWLIST:
+        raise ValueError('Blocks root must contain exactly the reviewed CAD resource filenames')
+    entries = {}
+    for name in sorted(BLOCK_ALLOWLIST):
+        path = root / name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError('Missing or symlink CAD resource: ' + name)
+        data = path.read_bytes()
+        if path.suffix.lower() == '.dwg':
+            valid = re.match(rb'AC10[0-9]{2}', data) is not None
+        else:
+            valid = re.search(rb'(?:\A|\r?\n)[ \t]*0[ \t]*\r?\n[ \t]*EOF[ \t]*(?:\r?\n|\Z)', data) is not None
+        if not valid:
+            raise ValueError('Empty or invalid CAD resource header/EOF: ' + name)
+        entries['blocks/' + name] = path
+        for host in HOSTS:
+            entries[f'Runtime/{host}/blocks/{name}'] = path
+    return entries
 
 
 def source_files():
@@ -110,13 +145,16 @@ def source_files():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime-root', type=Path)
+    parser.add_argument('--blocks-root', type=Path,
+                        help='External folder containing the complete reviewed CAD resource set')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--commit')
     parser.add_argument('--verify-only', action='store_true')
     args = parser.parse_args()
     entries = source_files()
+    resources = block_files(args.blocks_root)
     if args.verify_only:
-        print(f'Verified {len(entries)} source hashes')
+        print(f'Verified {len(entries)} source hashes; {len(resources) // 3} CAD resources')
         return
     if not args.output or not args.runtime_root or not re.fullmatch(r'[0-9a-f]{40}', args.commit or ''):
         parser.error('Packaging requires --runtime-root, --output and a 40-hex --commit')
@@ -124,7 +162,7 @@ def main():
     if output.exists() or output.is_symlink():
         raise ValueError('Output must not exist')
     runtime = {}
-    for host in ('AutoCAD2025', 'AutoCAD2026'):
+    for host in HOSTS:
         for name in ('AGPT.dll', 'AGPT.InputCore.dll'):
             path = args.runtime_root / host / name
             if any(p.is_symlink() for p in [path, *path.parents]) or not path.is_file():
@@ -136,14 +174,20 @@ def main():
     with tempfile.TemporaryDirectory(prefix='agpt-package-', dir=output.parent) as tmp:
         stage = Path(tmp) / 'candidate'
         stage.mkdir()
-        for name, path in {**entries, MANIFEST: ROOT / MANIFEST, **runtime}.items():
+        for name, path in {**entries, MANIFEST: ROOT / MANIFEST, **runtime, **resources}.items():
             target = stage / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
         (stage / 'RELEASE_INFO.json').write_text(json.dumps({
-            'version': '1.1.0-preview.13', 'commit': args.commit,
+            'version': '1.1.0-preview.14', 'commit': args.commit,
             'nativeAutoCADVerified': False, 'engineeringAcceptanceVerified': False,
-            'privateCadResourcesIncluded': False,
+            'privateCadResourcesIncluded': bool(resources),
+            'actualResourcesIncluded': bool(resources),
+            'resourceNativeVerified': False,
+            'resourceFileCount': len(resources) // (len(HOSTS) + 1),
+            'resourceCopyCount': len(resources),
+            'resourceSHA256': {name: digest(path) for name, path in resources.items()
+                               if name.startswith('blocks/')},
             'status': 'pilot-candidate',
         }, indent=2) + '\n', encoding='utf-8')
         files = sorted(p for p in stage.rglob('*') if p.is_file())

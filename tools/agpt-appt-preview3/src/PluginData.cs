@@ -98,14 +98,25 @@ namespace AGPT.Shared
         public static string FindBlockFile(string assemblyDirectory, params string[] names)
         {
             if (string.IsNullOrWhiteSpace(assemblyDirectory)) return null;
+            if (names == null) throw new ArgumentNullException(nameof(names));
+            foreach (var name in names)
+            {
+                // Validate Windows file names even in host-independent tests on Unix.
+                if (string.IsNullOrWhiteSpace(name) || name == "." || name == ".."
+                    || name.IndexOfAny(new[] { '/', '\\', ':' }) >= 0
+                    || Path.GetFileName(name) != name)
+                    throw new ArgumentException("Resource names must be file names.", nameof(names));
+            }
+            // Keep lookup local and bounded: Runtime/AutoCAD2026 uses the root
+            // blocks directory two levels above; installed bundles carry blocks
+            // beside the DLL. Older layouts may place the resource beside it.
             foreach (var directory in new[] {
                 Path.Combine(assemblyDirectory, "blocks"),
                 Path.Combine(assemblyDirectory, "..", "blocks"),
-                Path.Combine(assemblyDirectory, "..", "..", "blocks") })
+                Path.Combine(assemblyDirectory, "..", "..", "blocks"),
+                assemblyDirectory })
             foreach (var name in names)
             {
-                if (string.IsNullOrWhiteSpace(name) || Path.GetFileName(name) != name)
-                    throw new ArgumentException("Resource names must be file names.", nameof(names));
                 string candidate = Path.GetFullPath(Path.Combine(directory, name));
                 if (File.Exists(candidate)) return candidate;
             }

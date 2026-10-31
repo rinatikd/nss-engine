@@ -184,12 +184,7 @@ namespace AGPT.Cad
         {
             text = text.Trim();
             if (key == "ZONE_NAME") return text;
-            if (key == "GOTV")
-            {
-                if (System.Text.RegularExpressions.Regex.IsMatch(text, @"^Хладон\s*227[еe][аa]$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                    return GasAgentCatalog.SupportedAgent;
-                return RoomGasPolicy.Resolve(text, false); // Canonicalize aliases before comparing source candidates.
-            }
+            if (key == "GOTV") return GasAgentCatalog.NormalizeAgent(text);
             if (!NumericData.TryParseFinite(text, out double number)
                 || (key == "H" && number <= 0) || (key == "FH" && number < 0)) return null;
             return number.ToString("R", CultureInfo.InvariantCulture);

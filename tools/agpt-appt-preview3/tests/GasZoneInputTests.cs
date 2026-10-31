@@ -133,7 +133,7 @@ public class GasZoneInputTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("HFC-125")]
-    [InlineData("hfc-227ea")]
+    [InlineData("HFC-227")]
     public void ReferenceProfileRejectsUnsupportedAgent(string agent)
     {
         Assert.Throws<ArgumentException>(() => GasAgentCatalog.GetReferenceProfile(agent));
@@ -182,6 +182,72 @@ public class GasZoneInputTests
         var input = ValidInput();
         input.Gotv = agent;
         Assert.Contains("только для HFC-227ea", Assert.Single(input.Validate()));
+    }
+
+    [Theory]
+    [InlineData("HFC227ea")]
+    [InlineData(" hfc-227EA ")]
+    [InlineData("HFC‐227ea")]
+    [InlineData("HFC‑227ea")]
+    [InlineData("HFC–227ea")]
+    [InlineData("HFC−227ea")]
+    [InlineData("Хладон227еа")]
+    [InlineData(" хладон 227eа ")]
+    [InlineData("ХЛАДОН 227ЕA")]
+    [InlineData("Хладон-227еа")]
+    [InlineData("HFC‑227еа")]
+    [InlineData("HFC 227ea")]
+    [InlineData("Хладон\u00a0227еа")]
+    public void KnownAliasesUseTheSameProfileAcrossValidationAndModelSources(string agent)
+    {
+        Assert.Equal(GasAgentCatalog.SupportedAgent, GasAgentCatalog.NormalizeAgent(agent));
+        Assert.Same(GasAgentCatalog.GetReferenceProfile(GasAgentCatalog.SupportedAgent),
+            GasAgentCatalog.GetReferenceProfile(agent));
+        Assert.Equal(GasAgentCatalog.SupportedAgent, RoomGasPolicy.Resolve(agent, false));
+        Assert.Equal(GasAgentCatalog.SupportedAgent, RoomTextFacts.Parse("ГОТВ: " + agent).Values["GOTV"]);
+        var input = ValidInput();
+        input.Gotv = agent;
+        Assert.Empty(input.Validate());
+        Assert.Equal(agent, input.Gotv); // Validation does not rewrite stored drawing data.
+        input.Concentration = input.Density = null;
+        Assert.Equal(2, input.DescribeModelIssues().Count);
+        Assert.All(input.DescribeModelIssues(), issue => Assert.Contains("профиля не определены", issue));
+        input.Concentration = 8;
+        input.Density = 8;
+        Assert.Equal(2, input.Validate().Count);
+        Assert.All(input.Validate(), error => Assert.Contains("проектного профиля", error));
+    }
+
+    [Theory]
+    [InlineData("Хладон227")]
+    [InlineData("Хладон 227e")]
+    [InlineData("HFC-227")]
+    [InlineData("HFC-227e")]
+    [InlineData("HFC-227ea + IG-541")]
+    [InlineData("Хладон227еа/Хладон125")]
+    [InlineData("prefix HFC-227ea")]
+    [InlineData("HFC-227ea suffix")]
+    [InlineData("HFC-125")]
+    [InlineData("FK-5-1-12")]
+    [InlineData("IG-541")]
+    [InlineData("CO2")]
+    public void UnknownAgentsAndMixturesStayUnsupported(string agent)
+    {
+        Assert.Equal(agent, GasAgentCatalog.NormalizeAgent(" " + agent + " "));
+        Assert.Equal(agent, RoomGasPolicy.Resolve(" " + agent + " ", false));
+        Assert.Equal(agent, RoomTextFacts.Parse("ГОТВ: " + agent).Values["GOTV"]);
+        Assert.Throws<ArgumentException>(() => GasAgentCatalog.GetReferenceProfile(agent));
+        var input = ValidInput();
+        input.Gotv = agent;
+        Assert.Contains("только для HFC-227ea", Assert.Single(input.Validate()));
+    }
+
+    [Fact]
+    public void NormalizationDoesNotInventMissingAgentOrChangeUnknownInternalWhitespace()
+    {
+        Assert.Null(GasAgentCatalog.NormalizeAgent(null));
+        Assert.Equal("", GasAgentCatalog.NormalizeAgent(" \t "));
+        Assert.Equal("unknown  gas", GasAgentCatalog.NormalizeAgent(" unknown  gas "));
     }
     [Fact]
     public void AutomaticDiagnosticsDoNotRequestManualDataOrDuplicateDerivedMissingFields()

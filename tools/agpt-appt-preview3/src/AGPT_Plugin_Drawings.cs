@@ -182,16 +182,9 @@ namespace AGPT.Drawings
             {
                 string dll = Assembly.GetExecutingAssembly().Location;
                 string dir = Path.GetDirectoryName(dll) ?? "";
-                candidates.Add(Path.Combine(dir, "blocks", "ММХ_Штамп.dwg"));
-                candidates.Add(Path.Combine(dir, "blocks", "MMH_Stamp.dwg"));
-                candidates.Add(Path.Combine(dir, "blocks", "AGPT_Frame_A3.dwg"));
-                candidates.Add(Path.Combine(dir, "blocks", "AGPT_Frame_A3.dxf"));
-                candidates.Add(Path.Combine(dir, "..", "blocks", "AGPT_Frame_A3.dwg"));
-                candidates.Add(Path.Combine(dir, "..", "blocks", "AGPT_Frame_A3.dxf"));
-                candidates.Add(Path.Combine(dir, "..", "..", "blocks", "AGPT_Frame_A3.dwg"));
-                candidates.Add(Path.Combine(dir, "..", "..", "blocks", "AGPT_Frame_A3.dxf"));
-                candidates.Add(Path.Combine(dir, "AGPT_Frame_A3.dxf"));
-                candidates.Add(Path.Combine(dir, "AGPT_Frame_A3.dwg"));
+                string located = ResourceLocator.FindBlockFile(dir,
+                    "ММХ_Штамп.dwg", "MMH_Stamp.dwg", "MMX_ШТАМП.dwg", "AGPT_Frame_A3.dwg", "AGPT_Frame_A3.dxf");
+                if (located != null) candidates.Add(located);
             }
             catch { }
             candidates.Add(@"c:\Work\AGPT_Plugin\blocks\MMX_ШТАМП.dwg");
@@ -1910,8 +1903,12 @@ namespace AGPT.Drawings
                 Concentration = zone.Cn, Density = zone.Rho0 }.Validate();
             if (!double.IsFinite(zone.Vp) || zone.Vp <= 0) invalid.Add("VP > 0");
             if (invalid.Count > 0)
-                throw new InvalidOperationException("Зона " + entity.Handle + ": " + string.Join("; ", invalid)
-                    + ". Повторите AGPT_ZONE и примените справочный профиль.");
+            {
+                string recordedAgent = (XD.Get(entity, "GOTV") ?? "").Replace("\r", " ").Replace("\n", " ");
+                if (recordedAgent.Length > 80) recordedAgent = recordedAgent.Substring(0, 80) + "…";
+                throw new InvalidOperationException("Зона " + entity.Handle + ": ГОТВ в модели «" + recordedAgent
+                    + "». " + string.Join("; ", invalid) + " Повторите AGPT_ZONE или выберите профиль в AGPT_ZONE_EDIT.");
+            }
         }
 
         public static ProjectData FromModel(Database db, Transaction tr)
@@ -1968,7 +1965,7 @@ namespace AGPT.Drawings
                         Tm = RequireDouble(ent, "TM"),
                         Cn = RequireDouble(ent, "CN"),
                         Rho0 = RequireDouble(ent, "RHO0"),
-                        Gotv = XD.Get(ent, "GOTV")
+                        Gotv = GasAgentCatalog.NormalizeAgent(XD.Get(ent, "GOTV"))
                     };
                     ValidateZone(z, ent);
                     pd.Zones.Add(z);

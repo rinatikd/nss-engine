@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 namespace AGPT.Shared
 {
@@ -33,6 +34,9 @@ namespace AGPT.Shared
     public static class GasAgentCatalog
     {
         public const string SupportedAgent = "HFC-227ea";
+        private static readonly Regex Hfc227eaAlias = new Regex(
+            @"\A(?:HFC|Хладон)[ \t\u00a0]*(?:[-\u2010-\u2015\u2212][ \t\u00a0]*)?227[еe][аa]\z",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly GasAgentReferenceProfile Hfc227eaReference = new GasAgentReferenceProfile(
             SupportedAgent, 7.2, 7.28, 20, 101.3,
             "Предоставленный проектный эталон: лист расчёта ГОТВ", "ProjectReference");
@@ -42,9 +46,16 @@ namespace AGPT.Shared
             SupportedAgent
         });
 
+        /// <summary>Canonicalizes only known spellings; unknown agents remain trimmed for validation.</summary>
+        public static string NormalizeAgent(string agent)
+        {
+            string value = agent?.Trim();
+            return value != null && Hfc227eaAlias.IsMatch(value) ? SupportedAgent : value;
+        }
+
         public static GasAgentReferenceProfile GetReferenceProfile(string agent)
         {
-            if (!string.Equals(agent?.Trim(), SupportedAgent, StringComparison.Ordinal))
+            if (!string.Equals(NormalizeAgent(agent), SupportedAgent, StringComparison.Ordinal))
                 throw new ArgumentException("Проектный профиль доступен только для HFC-227ea.", nameof(agent));
             return Hfc227eaReference;
         }
@@ -95,10 +106,11 @@ namespace AGPT.Shared
         public List<string> Validate()
         {
             var errors = new List<string>();
+            string agent = GasAgentCatalog.NormalizeAgent(Gotv);
             if (string.IsNullOrWhiteSpace(Name)) errors.Add("Название зоны: укажите название.");
             if (string.IsNullOrWhiteSpace(Gotv))
                 errors.Add("ГОТВ: выберите вещество.");
-            else if (!string.Equals(Gotv.Trim(), GasAgentCatalog.SupportedAgent, StringComparison.Ordinal))
+            else if (!string.Equals(agent, GasAgentCatalog.SupportedAgent, StringComparison.Ordinal))
                 errors.Add("ГОТВ: текущая расчётная методика реализована только для HFC-227ea (хладон 227ea).");
 
             ValidateNumber(errors, Height, "Высота H", x => x > 0, "должна быть больше 0 м.");
@@ -109,7 +121,7 @@ namespace AGPT.Shared
             ValidateNumber(errors, Concentration, "Концентрация Cн", x => x > 0 && x < 100,
                 "должна быть больше 0 и меньше 100 %.", "примените профиль ГОТВ.");
             ValidateNumber(errors, Density, "Плотность ρ₀", x => x > 0, "должна быть больше 0 кг/м³.", "примените профиль ГОТВ.");
-            if (string.Equals(Gotv?.Trim(), GasAgentCatalog.SupportedAgent, StringComparison.Ordinal))
+            if (string.Equals(agent, GasAgentCatalog.SupportedAgent, StringComparison.Ordinal))
             {
                 var profile = GasAgentCatalog.GetReferenceProfile(Gotv);
                 if (Concentration.HasValue && double.IsFinite(Concentration.Value) &&
@@ -125,7 +137,7 @@ namespace AGPT.Shared
         public List<string> DescribeModelIssues()
         {
             var issues = new List<string>();
-            bool knownAgent = string.Equals(Gotv?.Trim(), GasAgentCatalog.SupportedAgent, StringComparison.Ordinal);
+            bool knownAgent = string.Equals(GasAgentCatalog.NormalizeAgent(Gotv), GasAgentCatalog.SupportedAgent, StringComparison.Ordinal);
             foreach (string error in Validate())
             {
                 if (!knownAgent && (error.StartsWith("Концентрация", StringComparison.Ordinal)

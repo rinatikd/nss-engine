@@ -1,5 +1,3 @@
-using System;
-
 namespace AGPT.Shared
 {
     public static class RoomGasPolicy
@@ -12,12 +10,7 @@ namespace AGPT.Shared
             if (hasUnresolvedSource) return null;
             if (string.IsNullOrWhiteSpace(explicitValue)) return DefaultAgent;
 
-            string value = explicitValue.Trim();
-            if (string.Equals(value, DefaultAgent, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(value, "HFC227ea", StringComparison.OrdinalIgnoreCase))
-                return DefaultAgent;
-
-            return value;
+            return GasAgentCatalog.NormalizeAgent(explicitValue);
         }
     }
 }

@@ -64,12 +64,7 @@ namespace AGPT.Shared
         {
             if (raw.Length == 0) return null;
             if (key == "ZONE_NAME") return raw;
-            if (key == "GOTV")
-            {
-                if (raw.Equals(GasAgentCatalog.SupportedAgent, StringComparison.OrdinalIgnoreCase)
-                    || Regex.IsMatch(raw, @"^Хладон\s*227[еe][аa]$", Options)) return GasAgentCatalog.SupportedAgent;
-                return raw;
-            }
+            if (key == "GOTV") return GasAgentCatalog.NormalizeAgent(raw);
             bool unitInLabel = label.Equals("HEIGHT_M", StringComparison.OrdinalIgnoreCase)
                 || label.Equals("OPENINGS_M2", StringComparison.OrdinalIgnoreCase)
                 || label.Equals("TM_C", StringComparison.OrdinalIgnoreCase);
