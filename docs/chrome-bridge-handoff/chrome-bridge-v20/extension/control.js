@@ -286,8 +286,25 @@ async function execute(cmd) {
     return { ok: true };
   }
   if (['agent_send', 'agent_peek', 'agent_selftest'].includes(name)) {
-    const { tab, site, adapter } = await agentTab(args.tabId);
-    if (name === 'agent_send') { const s = findSecret(args.text); if (s) throw Error('Refusing to send: text looks like it contains a secret (' + s + ')'); }
+    let { tab, site, adapter, adapterName } = await agentTab(args.tabId);
+    if (name === 'agent_send') {
+      const secret = findSecret(args.text);
+      if (secret) throw Error('Refusing to send: text looks like it contains a secret (' + secret + ')');
+      if (!running) throw Error('Bridge is stopped');
+      const expires = cmd.expires;
+      const details = 'Tab: ' + tab.id + '\\nURL: ' + tab.url + '\\nOrigin: ' + site.origin + '\\nMessage:\\n' + String(args.text ?? '');
+      await askApproval('Approve sending message to AI chat', details, expires);
+      if (!running) throw Error('Bridge stopped before send');
+      if (Date.now() > expires) throw Error('Command expired');
+      grants.require(site.origin);
+      const current = await chrome.tabs.get(args.tabId);
+      if (current.url !== tab.url) throw Error('Tab changed after approval');
+      const verified = await agentTab(args.tabId);
+      if (verified.site.origin !== site.origin || verified.adapterName !== adapterName || verified.tab.url !== tab.url) {
+        throw Error('Tab origin or adapter changed after approval');
+      }
+      ({ tab, site, adapter, adapterName } = verified);
+    }
     const result = await inject(tab.id, site.origin, name, { ...args, adapter });
     return result?.text ? { ...result, text: redact(result.text) } : result;
   }
