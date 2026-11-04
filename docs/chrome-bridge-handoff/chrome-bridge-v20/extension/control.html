@@ -37,6 +37,16 @@
     <label class="check"><input id="confirmReads" type="checkbox">РџРѕРґС‚РІРµСЂР¶РґР°С‚СЊ РєР°Р¶РґРѕРµ С‡С‚РµРЅРёРµ СЃС‚СЂР°РЅРёС†С‹ (browser_read)</label>
   </section>
 
+  <section id="visualDebugSection">
+    <h2>Визуальная диагностика вкладки (экспериментальная)</h2>
+    <p class="hint">Снимок остаётся только в этом окне. Не захватывайте страницы с паролями, ключами и личной информацией. Передача изображения другим AI отключена.</p>
+    <label>Идентификатор вкладки (tabId, из browser_tabs)<input id="visualTabId" type="number" min="1" inputmode="numeric" placeholder="Например, 1864253125"></label>
+    <button id="visualCapture" class="secondary">Сфотографировать выбранную вкладку</button>
+    <p id="visualStatus" role="status">Снимок не выполнялся</p>
+    <img id="visualPreview" alt="Предпросмотр снимка вкладки (только локально)" hidden style="max-width:100%;max-height:480px;object-fit:contain;border:1px solid #888">
+    <button id="visualClear" class="secondary">Удалить локальный снимок</button>
+  </section>
+
   <section>
     <h2>Р—Р°РїСЂРѕСЃС‹ РЅР° РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ</h2>
     <div id="approvals"><p class="hint">РќРµС‚ РѕР¶РёРґР°СЋС‰РёС… Р·Р°РїСЂРѕСЃРѕРІ.</p></div>
