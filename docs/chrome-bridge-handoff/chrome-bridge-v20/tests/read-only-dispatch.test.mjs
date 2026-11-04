@@ -5,7 +5,7 @@ import { dispatchReadOnly } from '../extension/read-only-dispatch.js';
 function mock({tabUrl='https://claude.ai/chat/test',allowed=true,site=true,changed=false}={}){
  const tab={id:42,url:tabUrl,title:'Claude',active:true,windowId:3};
  return {
-   tabs:{get:async()=>changed?{...tab,url:'https://evil.example'}:tab,query:async()=>[tab,{id:99,url:'https://private.example',title:'Private',active:false,windowId:3}]},
+   tabs:{get:async id=>id===42?(changed?{...tab,url:'https://evil.example'}:tab):{id,url:'https://private.example',title:'Private',active:false,windowId:3},query:async()=>[tab,{id:99,url:'https://private.example',title:'Private',active:false,windowId:3}]},
    storage:{local:{get:async()=>({sites:site?{'https://claude.ai':{mode:'chat',adapter:'claude'}}:{}})}},
    permissions:{contains:async()=>allowed},
    scripting:{executeScript:async()=>[{result:{text:'sample text',links:[{text:'Page',url:'https://claude.ai/'}]}}]}
