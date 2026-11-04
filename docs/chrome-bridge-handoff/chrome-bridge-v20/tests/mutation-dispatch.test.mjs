@@ -39,7 +39,7 @@ const cmd=(name='browser_click')=>({
     expectedConversationId:'abcdefghi'}
 });
 const execute=(c,f)=>dispatchMutation(c,f.chromeApi,{
-  approvals:f.approvals,controlGrant:f.controlGrant,uuid:()=> 'fixedid'
+  approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'fixedid'
 });
 test('click executes only after fresh site/target revalidation and approval',async()=>{
  const f=fixture();
@@ -76,4 +76,32 @@ test('invalid/sensitive payload and unknown origins fail without request',async(
  const f=fixture({badOrigin:true});
  await assert.rejects(execute(cmd(),f),/ORIGIN_NOT_PERMITTED/);
  assert.equal(f.state.approvalCount,0);
+});
+
+test('manual stop between approval and DOM action blocks mutation',async()=>{
+ const f=fixture();
+ let calls=0;
+ await assert.rejects(
+   dispatchMutation(cmd(),f.chromeApi,{
+     approvals:f.approvals,
+     controlGrant:f.controlGrant,
+     uuid:()=> 'fixedid',
+     stillEnabled:async()=>++calls<2
+   }),
+   /BACKGROUND_CONTROL_STOPPED/
+ );
+ assert.equal(f.state.injections.includes('browser_click'),false);
+ assert.equal(f.state.approvalCount,1);
+});
+test('disabled lab blocks mutation before approval request',async()=>{
+ const f=fixture();
+ await assert.rejects(
+   dispatchMutation(cmd(),f.chromeApi,{
+     approvals:f.approvals,controlGrant:f.controlGrant,
+     stillEnabled:async()=>false
+   }),
+   /BACKGROUND_CONTROL_STOPPED/
+ );
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(f.state.injections.length,0);
 });

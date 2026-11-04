@@ -97,7 +97,15 @@ export function installBackgroundCoordinator(chromeApi) {
           const grants=new BackgroundControlGrants(chromeApi);
           return dispatchMutation(msg.command,chromeApi,{
             approvals,
-            controlGrant:(origin,tabId)=>grants.require(origin,tabId)
+            controlGrant:(origin,tabId)=>grants.require(origin,tabId),
+            stillEnabled:async()=>{
+              const settings=await chromeApi.storage.local.get([
+                'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
+              ]);
+              return settings.bridgeBackgroundMode===true &&
+                settings.bridgeMutationLabMode===true &&
+                settings.bridgeConnectionDesired===true;
+            }
           });
         }
         return dispatchReadOnly(msg.command,chromeApi);
