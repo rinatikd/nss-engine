@@ -5,22 +5,22 @@
 <title>Chrome Bridge</title>
 <link rel="stylesheet" href="style.css">
 <main>
-  <p class="eyebrow">AGENT HUB В· 0.3</p>
+  <p class="eyebrow">AGENT HUB · RC</p>
   <h1>Chrome Bridge</h1>
-  <p>Мост между локальными ИИ-агентами и вашим браузером. Держите эту вкладку открытой (лучше в отдельном окне Chrome вместе с вкладками чатов).</p>
+  <p>Управление подключениями и диагностикой AI-агентов. Для работы команд оставьте окно управления открытым.</p>
 
   <section>
     <h2>1. Подключение</h2>
-    <label>Ключ браузера из Setup-Windows.ps1<input id="token" type="password" autocomplete="off"></label>
+    <label>Ключ браузера (browserToken)<input id="token" type="password" autocomplete="off"></label>
     <div class="row"><button id="connect">Подключить</button><button id="stop" class="secondary">Остановить</button></div>
-    <p id="keyStorageStatus" class="hint" role="status">Ключ сохраняется при подключении и восстанавливается после перезапуска Chrome.</p>
+    <p id="keyStorageStatus" class="hint" role="status">Ключ сохраняется только после успешной проверки связи с сервером.</p>
     <button id="forgetKey" class="secondary" type="button">Удалить сохранённый ключ</button>
     <p class="hint">Ключ хранится только в профиле этого расширения Chrome и недоступен обычным веб-страницам. Не сохраняйте его на общем компьютере. Это не заменяет локальных разрешений Control.</p>
     <p id="status" role="status">Отключено</p>
   </section>
 
   <section>
-    <p>Control only: https://claude.ai, https://gemini.google.com, https://chat.deepseek.com. Connect, then locally approve Grant control (1, 3 or 4 hours). Explicit re-grant after expiry, origin change, disconnect or restart. Other origins remain read-only. Grants permit sending prompts to external services; never send secrets.</p><h2>2. Сайты</h2>
+    <p>Управление доступно для Claude, Gemini и DeepSeek только после отдельного локального разрешения. Grok, Qwen и Cursor пока доступны для диагностики и чтения. Никакие действия не выполняются автоматически.</p><h2>2. Сайты</h2>
     <label>Срок локального разрешения Control<select id="controlDuration"><option value="240">4 часа</option><option value="180">3 часа</option><option value="60">1 час</option></select></label>
     <div class="row">
       <label>Тип<select id="mode"><option value="read">Обычный сайт (чтение)</option><option value="chat">ИИ-чат (агентский режим)</option></select></label>
@@ -34,7 +34,7 @@
 
   <section>
     <h2>3. Безопасность</h2>
-    <label class="check"><input id="actions" type="checkbox">Разрешить запросы на нажатия и ввод (browser_click / browser_fill вЂ” каждый подтверждается ниже)</label>
+    <label class="check"><input id="actions" type="checkbox">Разрешить запросы на нажатия и ввод (browser_click / browser_fill — каждый подтверждается ниже)</label>
     <p id="controlGlobalState" role="status">Глобальное разрешение действий: ВЫКЛ</p>
     <p class="hint">На каждом разрешённом сайте теперь есть отдельные кнопки «Подключить управление» и «Отключить управление». Для подключения нужен работающий мост, установленное глобальное разрешение и локальное подтверждение. При отключении разрешение отзывается только для выбранного сайта.</p>
     <label class="check"><input id="confirmReads" type="checkbox">Подтверждать каждое чтение страницы (browser_read)</label>
@@ -42,7 +42,7 @@
 
   <section id="visualDebugSection">
     <h2>Визуальная диагностика вкладки (экспериментальная)</h2>
-    <p class="hint">Снимок остаётся только в этом окне. Не захватывайте страницы с паролями, ключами и личной информацией. Передача изображения другим AI отключена.</p>
+    <p class="hint">Снимок остаётся только в этом окне. Не захватывайте страницы с паролями, ключами и личной информацией. Отправка снимка другим AI отключена.</p>
     <label>Идентификатор вкладки (tabId, из browser_tabs)<input id="visualTabId" type="number" min="1" inputmode="numeric" placeholder="Например, 1864253125"></label>
     <button id="visualCapture" class="secondary">Сфотографировать выбранную вкладку</button>
     <p id="visualStatus" role="status">Снимок не выполнялся</p>
