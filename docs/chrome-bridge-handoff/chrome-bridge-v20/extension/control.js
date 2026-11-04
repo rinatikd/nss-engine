@@ -1,4 +1,5 @@
 import { CONTROL_ORIGINS, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
+import { captureLocalTab } from './visual-snapshot.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
@@ -395,6 +396,37 @@ $('connect').onclick = async () => {
   loop(generation);
 };
 window.addEventListener('beforeunload', stop);
+
+// ---------- локальная визуальная диагностика ----------
+$('visualCapture').onclick = async (event) => {
+  const status = $('visualStatus');
+  const preview = $('visualPreview');
+  preview.src = '';
+  preview.hidden = true;
+  if (!event.isTrusted) { status.textContent = 'Требуется локальный клик'; return; }
+  const tabId = Number($('visualTabId').value);
+  if (!Number.isSafeInteger(tabId) || tabId <= 0) { status.textContent = 'Укажите существующий tabId'; return; }
+  try {
+    const snap = await captureLocalTab(chrome, tabId, {
+      approve: async ({ origin, title }) => window.confirm(
+        'Создать локальный снимок вкладки ' + origin + '\\n' + title +
+        '\\nПроверьте, что на экране нет токенов, паролей и личной информации. Снимок НЕ отправляется в сеть.'
+      )
+    });
+    preview.src = snap.pngDataUrl;
+    preview.hidden = false;
+    status.textContent = 'Локальный снимок: ' + snap.provider + ', tabId=' + tabId +
+      '. Передача другим AI отключена. Проверьте изображение и при необходимости очистите.';
+  } catch (error) {
+    status.textContent = 'Снимок не выполнен: ' + error.message +
+      '. Вкладка должна быть активной в своём окне; Chrome также требует отдельное разрешение на захват экрана.';
+  }
+};
+$('visualClear').onclick = () => {
+  $('visualPreview').src = '';
+  $('visualPreview').hidden = true;
+  $('visualStatus').textContent = 'Локальный снимок удалён';
+};
 
 // ---------- СЃС‚Р°СЂС‚ ----------
 fillAdapterSelect();
