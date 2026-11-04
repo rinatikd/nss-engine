@@ -58,3 +58,33 @@ test('content scripts cannot spoof coordinator status or dispatch',async()=>{
   invoke({target:'bridge-coordinator',type:'status'},{id:c.runtime.id,url:'chrome-extension://ext-mock-id/control.html'});
   assert.equal(response.connected,true);
 });
+
+test('extension control window may have sender.tab and still receive coordinator status',()=>{
+  const c=fakeChrome();
+  installBackgroundCoordinator(c);
+  const sender={id:c.runtime.id,url:c.runtime.getURL('control.html'),tab:{id:456}};
+  let response;
+  const handled=c.listeners[0]({target:'bridge-coordinator',type:'status'},sender,x=>response=x);
+  assert.equal(handled,false);
+  assert.equal(response.state,'disconnected');
+  assert.equal(response.connected,false);
+  response=undefined;
+  c.listeners[0]({target:'bridge-coordinator',type:'approval-list'},sender,x=>response=x);
+  assert.deepEqual(response,{pending:[]});
+});
+test('extension ID match alone does not authorize web content scripts or other extension pages',()=>{
+  const c=fakeChrome();
+  installBackgroundCoordinator(c);
+  const cases=[
+    {id:c.runtime.id,url:'https://claude.ai/chat/x',tab:{id:456}},
+    {id:c.runtime.id,url:c.runtime.getURL('other.html'),tab:{id:456}},
+    {id:'other-extension-id',url:c.runtime.getURL('control.html'),tab:{id:456}},
+    {id:c.runtime.id,url:c.runtime.getURL('transport-host.html'),tab:{id:456}}
+  ];
+  for (const sender of cases) {
+    let response;
+    const handled=c.listeners[0]({target:'bridge-coordinator',type:'status'},sender,x=>response=x);
+    assert.equal(handled,false);
+    assert.equal(response,undefined);
+  }
+});
