@@ -474,6 +474,9 @@ fillAdapterSelect();
 $('token').value = (await chrome.storage.session.get('browserToken')).browserToken || '';
 $('adapterJson').value = (await chrome.storage.local.get('adapters')).adapters || '{}';
 await renderSites();
+const visualCandidate = (await chrome.storage.session.get('visualCandidateTabId')).visualCandidateTabId;
+if (Number.isSafeInteger(visualCandidate) && visualCandidate > 0)
+  $('visualTabId').value = String(visualCandidate);
 taskStatus('РћР¶РёРґР°РЅРёРµ РїРѕРґРєР»СЋС‡РµРЅРёСЏ', 0);
 log('Р“РѕС‚РѕРІРѕ. РЈРєР°Р¶РёС‚Рµ РєР»СЋС‡ Рё РЅР°Р¶РјРёС‚Рµ В«РџРѕРґРєР»СЋС‡РёС‚СЊВ».');
 
