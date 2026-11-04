@@ -1,0 +1,27 @@
+name: Chrome Bridge Visual RC
+on:
+  push:
+    branches: [agent/chatgpt/visual-debug-01]
+  pull_request:
+    paths:
+      - 'docs/chrome-bridge-handoff/chrome-bridge-v20/**'
+      - '.github/workflows/chrome-bridge-visual-rc.yml'
+permissions:
+  contents: read
+jobs:
+  node-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run visual snapshot and grant tests
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs
+      - name: Syntax check changed extension files
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          node --check extension/control.js
+          node --check extension/visual-snapshot.js
+          node --check extension/permissions.js
