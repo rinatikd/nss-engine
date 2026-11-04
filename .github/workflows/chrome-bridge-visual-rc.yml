@@ -121,3 +121,13 @@ jobs:
           if ((Get-FileHash $manifestPath).Hash -ne $originalHash) { throw 'Manifest not restored exactly' }
           if (Test-Path (Join-Path $installed 'browser-key-store.js')) { throw 'New file survived rollback' }
           Write-Output '[PASS] Windows PowerShell 5.1 dry-run/apply/restore with BOM check'
+      - name: Package source-only Windows upgrade candidate
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-bridge-rc-windows-upgrade
+          path: |
+            docs/chrome-bridge-handoff/chrome-bridge-v20/extension/
+            docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/
+          if-no-files-found: error
+          retention-days: 7
