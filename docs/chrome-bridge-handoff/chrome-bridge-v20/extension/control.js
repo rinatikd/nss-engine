@@ -1,6 +1,7 @@
 import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
 import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
+import { verifyBridgeCredential } from './connection-check.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
@@ -18,7 +19,7 @@ let releaseLock = null;
 const approvals = new Map();
 const grants = new ControlGrants();
 const timestamp = () => new Intl.DateTimeFormat('ru-RU', {timeZone:'Asia/Almaty', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}).format(new Date());
-function taskStatus(label, value, detail='') { $('taskState').textContent=label; $('taskProgress').value=value; $('taskTimes').textContent=timestamp() + (detail ? ' В· '+detail : ''); }
+function taskStatus(label, value, detail='') { $('taskState').textContent=label; $('taskProgress').value=value; $('taskTimes').textContent=timestamp() + (detail ? ' · '+detail : ''); }
 function refreshGrantLabels() {
   for (const row of $('sites').children) {
     const origin = row.dataset.origin;
@@ -80,7 +81,7 @@ async function renderSites() {
     left.textContent = origin;
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = s.mode === 'chat' ? 'ИИ-чат В· ' + s.adapter : 'чтение';
+    tag.textContent = s.mode === 'chat' ? 'ИИ-чат · ' + s.adapter : 'чтение';
     left.append(tag);
     if (!granted.has(origin)) { const w = document.createElement('span'); w.className = 'tag'; w.textContent = 'нет разрешения Chrome'; left.append(w); }
     const rm = document.createElement('button');
@@ -178,7 +179,7 @@ $('saveAdapters').onclick = async () => {
 // ---------- одобрения ----------
 function notify() {
   const n = approvals.size;
-  document.title = n ? `(${n}) Подтвердите В· Chrome Bridge` : 'Chrome Bridge';
+  document.title = n ? `(${n}) Подтвердите · Chrome Bridge` : 'Chrome Bridge';
   if (n && audio) { try { const o = audio.createOscillator(); o.connect(audio.destination); o.frequency.value = 660; o.start(); o.stop(audio.currentTime + 0.15); } catch { /* звук необязателен */ } }
   if (!n) { const box = $('approvals'); if (!box.children.length) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Нет ожидающих запросов.'; box.append(p); } }
 }
@@ -392,10 +393,10 @@ async function post(path, body, ms) {
 }
 async function handle(command) {
   let result, error;
-  log('в†’ ' + command.name);
+  log('→ ' + command.name);
   taskStatus('Выполняется: '+command.name, 35, 'Задание принято');
-  try { result = await execute(command); } catch (e) { error = e.message; log('вњ— ' + command.name + ': ' + e.message); }
-  taskStatus(error ? 'Ошибка: '+command.name : 'Завершено: '+command.name, 100, error ? 'Смотрите журнал' : 'Р езультат подготовлен');
+  try { result = await execute(command); } catch (e) { error = e.message; log('✗ ' + command.name + ': ' + e.message); }
+  taskStatus(error ? 'Ошибка: '+command.name : 'Завершено: '+command.name, 100, error ? 'Смотрите журнал' : 'Результат подготовлен');
   try { await post('/bridge/result', { id: command.id, result, error }, 10000); }
   catch { await sleep(500); await post('/bridge/result', { id: command.id, result, error }, 10000).catch(() => {}); }
 }
@@ -406,7 +407,7 @@ async function loop(gen) {
       if (!epoch || grants.epoch !== epoch) grants.reset(epoch || null);
       refreshGrantLabels();
       if (!running || gen !== generation) break;
-      setStatus('Подключено В· ожидание команд');
+      setStatus('Подключено · ожидание команд');
       if (!command && $('taskProgress').value !== 100) taskStatus('Ожидание команд',0);
       if (command) await handle(command);
     } catch (e) {
@@ -434,21 +435,38 @@ $('actions').addEventListener('change', (event) => {
 });
 $('stop').onclick = stop;
 $('connect').onclick = async () => {
-  if (running) return;
+  if (running || $('connect').disabled) return;
+  const token = $('token').value.trim();
+  if (!token) { setStatus('Введите ключ браузера.'); return; }
+  $('connect').disabled = true;
+  setStatus('Проверяем авторизацию сервера (до 26 секунд)…');
   try {
-    await saveBrowserKey(chrome, $('token').value);
-    $('keyStorageStatus').textContent = 'Ключ сохранён в локальном хранилище расширения (только доверенные контексты).';
+    // First verify with the running server. Never persist unverified keys.
+    const handshake = await verifyBridgeCredential(fetch, token);
+    await saveBrowserKey(chrome, token);
+    $('keyStorageStatus').textContent = 'Ключ проверен сервером и сохранён в профиле расширения.';
+    grants.reset(handshake.epoch);
+    pollAbort = new AbortController();
+    try { audio = new AudioContext(); } catch { audio = null; }
+    navigator.locks.request('chrome-bridge-control', () =>
+      new Promise(resolve => { releaseLock = resolve; })).catch(() => {});
+    running = true;
+    refreshGrantLabels();
+    setStatus('Подключено · ожидание команд');
+    loop(generation);
   } catch (error) {
-    setStatus('Ключ не сохранён: ' + error.message);
-    return; // Do not connect without secure credential storage.
+    const code = error.message || 'UNKNOWN';
+    const hints = {
+      BROWSER_KEY_REJECTED_401: 'Ключ отклонён сервером (HTTP 401). Проверьте browserToken активной конфигурации; ключ не сохранялся.',
+      EXTENSION_ORIGIN_REJECTED_403: 'Сервер отклонил идентификатор расширения (HTTP 403). Проверьте extensionId в активной конфигурации.',
+      BRIDGE_NETWORK_UNREACHABLE: 'Мост недоступен на 127.0.0.1:17381. Проверьте, что сервер запущен.',
+      BRIDGE_TIMEOUT: 'Нет ответа от моста за 26 секунд. Проверьте сервер и попробуйте после диагностики.',
+      KEY_EMPTY: 'Ключ не введён.'
+    };
+    setStatus(hints[code] || ('Ошибка подключения: ' + code));
+  } finally {
+    $('connect').disabled = false;
   }
-  try { audio = new AudioContext(); } catch { audio = null; }
-  // Удержание Web Lock помогает Chrome не «замораживать» вкладку в фоне.
-  navigator.locks.request('chrome-bridge-control', () => new Promise((r) => { releaseLock = r; }));
-  running = true;
-  refreshGrantLabels();
-  pollAbort = new AbortController();
-  loop(generation);
 };
 $('forgetKey').onclick = async (event) => {
   if (!event.isTrusted) return;
