@@ -55,3 +55,19 @@ test('injected mutation denies other origins and expired grants before DOM acces
  delete globalThis.location;
 });
 
+
+test('global off is denied even with per-origin grant; explicit revoke removes only selected origin', () => {
+  const g = new ControlGrants(() => 1000);
+  g.reset('session');
+  g.approve('https://claude.ai', true, 60);
+  g.approve('https://gemini.google.com', true, 60);
+  assert.equal(g.status('https://claude.ai', false).allowed, false);
+  assert.equal(g.status('https://claude.ai', true).allowed, true);
+  g.revoke('https://claude.ai');
+  assert.equal(g.status('https://claude.ai', true).allowed, false);
+  assert.throws(() => g.require('https://claude.ai'));
+  assert.equal(g.status('https://gemini.google.com', true).allowed, true);
+  g.revoke('https://claude.ai');
+  g.reset();
+  assert.equal(g.status('https://gemini.google.com', true).allowed, false);
+});

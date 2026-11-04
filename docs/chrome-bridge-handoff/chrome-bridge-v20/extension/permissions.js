@@ -8,6 +8,12 @@ export const CONTROL_DURATION_MS = Object.freeze({ 60: 60 * 60 * 1000, 180: 180 
 export class ControlGrants {
   constructor(now = Date.now) { this.now = now; this.grants = new Map(); this.epoch = null; }
   reset(epoch = null) { this.grants.clear(); this.epoch = epoch; }
+  revoke(origin) { this.grants.delete(origin); }
+  status(origin, globalEnabled = false) {
+    const expires = this.grants.get(origin) || 0;
+    const allowed = !!(globalEnabled && this.epoch && CONTROL_ORIGINS[origin] && expires > this.now());
+    return { allowed, expiresAt: allowed ? expires : null };
+  }
   approve(origin, trusted, durationMinutes = 240) {
     if (!trusted || !this.epoch || !CONTROL_ORIGINS[origin]) throw Error('Local approval on an allowed origin required');
     if (!Object.hasOwn(CONTROL_DURATION_MS, durationMinutes)) throw Error('Invalid control duration');
