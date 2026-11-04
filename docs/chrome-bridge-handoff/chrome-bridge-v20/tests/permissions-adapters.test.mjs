@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ControlGrants, CONTROL_ORIGINS, CONTROL_DURATION_MS } from '../extension/permissions.js';
+import { ControlGrants, CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_DURATION_MS } from '../extension/permissions.js';
 import { DEFAULT_ADAPTERS } from '../extension/adapters.js';
 import { pageAction } from '../extension/page.js';
 import { toolByName } from '../server/tools.mjs';
@@ -33,8 +33,8 @@ test('each allowed origin has its own complete adapter', () => {
   for (const k of ['composer','send','reply','stop']) assert.ok(a[k]);
  }
 });
-test('Grok and Qwen remain read-only candidates without Control grants or send selectors', () => {
- for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai']]) {
+test('Grok, Qwen, Cursor remain read-only candidates without Control grants or send selectors', () => {
+ for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai'], ['cursor','https://cursor.com']]) {
   const adapter = DEFAULT_ADAPTERS[key];
   assert.equal(adapter.origin, origin);
   assert.equal(Object.hasOwn(CONTROL_ORIGINS, origin), false);
@@ -70,4 +70,11 @@ test('global off is denied even with per-origin grant; explicit revoke removes o
   g.revoke('https://claude.ai');
   g.reset();
   assert.equal(g.status('https://gemini.google.com', true).allowed, false);
+});
+
+test('candidate origins are exact and cannot be escalated through lookalike hosts', () => {
+ for (const value of ['https://grok.com.evil.test', 'http://cursor.com', 'https://chat.qwen.ai.evil.test'])
+   assert.equal(providerForOrigin(new URL(value).origin), null);
+ for (const origin of Object.keys(DISCOVERY_ONLY_ORIGINS))
+   assert.equal(new ControlGrants().status(origin, true).allowed, false);
 });

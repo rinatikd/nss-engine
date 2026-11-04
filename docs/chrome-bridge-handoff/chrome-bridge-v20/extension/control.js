@@ -1,4 +1,4 @@
-import { CONTROL_ORIGINS, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
+import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
 import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
@@ -149,8 +149,9 @@ $('grant').onclick = async () => {
     const ok = await chrome.permissions.request({ origins: [u.origin + '/*'] });
     if (!ok) throw Error('Chrome РЅРµ РІС‹РґР°Р» СЂР°Р·СЂРµС€РµРЅРёРµ');
     const sites = await getSites();
-    const mode = CONTROL_ORIGINS[u.origin] ? $('mode').value : 'read';
-    sites[u.origin] = mode === 'chat' ? { mode, adapter: CONTROL_ORIGINS[u.origin] } : { mode };
+    const provider = providerForOrigin(u.origin);
+    const mode = provider ? $('mode').value : 'read';
+    sites[u.origin] = mode === 'chat' ? { mode, adapter: provider } : { mode };
     await setSites(sites);
     $('origin').value = '';
     await renderSites();
@@ -212,7 +213,9 @@ async function siteOf(url) {
     const s = (await getSites())[u.origin];
     if (!s) return null;
     if (!(await chrome.permissions.contains({ origins: [u.origin + '/*'] }))) return null;
-    return { ...s, origin: u.origin, mode: CONTROL_ORIGINS[u.origin] ? s.mode : 'read', adapter: CONTROL_ORIGINS[u.origin] };
+    const provider = providerForOrigin(u.origin);
+    return { ...s, origin: u.origin, mode: provider ? s.mode : 'read', adapter: provider,
+      discoveryOnly: !!DISCOVERY_ONLY_ORIGINS[u.origin] };
   } catch { return null; }
 }
 async function inject(tabId, origin, name, args) {
@@ -242,7 +245,8 @@ async function agentTab(tabId) {
   if (site.mode !== 'chat') throw Error('Site is not marked as an AI chat in Chrome Bridge');
   const adapters = await getAdapters();
   const adapter = adapters[site.adapter];
-  if (!CONTROL_ORIGINS[site.origin] || adapter?.origin !== site.origin) throw Error('Origin-specific adapter required');
+  if (providerForOrigin(site.origin) !== site.adapter || adapter?.origin !== site.origin)
+    throw Error('Origin-specific adapter required');
   if (!adapter) throw Error('Unknown adapter: ' + site.adapter);
   return { tab, site, adapter, adapterName: site.adapter };
 }
@@ -333,6 +337,7 @@ async function execute(cmd) {
   }
   if (name === 'agent_new_chat') {
     const { tab, site, adapter } = await agentTab(args.tabId);
+    if (site.discoveryOnly) throw Error('Candidate chat is discovery-only: Control not enabled');
     grants.require(site.origin);
     if (!adapter.newChatUrl || new URL(adapter.newChatUrl).origin !== new URL(tab.url).origin) throw Error('Adapter has no same-origin newChatUrl');
     await askApproval('Новый AI-чат', 'Сайт: ' + site.origin + '\\nСоздать новый разговор в существующей вкладке?', cmd.expires);
@@ -346,6 +351,8 @@ async function execute(cmd) {
   }
   if (['agent_send', 'agent_peek', 'agent_selftest'].includes(name)) {
     const { tab, site, adapter } = await agentTab(args.tabId);
+    if (name === 'agent_send' && site.discoveryOnly)
+      throw Error('Candidate chat is discovery-only: message sending is disabled until adapter calibration and approval');
     if (name === 'agent_send') {
       const secret = findSecret(args.text);
       if (secret) throw Error('Refusing to send: text looks like it contains a secret (' + secret + ')');
