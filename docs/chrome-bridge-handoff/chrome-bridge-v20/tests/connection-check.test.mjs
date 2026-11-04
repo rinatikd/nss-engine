@@ -32,7 +32,7 @@ test('HTML has readable labels and the controller verifies before persisting', a
   assert.match(html, /Подключение/);
   assert.match(html, /Удалить сохранённый ключ/);
   assert.doesNotMatch(html, /РџРѕ|РњРѕ|РєР»/);
-  const handler = js.slice(js.indexOf("$('connect').onclick"), js.indexOf("$('forgetKey').onclick"));
+  const handler = js.slice(js.indexOf('async function connectBridge'), js.indexOf("$('forgetKey').onclick"));
   assert.ok(handler.indexOf('verifyBridgeCredential') < handler.indexOf('saveBrowserKey'));
   assert.match(handler, /BROWSER_KEY_REJECTED_401/);
   assert.match(handler, /EXTENSION_ORIGIN_REJECTED_403/);
