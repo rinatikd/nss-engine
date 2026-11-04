@@ -39,7 +39,7 @@ const cmd=(name='browser_click')=>({
     expectedConversationId:'abcdefghi'}
 });
 const execute=(c,f)=>dispatchMutation(c,f.chromeApi,{
-  approvals:f.approvals,controlGrant:f.controlGrant,uuid:()=> 'fixedid'
+  approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'fixedid'
 });
 test('click executes only after fresh site/target revalidation and approval',async()=>{
  const f=fixture();
