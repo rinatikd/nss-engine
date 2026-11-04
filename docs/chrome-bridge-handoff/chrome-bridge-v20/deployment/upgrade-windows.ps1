@@ -11,7 +11,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $files = @(
   'control.html', 'control.js', 'background.js', 'permissions.js',
-  'adapters.js', 'visual-snapshot.js', 'browser-key-store.js'
+  'adapters.js', 'visual-snapshot.js', 'browser-key-store.js',
+  'connection-check.js', 'style.css'
 )
 function Require([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
