@@ -18,7 +18,7 @@ jobs:
           node-version: '22'
       - name: Run visual snapshot and grant tests
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
-        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs tests/manifest-rc.test.mjs tests/browser-key-store.test.mjs
+        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs tests/manifest-rc.test.mjs tests/browser-key-store.test.mjs tests/connection-check.test.mjs
       - name: Syntax check changed extension files
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
@@ -28,6 +28,7 @@ jobs:
           node --check server/tools.mjs
           node --check extension/browser-key-store.js
           node --check extension/background.js
+          node --check extension/connection-check.js
       - name: Read-only Windows preflight with synthetic manifest
         shell: pwsh
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
@@ -69,6 +70,9 @@ jobs:
           if (@($updated.optional_host_permissions) -notcontains 'https://*/*') { throw 'Optional hosts changed' }
           if (@($updated.host_permissions) -contains '<all_urls>') { throw 'Broad host access introduced' }
           if (-not (Test-Path (Join-Path $installed 'browser-key-store.js'))) { throw 'Key-store module missing' }
+          if (-not (Test-Path (Join-Path $installed 'connection-check.js'))) { throw 'Credential check module missing' }
+          if (-not (Test-Path (Join-Path $installed 'style.css'))) { throw 'Stylesheet missing' }
+          if ((Get-Content (Join-Path $installed 'style.css') -Raw) -notmatch 'max-width:940px') { throw 'New styles not deployed' }
           $backups = @(Get-ChildItem (Split-Path $root -Parent) -Directory -Filter 'chrome-bridge-backup-*' | Sort-Object LastWriteTime -Descending)
           if (-not $backups.Count) { throw 'Backup not found' }
           & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName
@@ -114,6 +118,9 @@ jobs:
           if (($bytes.Length -gt 2) -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { throw 'UTF-8 BOM added to Chrome manifest' }
           $updated = Get-Content $manifestPath -Raw | ConvertFrom-Json
           if (@($updated.permissions) -notcontains 'activeTab') { throw 'activeTab missing' }
+          if (-not (Test-Path (Join-Path $installed 'connection-check.js'))) { throw 'Credential check module missing' }
+          if (-not (Test-Path (Join-Path $installed 'style.css'))) { throw 'Stylesheet missing' }
+          if ((Get-Content (Join-Path $installed 'style.css') -Raw) -notmatch 'max-width:940px') { throw 'New styles not deployed' }
           $backups = @(Get-ChildItem (Split-Path $root -Parent) -Directory -Filter 'chrome-bridge-backup-*' | Sort-Object LastWriteTime -Descending)
           if ($backups.Count -ne 1) { throw 'Expected exactly one rollback backup' }
           & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName
