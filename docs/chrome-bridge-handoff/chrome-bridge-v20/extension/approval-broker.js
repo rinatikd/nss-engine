@@ -1,3 +1,4 @@
+import { CONTROL_ORIGINS } from './permissions.js';
 // Pending approvals belong to the coordinator, not to the disposable panel.
 // No execution authority is granted by a panel message alone: the executor
 // must independently re-check origin, epoch, tab identity, and permissions.
@@ -13,7 +14,7 @@ export class ApprovalBroker {
     if (this.pending.has(id)) throw Error('DUPLICATE_APPROVAL');
     if (!Number.isSafeInteger(tabId) || tabId<=0) throw Error('INVALID_TAB_ID');
     if (typeof origin!=='string' || !origin.startsWith('https://') ||
-        new URL(origin).origin!==origin) throw Error('INVALID_ORIGIN');
+        new URL(origin).origin!==origin || !Object.hasOwn(CONTROL_ORIGINS,origin)) throw Error('INVALID_ORIGIN');
     if (!Number.isFinite(expires) || expires<=this.now() ||
         expires>this.now()+120000) throw Error('INVALID_APPROVAL_EXPIRY');
     if (!['browser_open','browser_click','browser_fill','agent_send','agent_new_chat'].includes(command))
