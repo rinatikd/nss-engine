@@ -3,6 +3,15 @@ export const CONTROL_ORIGINS = Object.freeze({
   'https://gemini.google.com': 'gemini',
   'https://chat.deepseek.com': 'deepseek',
 });
+// Candidate sites may be listed and calibrated, but are NOT allowed to send,
+// navigate or modify a page until separately reviewed and explicitly enabled.
+export const DISCOVERY_ONLY_ORIGINS = Object.freeze({
+  'https://grok.com': 'grok',
+  'https://chat.qwen.ai': 'qwen',
+  'https://cursor.com': 'cursor',
+});
+export const providerForOrigin = (origin) =>
+  CONTROL_ORIGINS[origin] || DISCOVERY_ONLY_ORIGINS[origin] || null;
 export const CONTROL_ACTIONS = new Set(['browser_open', 'browser_click', 'browser_fill', 'agent_send', 'agent_new_chat']);
 export const CONTROL_DURATION_MS = Object.freeze({ 60: 60 * 60 * 1000, 180: 180 * 60 * 1000, 240: 240 * 60 * 1000 });
 export class ControlGrants {
