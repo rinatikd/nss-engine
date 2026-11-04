@@ -92,10 +92,15 @@ try {
   }
   # Existing action, host permissions, extension ID/key and service worker
   # must remain exactly as installed; only the permissions array changes.
-  $m | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+  # Windows PowerShell 5.1 writes a UTF-8 BOM with Set-Content -Encoding UTF8.
+  # Chrome JSON manifests must not acquire an unexpected BOM during upgrades.
+  $json = $m | ConvertTo-Json -Depth 50
+  [IO.File]::WriteAllText($manifestPath, $json + [Environment]::NewLine,
+    (New-Object System.Text.UTF8Encoding($false)))
   ValidateStaging $stage
   Write-Output ('[READY] Candidate validated: ' + $files.Count + ' source files and activeTab in staged manifest')
   Write-Output ('[INFO] Existing manifest version: ' + $existingManifest.version)
+  Write-Output '[INFO] No changes to Codex CLI hooks or backend configuration.'
   Write-Output '[INFO] Existing server, credentials, and tunnel are untouched.'
   if (-not $Apply) {
     Write-Output '[DRY-RUN] No installed files were changed. Use -Apply after closing the Chrome Bridge control window.'
