@@ -509,7 +509,13 @@ async function showBackgroundApprovals() {
       row.className='approval';
       const description=document.createElement('p');
       description.textContent=pending.command+' · '+pending.origin+
-        ' · вкладка '+pending.tabId+' · до '+new Date(pending.expires).toLocaleTimeString();
+        ' · вкладка '+pending.tabId+' · до '+new Date(pending.expires).toLocaleTimeString()+
+        ' · символов '+(pending.contentLength || 0);
+      if (pending.preview) {
+        const preview=document.createElement('pre');
+        preview.textContent=pending.preview;
+        row.append(preview);
+      }
       row.append(description);
       for (const [title,approved] of [['Разрешить',true],['Отклонить',false]]) {
         const b=document.createElement('button');
