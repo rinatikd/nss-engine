@@ -41,10 +41,21 @@ test('HTML has readable labels and the controller verifies before persisting', a
 test('persistent key automatically reconnects without granting control', async () => {
   const { readFileSync } = await import('node:fs');
   const js = readFileSync(new URL('../extension/control.js', import.meta.url), 'utf8');
-  assert.match(js, /if \(savedKey\.persistent && savedKey\.value\) void connectBridge\(\{ automatic: true \}\)/);
+  assert.match(js, /bridgeConnectionDesired === true && savedKey.value/);
   assert.match(js, /automatic && reconnectAllowed/);
   assert.match(js, /BRIDGE_NETWORK_UNREACHABLE', 'BRIDGE_TIMEOUT/);
   assert.match(js, /reconnectAllowed = false/);
   const handler = js.slice(js.indexOf('async function connectBridge'), js.indexOf("$('forgetKey').onclick"));
   assert.doesNotMatch(handler, /grants\.approve\(/);
+});
+
+test('window close does not change desired connection; disconnect is explicit', async () => {
+  const { readFileSync } = await import('node:fs');
+  const js = readFileSync(new URL('../extension/control.js', import.meta.url), 'utf8');
+  const unload = js.slice(js.indexOf("window.addEventListener('beforeunload'"), js.indexOf('// ---------- локальная визуальная'));
+  assert.doesNotMatch(unload, /storage\.local\.set/);
+  const stopHandler = js.slice(js.indexOf("$('stop').onclick"), js.indexOf('async function connectBridge'));
+  assert.match(stopHandler, /bridgeConnectionDesired: false/);
+  const revoke = js.slice(js.indexOf("$('revoke').onclick"), js.indexOf("$('saveAdapters').onclick"));
+  assert.doesNotMatch(revoke, /stop\(\)/);
 });
