@@ -9,7 +9,7 @@ Source-only GitHub staging changes: PR #65 (two explicit per-site connect/discon
 
 ## Release blockers — do not publish as installed FINAL while any remain
 - [ ] Diff installed C:/Engineering/chrome-bridge/extension/{manifest.json,control.html,control.js,permissions.js,background.js} against archived v20 staging; keep backup and preserve secrets.
-- [ ] Confirm installed manifest has the minimum `activeTab` permission (see `MANIFEST_CAPTURE_REVIEW.md`); `manifest.rc.example.json` is *only an example*, not the installed manifest. Do not add permanent `<all_urls>`.
+- [ ] Confirm installed manifest has the minimum `activeTab` permission (see `MANIFEST_CAPTURE_REVIEW.md`); No example manifest is committed: `repo_guard` prohibits local manifest-like JSON; only the documented minimal delta is retained. Do not add permanent `<all_urls>`.
 - [ ] Real Chrome UI test: choose tab ID, local consent, capture, preview, clear, wrong tab, tab-switch race, sensitive pixels, permission denial.
 - [ ] Control test: global OFF denies, per-site grant separate, approval window receives user action, revocation/TTL/reconnect clear state.
 - [ ] Test `control_status` as actually discovered MCP tool, then E2E locally approved `agent_send` followed by `agent_wait` ACK. Confirm approval appears in UI, and neither timeout nor UNKNOWN send automatically retries.
