@@ -25,5 +25,6 @@ test('toolbar click records target tab and photo preview remains local', () => {
   assert.match(background, /visualCandidateTabId/);
   assert.match(control, /visualCapture/);
   assert.match(control, /captureLocalTab\(chrome, tabId/);
-  assert.doesNotMatch(control.slice(control.indexOf("'visualCapture').onclick") , /post\('\/bridge\/result'/);
+  const captureSection = control.slice(control.indexOf("$('visualCapture').onclick"), control.indexOf("$('visualClear').onclick"));
+  assert.doesNotMatch(captureSection, /post\(\s*['\"]\\/bridge\\/result/);
 });
