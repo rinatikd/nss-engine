@@ -8,7 +8,14 @@ let creating = null;
 let status = {state:'disconnected',connected:false,error:null,updatedAt:0};
 let starting = null;
 const approvals = new ApprovalSession();
-const trusted = (sender, chromeApi) => sender?.id === chromeApi.runtime.id && !sender.tab;
+// Extension control.html opened via chrome.windows.create is still a tab.
+// Reject web content scripts by requiring the exact extension page URL, not
+// by treating sender.tab presence as proof of an untrusted sender.
+export const trustedCoordinatorSender = (sender, chromeApi) =>
+  sender?.id === chromeApi.runtime.id && (
+    sender.url === chromeApi.runtime.getURL('control.html') ||
+    (sender.url === chromeApi.runtime.getURL(PATH) && !sender.tab)
+  );
 const updateStatus = (next) => {
   status = {state:next.state || 'unknown',connected:next.connected === true,
     error:next.error || null,updatedAt:Date.now()};
@@ -67,7 +74,7 @@ export async function stopBackgroundTransport(chromeApi) {
 }
 export function installBackgroundCoordinator(chromeApi) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
-    if (!msg || msg.target !== 'bridge-coordinator' || !trusted(sender,chromeApi))
+    if (!msg || msg.target !== 'bridge-coordinator' || !trustedCoordinatorSender(sender,chromeApi))
       return false;
     if (msg.type === 'transport-status') {
       // Only the offscreen document can publish connection state.
