@@ -1,5 +1,7 @@
 import { dispatchReadOnly } from './read-only-dispatch.js';
 import { ApprovalSession } from './approval-session.js';
+import { dispatchMutation } from './mutation-dispatch.js';
+import { BackgroundControlGrants } from './background-control-grants.js';
 
 const PATH = 'transport-host.html';
 let creating = null;
@@ -56,7 +58,10 @@ async function startBackgroundTransportOnce(chromeApi) {
 }
 export async function stopBackgroundTransport(chromeApi) {
   approvals.stop();
-  await chromeApi.storage.local.set({bridgeConnectionDesired:false});
+  await new BackgroundControlGrants(chromeApi).clear();
+  await chromeApi.storage.local.set({
+    bridgeConnectionDesired:false,bridgeMutationLabMode:false
+  });
   try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
   updateStatus({state:'disconnected',connected:false});
 }
@@ -76,9 +81,56 @@ export function installBackgroundCoordinator(chromeApi) {
       return false;
     }
     if (msg.type === 'dispatch') {
-      if (sender.url !== chromeApi.runtime.getURL(PATH)) { respond({error:'OFFSCREEN_CONTEXT_REQUIRED'}); return false; }
-      Promise.resolve().then(() => dispatchReadOnly(msg.command,chromeApi))
-        .then(result=>respond({result}),e=>respond({error:e.message}));
+      if (sender.url !== chromeApi.runtime.getURL(PATH)) {
+        respond({error:'OFFSCREEN_CONTEXT_REQUIRED'}); return false;
+      }
+      const run = async () => {
+        const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired} =
+          await chromeApi.storage.local.get([
+            'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
+          ]);
+        if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
+          throw Error('BACKGROUND_TRANSPORT_DISABLED');
+        const name=msg.command?.name;
+        if (['browser_click','browser_fill','agent_send'].includes(name)) {
+          if (bridgeMutationLabMode!==true) throw Error('BACKGROUND_MUTATIONS_DISABLED');
+          const grants=new BackgroundControlGrants(chromeApi);
+          return dispatchMutation(msg.command,chromeApi,{
+            approvals,
+            controlGrant:(origin,tabId)=>grants.require(origin,tabId)
+          });
+        }
+        return dispatchReadOnly(msg.command,chromeApi);
+      };
+      void run().then(result=>respond({result}),e=>respond({error:e.message}));
+      return true;
+    }
+    if (msg.type === 'clear-background-controls') {
+      if (sender.url !== chromeApi.runtime.getURL('control.html')) {
+        respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
+      }
+      void new BackgroundControlGrants(chromeApi).clear()
+        .then(()=>respond({ok:true}),e=>respond({error:e.message}));
+      return true;
+    }
+    if (msg.type === 'grant-background-control' || msg.type === 'revoke-background-control') {
+      if (sender.url !== chromeApi.runtime.getURL('control.html')) {
+        respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
+      }
+      const run=async()=>{
+        const grants=new BackgroundControlGrants(chromeApi);
+        if (msg.type==='revoke-background-control') {
+          await grants.revoke(msg.tabId);return {ok:true};
+        }
+        const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
+          ['bridgeMutationLabMode','bridgeConnectionDesired']);
+        if(bridgeMutationLabMode!==true || bridgeConnectionDesired!==true)
+          throw Error('BACKGROUND_CONTROL_DISABLED');
+        return grants.grant({
+          tabId:msg.tabId,durationMinutes:msg.durationMinutes,localGesture:msg.localGesture===true
+        });
+      };
+      void run().then(respond,e=>respond({error:e.message}));
       return true;
     }
     if (msg.type === 'approval-list') {

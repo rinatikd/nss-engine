@@ -8,7 +8,7 @@ export class ApprovalBroker {
     this.onChange=onChange;
     this.pending=new Map();
   }
-  request({id,command,origin,tabId,expires}) {
+  request({id,command,origin,tabId,expires,preview='',contentLength=0}) {
     if (typeof id!=='string' || !/^[a-zA-Z0-9_-]{1,96}$/.test(id))
       throw Error('INVALID_APPROVAL_ID');
     if (this.pending.has(id)) throw Error('DUPLICATE_APPROVAL');
@@ -19,7 +19,10 @@ export class ApprovalBroker {
         expires>this.now()+120000) throw Error('INVALID_APPROVAL_EXPIRY');
     if (!['browser_open','browser_click','browser_fill','agent_send','agent_new_chat'].includes(command))
       throw Error('COMMAND_NOT_APPROVABLE');
-    const item={id,command,origin,tabId,expires,status:'pending'};
+    if (typeof preview!=='string' || preview.length>240 ||
+        !Number.isSafeInteger(contentLength) || contentLength<0 || contentLength>12000)
+      throw Error('INVALID_APPROVAL_PREVIEW');
+    const item={id,command,origin,tabId,expires,status:'pending',preview,contentLength};
     this.pending.set(id,item);
     this.onChange(this.list());
     return {...item};

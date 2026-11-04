@@ -8,17 +8,17 @@ let transport = null;
 const dangerous = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
 const send = (data) => self.postMessage(data);
 function delegate(command) {
-  if (dangerous.has(command.name)) {
-    // Mutating actions are never executed by this prototype; approvals
-    // must be migrated to the independent runtime first.
-    throw Error('CONTROL_REQUIRES_APPROVAL_UI');
-  }
+  // Unsupported mutating commands always fail closed; click/fill/send are
+  // delegated to the coordinator, which checks lab opt-in and human approval.
+  if (unsupported.has(command.name)) throw Error('COMMAND_NOT_MIGRATED');
   const id = ++seq;
   return new Promise((resolve,reject) => {
+    const expires=Number.isFinite(command.expires)?command.expires:Date.now()+12000;
+    const remaining=Math.max(1,Math.min(120000,expires-Date.now()+1000));
     const timer = setTimeout(() => {
       pending.delete(id);
       reject(Error('DISPATCH_TIMEOUT'));
-    }, 12000);
+    }, remaining);
     pending.set(id,{resolve,reject,timer});
     send({type:'dispatch',id,command});
   });
