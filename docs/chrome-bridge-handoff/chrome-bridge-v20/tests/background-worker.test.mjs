@@ -20,14 +20,24 @@ test('only transport inspection is permitted as baseline',()=>{
  assert.equal(r.approvalPending,0);
  assert.deepEqual(r.origins,[]);
 });
-test('no duplicate poller is enabled before a guarded migration',()=>{
- const sw=source('background.js');
- assert.doesNotMatch(sw,/installBackgroundCoordinator|startBackgroundTransport|transport-host/);
- const host=source('transport-host.js');
- assert.match(host,/new Worker\('\.\/transport-worker.js'/);
- const coordinator=source('background-coordinator.js');
- assert.match(coordinator,/reasons:\['WORKERS'\]/);
- assert.match(coordinator,/TRUSTED_CONTEXTS/);
+test('new background owner is feature gated and mutually exclusive with UI polling',()=>{
+  const sw=source('background.js');
+  const panel=source('control.js');
+  const coordinator=source('background-coordinator.js');
+  assert.match(sw,/installBackgroundCoordinator\(chrome\)/);
+  assert.match(sw,/bridgeBackgroundMode === true && bridgeConnectionDesired === true/);
+  assert.match(coordinator,/bridgeBackgroundMode !== true/);
+  assert.match(panel,/if \(backgroundMode\)/);
+  assert.match(panel,/if \(!backgroundMode\) stop\(\)/);
+  assert.match(panel,/if \(running && pollAbort\) stop\(\)/);
+  assert.match(source('transport-host.js'),/new Worker\('\.\/transport-worker.js'/);
+  assert.match(coordinator,/reasons:\['WORKERS'\]/);
+  assert.match(coordinator,/TRUSTED_CONTEXTS/);
+});
+test('coordinator rejects content scripts and offscreen spoofing',()=>{
+  const coordinator=source('background-coordinator.js');
+  assert.match(coordinator,/!sender\.tab/);
+  assert.match(coordinator,/sender\.url !== chromeApi\.runtime\.getURL\(PATH\)/);
 });
 test('offscreen host never reads browserToken from storage',()=>{
  const host=source('transport-host.js');
