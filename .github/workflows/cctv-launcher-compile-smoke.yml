@@ -1,0 +1,21 @@
+name: CCTV launcher compile smoke
+on:
+  push:
+    branches: [agent/chatgpt/cctv-m3-diagnostics]
+  pull_request:
+    paths:
+      - 'work/NSS_TKK_Editor_v0.2/source/CctvCommands.cs'
+      - 'work/NSS_TKK_Editor_v0.2/tests/CctvLauncherCompileSmoke/**'
+      - '.github/workflows/cctv-launcher-compile-smoke.yml'
+permissions:
+  contents: read
+jobs:
+  compile-with-fake-autocad-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Compile CCTV launcher against mock API
+        run: dotnet build work/NSS_TKK_Editor_v0.2/tests/CctvLauncherCompileSmoke/CctvLauncherCompileSmoke.csproj -c Release
