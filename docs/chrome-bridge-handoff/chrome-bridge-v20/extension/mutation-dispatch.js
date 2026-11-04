@@ -81,8 +81,14 @@ export async function dispatchMutation(cmd, chromeApi, {
 
   // Only metadata is surfaced in the queue. Do not persist prompt contents.
   const approvalId='m-'+uuid();
+  const preview = cmd.name === 'agent_send'
+    ? redact(cmd.args.text.slice(0,180))
+    : cmd.name === 'browser_fill'
+      ? 'Поле: ' + cmd.args.selector + ' · текст: ' + redact(cmd.args.text.slice(0,80))
+      : 'Элемент: ' + String(preflight.text || cmd.args.selector).slice(0,160);
   await approvals.request({
-    id:approvalId,command:cmd.name,origin,tabId:tab.id,expires
+    id:approvalId,command:cmd.name,origin,tabId:tab.id,expires,
+    preview:preview.slice(0,240),contentLength:cmd.args.text?.length || 0
   });
 
   // Revalidate EVERYTHING after human approval and immediately before DOM
