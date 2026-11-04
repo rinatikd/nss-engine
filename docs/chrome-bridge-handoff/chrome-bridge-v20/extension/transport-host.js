@@ -18,7 +18,10 @@ worker.onmessage = async ({data}) => {
 };
 chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
   if (message?.target !== 'bridge-offscreen') return false;
-  if (sender.id !== chrome.runtime.id) { sendResponse({ok:false}); return false; }
+  // Content scripts carry the same extension ID: reject any sender from a tab.
+  if (sender.id !== chrome.runtime.id || sender.tab) {
+    sendResponse({ok:false}); return false;
+  }
   if (message.type === 'start' && typeof message.token === 'string') {
     worker.postMessage({type:'start',token:message.token});
     sendResponse({ok:true});
