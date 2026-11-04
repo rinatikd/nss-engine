@@ -103,5 +103,32 @@ class RepoGuardTests(unittest.TestCase):
                 self.git('rm', '--cached', '--', path)
 
 
+    def check(self, path, data, expected, marker=False):
+        if marker:
+            self.stage(b'', 'data/drawings/.PRIVATE_REPO_CONFIRMED')
+        self.stage(data, path)
+        self.assertEqual(self.guard('--staged').returncode, expected, path)
+        self.git('rm', '-r', '--cached', '--quiet', '--', 'data')
+
+    def test_drawings_need_private_marker(self):
+        self.check('data/drawings/plan.dwg', bytes([65, 0, 66]), 1)
+        self.check('data/drawings/plan.dwg', bytes([65, 0, 66]), 0, marker=True)
+        self.check('data/drawings/plan.dxf', b'0\nSECTION\n', 0, marker=True)
+
+    def test_drawings_only_in_drawings_folder(self):
+        self.check('data/other/plan.dwg', b'x', 1, marker=True)
+        self.check('data/plan.dxf', b'x', 1, marker=True)
+
+    def test_drawings_folder_keeps_other_bans(self):
+        self.check('data/drawings/model.rvt', b'x', 1, marker=True)
+        self.check('data/drawings/pack.zip', b'x', 1, marker=True)
+        self.check('data/drawings/bin.dxf', bytes([65, 0, 66]), 1, marker=True)
+        self.check('data/drawings/leak.dxf', (b'-----BEGIN RSA PRIV' + b'ATE KEY-----\n'), 1, marker=True)
+
+    def test_drawing_size_cap(self):
+        self.check('data/drawings/big.dwg', b'\0' * (90 * 1024 * 1024 + 1), 1, marker=True)
+        self.check('data/drawings/ok.dwg', b'\0' * (5 * 1024 * 1024), 0, marker=True)
+
+
 if __name__ == '__main__':
     unittest.main()
