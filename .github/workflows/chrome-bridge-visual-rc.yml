@@ -18,7 +18,7 @@ jobs:
           node-version: '22'
       - name: Run visual snapshot and grant tests
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
-        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs tests/manifest-rc.test.mjs tests/browser-key-store.test.mjs tests/connection-check.test.mjs
+        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs tests/manifest-rc.test.mjs tests/browser-key-store.test.mjs tests/connection-check.test.mjs tests/transport-engine.test.mjs
       - name: Syntax check changed extension files
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
@@ -29,6 +29,7 @@ jobs:
           node --check extension/browser-key-store.js
           node --check extension/background.js
           node --check extension/connection-check.js
+          node --check extension/transport-engine.js
       - name: Read-only Windows preflight with synthetic manifest
         shell: pwsh
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
