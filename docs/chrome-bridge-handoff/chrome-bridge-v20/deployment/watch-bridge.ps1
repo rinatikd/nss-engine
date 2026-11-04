@@ -63,9 +63,14 @@ try {
         Write-Output ('[WARNING] Server not ready; retry in ' + $delay + ' seconds')
         # If the child keeps running without opening the expected port,
         # do not create duplicates. Wait for its exit instead.
-        while (-not $proc.HasExited -and -not (IsListening)) {
+        $deadline = (Get-Date).AddSeconds(90)
+        while (-not $proc.HasExited -and -not (IsListening) -and (Get-Date) -lt $deadline) {
           Start-Sleep -Seconds $CheckSeconds
           $proc.Refresh()
+        }
+        if (-not $proc.HasExited -and -not (IsListening)) {
+          # The watcher owns this launcher process; prevent unbounded hangs.
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
         }
       }
     } catch {
