@@ -1,5 +1,6 @@
 import { CONTROL_ORIGINS, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
 import { captureLocalTab } from './visual-snapshot.js';
+import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
@@ -427,7 +428,13 @@ $('actions').addEventListener('change', (event) => {
 $('stop').onclick = stop;
 $('connect').onclick = async () => {
   if (running) return;
-  await chrome.storage.session.set({ browserToken: $('token').value });
+  try {
+    await saveBrowserKey(chrome, $('token').value);
+    $('keyStorageStatus').textContent = 'Ключ сохранён в локальном хранилище расширения (только доверенные контексты).';
+  } catch (error) {
+    setStatus('Ключ не сохранён: ' + error.message);
+    return; // Do not connect without secure credential storage.
+  }
   try { audio = new AudioContext(); } catch { audio = null; }
   // РЈРґРµСЂР¶Р°РЅРёРµ Web Lock РїРѕРјРѕРіР°РµС‚ Chrome РЅРµ В«Р·Р°РјРѕСЂР°Р¶РёРІР°С‚СЊВ» РІРєР»Р°РґРєСѓ РІ С„РѕРЅРµ.
   navigator.locks.request('chrome-bridge-control', () => new Promise((r) => { releaseLock = r; }));
@@ -435,6 +442,18 @@ $('connect').onclick = async () => {
   refreshGrantLabels();
   pollAbort = new AbortController();
   loop(generation);
+};
+$('forgetKey').onclick = async (event) => {
+  if (!event.isTrusted) return;
+  if (!window.confirm('Удалить сохранённый ключ браузера из Chrome Bridge и отключить мост?')) return;
+  try {
+    stop();
+    await forgetBrowserKey(chrome);
+    $('token').value = '';
+    $('keyStorageStatus').textContent = 'Сохранённый ключ удалён. Для подключения потребуется ввести его заново.';
+  } catch (error) {
+    setStatus('Не удалось удалить ключ: ' + error.message);
+  }
 };
 window.addEventListener('beforeunload', stop);
 
@@ -471,7 +490,17 @@ $('visualClear').onclick = () => {
 
 // ---------- СЃС‚Р°СЂС‚ ----------
 fillAdapterSelect();
-$('token').value = (await chrome.storage.session.get('browserToken')).browserToken || '';
+try {
+  const savedKey = await loadBrowserKey(chrome);
+  $('token').value = savedKey.value;
+  $('keyStorageStatus').textContent = savedKey.persistent
+    ? 'Ключ загружен из постоянного хранилища расширения.'
+    : savedKey.value ? 'Найден временный ключ. Нажмите «Подключить», чтобы сохранить его постоянно.'
+    : 'Введите ключ один раз — он сохранится при подключении.';
+} catch (error) {
+  $('keyStorageStatus').textContent = 'Безопасное хранилище недоступно: ' + error.message;
+  $('token').value = '';
+}
 $('adapterJson').value = (await chrome.storage.local.get('adapters')).adapters || '{}';
 await renderSites();
 const visualCandidate = (await chrome.storage.session.get('visualCandidateTabId')).visualCandidateTabId;
