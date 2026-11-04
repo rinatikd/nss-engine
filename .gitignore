@@ -10,6 +10,9 @@
 !/requirements-test.txt
 !/docs/
 !/tools/
+!/data/
+/data/*
+!/data/drawings/
 !/.githooks/
 !/.github/
 !/.agents/
@@ -146,3 +149,13 @@ secrets.json
 
 # Legacy v06 authoring script has a corrupt first byte; preserve locally, use v09 source.
 /work/build_cctv_package_v06.py
+
+# Working copies of drawings live ONLY in data/drawings/ (see data/drawings/README.md).
+# Originals stay on the owner's computer. tools/repo_guard.py enforces the private-repo marker and size caps.
+!/data/drawings/
+!/data/drawings/**/
+!/data/drawings/**/*.dwg
+!/data/drawings/**/*.dxf
+!/data/drawings/**/*.csv
+!/data/drawings/**/*.json
+!/data/drawings/.PRIVATE_REPO_CONFIRMED

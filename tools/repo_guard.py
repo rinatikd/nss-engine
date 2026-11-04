@@ -6,6 +6,14 @@ from pathlib import Path, PurePosixPath
 ROOT=Path(__file__).resolve().parents[1]
 GIT=['git','-c','safe.directory='+ROOT.as_posix()]
 BANNED_SUFFIX={'.dwg','.dxf','.dwt','.dws','.rvt','.rfa','.rte','.rft','.ifc','.nwc','.nwd','.zip','.7z','.rar','.tar','.gz','.bz2','.xz','.whl','.nupkg','.dll','.exe','.pdb','.so','.dylib','.lib','.a','.pyc','.pyo','.db','.sqlite','.sqlite3','.dmp','.dump','.bak','.tmp','.log','.err','.jsonl','.ndjson','.pem','.key','.pfx','.p12'}
+# Working COPIES of customer drawings: allowed only here, and only after the owner confirmed a private repository
+# (marker file). Originals stay on the owner's computer. These files have their own size policy, separate from the
+# 2 MiB-per-blob / 30 MiB-snapshot limits that protect the source tree.
+DRAWINGS=('data','drawings')
+DRAWINGS_MARKER='data/drawings/.PRIVATE_REPO_CONFIRMED'
+DRAWING_SUFFIX={'.dwg','.dxf','.csv','.json'}
+DRAWING_MAX_BLOB=90*1024*1024
+DRAWING_MAX_TOTAL=500*1024*1024
 BANNED_DIR={'.git','.venv','venv','env','runtime','node_modules','__pycache__','bin','obj','runs','evidence','history','graphify-out','dumps','dump','secrets','local-backups','.aws','.ssh','.codex','.claude','.cursor','.gemini'}
 PATTERNS={
  'private-key':re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'),
@@ -38,13 +46,38 @@ def entries(tree):
     result.append((mode.decode(),oid.decode(),path.decode('utf-8')))
  return result
 
+def scan(path,data):
+ found=[]
+ for label,pattern in PATTERNS.items():
+  for match in pattern.finditer(data):
+   line=data.count(b'\n',0,match.start())+1;found.append((path,f'{label}:line-{line}'))
+ for match in ASSIGN.finditer(data):
+  value=match.group(1).lower()
+  if not any(t in value for t in PLACEHOLDERS):
+   # Expressions and format strings are not literal credentials.
+   # Whitespace inside a quoted literal does not make it an expression.
+   if any(t in value for t in (b'(',b')',b'{',b'}',b'\\',b'$')):continue
+   line=data.count(b'\n',0,match.start())+1;found.append((path,f'credential-literal-review:line-{line}'))
+ return found
+
 def main():
  p=argparse.ArgumentParser();p.add_argument('--staged',action='store_true');p.add_argument('--tree');args=p.parse_args()
- problems=[];items=entries(args.tree);total=0
+ problems=[];items=entries(args.tree);total=0;drawing_total=0;drawing_count=0;paths={x[2] for x in items}
  if not items:problems.append(('(index)','empty-snapshot'))
  for mode,oid,path in items:
   pp=PurePosixPath(path);lower=[x.lower() for x in pp.parts];name=pp.name.lower()
   if mode not in ('100644','100755'):problems.append((path,'nonportable-link-or-submodule'));continue
+  if len(pp.parts)>2 and tuple(lower[:2])==DRAWINGS and pp.suffix.lower() in DRAWING_SUFFIX:
+   drawing_count+=1
+   if DRAWINGS_MARKER not in paths:problems.append((path,'drawing-without-private-repo-marker'))
+   if any(x in BANNED_DIR for x in lower[:-1]):problems.append((path,'excluded-artifact'))
+   size=int(git('cat-file','-s',oid));drawing_total+=size
+   if size>DRAWING_MAX_BLOB:problems.append((path,'drawing-over-90MiB'));continue
+   if pp.suffix.lower()!='.dwg':
+    data=git('cat-file','blob',oid)
+    if b'\0' in data:problems.append((path,'binary-content'));continue
+    problems.extend(scan(path,data))
+   continue
   if pp.suffix.lower() in BANNED_SUFFIX or any(x in BANNED_DIR for x in lower[:-1]):problems.append((path,'excluded-artifact'))
   if name=='.env' or name.startswith('.env.') or name in ('auth.json','credentials.json','secrets.json','.git-credentials','.netrc'):problems.append((path,'credential-file'))
   if pp.suffix.lower()=='.json' and path!='skills-lock.json' and not path.startswith('.agents/skills/'):problems.append((path,'local-json-or-dump'))
@@ -52,21 +85,14 @@ def main():
   data=git('cat-file','blob',oid);total+=len(data)
   if len(data)>2*1024*1024:problems.append((path,'blob-over-2MiB'))
   if b'\0' in data:problems.append((path,'binary-content'));continue
-  for label,pattern in PATTERNS.items():
-   for match in pattern.finditer(data):
-    line=data.count(b'\n',0,match.start())+1;problems.append((path,f'{label}:line-{line}'))
-  for match in ASSIGN.finditer(data):
-   value=match.group(1).lower()
-   if not any(t in value for t in PLACEHOLDERS):
-    # Expressions and format strings are not literal credentials.
-    # Whitespace inside a quoted literal does not make it an expression.
-    if any(t in value for t in (b'(',b')',b'{',b'}',b'\\',b'$')):continue
-    line=data.count(b'\n',0,match.start())+1;problems.append((path,f'credential-literal-review:line-{line}'))
+  problems.extend(scan(path,data))
  if total>30*1024*1024:problems.append(('(snapshot)','source-snapshot-over-30MiB'))
+ if drawing_total>DRAWING_MAX_TOTAL:problems.append(('(drawings)','drawings-over-500MiB'))
  if problems:
   for path,reason in sorted(set(problems)):print(f'BLOCK {path}: {reason}')
   print(f'FAILED: {len(set(problems))} finding(s); values are redacted.');return 1
- print(f'PASS: {len(items)} text files, {total:,} bytes; no prohibited artifacts or detected secret patterns.');return 0
+ extra=f' plus {drawing_count} drawing working cop{"y" if drawing_count==1 else "ies"} ({drawing_total:,} bytes)' if drawing_count else ''
+ print(f'PASS: {len(items)-drawing_count} text files, {total:,} bytes{extra}; no prohibited artifacts or detected secret patterns.');return 0
 if __name__=='__main__':
  try:sys.exit(main())
  except Exception as e:print(f'ERROR: {e}',file=sys.stderr);sys.exit(2)
