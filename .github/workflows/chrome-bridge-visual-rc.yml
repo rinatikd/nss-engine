@@ -151,6 +151,34 @@ jobs:
           $rm = & ./deployment/register-watchdog.ps1 -BridgeRoot $root -Remove
           if ((($rm -join ' ') -notmatch '\[DRY-RUN\]')) { throw 'Removal dry-run failed' }
           Write-Output '[PASS] No startup settings changed during watchdog preflight'
+      - name: Stage separate MV3 background lab manifest safely
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-background-installed'
+          $out = Join-Path $env:RUNNER_TEMP 'chrome-bridge-background-lab'
+          New-Item -Path (Join-Path $root 'extension') -ItemType Directory -Force | Out-Null
+          $installed = Join-Path $root 'extension'
+          Copy-Item extension/background.js -Destination $installed
+          $m = @{
+            manifest_version = 3
+            version = '0.2.1'
+            permissions = @('storage','scripting')
+            host_permissions = @('http://127.0.0.1/*')
+            background = @{service_worker='background.js'}
+          }
+          [IO.File]::WriteAllText((Join-Path $installed 'manifest.json'),($m | ConvertTo-Json -Depth 10),(New-Object System.Text.UTF8Encoding($false)))
+          $dry = & ./deployment/stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out
+          if ((($dry -join ' ') -notmatch '\[DRY-RUN\]') -or (Test-Path $out)) { throw 'Lab dry run changed files' }
+          & ./deployment/stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out -Apply
+          if ($LASTEXITCODE -ne 0) { throw 'Lab stage failed' }
+          $labManifest = Get-Content (Join-Path $out 'manifest.json') -Raw | ConvertFrom-Json
+          if ($labManifest.background.type -ne 'module') { throw 'Module worker not enabled' }
+          if (@($labManifest.permissions) -notcontains 'offscreen') { throw 'Offscreen permission missing' }
+          if (@($labManifest.permissions) -notcontains 'alarms') { throw 'Alarms permission missing' }
+          if ((Get-Content (Join-Path $installed 'manifest.json') -Raw | ConvertFrom-Json).background.type) { throw 'Installed manifest modified' }
+          if (-not (Test-Path (Join-Path $out 'transport-worker.js'))) { throw 'Worker missing' }
+          Write-Output '[PASS] MV3 background lab prepared without modifying the installed extension'
       - name: Package source-only Windows upgrade candidate
         if: success()
         uses: actions/upload-artifact@v4
