@@ -212,7 +212,7 @@ def artifacts(run):
         report+='</table>'
     if state.get('host_diagnosis'):
         report+='<h2>Host startup diagnosis</h2><pre>'+html.escape(json.dumps(state['host_diagnosis'],ensure_ascii=False,indent=2))+'</pre>'
-    report+='<p><a href="reports/native_results.json">Native JSON</a> | <a href="host.log">Host log</a> | <a href="python-tests.log">Offline test log</a> | <a href="RUN_IN_AUTOCAD.lsp">In-host fallback loader</a></p>'
+    report+='<p><a href="reports/bootstrap_trace.log">LISP bootstrap trace</a> | <a href="reports/bootstrap_error.txt">LISP bootstrap error</a> | <a href="reports/native_results.json">Native JSON</a> | <a href="host.log">Host log</a> | <a href="python-tests.log">Offline test log</a> | <a href="RUN_IN_AUTOCAD.lsp">In-host fallback loader</a></p>'
     (run/'RESULT.html').write_text(report,encoding='utf8')
     zip_path=run.parent/(run.name+'_diagnostics.zip')
     with zipfile.ZipFile(zip_path,'w',zipfile.ZIP_DEFLATED) as z:
