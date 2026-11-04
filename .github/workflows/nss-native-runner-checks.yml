@@ -35,6 +35,12 @@ jobs:
       - name: DesktopHost must refuse absent explicit opt-in
         shell: pwsh
         run: |
-          & ./work/NSS_AutoDebug_v0423/scripts/run_native.ps1 -Mode DesktopHost
-          if ($LASTEXITCODE -ne 2) { throw "Expected refusal with exit 2, got $LASTEXITCODE" }
-          Write-Host 'DesktopHost gate: PASS'
+          # Use a child PowerShell process: the expected error must not fail the CI shell.
+          $scriptPath = (Resolve-Path 'work/NSS_AutoDebug_v0423/scripts/run_native.ps1').Path
+          $stdout = Join-Path $env:RUNNER_TEMP 'native-gate-stdout.txt'
+          $stderr = Join-Path $env:RUNNER_TEMP 'native-gate-stderr.txt'
+          $child = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',('"' + $scriptPath + '"'),'-Mode','DesktopHost') -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if ($child.ExitCode -ne 2) { throw "Expected refusal with exit 2, got $($child.ExitCode)" }
+          $details = Get-Content -LiteralPath $stderr -Raw
+          if ($details -notmatch 'AllowAutoCADLaunch') { throw 'Refusal reason not present' }
+          Write-Host 'DesktopHost gate: PASS (expected rejection, no acad.exe started)'
