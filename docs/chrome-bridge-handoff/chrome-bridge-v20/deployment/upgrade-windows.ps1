@@ -12,7 +12,9 @@ $ErrorActionPreference = 'Stop'
 $files = @(
   'control.html', 'control.js', 'background.js', 'permissions.js',
   'adapters.js', 'visual-snapshot.js', 'browser-key-store.js',
-  'connection-check.js', 'style.css'
+  'connection-check.js', 'style.css',
+  'background-coordinator.js', 'read-only-dispatch.js', 'transport-engine.js',
+  'transport-worker.js', 'transport-host.js', 'transport-host.html'
 )
 function Require([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
@@ -31,6 +33,8 @@ function ValidateStaging([string]$Stage) {
   $manifest = ConfirmManifest (Join-Path $Stage 'manifest.json')
   $perms = @($manifest.permissions)
   Require ($perms -contains 'activeTab') 'Staged manifest lacks activeTab'
+  Require (($perms -contains 'offscreen') -and ($perms -contains 'alarms')) 'Background integration requires offscreen and alarms'
+  Require ($manifest.background.type -eq 'module') 'Background integration requires MV3 module service worker'
   foreach ($name in $files) {
     Require (Test-Path -LiteralPath (Join-Path $Stage $name) -PathType Leaf) ("Missing staged " + $name)
   }
@@ -88,11 +92,15 @@ try {
   }
   $manifestPath = Join-Path $stage 'manifest.json'
   $m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-  if (@($m.permissions) -notcontains 'activeTab') {
-    $m.permissions = @($m.permissions) + @('activeTab')
+  $permissions = @($m.permissions)
+  foreach ($permission in @('activeTab','offscreen','alarms')) {
+    if ($permissions -notcontains $permission) { $permissions += $permission }
   }
-  # Existing action, host permissions, extension ID/key and service worker
-  # must remain exactly as installed; only the permissions array changes.
+  $m.permissions = $permissions
+  $m.background | Add-Member -MemberType NoteProperty -Name type -Value 'module' -Force
+  # Existing action, host permissions, extension ID/key and service_worker
+  # stay unchanged; background.type=module and offscreen/alarms are needed
+  # for this opt-in gated experiment. This candidate must remain draft.
   # Windows PowerShell 5.1 writes a UTF-8 BOM with Set-Content -Encoding UTF8.
   # Chrome JSON manifests must not acquire an unexpected BOM during upgrades.
   $json = $m | ConvertTo-Json -Depth 50
