@@ -18,6 +18,13 @@
     <p class="hint">Ключ хранится только в профиле этого расширения Chrome и недоступен обычным веб-страницам. Не сохраняйте его на общем компьютере. Это не заменяет локальных разрешений Control.</p>
     <label class="check"><input id="backgroundMode" type="checkbox">Экспериментальный фоновый режим (диагностика и чтение разрешённых страниц; без отправки сообщений и изменения страниц)</label>
     <p id="backgroundModeStatus" class="hint">Фоновый режим отключён. До завершения миграции подтверждений используется обычное окно управления.</p>
+    <label class="check"><input id="mutationLab" type="checkbox">Экспериментальное управление во фоновом режиме — каждое действие требует подтверждения (только Claude, Gemini, DeepSeek)</label>
+    <div class="row">
+      <label>Вкладка для Control (tabId)<input id="backgroundGrantTabId" type="number" min="1" placeholder="tabId"></label>
+      <label>Срок разрешения<select id="backgroundGrantMinutes"><option value="15">15 минут</option><option value="60">60 минут</option></select></label>
+    </div>
+    <div class="row"><button id="backgroundGrant" class="secondary">Разрешить управление вкладкой</button><button id="backgroundRevoke" class="secondary">Отозвать управление вкладкой</button></div>
+    <p id="backgroundGrantStatus" class="hint">По умолчанию управление отключено. Для отправки нужен отдельный запрос подтверждения.</p>
         <p id="status" role="status">Отключено</p>
   </section>
 
