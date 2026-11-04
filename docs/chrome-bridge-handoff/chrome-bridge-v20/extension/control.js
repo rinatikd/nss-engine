@@ -248,6 +248,9 @@ async function agentTab(tabId) {
 async function execute(cmd) {
   if (Date.now() > cmd.expires) throw Error('Command expired');
   const { name, args } = cmd;
+  // One global gate for every mutating action, including agent_send/new_chat/open.
+  if (CONTROL_ACTIONS.has(name) && !$('actions').checked)
+    throw Error('Control denied: global Grant Control is OFF');
 
   if (name === 'browser_tabs') {
     const out = [];
