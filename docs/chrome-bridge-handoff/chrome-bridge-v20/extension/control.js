@@ -437,6 +437,63 @@ $('actions').addEventListener('change', (event) => {
   refreshGrantLabels();
 });
 let backgroundMode = false;
+// Background mutation lab is ALWAYS opt-in and starts disabled.
+$('mutationLab').addEventListener('change',async event=>{
+  if (!event.isTrusted) { $('mutationLab').checked=false; return; }
+  const enabled=$('mutationLab').checked;
+  if (enabled && (!backgroundMode || !window.confirm(
+    'Включить экспериментальное управление? Каждая команда потребует отдельного подтверждения, а каждая вкладка — временного разрешения Control. Продолжить?'
+  ))) {
+    $('mutationLab').checked=false;return;
+  }
+  try {
+    await chrome.storage.local.set({bridgeMutationLabMode:enabled});
+    if (!enabled) {
+      // Disabling the lab also revokes all existing per-tab grants.
+      await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'clear-background-controls'});
+    }
+    $('backgroundGrantStatus').textContent=enabled ?
+      'Лабораторный режим включён. Выберите вкладку и разрешите Control вручную.' :
+      'Управление отключено';
+  } catch(e) {
+    $('mutationLab').checked=!enabled;
+    setStatus('Ошибка настройки управления: '+e.message);
+  }
+});
+function selectedBackgroundTab() {
+  const tabId=Number($('backgroundGrantTabId').value);
+  if (!Number.isSafeInteger(tabId)||tabId<=0) throw Error('Укажите действительный tabId');
+  return tabId;
+}
+$('backgroundGrant').onclick=async event=>{
+  if (!event.isTrusted || !backgroundMode || !$('mutationLab').checked) return;
+  try {
+    const tabId=selectedBackgroundTab();
+    const durationMinutes=Number($('backgroundGrantMinutes').value);
+    const tab=await chrome.tabs.get(tabId);
+    if (!window.confirm('Разрешить Control для вкладки '+tabId+' на '+durationMinutes+
+      ' минут?\n'+new URL(tab.url).origin+'\nЛюбое действие дополнительно запрашивает подтверждение.')) return;
+    const result=await chrome.runtime.sendMessage({
+      target:'bridge-coordinator',type:'grant-background-control',
+      tabId,durationMinutes,localGesture:true
+    });
+    if(result.error)throw Error(result.error);
+    $('backgroundGrantStatus').textContent='Control разрешён для '+result.origin+
+      ', вкладка '+tabId+', до '+new Date(result.expires).toLocaleTimeString();
+  } catch(e) { $('backgroundGrantStatus').textContent='Не удалось разрешить Control: '+e.message; }
+};
+$('backgroundRevoke').onclick=async event=>{
+  if (!event.isTrusted || !backgroundMode) return;
+  try {
+    const tabId=selectedBackgroundTab();
+    const result=await chrome.runtime.sendMessage({
+      target:'bridge-coordinator',type:'revoke-background-control',tabId
+    });
+    if(result.error)throw Error(result.error);
+    $('backgroundGrantStatus').textContent='Control для вкладки '+tabId+' отозван.';
+  } catch(e) { $('backgroundGrantStatus').textContent='Ошибка отзыва Control: '+e.message; }
+};
+
 let backgroundTimer = null;
 async function showBackgroundApprovals() {
   const box = $('backgroundApprovals');
@@ -529,6 +586,8 @@ async function leaveBackgroundMode() {
   running = false;
   $('actions').disabled = false;
   $('backgroundMode').checked = false;
+  $('mutationLab').checked = false;
+  await chrome.storage.local.set({bridgeMutationLabMode:false});
   $('backgroundModeStatus').textContent = 'Обычный режим: панель управляет подключением.';
   setStatus('Отключено · нажмите «Подключить»');
 }
@@ -696,6 +755,8 @@ try {
   if (bridgeBackgroundMode === true) {
     backgroundMode = true;
     $('backgroundMode').checked = true;
+    const {bridgeMutationLabMode}=await chrome.storage.local.get('bridgeMutationLabMode');
+    $('mutationLab').checked=bridgeMutationLabMode === true;
     $('actions').disabled = true;
     backgroundTimer = setInterval(updateBackgroundStatus, 2500);
     await updateBackgroundStatus();
