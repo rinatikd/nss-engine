@@ -35,11 +35,11 @@ export async function dispatchReadOnly(command, chromeApi) {
     for (const t of tabs) {
       if (!Number.isSafeInteger(t.id) || !t.url) continue;
       try {
-        const {origin,site} = await permittedTab(chromeApi,t.id);
+        const {tab,origin,site} = await permittedTab(chromeApi,t.id);
         // Re-check the current URL rather than returning stale query results.
-        out.push({tabId:t.id,title:redact(t.title || ''),url:redact(t.url),
+        out.push({tabId:tab.id,title:redact(tab.title || ''),url:redact(tab.url),
           mode:site.mode || 'read',adapter:site.adapter || null,
-          active:!!t.active,windowId:t.windowId,origin});
+          active:!!tab.active,windowId:tab.windowId,origin});
       } catch { /* do not disclose unapproved tabs */ }
     }
     return out;
