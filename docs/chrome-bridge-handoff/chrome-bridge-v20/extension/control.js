@@ -47,7 +47,7 @@ chrome.tabs.onUpdated.addListener((id, change) => {
   observedOrigins.set(id, origin);
 });
 
-// ---------- С…СЂР°РЅРёР»РёС‰Рµ ----------
+// ---------- хранилище ----------
 const getSites = async () => (await chrome.storage.local.get('sites')).sites || {};
 const setSites = (sites) => chrome.storage.local.set({ sites });
 async function getAdapters() {
@@ -55,7 +55,7 @@ async function getAdapters() {
   try { return mergeAdapters(JSON.parse(adapters || '{}')); } catch { return mergeAdapters(); }
 }
 
-// ---------- Р¶СѓСЂРЅР°Р» ----------
+// ---------- журнал ----------
 const logLines = [];
 function log(msg) {
   logLines.push(timestamp() + '  ' + msg);
@@ -64,7 +64,7 @@ function log(msg) {
 }
 const setStatus = (s) => { $('status').textContent = s; };
 
-// ---------- СЃР°Р№С‚С‹ ----------
+// ---------- сайты ----------
 async function renderSites() {
   const sites = await getSites();
   const perms = await chrome.permissions.getAll();
@@ -72,7 +72,7 @@ async function renderSites() {
   const ul = $('sites');
   ul.textContent = '';
   const entries = Object.entries(sites);
-  if (!entries.length) { const li = document.createElement('li'); li.textContent = 'РЎР°Р№С‚С‹ РЅРµ РґРѕР±Р°РІР»РµРЅС‹.'; ul.append(li); }
+  if (!entries.length) { const li = document.createElement('li'); li.textContent = 'Сайты не добавлены.'; ul.append(li); }
   for (const [origin, s] of entries) {
     const li = document.createElement('li');
     li.dataset.origin = origin;
@@ -80,18 +80,18 @@ async function renderSites() {
     left.textContent = origin;
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = s.mode === 'chat' ? 'РР-С‡Р°С‚ В· ' + s.adapter : 'С‡С‚РµРЅРёРµ';
+    tag.textContent = s.mode === 'chat' ? 'ИИ-чат В· ' + s.adapter : 'чтение';
     left.append(tag);
-    if (!granted.has(origin)) { const w = document.createElement('span'); w.className = 'tag'; w.textContent = 'РЅРµС‚ СЂР°Р·СЂРµС€РµРЅРёСЏ Chrome'; left.append(w); }
+    if (!granted.has(origin)) { const w = document.createElement('span'); w.className = 'tag'; w.textContent = 'нет разрешения Chrome'; left.append(w); }
     const rm = document.createElement('button');
     rm.className = 'secondary';
-    rm.textContent = 'РЈР±СЂР°С‚СЊ';
+    rm.textContent = 'Убрать';
     rm.onclick = async () => {
       const cur = await getSites();
       delete cur[origin];
       grants.grants.delete(origin);
       await setSites(cur);
-      try { await chrome.permissions.remove({ origins: [origin + '/*'] }); } catch { /* СѓР¶Рµ СЃРЅСЏС‚Рѕ */ }
+      try { await chrome.permissions.remove({ origins: [origin + '/*'] }); } catch { /* уже снято */ }
       await renderSites();
     };
     if (CONTROL_ORIGINS[origin]) {
@@ -144,10 +144,10 @@ function syncOrigin() {
 $('grant').onclick = async () => {
   try {
     const u = new URL($('origin').value);
-    if (u.protocol !== 'https:') throw Error('РќСѓР¶РµРЅ HTTPS-Р°РґСЂРµСЃ');
-    if (LOCAL_HOSTS.includes(u.hostname)) throw Error('Р›РѕРєР°Р»СЊРЅС‹Рµ Р°РґСЂРµСЃР° Р·Р°РїСЂРµС‰РµРЅС‹');
+    if (u.protocol !== 'https:') throw Error('Нужен HTTPS-адрес');
+    if (LOCAL_HOSTS.includes(u.hostname)) throw Error('Локальные адреса запрещены');
     const ok = await chrome.permissions.request({ origins: [u.origin + '/*'] });
-    if (!ok) throw Error('Chrome РЅРµ РІС‹РґР°Р» СЂР°Р·СЂРµС€РµРЅРёРµ');
+    if (!ok) throw Error('Chrome не выдал разрешение');
     const sites = await getSites();
     const provider = providerForOrigin(u.origin);
     const mode = provider ? $('mode').value : 'read';
@@ -155,7 +155,7 @@ $('grant').onclick = async () => {
     await setSites(sites);
     $('origin').value = '';
     await renderSites();
-    log('РЎР°Р№С‚ РґРѕР±Р°РІР»РµРЅ: ' + u.origin + ' (' + mode + ')');
+    log('Сайт добавлен: ' + u.origin + ' (' + mode + ')');
   } catch (e) { setStatus(e.message); }
 };
 $('revoke').onclick = async () => {
@@ -164,23 +164,23 @@ $('revoke').onclick = async () => {
   for (const o of p.origins || []) if (!o.includes('127.0.0.1')) await chrome.permissions.remove({ origins: [o] });
   await setSites({});
   await renderSites();
-  log('Р’СЃРµ СЃР°Р№С‚С‹ РѕС‚РѕР·РІР°РЅС‹');
+  log('Все сайты отозваны');
 };
 $('saveAdapters').onclick = async () => {
   try {
     const v = JSON.parse($('adapterJson').value || '{}');
-    if (typeof v !== 'object' || Array.isArray(v) || v === null) throw Error('РќСѓР¶РµРЅ JSON-РѕР±СЉРµРєС‚');
+    if (typeof v !== 'object' || Array.isArray(v) || v === null) throw Error('Нужен JSON-объект');
     await chrome.storage.local.set({ adapters: JSON.stringify(v) });
-    $('adapterMsg').textContent = 'РЎРѕС…СЂР°РЅРµРЅРѕ.';
-  } catch (e) { $('adapterMsg').textContent = 'РћС€РёР±РєР°: ' + e.message; }
+    $('adapterMsg').textContent = 'Сохранено.';
+  } catch (e) { $('adapterMsg').textContent = 'Ошибка: ' + e.message; }
 };
 
-// ---------- РѕРґРѕР±СЂРµРЅРёСЏ ----------
+// ---------- одобрения ----------
 function notify() {
   const n = approvals.size;
-  document.title = n ? `(${n}) РџРѕРґС‚РІРµСЂРґРёС‚Рµ В· Chrome Bridge` : 'Chrome Bridge';
-  if (n && audio) { try { const o = audio.createOscillator(); o.connect(audio.destination); o.frequency.value = 660; o.start(); o.stop(audio.currentTime + 0.15); } catch { /* Р·РІСѓРє РЅРµРѕР±СЏР·Р°С‚РµР»РµРЅ */ } }
-  if (!n) { const box = $('approvals'); if (!box.children.length) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'РќРµС‚ РѕР¶РёРґР°СЋС‰РёС… Р·Р°РїСЂРѕСЃРѕРІ.'; box.append(p); } }
+  document.title = n ? `(${n}) Подтвердите В· Chrome Bridge` : 'Chrome Bridge';
+  if (n && audio) { try { const o = audio.createOscillator(); o.connect(audio.destination); o.frequency.value = 660; o.start(); o.stop(audio.currentTime + 0.15); } catch { /* звук необязателен */ } }
+  if (!n) { const box = $('approvals'); if (!box.children.length) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Нет ожидающих запросов.'; box.append(p); } }
 }
 function askApproval(title, details, expires) {
   return new Promise((resolve, reject) => {
@@ -191,8 +191,8 @@ function askApproval(title, details, expires) {
     el.className = 'approval';
     const h = document.createElement('strong'); h.textContent = title;
     const pre = document.createElement('pre'); pre.textContent = details;
-    const ok = document.createElement('button'); ok.textContent = 'Р Р°Р·СЂРµС€РёС‚СЊ';
-    const no = document.createElement('button'); no.textContent = 'РћС‚РєР»РѕРЅРёС‚СЊ'; no.className = 'danger'; no.style.marginLeft = '8px';
+    const ok = document.createElement('button'); ok.textContent = 'Разрешить';
+    const no = document.createElement('button'); no.textContent = 'Отклонить'; no.className = 'danger'; no.style.marginLeft = '8px';
     el.append(h, pre, ok, no);
     box.append(el);
     const done = (fn) => (arg) => { clearTimeout(timer); approvals.delete(id); el.remove(); notify(); fn(arg); };
@@ -204,7 +204,7 @@ function askApproval(title, details, expires) {
   });
 }
 
-// ---------- РІС‹РїРѕР»РЅРµРЅРёРµ РєРѕРјР°РЅРґ ----------
+// ---------- выполнение команд ----------
 const isHttp = (u) => ['https:'].includes(u.protocol) && !LOCAL_HOSTS.includes(u.hostname);
 async function siteOf(url) {
   try {
@@ -305,7 +305,7 @@ async function execute(cmd) {
   }
   if (name === 'browser_read') {
     const { tab, site } = await tabAndSite(args.tabId);
-    if ($('confirmReads').checked) await askApproval('Р§С‚РµРЅРёРµ СЃС‚СЂР°РЅРёС†С‹', `${tab.url}\n${args.selector ? 'Р­Р»РµРјРµРЅС‚: ' + args.selector : 'Р’СЃСЏ СЃС‚СЂР°РЅРёС†Р°'}`, cmd.expires);
+    if ($('confirmReads').checked) await askApproval('Чтение страницы', `${tab.url}\n${args.selector ? 'Элемент: ' + args.selector : 'Вся страница'}`, cmd.expires);
     const r = await inject(tab.id, site.origin, 'browser_read', args);
     return { ...r, text: redact(r.text), links: r.links.map((l) => ({ text: redact(l.text), url: redact(l.url) })) };
   }
@@ -315,16 +315,16 @@ async function execute(cmd) {
     const { tab, site } = await tabAndSite(args.tabId);
     grants.require(site.origin);
     const d = await inject(tab.id, site.origin, 'describe', { selector: args.selector });
-    const lines = [`РЎС‚СЂР°РЅРёС†Р°: ${tab.url}`, `РЎРµР»РµРєС‚РѕСЂ: ${args.selector}`, `Р­Р»РµРјРµРЅС‚: <${d.tag}${d.type ? ' type=' + d.type : ''}> В«${d.text}В»`];
-    if (d.href) lines.push('РЎСЃС‹Р»РєР°: ' + d.href);
-    if (d.formAction) lines.push('РћС‚РїСЂР°РІР»СЏРµС‚ С„РѕСЂРјСѓ РЅР°: ' + d.formAction);
-    if (name === 'browser_fill') lines.push('РўРµРєСЃС‚: ' + args.text.slice(0, 300) + (args.text.length > 300 ? 'вЂ¦' : ''));
-    await askApproval(name === 'browser_click' ? 'РќР°Р¶Р°С‚РёРµ' : 'Р’РІРѕРґ С‚РµРєСЃС‚Р°', lines.join('\n'), cmd.expires);
+    const lines = [`Страница: ${tab.url}`, `Селектор: ${args.selector}`, `Элемент: <${d.tag}${d.type ? ' type=' + d.type : ''}> В«${d.text}В»`];
+    if (d.href) lines.push('Ссылка: ' + d.href);
+    if (d.formAction) lines.push('Отправляет форму на: ' + d.formAction);
+    if (name === 'browser_fill') lines.push('Текст: ' + args.text.slice(0, 300) + (args.text.length > 300 ? 'вЂ¦' : ''));
+    await askApproval(name === 'browser_click' ? 'Нажатие' : 'Ввод текста', lines.join('\n'), cmd.expires);
     if (!running || Date.now() > cmd.expires) throw Error('Command stopped or expired');
     return inject(tab.id, site.origin, name, { ...args, expect: { tag: d.tag, text: d.text } });
   }
 
-  // ---- Р°РіРµРЅС‚СЃРєРёРµ С‡Р°С‚С‹ ----
+  // ---- агентские чаты ----
   if (name === 'agent_probe') {
     const { tab, site, adapter, adapterName } = await agentTab(args.tabId);
     const test = await inject(tab.id, site.origin, 'agent_selftest', { adapter });
@@ -379,7 +379,7 @@ async function execute(cmd) {
   throw Error('Unknown command: ' + name);
 }
 
-// ---------- long-poll С†РёРєР» ----------
+// ---------- long-poll цикл ----------
 async function post(path, body, ms) {
   const r = await fetch(BRIDGE + path, {
     method: 'POST',
@@ -393,9 +393,9 @@ async function post(path, body, ms) {
 async function handle(command) {
   let result, error;
   log('в†’ ' + command.name);
-  taskStatus('Р’С‹РїРѕР»РЅСЏРµС‚СЃСЏ: '+command.name, 35, 'Р—Р°РґР°РЅРёРµ РїСЂРёРЅСЏС‚Рѕ');
+  taskStatus('Выполняется: '+command.name, 35, 'Задание принято');
   try { result = await execute(command); } catch (e) { error = e.message; log('вњ— ' + command.name + ': ' + e.message); }
-  taskStatus(error ? 'РћС€РёР±РєР°: '+command.name : 'Р—Р°РІРµСЂС€РµРЅРѕ: '+command.name, 100, error ? 'РЎРјРѕС‚СЂРёС‚Рµ Р¶СѓСЂРЅР°Р»' : 'Р РµР·СѓР»СЊС‚Р°С‚ РїРѕРґРіРѕС‚РѕРІР»РµРЅ');
+  taskStatus(error ? 'Ошибка: '+command.name : 'Завершено: '+command.name, 100, error ? 'Смотрите журнал' : 'Р езультат подготовлен');
   try { await post('/bridge/result', { id: command.id, result, error }, 10000); }
   catch { await sleep(500); await post('/bridge/result', { id: command.id, result, error }, 10000).catch(() => {}); }
 }
@@ -406,12 +406,12 @@ async function loop(gen) {
       if (!epoch || grants.epoch !== epoch) grants.reset(epoch || null);
       refreshGrantLabels();
       if (!running || gen !== generation) break;
-      setStatus('РџРѕРґРєР»СЋС‡РµРЅРѕ В· РѕР¶РёРґР°РЅРёРµ РєРѕРјР°РЅРґ');
-      if (!command && $('taskProgress').value !== 100) taskStatus('РћР¶РёРґР°РЅРёРµ РєРѕРјР°РЅРґ',0);
+      setStatus('Подключено В· ожидание команд');
+      if (!command && $('taskProgress').value !== 100) taskStatus('Ожидание команд',0);
       if (command) await handle(command);
     } catch (e) {
       if (!running || gen !== generation) break;
-      setStatus('РћС€РёР±РєР°: ' + e.message);
+      setStatus('Ошибка: ' + e.message);
       await sleep(2000);
     }
   }
@@ -424,8 +424,8 @@ function stop() {
   pollAbort?.abort();
   for (const a of [...approvals.values()]) a.deny();
   if (releaseLock) { releaseLock(); releaseLock = null; }
-  setStatus('РћС‚РєР»СЋС‡РµРЅРѕ');
-  taskStatus('РћС‚РєР»СЋС‡РµРЅРѕ', 0);
+  setStatus('Отключено');
+  taskStatus('Отключено', 0);
 }
 $('actions').addEventListener('change', (event) => {
   if (!event.isTrusted) { $('actions').checked = false; }
@@ -443,7 +443,7 @@ $('connect').onclick = async () => {
     return; // Do not connect without secure credential storage.
   }
   try { audio = new AudioContext(); } catch { audio = null; }
-  // РЈРґРµСЂР¶Р°РЅРёРµ Web Lock РїРѕРјРѕРіР°РµС‚ Chrome РЅРµ В«Р·Р°РјРѕСЂР°Р¶РёРІР°С‚СЊВ» РІРєР»Р°РґРєСѓ РІ С„РѕРЅРµ.
+  // Удержание Web Lock помогает Chrome не «замораживать» вкладку в фоне.
   navigator.locks.request('chrome-bridge-control', () => new Promise((r) => { releaseLock = r; }));
   running = true;
   refreshGrantLabels();
@@ -495,7 +495,7 @@ $('visualClear').onclick = () => {
   $('visualStatus').textContent = 'Локальный снимок удалён';
 };
 
-// ---------- СЃС‚Р°СЂС‚ ----------
+// ---------- старт ----------
 fillAdapterSelect();
 try {
   const savedKey = await loadBrowserKey(chrome);
@@ -513,6 +513,6 @@ await renderSites();
 const visualCandidate = (await chrome.storage.session.get('visualCandidateTabId')).visualCandidateTabId;
 if (Number.isSafeInteger(visualCandidate) && visualCandidate > 0)
   $('visualTabId').value = String(visualCandidate);
-taskStatus('РћР¶РёРґР°РЅРёРµ РїРѕРґРєР»СЋС‡РµРЅРёСЏ', 0);
-log('Р“РѕС‚РѕРІРѕ. РЈРєР°Р¶РёС‚Рµ РєР»СЋС‡ Рё РЅР°Р¶РјРёС‚Рµ В«РџРѕРґРєР»СЋС‡РёС‚СЊВ».');
+taskStatus('Ожидание подключения', 0);
+log('Готово. Укажите ключ и нажмите «Подключить».');
 
