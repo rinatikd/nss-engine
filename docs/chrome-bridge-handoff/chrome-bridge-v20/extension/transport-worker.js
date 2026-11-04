@@ -1,0 +1,50 @@
+import { BridgeTransport } from './transport-engine.js';
+
+// Worker executes NO browser actions. Only the service worker can dispatch
+// permission-gated commands; this worker owns the HTTP poll connection.
+const pending = new Map();
+let seq = 0;
+let transport = null;
+const dangerous = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
+const send = (data) => self.postMessage(data);
+function delegate(command) {
+  if (dangerous.has(command.name)) {
+    // Mutating actions are never executed by this prototype; approvals
+    // must be migrated to the independent runtime first.
+    throw Error('CONTROL_REQUIRES_APPROVAL_UI');
+  }
+  const id = ++seq;
+  return new Promise((resolve,reject) => {
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(Error('DISPATCH_TIMEOUT'));
+    }, 12000);
+    pending.set(id,{resolve,reject,timer});
+    send({type:'dispatch',id,command});
+  });
+}
+const start = async (token) => {
+  if (!transport) {
+    transport = new BridgeTransport({
+      execute: delegate,
+      onStatus: (status) => send({type:'transport-status',status})
+    });
+  }
+  await transport.start(token);
+};
+self.onmessage = (event) => {
+  const msg = event.data;
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'start') {
+    void start(msg.token).catch(e => send({type:'transport-status',status:{state:'error',connected:false,error:e.message}}));
+  } else if (msg.type === 'stop') {
+    transport?.stop();
+    for (const [id,p] of pending) { clearTimeout(p.timer); p.reject(Error('Stopped')); pending.delete(id); }
+  } else if (msg.type === 'dispatch-result') {
+    const p = pending.get(msg.id);
+    if (!p) return;
+    clearTimeout(p.timer);
+    pending.delete(msg.id);
+    if (msg.error) p.reject(Error(msg.error)); else p.resolve(msg.result);
+  }
+};
