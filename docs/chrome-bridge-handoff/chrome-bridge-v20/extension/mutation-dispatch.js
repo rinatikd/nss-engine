@@ -34,11 +34,12 @@ async function boundTab(chromeApi, tabId, originalUrl, origin) {
   return current;
 }
 export async function dispatchMutation(cmd, chromeApi, {
-  approvals, controlGrant, now=Date.now, uuid=()=>crypto.randomUUID()
+  approvals, controlGrant, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
   exactCommand(cmd);
   if (!approvals?.request || typeof controlGrant !== 'function')
     throw Error('BACKGROUND_CONTROL_NOT_CONFIGURED');
+  if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
   if (nowExpired(cmd,now)) throw Error('COMMAND_EXPIRED');
   const {tab,origin} = await permittedTab(chromeApi,cmd.args.tabId);
   if (CONTROL_ORIGINS[origin] == null) throw Error('CONTROL_ORIGIN_DENIED');
@@ -91,6 +92,7 @@ export async function dispatchMutation(cmd, chromeApi, {
     preview:preview.slice(0,240),contentLength:cmd.args.text?.length || 0
   });
 
+  if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
   // Revalidate EVERYTHING after human approval and immediately before DOM
   // action; a changed origin, URL, conversation or grant must fail closed.
   if (nowExpired(cmd,now) || now()>=expires) throw Error('APPROVAL_EXPIRED');
@@ -115,6 +117,7 @@ export async function dispatchMutation(cmd, chromeApi, {
     args={...cmd.args,controlExpires:refreshedGrant,
       expect:{tag:current.tag,text:current.text}};
   }
+  if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
   // At most one dispatch. Failed confirmations are UNKNOWN, never retried.
   const result=await inject(chromeApi,tab.id,origin,cmd.name,args);
   return result?.text ? {...result,text:redact(result.text)} : result;
