@@ -13,7 +13,7 @@ Diagnose UI failures via an explicitly approved screenshot of one identified tab
 7. Report timestamp, tab ID, URL, provider, evidence, confidence, local/transmitted status, and checks actually run.
 
 ## Implementation boundary
-This branch adds extension/visual-snapshot.js (a local approved PNG capture primitive) and unit tests, but NOT a working screenshot button, MCP transport, manifest permission changes, or automatic visual interpretation. It cannot run through the currently installed Bridge without integrating and exposing new tools.
+This branch adds extension/visual-snapshot.js, unit tests and an experimental **local screenshot preview button in control.html/control.js**. There is NO MCP image transport, no manifest permission changes and no automatic multimodal visual interpretation. The screenshot button will work only when Chrome grants its required capture permission and the chosen target tab is active in its own window. It has not been tested in a real Chrome browser. It cannot run through the currently installed Bridge until the reviewed extension is installed.
 
 ## Safeguards
 - Exact allowlisted HTTPS origins; refuse lookalike hosts and changed, unknown, or inactive tabs.
@@ -25,5 +25,5 @@ This branch adds extension/visual-snapshot.js (a local approved PNG capture prim
 ## Release gates
 - Inspect actual installed extension/manifest.json, confirm Chrome captureVisibleTab permissions and compare installed version with snapshot.
 - Run Node tests and Chrome integration tests for consent, race, origin denial, secrets, local preview and no silent outbound bytes.
-- Add a local UI capture button and separately approved image transport before claiming the feature is operational.
+- Validate the new local UI capture button under actual Chrome permissions, and add separately approved image transport before claiming automatic AI visual analysis is operational.
 - Get operator approval, backup prior release and keep rollback.
