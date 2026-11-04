@@ -29,7 +29,7 @@ textarea { font:12px/1.4 ui-monospace,Consolas,monospace; }
 .row { display:flex; align-items:center; flex-wrap:wrap; gap:9px; margin:12px 0; }
 .row>label { min-width:200px; flex:1; }
 button { min-height:37px; padding:8px 13px; border:1px solid var(--acc);
-  border-radius:9px; background:var(--acc); color:#fff; font:600 12px/1.25 inherit;
+  border-radius:9px; background:var(--acc); color:#fff; font-family:inherit; font-size:12px; font-weight:600; line-height:1.25;
   cursor:pointer; transition:background .15s,opacity .15s; }
 button:hover { background:var(--acc-hover); }
 button.secondary { background:transparent; color:var(--acc); }
