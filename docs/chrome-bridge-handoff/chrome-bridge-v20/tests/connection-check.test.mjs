@@ -37,3 +37,14 @@ test('HTML has readable labels and the controller verifies before persisting', a
   assert.match(handler, /BROWSER_KEY_REJECTED_401/);
   assert.match(handler, /EXTENSION_ORIGIN_REJECTED_403/);
 });
+
+test('persistent key automatically reconnects without granting control', async () => {
+  const { readFileSync } = await import('node:fs');
+  const js = readFileSync(new URL('../extension/control.js', import.meta.url), 'utf8');
+  assert.match(js, /if \(savedKey\.persistent && savedKey\.value\) void connectBridge\(\{ automatic: true \}\)/);
+  assert.match(js, /automatic && reconnectAllowed/);
+  assert.match(js, /BRIDGE_NETWORK_UNREACHABLE', 'BRIDGE_TIMEOUT/);
+  assert.match(js, /reconnectAllowed = false/);
+  const handler = js.slice(js.indexOf('async function connectBridge'), js.indexOf("$('forgetKey').onclick"));
+  assert.doesNotMatch(handler, /grants\.approve\(/);
+});
