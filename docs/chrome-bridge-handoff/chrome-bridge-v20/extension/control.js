@@ -438,6 +438,50 @@ $('actions').addEventListener('change', (event) => {
 });
 let backgroundMode = false;
 let backgroundTimer = null;
+async function showBackgroundApprovals() {
+  const box = $('backgroundApprovals');
+  if (!backgroundMode) { box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  try {
+    const response = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'approval-list'});
+    if (response.error) throw Error(response.error);
+    // Rebuild DOM safely; no HTML injection from remote command metadata.
+    box.replaceChildren();
+    for (const pending of response.pending || []) {
+      const row=document.createElement('div');
+      row.className='approval';
+      const description=document.createElement('p');
+      description.textContent=pending.command+' · '+pending.origin+
+        ' · вкладка '+pending.tabId+' · до '+new Date(pending.expires).toLocaleTimeString();
+      row.append(description);
+      for (const [title,approved] of [['Разрешить',true],['Отклонить',false]]) {
+        const b=document.createElement('button');
+        b.textContent=title;
+        if (!approved) b.className='danger';
+        b.addEventListener('click',async event=>{
+          if (!event.isTrusted) return;
+          b.disabled=true;
+          const result=await chrome.runtime.sendMessage({
+            target:'bridge-coordinator',type:'approval-decide',
+            id:pending.id,approved,trustedUserGesture:true
+          });
+          if (result.error) setStatus('Подтверждение: '+result.error);
+          await showBackgroundApprovals();
+        });
+        row.append(b);
+      }
+      box.append(row);
+    }
+    if (!box.children.length) {
+      const empty=document.createElement('p');
+      empty.className='hint';
+      empty.textContent='Нет ожидающих фоновых подтверждений.';
+      box.append(empty);
+    }
+  } catch (error) {
+    box.textContent='Очередь подтверждений недоступна: '+error.message;
+  }
+}
 async function updateBackgroundStatus() {
   if (!backgroundMode) return;
   try {
@@ -456,6 +500,7 @@ async function updateBackgroundStatus() {
     };
     setStatus(labels[current.state] || 'Фоновый режим: ' + current.state);
     refreshGrantLabels();
+    await showBackgroundApprovals();
   } catch (e) {
     setStatus('Фоновый координатор недоступен: ' + e.message);
   }
@@ -480,6 +525,7 @@ async function leaveBackgroundMode() {
   if (!result.ok) throw Error(result.reason || 'BACKGROUND_STOP_FAILED');
   await chrome.storage.local.set({bridgeBackgroundMode:false});
   backgroundMode = false;
+  await showBackgroundApprovals();
   running = false;
   $('actions').disabled = false;
   $('backgroundMode').checked = false;
