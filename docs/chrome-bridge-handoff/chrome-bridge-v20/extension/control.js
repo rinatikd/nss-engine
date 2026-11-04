@@ -17,7 +17,24 @@ const approvals = new Map();
 const grants = new ControlGrants();
 const timestamp = () => new Intl.DateTimeFormat('ru-RU', {timeZone:'Asia/Almaty', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}).format(new Date());
 function taskStatus(label, value, detail='') { $('taskState').textContent=label; $('taskProgress').value=value; $('taskTimes').textContent=timestamp() + (detail ? ' В· '+detail : ''); }
-function refreshGrantLabels() { for (const [origin, expires] of grants.grants) { const row=[...$('sites').children].find(li=>li.dataset.origin===origin); if (!row) continue; const ttl=row.querySelector('[data-ttl]'); if (ttl) ttl.textContent='Р”Рѕ РѕРєРѕРЅС‡Р°РЅРёСЏ: '+Math.max(0,Math.ceil((expires-Date.now())/60000))+' РјРёРЅ'; } }
+function refreshGrantLabels() {
+  for (const row of $('sites').children) {
+    const origin = row.dataset.origin;
+    const ttl = row.querySelector('[data-ttl]');
+    if (!origin || !ttl) continue;
+    const expires = grants.grants.get(origin);
+    const active = !!(running && grants.epoch && expires && expires > Date.now() && $('actions').checked);
+    ttl.textContent = active ? 'Управление разрешено: ещё ' + Math.ceil((expires - Date.now()) / 60000) + ' мин' : 'Управление отключено';
+    const connect = row.querySelector('[data-connect-control]');
+    const disconnect = row.querySelector('[data-disconnect-control]');
+    if (connect) connect.disabled = active || !running;
+    if (disconnect) disconnect.disabled = !expires;
+  }
+  const global = $('controlGlobalState');
+  if (global) global.textContent = !running ? 'Мост отключён; управление недоступно'
+    : $('actions').checked ? 'Глобальное разрешение действий: ВКЛ'
+    : 'Глобальное разрешение действий: ВЫКЛ';
+}
 setInterval(refreshGrantLabels,30000);
 const observedOrigins = new Map();
 chrome.tabs.onUpdated.addListener((id, change) => {
@@ -76,19 +93,34 @@ async function renderSites() {
       await renderSites();
     };
     if (CONTROL_ORIGINS[origin]) {
-      const grant = document.createElement('button');
-      grant.textContent = 'Grant control';
-      grant.onclick = (event) => {
+      const connect = document.createElement('button');
+      connect.dataset.connectControl = '';
+      connect.textContent = 'Подключить управление';
+      connect.onclick = (event) => {
         try {
-          if (!running || !event.isTrusted) throw Error('Connect first; local click required');
+          if (!running || !event.isTrusted) throw Error('Сначала подключите мост; требуется локальный клик');
+          if (!$('actions').checked) throw Error('Включите глобальное разрешение действий в разделе «Безопасность»');
           const minutes = Number($('controlDuration').value);
-          if (!window.confirm('Р Р°Р·СЂРµС€РёС‚СЊ СѓРїСЂР°РІР»РµРЅРёРµ ' + origin + ' РЅР° ' + minutes + ' РјРёРЅСѓС‚? РњРѕРіСѓС‚ РѕС‚РїСЂР°РІР»СЏС‚СЊСЃСЏ Р·Р°РїСЂРѕСЃС‹ РІРЅРµС€РЅРµРјСѓ AI. Р Р°Р·СЂРµС€РµРЅРёРµ РїСЂРµРєСЂР°С‰Р°РµС‚СЃСЏ РїСЂРё РѕС‚РєР»СЋС‡РµРЅРёРё РёР»Рё РїРµСЂРµР·Р°РїСѓСЃРєРµ.')) return;
+          if (!window.confirm('Разрешить управление ' + origin + ' на ' + minutes + ' мин? Отправка запросов внешнему AI потребует подтверждения; не отправляйте секреты.')) return;
           grants.approve(origin, event.isTrusted, minutes);
           refreshGrantLabels();
           log('Control granted: ' + origin);
-        } catch (e) { setStatus(e.message); }
+        } catch (e) { setStatus(e.message); refreshGrantLabels(); }
       };
-      const ttl = document.createElement('span'); ttl.className='tag'; ttl.dataset.ttl=''; ttl.textContent='РќРµС‚ Р°РєС‚РёРІРЅРѕРіРѕ СЂР°Р·СЂРµС€РµРЅРёСЏ'; li.append(ttl,grant);
+      const disconnect = document.createElement('button');
+      disconnect.dataset.disconnectControl = '';
+      disconnect.className = 'secondary';
+      disconnect.textContent = 'Отключить управление';
+      disconnect.onclick = (event) => {
+        if (!event.isTrusted) { setStatus('Требуется локальный клик'); return; }
+        grants.grants.delete(origin);
+        refreshGrantLabels();
+        log('Control revoked: ' + origin);
+      };
+      const ttl = document.createElement('span');
+      ttl.className = 'tag';
+      ttl.dataset.ttl = '';
+      li.append(ttl, connect, disconnect);
     }
     li.append(left, rm);
     ul.append(li);
@@ -319,6 +351,7 @@ async function loop(gen) {
     try {
       const { command, epoch } = await post('/bridge/poll', {}, 30000);
       if (!epoch || grants.epoch !== epoch) grants.reset(epoch || null);
+      refreshGrantLabels();
       if (!running || gen !== generation) break;
       setStatus('РџРѕРґРєР»СЋС‡РµРЅРѕ В· РѕР¶РёРґР°РЅРёРµ РєРѕРјР°РЅРґ');
       if (!command && $('taskProgress').value !== 100) taskStatus('РћР¶РёРґР°РЅРёРµ РєРѕРјР°РЅРґ',0);
@@ -333,6 +366,7 @@ async function loop(gen) {
 function stop() {
   running = false;
   grants.reset();
+  refreshGrantLabels();
   generation++;
   pollAbort?.abort();
   for (const a of [...approvals.values()]) a.deny();
@@ -340,6 +374,11 @@ function stop() {
   setStatus('РћС‚РєР»СЋС‡РµРЅРѕ');
   taskStatus('РћС‚РєР»СЋС‡РµРЅРѕ', 0);
 }
+$('actions').addEventListener('change', (event) => {
+  if (!event.isTrusted) { $('actions').checked = false; }
+  if (!$('actions').checked) grants.grants.clear();
+  refreshGrantLabels();
+});
 $('stop').onclick = stop;
 $('connect').onclick = async () => {
   if (running) return;
@@ -348,6 +387,7 @@ $('connect').onclick = async () => {
   // РЈРґРµСЂР¶Р°РЅРёРµ Web Lock РїРѕРјРѕРіР°РµС‚ Chrome РЅРµ В«Р·Р°РјРѕСЂР°Р¶РёРІР°С‚СЊВ» РІРєР»Р°РґРєСѓ РІ С„РѕРЅРµ.
   navigator.locks.request('chrome-bridge-control', () => new Promise((r) => { releaseLock = r; }));
   running = true;
+  refreshGrantLabels();
   pollAbort = new AbortController();
   loop(generation);
 };
