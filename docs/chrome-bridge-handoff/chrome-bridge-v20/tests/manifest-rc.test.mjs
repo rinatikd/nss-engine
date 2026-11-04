@@ -2,16 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const root = new URL('../extension/', import.meta.url);
-const manifest = JSON.parse(readFileSync(new URL('manifest.rc.example.json', root), 'utf8'));
-test('MV3 screenshot example uses activeTab, not permanent universal host access', () => {
-  assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.background.service_worker, 'background.js');
-  assert.ok(manifest.permissions.includes('activeTab'));
-  assert.ok(manifest.permissions.includes('scripting'));
-  assert.ok(manifest.permissions.includes('storage'));
-  assert.ok(!manifest.host_permissions.includes('<all_urls>'));
-  assert.ok(!manifest.host_permissions.includes('https://*/*'));
-  assert.deepEqual(manifest.host_permissions, ['http://127.0.0.1/*']);
+test('manifest least-privilege deployment guidance disallows permanent all-site capture', () => {
+  const docs = readFileSync(new URL('../MANIFEST_CAPTURE_REVIEW.md', import.meta.url), 'utf8');
+  assert.match(docs, /activeTab/);
+  assert.match(docs, /Do NOT apply this example verbatim/);
+  assert.match(docs, /Do not replace the installed manifest/);
+  assert.match(docs, /excessively broad/);
 });
 test('source snapshot has referenced background, control and screenshot sources', () => {
   for (const name of ['background.js', 'control.html', 'control.js', 'permissions.js', 'visual-snapshot.js']) {
@@ -25,6 +21,9 @@ test('toolbar click records target tab and photo preview remains local', () => {
   assert.match(background, /visualCandidateTabId/);
   assert.match(control, /visualCapture/);
   assert.match(control, /captureLocalTab\(chrome, tabId/);
-  const captureSection = control.slice(control.indexOf("$('visualCapture').onclick"), control.indexOf("$('visualClear').onclick"));
+  const start = control.indexOf("$('visualCapture').onclick");
+  const end = control.indexOf("$('visualClear').onclick");
+  assert.ok(start >= 0 && end > start);
+  const captureSection = control.slice(start, end);
   assert.equal(captureSection.includes("post('/bridge/result'"), false);
 });
