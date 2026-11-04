@@ -18,10 +18,23 @@ jobs:
           node-version: '22'
       - name: Run visual snapshot and grant tests
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
-        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs
+        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs tests/manifest-rc.test.mjs
       - name: Syntax check changed extension files
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
           node --check extension/control.js
           node --check extension/visual-snapshot.js
           node --check extension/permissions.js
+          node --check server/tools.mjs
+      - name: Read-only Windows preflight with synthetic manifest
+        shell: pwsh
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'chrome-bridge-fixture'
+          $ext = Join-Path $fixture 'extension'
+          New-Item -ItemType Directory -Path $ext -Force | Out-Null
+          Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $ext
+          $manifest = @{ manifest_version = 3; version = '0.2.0'; permissions = @('storage','scripting','activeTab'); host_permissions = @('http://127.0.0.1/*'); background = @{service_worker = 'background.js'} }
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $ext 'manifest.json') -Encoding UTF8
+          & ./deployment/preflight-windows.ps1 -BridgeRoot $fixture -SkipPorts
+          if ($LASTEXITCODE -ne 0) { throw "Read-only preflight returned $LASTEXITCODE" }

@@ -253,6 +253,21 @@ async function execute(cmd) {
   if (CONTROL_ACTIONS.has(name) && !$('actions').checked)
     throw Error('Control denied: global Grant Control is OFF');
 
+  if (name === 'control_status') {
+    const sites = await getSites();
+    const globalEnabled = running && $('actions').checked;
+    return {
+      connected: running,
+      globalEnabled,
+      approvalPending: approvals.size,
+      origins: Object.keys(sites).filter(origin => CONTROL_ORIGINS[origin]).map(origin => ({
+        origin,
+        effective: grants.status(origin, globalEnabled).allowed,
+        expiresAt: grants.status(origin, globalEnabled).expiresAt
+      })),
+      // No token, prompt text, screenshot bytes or approval details.
+    };
+  }
   if (name === 'browser_tabs') {
     const out = [];
     for (const t of await chrome.tabs.query({})) {
@@ -263,7 +278,11 @@ async function execute(cmd) {
   }
   if (name === 'browser_open') {
     if (!(await siteOf(args.url))) throw Error('Origin not permitted: add this website in Chrome Bridge');
-    grants.require(new URL(args.url).origin);
+    const targetOrigin = new URL(args.url).origin;
+    grants.require(targetOrigin);
+    await askApproval('Открыть вкладку', 'Разрешённый адрес: ' + targetOrigin + '\\nОткрытие внешнего сайта', cmd.expires);
+    if (!running || Date.now() >= cmd.expires) throw Error('Command stopped or expired');
+    grants.require(targetOrigin);
     const t = await chrome.tabs.create({ url: args.url, active: !!args.active });
     return { tabId: t.id, url: args.url };
   }
@@ -315,6 +334,9 @@ async function execute(cmd) {
     const { tab, site, adapter } = await agentTab(args.tabId);
     grants.require(site.origin);
     if (!adapter.newChatUrl || new URL(adapter.newChatUrl).origin !== new URL(tab.url).origin) throw Error('Adapter has no same-origin newChatUrl');
+    await askApproval('Новый AI-чат', 'Сайт: ' + site.origin + '\\nСоздать новый разговор в существующей вкладке?', cmd.expires);
+    if (!running || Date.now() >= cmd.expires) throw Error('Command stopped or expired');
+    grants.require(site.origin);
     await chrome.tabs.update(tab.id, { url: adapter.newChatUrl });
     await sleep(500);
     await waitComplete(tab.id, 15000);
@@ -323,7 +345,26 @@ async function execute(cmd) {
   }
   if (['agent_send', 'agent_peek', 'agent_selftest'].includes(name)) {
     const { tab, site, adapter } = await agentTab(args.tabId);
-    if (name === 'agent_send') { const s = findSecret(args.text); if (s) throw Error('Refusing to send: text looks like it contains a secret (' + s + ')'); }
+    if (name === 'agent_send') {
+      const secret = findSecret(args.text);
+      if (secret) throw Error('Refusing to send: text looks like it contains a secret (' + secret + ')');
+      grants.require(site.origin);
+      const conversation = await inject(tab.id, site.origin, 'agent_context', { adapter });
+      if (!conversation.verified || conversation.origin !== site.origin ||
+          conversation.conversationId !== args.expectedConversationId ||
+          args.expectedOrigin !== site.origin) throw Error('Conversation changed before approval');
+      // Display only a short redacted preview; full prompt is not copied to logs.
+      await askApproval('Отправить AI-запрос', 'Сайт: ' + site.origin +
+        '\\nРазговор: ' + conversation.conversationId +
+        '\\nСимволов: ' + args.text.length +
+        '\\nНачало: ' + redact(args.text.slice(0, 180)), cmd.expires);
+      if (!running || Date.now() >= cmd.expires) throw Error('Command stopped or expired');
+      grants.require(site.origin);
+      // Confirm identity after approval, not only before it.
+      const current = await tabAndSite(tab.id);
+      if (current.site.origin !== site.origin || current.tab.url !== tab.url)
+        throw Error('AI tab changed after approval');
+    }
     const result = await inject(tab.id, site.origin, name, { ...args, adapter });
     return result?.text ? { ...result, text: redact(result.text) } : result;
   }
@@ -433,6 +474,9 @@ fillAdapterSelect();
 $('token').value = (await chrome.storage.session.get('browserToken')).browserToken || '';
 $('adapterJson').value = (await chrome.storage.local.get('adapters')).adapters || '{}';
 await renderSites();
+const visualCandidate = (await chrome.storage.session.get('visualCandidateTabId')).visualCandidateTabId;
+if (Number.isSafeInteger(visualCandidate) && visualCandidate > 0)
+  $('visualTabId').value = String(visualCandidate);
 taskStatus('РћР¶РёРґР°РЅРёРµ РїРѕРґРєР»СЋС‡РµРЅРёСЏ', 0);
 log('Р“РѕС‚РѕРІРѕ. РЈРєР°Р¶РёС‚Рµ РєР»СЋС‡ Рё РЅР°Р¶РјРёС‚Рµ В«РџРѕРґРєР»СЋС‡РёС‚СЊВ».');
 
