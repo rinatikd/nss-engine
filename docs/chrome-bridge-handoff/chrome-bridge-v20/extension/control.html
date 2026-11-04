@@ -7,37 +7,37 @@
 <main>
   <p class="eyebrow">AGENT HUB В· 0.3</p>
   <h1>Chrome Bridge</h1>
-  <p>РњРѕСЃС‚ РјРµР¶РґСѓ Р»РѕРєР°Р»СЊРЅС‹РјРё РР-Р°РіРµРЅС‚Р°РјРё Рё РІР°С€РёРј Р±СЂР°СѓР·РµСЂРѕРј. Р”РµСЂР¶РёС‚Рµ СЌС‚Сѓ РІРєР»Р°РґРєСѓ РѕС‚РєСЂС‹С‚РѕР№ (Р»СѓС‡С€Рµ РІ РѕС‚РґРµР»СЊРЅРѕРј РѕРєРЅРµ Chrome РІРјРµСЃС‚Рµ СЃ РІРєР»Р°РґРєР°РјРё С‡Р°С‚РѕРІ).</p>
+  <p>Мост между локальными ИИ-агентами и вашим браузером. Держите эту вкладку открытой (лучше в отдельном окне Chrome вместе с вкладками чатов).</p>
 
   <section>
-    <h2>1. РџРѕРґРєР»СЋС‡РµРЅРёРµ</h2>
-    <label>РљР»СЋС‡ Р±СЂР°СѓР·РµСЂР° РёР· Setup-Windows.ps1<input id="token" type="password" autocomplete="off"></label>
-    <div class="row"><button id="connect">РџРѕРґРєР»СЋС‡РёС‚СЊ</button><button id="stop" class="secondary">РћСЃС‚Р°РЅРѕРІРёС‚СЊ</button></div>
+    <h2>1. Подключение</h2>
+    <label>Ключ браузера из Setup-Windows.ps1<input id="token" type="password" autocomplete="off"></label>
+    <div class="row"><button id="connect">Подключить</button><button id="stop" class="secondary">Остановить</button></div>
     <p id="keyStorageStatus" class="hint" role="status">Ключ сохраняется при подключении и восстанавливается после перезапуска Chrome.</p>
     <button id="forgetKey" class="secondary" type="button">Удалить сохранённый ключ</button>
     <p class="hint">Ключ хранится только в профиле этого расширения Chrome и недоступен обычным веб-страницам. Не сохраняйте его на общем компьютере. Это не заменяет локальных разрешений Control.</p>
-    <p id="status" role="status">РћС‚РєР»СЋС‡РµРЅРѕ</p>
+    <p id="status" role="status">Отключено</p>
   </section>
 
   <section>
-    <p>Control only: https://claude.ai, https://gemini.google.com, https://chat.deepseek.com. Connect, then locally approve Grant control (1, 3 or 4 hours). Explicit re-grant after expiry, origin change, disconnect or restart. Other origins remain read-only. Grants permit sending prompts to external services; never send secrets.</p><h2>2. РЎР°Р№С‚С‹</h2>
-    <label>РЎСЂРѕРє Р»РѕРєР°Р»СЊРЅРѕРіРѕ СЂР°Р·СЂРµС€РµРЅРёСЏ Control<select id="controlDuration"><option value="240">4 С‡Р°СЃР°</option><option value="180">3 С‡Р°СЃР°</option><option value="60">1 С‡Р°СЃ</option></select></label>
+    <p>Control only: https://claude.ai, https://gemini.google.com, https://chat.deepseek.com. Connect, then locally approve Grant control (1, 3 or 4 hours). Explicit re-grant after expiry, origin change, disconnect or restart. Other origins remain read-only. Grants permit sending prompts to external services; never send secrets.</p><h2>2. Сайты</h2>
+    <label>Срок локального разрешения Control<select id="controlDuration"><option value="240">4 часа</option><option value="180">3 часа</option><option value="60">1 час</option></select></label>
     <div class="row">
-      <label>РўРёРї<select id="mode"><option value="read">РћР±С‹С‡РЅС‹Р№ СЃР°Р№С‚ (С‡С‚РµРЅРёРµ)</option><option value="chat">РР-С‡Р°С‚ (Р°РіРµРЅС‚СЃРєРёР№ СЂРµР¶РёРј)</option></select></label>
-      <label id="adapterWrap" hidden>РђРґР°РїС‚РµСЂ<select id="adapter"></select></label>
+      <label>Тип<select id="mode"><option value="read">Обычный сайт (чтение)</option><option value="chat">ИИ-чат (агентский режим)</option></select></label>
+      <label id="adapterWrap" hidden>Адаптер<select id="adapter"></select></label>
     </div>
-    <label>РђРґСЂРµСЃ СЃР°Р№С‚Р°<input id="origin" placeholder="https://claude.ai"></label>
-    <div class="row"><button id="grant">Р”РѕР±Р°РІРёС‚СЊ СЃР°Р№С‚</button><button id="revoke" class="secondary">РћС‚РѕР·РІР°С‚СЊ РІСЃРµ СЃР°Р№С‚С‹</button></div>
+    <label>Адрес сайта<input id="origin" placeholder="https://claude.ai"></label>
+    <div class="row"><button id="grant">Добавить сайт</button><button id="revoke" class="secondary">Отозвать все сайты</button></div>
     <ul id="sites"></ul>
 
   </section>
 
   <section>
-    <h2>3. Р‘РµР·РѕРїР°СЃРЅРѕСЃС‚СЊ</h2>
-    <label class="check"><input id="actions" type="checkbox">Р Р°Р·СЂРµС€РёС‚СЊ Р·Р°РїСЂРѕСЃС‹ РЅР° РЅР°Р¶Р°С‚РёСЏ Рё РІРІРѕРґ (browser_click / browser_fill вЂ” РєР°Р¶РґС‹Р№ РїРѕРґС‚РІРµСЂР¶РґР°РµС‚СЃСЏ РЅРёР¶Рµ)</label>
+    <h2>3. Безопасность</h2>
+    <label class="check"><input id="actions" type="checkbox">Разрешить запросы на нажатия и ввод (browser_click / browser_fill вЂ” каждый подтверждается ниже)</label>
     <p id="controlGlobalState" role="status">Глобальное разрешение действий: ВЫКЛ</p>
     <p class="hint">На каждом разрешённом сайте теперь есть отдельные кнопки «Подключить управление» и «Отключить управление». Для подключения нужен работающий мост, установленное глобальное разрешение и локальное подтверждение. При отключении разрешение отзывается только для выбранного сайта.</p>
-    <label class="check"><input id="confirmReads" type="checkbox">РџРѕРґС‚РІРµСЂР¶РґР°С‚СЊ РєР°Р¶РґРѕРµ С‡С‚РµРЅРёРµ СЃС‚СЂР°РЅРёС†С‹ (browser_read)</label>
+    <label class="check"><input id="confirmReads" type="checkbox">Подтверждать каждое чтение страницы (browser_read)</label>
   </section>
 
   <section id="visualDebugSection">
@@ -51,26 +51,26 @@
   </section>
 
   <section>
-    <h2>Р—Р°РїСЂРѕСЃС‹ РЅР° РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ</h2>
-    <div id="approvals"><p class="hint">РќРµС‚ РѕР¶РёРґР°СЋС‰РёС… Р·Р°РїСЂРѕСЃРѕРІ.</p></div>
+    <h2>Запросы на подтверждение</h2>
+    <div id="approvals"><p class="hint">Нет ожидающих запросов.</p></div>
   </section>
 
   <section>
-    <h2>РњРѕРЅРёС‚РѕСЂ РєРѕРјР°РЅРґ</h2>
-    <p id="taskState" role="status">РћР¶РёРґР°РЅРёРµ РїРѕРґРєР»СЋС‡РµРЅРёСЏ</p>
+    <h2>Монитор команд</h2>
+    <p id="taskState" role="status">Ожидание подключения</p>
     <progress id="taskProgress" max="100" value="0"></progress>
     <p id="taskTimes" class="hint"></p>
   </section>
   <section>
-    <h2>Р–СѓСЂРЅР°Р» (Р±РµР· СЃРѕРґРµСЂР¶РёРјРѕРіРѕ СЃС‚СЂР°РЅРёС†)</h2>
+    <h2>Журнал (без содержимого страниц)</h2>
     <pre id="log"></pre>
   </section>
 
   <details>
-    <summary>РђРґР°РїС‚РµСЂС‹ С‡Р°С‚РѕРІ (JSON, РЅР°РєР»Р°РґС‹РІР°СЋС‚СЃСЏ РїРѕРІРµСЂС… РІСЃС‚СЂРѕРµРЅРЅС‹С…)</summary>
-    <p class="hint">РЎРµР»РµРєС‚РѕСЂС‹ РёРЅС‚РµСЂС„РµР№СЃРѕРІ РјРѕРіСѓС‚ СѓСЃС‚Р°СЂРµС‚СЊ. РџСЂРёРјРµСЂ: {"chatgpt":{"send":"button[data-testid='send-button']"}}. РџСЂРѕРІРµСЂРєР°: agent_selftest.</p>
+    <summary>Адаптеры чатов (JSON, накладываются поверх встроенных)</summary>
+    <p class="hint">Селекторы интерфейсов могут устареть. Пример: {"chatgpt":{"send":"button[data-testid='send-button']"}}. Проверка: agent_selftest.</p>
     <textarea id="adapterJson" rows="8" spellcheck="false">{}</textarea>
-    <button id="saveAdapters" class="secondary">РЎРѕС…СЂР°РЅРёС‚СЊ Р°РґР°РїС‚РµСЂС‹</button>
+    <button id="saveAdapters" class="secondary">Сохранить адаптеры</button>
     <p id="adapterMsg" class="hint"></p>
   </details>
 </main>
