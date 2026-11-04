@@ -7,6 +7,18 @@ Source-only GitHub staging changes: PR #65 (two explicit per-site connect/discon
 - CI workflow Chrome Bridge Visual RC runs Node 22 tests: visual-snapshot.test.mjs, permissions-adapters.test.mjs; syntax checks control.js, visual-snapshot.js, permissions.js.
 - Repository Source checks should complete successfully. Both CI check results must be saved as release evidence for the exact candidate SHA.
 
+## Read-only Windows preflight
+
+The following command **does not change installed files, grants or credentials**. Run it from a checked-out RC source tree on the Windows PC:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\\docs\\chrome-bridge-handoff\\chrome-bridge-v20\\deployment\\preflight-windows.ps1" -BridgeRoot "C:\\Engineering\\chrome-bridge"
+```
+
+It inspects presence of extension sources, actual manifest, minimum permissions, background worker, JavaScript syntax (if Node is installed), and loopback ports 17381/17382. It does **not** print tokens or read browser profile secrets. If the checked-out path differs, use the local script path. An absent `activeTab` is explicitly reported but does not automatically alter the installed manifest. Copy back only the `[PASS]`, `[FAIL]`, `[INFO]` and `[RESULT]` lines, never raw manifest or config files.
+
+**CI evidence:** the same script is executed on a synthetic manifest/extension fixture with `-SkipPorts`; this is not equivalent to testing the installed bridge.
+
 ## Release blockers — do not publish as installed FINAL while any remain
 - [ ] Diff installed C:/Engineering/chrome-bridge/extension/{manifest.json,control.html,control.js,permissions.js,background.js} against archived v20 staging; keep backup and preserve secrets.
 - [ ] Confirm installed manifest has the minimum `activeTab` permission (see `MANIFEST_CAPTURE_REVIEW.md`); No example manifest is committed: `repo_guard` prohibits local manifest-like JSON; only the documented minimal delta is retained. Do not add permanent `<all_urls>`.
