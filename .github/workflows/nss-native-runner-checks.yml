@@ -1,0 +1,40 @@
+name: NSS Native Runner static checks
+on:
+  pull_request:
+    paths:
+      - 'work/NSS_AutoDebug_v0423/scripts/run_native.ps1'
+      - '.github/workflows/nss-native-runner-checks.yml'
+  push:
+    paths:
+      - 'work/NSS_AutoDebug_v0423/scripts/run_native.ps1'
+      - '.github/workflows/nss-native-runner-checks.yml'
+permissions:
+  contents: read
+jobs:
+  powershell-static:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell parser (must have zero errors)
+        shell: pwsh
+        run: |
+          $path = 'work/NSS_AutoDebug_v0423/scripts/run_native.ps1'
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'PowerShell AST: PASS'
+      - name: Read-only Inspect mode (no AutoCAD or Python)
+        shell: pwsh
+        run: |
+          & ./work/NSS_AutoDebug_v0423/scripts/run_native.ps1 -Mode Inspect
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: DesktopHost must refuse absent explicit opt-in
+        shell: pwsh
+        run: |
+          & ./work/NSS_AutoDebug_v0423/scripts/run_native.ps1 -Mode DesktopHost
+          if ($LASTEXITCODE -ne 2) { throw "Expected refusal with exit 2, got $LASTEXITCODE" }
+          Write-Host 'DesktopHost gate: PASS'
