@@ -14,6 +14,7 @@ $names = @(
   'transport-engine.js', 'transport-worker.js', 'transport-host.js',
   'transport-host.html', 'control.html', 'control.js', 'style.css',
   'connection-check.js', 'browser-key-store.js', 'permissions.js',
+  'approval-broker.js',
   'adapters.js', 'visual-snapshot.js', 'page.js', 'secrets.js'
 )
 $installed = Join-Path ([IO.Path]::GetFullPath($BridgeRoot)) 'extension'
