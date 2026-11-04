@@ -18,10 +18,11 @@ jobs:
           node-version: '22'
       - name: Run visual snapshot and grant tests
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
-        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs
+        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs
       - name: Syntax check changed extension files
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
           node --check extension/control.js
           node --check extension/visual-snapshot.js
           node --check extension/permissions.js
+          node --check server/tools.mjs
