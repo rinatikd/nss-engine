@@ -23,7 +23,7 @@ function refreshGrantLabels() {
     const ttl = row.querySelector('[data-ttl]');
     if (!origin || !ttl) continue;
     const expires = grants.grants.get(origin);
-    const active = !!(running && grants.epoch && expires && expires > Date.now() && $('actions').checked);
+    const active = grants.status(origin, running && $('actions').checked).allowed;
     ttl.textContent = active ? 'Управление разрешено: ещё ' + Math.ceil((expires - Date.now()) / 60000) + ' мин' : 'Управление отключено';
     const connect = row.querySelector('[data-connect-control]');
     const disconnect = row.querySelector('[data-disconnect-control]');
@@ -113,7 +113,7 @@ async function renderSites() {
       disconnect.textContent = 'Отключить управление';
       disconnect.onclick = (event) => {
         if (!event.isTrusted) { setStatus('Требуется локальный клик'); return; }
-        grants.grants.delete(origin);
+        grants.revoke(origin);
         refreshGrantLabels();
         log('Control revoked: ' + origin);
       };
