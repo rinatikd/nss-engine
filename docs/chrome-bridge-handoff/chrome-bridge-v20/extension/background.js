@@ -1,3 +1,26 @@
+import { installBackgroundCoordinator, startBackgroundTransport } from './background-coordinator.js';
+installBackgroundCoordinator(chrome);
+
+async function maintainBackgroundIfEnabled() {
+  try {
+    const {bridgeBackgroundMode, bridgeConnectionDesired} =
+      await chrome.storage.local.get(['bridgeBackgroundMode','bridgeConnectionDesired']);
+    if (bridgeBackgroundMode === true && bridgeConnectionDesired === true) {
+      await startBackgroundTransport(chrome);
+    }
+  } catch (error) {
+    // No credential data in diagnostic logs.
+    console.warn('[Chrome Bridge] recovery failed:', error?.name || 'Error');
+  }
+}
+chrome.runtime.onStartup.addListener(() => { void maintainBackgroundIfEnabled(); });
+chrome.runtime.onInstalled.addListener(() => { void maintainBackgroundIfEnabled(); });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === 'chrome-bridge-background-keepalive') void maintainBackgroundIfEnabled();
+});
+void chrome.alarms.create('chrome-bridge-background-keepalive', {periodInMinutes: 1});
+void maintainBackgroundIfEnabled();
+
 // Deny content-script access to persisted credentials as soon as MV3 starts.
 chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })
   .catch(() => { /* control.js refuses persistence when this is unavailable */ });

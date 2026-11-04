@@ -436,6 +436,72 @@ $('actions').addEventListener('change', (event) => {
   if (!$('actions').checked) grants.grants.clear();
   refreshGrantLabels();
 });
+let backgroundMode = false;
+let backgroundTimer = null;
+async function updateBackgroundStatus() {
+  if (!backgroundMode) return;
+  try {
+    const current = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'status'});
+    const active = current.connected === true;
+    running = active; // UI indication only; background owns the HTTP poll.
+    $('actions').checked = false; // Never auto-enable Control in background mode.
+    $('actions').disabled = true;
+    $('backgroundModeStatus').textContent = 'Фоновый режим: только диагностика; отправка запросов помощникам отключена.';
+    const labels = {
+      connected:'Подключено · фоновый режим',
+      connecting:'Фоновое подключение…',
+      recovering:'Восстанавливаем соединение с сервером…',
+      'auth-failed':'Ошибка авторизации фонового соединения',
+      disconnected:'Отключено вручную'
+    };
+    setStatus(labels[current.state] || 'Фоновый режим: ' + current.state);
+    refreshGrantLabels();
+  } catch (e) {
+    setStatus('Фоновый координатор недоступен: ' + e.message);
+  }
+}
+async function switchToBackgroundMode() {
+  // Stop the previous UI poller BEFORE authorizing a second transport owner.
+  if (running && pollAbort) stop();
+  backgroundMode = true;
+  await chrome.storage.local.set({bridgeBackgroundMode:true});
+  $('backgroundMode').checked = true;
+  $('actions').checked = false;
+  $('actions').disabled = true;
+  const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'});
+  if (!result.ok && result.reason !== 'MANUAL_DISCONNECT') setStatus('Фоновый режим: ' + result.reason);
+  if (!backgroundTimer) backgroundTimer = setInterval(updateBackgroundStatus, 2500);
+  await updateBackgroundStatus();
+}
+async function leaveBackgroundMode() {
+  if (backgroundTimer) clearInterval(backgroundTimer);
+  backgroundTimer = null;
+  const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
+  if (!result.ok) throw Error(result.reason || 'BACKGROUND_STOP_FAILED');
+  await chrome.storage.local.set({bridgeBackgroundMode:false});
+  backgroundMode = false;
+  running = false;
+  $('actions').disabled = false;
+  $('backgroundMode').checked = false;
+  $('backgroundModeStatus').textContent = 'Обычный режим: панель управляет подключением.';
+  setStatus('Отключено · нажмите «Подключить»');
+}
+$('backgroundMode').addEventListener('change', async event => {
+  if (!event.isTrusted) { $('backgroundMode').checked = backgroundMode; return; }
+  const requested = $('backgroundMode').checked;
+  if (requested && !confirm('Фоновый режим пока поддерживает только диагностику и чтение статуса. Отправка сообщений Claude, Gemini и DeepSeek будет недоступна. Включить?')) {
+    $('backgroundMode').checked = backgroundMode;
+    return;
+  }
+  $('backgroundMode').disabled = true;
+  try {
+    if (requested) await switchToBackgroundMode();
+    else await leaveBackgroundMode();
+  } catch (error) {
+    $('backgroundMode').checked = backgroundMode;
+    setStatus('Не удалось переключить режим: ' + error.message);
+  } finally { $('backgroundMode').disabled = false; }
+});
 let reconnectTimer = null;
 let reconnectAllowed = true;
 const cancelReconnect = () => { if (reconnectTimer) clearTimeout(reconnectTimer); reconnectTimer = null; };
@@ -443,10 +509,30 @@ $('stop').onclick = async () => {
   reconnectAllowed = false;
   cancelReconnect();
   await chrome.storage.local.set({ bridgeConnectionDesired: false });
-  stop();
+  if (backgroundMode) {
+    const response = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
+    if (!response.ok) setStatus('Фоновое отключение не подтверждено');
+    running = false;
+    await updateBackgroundStatus();
+  } else stop();
 };
 async function connectBridge({ automatic = false } = {}) {
   if (running || $('connect').disabled) return;
+  if (backgroundMode) {
+    const token = $('token').value.trim();
+    if (!token) { setStatus('Введите ключ браузера.'); return; }
+    $('connect').disabled = true;
+    try {
+      await verifyBridgeCredential(fetch, token);
+      await saveBrowserKey(chrome, token);
+      await chrome.storage.local.set({bridgeConnectionDesired:true});
+      const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'});
+      if (!result.ok) throw Error(result.reason || 'BACKGROUND_START_FAILED');
+      await updateBackgroundStatus();
+    } catch (e) { setStatus('Фоновое подключение: ' + e.message); }
+    finally { $('connect').disabled = false; }
+    return;
+  }
   const token = $('token').value.trim();
   if (!token) { setStatus('Введите ключ браузера.'); return; }
   $('connect').disabled = true;
@@ -497,7 +583,10 @@ $('forgetKey').onclick = async (event) => {
   try {
     reconnectAllowed = false;
     cancelReconnect();
-    stop();
+    if (backgroundMode) {
+      await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
+      running = false;
+    } else stop();
     await chrome.storage.local.set({ bridgeConnectionDesired: false });
     await forgetBrowserKey(chrome);
     $('token').value = '';
@@ -513,7 +602,7 @@ $('forgetKey').onclick = async (event) => {
 window.addEventListener('beforeunload', () => {
   reconnectAllowed = false;
   cancelReconnect();
-  stop();
+  if (!backgroundMode) stop();
 });
 
 // ---------- локальная визуальная диагностика ----------
@@ -556,8 +645,20 @@ try {
     ? 'Ключ загружен. Проверяем подключение автоматически.'
     : savedKey.value ? 'Найден временный ключ. Нажмите «Подключить», чтобы сохранить его постоянно.'
     : 'Введите ключ один раз — он сохранится при подключении.';
-  const { bridgeConnectionDesired } = await chrome.storage.local.get('bridgeConnectionDesired');
-  if (bridgeConnectionDesired === true && savedKey.value) void connectBridge({ automatic: true });
+  const { bridgeConnectionDesired, bridgeBackgroundMode } =
+    await chrome.storage.local.get(['bridgeConnectionDesired','bridgeBackgroundMode']);
+  if (bridgeBackgroundMode === true) {
+    backgroundMode = true;
+    $('backgroundMode').checked = true;
+    $('actions').disabled = true;
+    backgroundTimer = setInterval(updateBackgroundStatus, 2500);
+    await updateBackgroundStatus();
+    if (bridgeConnectionDesired === true && savedKey.value) {
+      // The coordinator owns the connection, not the control window.
+      void chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'});
+    }
+  } else if (bridgeConnectionDesired === true && savedKey.value)
+    void connectBridge({ automatic:true });
 } catch (error) {
   $('keyStorageStatus').textContent = 'Безопасное хранилище недоступно: ' + error.message;
   $('token').value = '';
