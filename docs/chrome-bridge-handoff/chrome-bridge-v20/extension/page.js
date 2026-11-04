@@ -1,5 +1,5 @@
-// Р¤СѓРЅРєС†РёСЏ, РєРѕС‚РѕСЂР°СЏ С†РµР»РёРєРѕРј СЃРµСЂРёР°Р»РёР·СѓРµС‚СЃСЏ Рё РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ Р’РќРЈРўР Р СЃС‚СЂР°РЅРёС†С‹ (chrome.scripting.executeScript).
-// РћРЅР° РЅРµ РґРѕР»Р¶РЅР° СЃСЃС‹Р»Р°С‚СЊСЃСЏ РЅРё РЅР° С‡С‚Рѕ СЃРЅР°СЂСѓР¶Рё. Р’РѕР·РІСЂР°С‰Р°РµС‚ РґР°РЅРЅС‹Рµ РёР»Рё {error}.
+// Функция, которая целиком сериализуется и выполняется Р’РќРЈРўР И страницы (chrome.scripting.executeScript).
+// Она не должна ссылаться ни на что снаружи. Возвращает данные или {error}.
 export async function pageAction(name, args, expectedOrigin) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const vis = (e) => !!e && e.getClientRects().length > 0;
@@ -84,7 +84,7 @@ export async function pageAction(name, args, expectedOrigin) {
       return { filled: true };
     }
 
-    // ---------- Р°РіРµРЅС‚СЃРєРёРµ С‡Р°С‚С‹ (Р°РґР°РїС‚РµСЂ РїСЂРёС…РѕРґРёС‚ РІ args.adapter) ----------
+    // ---------- агентские чаты (адаптер приходит в args.adapter) ----------
     const A = args.adapter;
     const composerEl = () => one(A.composer);
     const textOf = (c) => ((c instanceof HTMLTextAreaElement || c instanceof HTMLInputElement) ? c.value : c.innerText || '').trim();
@@ -157,7 +157,7 @@ export async function pageAction(name, args, expectedOrigin) {
           const dt = new DataTransfer();
           dt.setData('text/plain', text);
           composer.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-        } catch { /* РїРµСЂРµР№РґС‘Рј Рє insertText */ }
+        } catch { /* перейдём к insertText */ }
         await sleep(150);
         if (!textOf(composer)) document.execCommand('insertText', false, text);
       }
