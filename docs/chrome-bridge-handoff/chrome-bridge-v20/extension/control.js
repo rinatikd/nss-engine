@@ -433,8 +433,11 @@ $('actions').addEventListener('change', (event) => {
   if (!$('actions').checked) grants.grants.clear();
   refreshGrantLabels();
 });
-$('stop').onclick = stop;
-$('connect').onclick = async () => {
+let reconnectTimer = null;
+let reconnectAllowed = true;
+const cancelReconnect = () => { if (reconnectTimer) clearTimeout(reconnectTimer); reconnectTimer = null; };
+$('stop').onclick = () => { reconnectAllowed = false; cancelReconnect(); stop(); };
+async function connectBridge({ automatic = false } = {}) {
   if (running || $('connect').disabled) return;
   const token = $('token').value.trim();
   if (!token) { setStatus('Введите ключ браузера.'); return; }
@@ -464,14 +467,27 @@ $('connect').onclick = async () => {
       KEY_EMPTY: 'Ключ не введён.'
     };
     setStatus(hints[code] || ('Ошибка подключения: ' + code));
+    // Retry only temporary network outages, never rejected credentials or
+    // extension-origin mismatches. Never re-enable page/control permissions.
+    if (automatic && reconnectAllowed &&
+        ['BRIDGE_NETWORK_UNREACHABLE', 'BRIDGE_TIMEOUT'].includes(code)) {
+      cancelReconnect();
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (reconnectAllowed && !running) void connectBridge({ automatic: true });
+      }, 12000);
+    }
   } finally {
     $('connect').disabled = false;
   }
-};
+}
+$('connect').onclick = () => { reconnectAllowed = true; cancelReconnect(); void connectBridge(); };
 $('forgetKey').onclick = async (event) => {
   if (!event.isTrusted) return;
   if (!window.confirm('Удалить сохранённый ключ браузера из Chrome Bridge и отключить мост?')) return;
   try {
+    reconnectAllowed = false;
+    cancelReconnect();
     stop();
     await forgetBrowserKey(chrome);
     $('token').value = '';
@@ -480,7 +496,7 @@ $('forgetKey').onclick = async (event) => {
     setStatus('Не удалось удалить ключ: ' + error.message);
   }
 };
-window.addEventListener('beforeunload', stop);
+window.addEventListener('beforeunload', () => { reconnectAllowed = false; cancelReconnect(); stop(); });
 
 // ---------- локальная визуальная диагностика ----------
 $('visualCapture').onclick = async (event) => {
@@ -519,9 +535,10 @@ try {
   const savedKey = await loadBrowserKey(chrome);
   $('token').value = savedKey.value;
   $('keyStorageStatus').textContent = savedKey.persistent
-    ? 'Ключ загружен из постоянного хранилища расширения.'
+    ? 'Ключ загружен. Проверяем подключение автоматически.'
     : savedKey.value ? 'Найден временный ключ. Нажмите «Подключить», чтобы сохранить его постоянно.'
     : 'Введите ключ один раз — он сохранится при подключении.';
+  if (savedKey.persistent && savedKey.value) void connectBridge({ automatic: true });
 } catch (error) {
   $('keyStorageStatus').textContent = 'Безопасное хранилище недоступно: ' + error.message;
   $('token').value = '';
