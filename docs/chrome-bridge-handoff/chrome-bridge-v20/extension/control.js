@@ -160,7 +160,10 @@ $('grant').onclick = async () => {
   } catch (e) { setStatus(e.message); }
 };
 $('revoke').onclick = async () => {
-  stop();
+  // Revoking site access must not stop the local bridge connection.
+  grants.grants.clear();
+  $('actions').checked = false;
+  refreshGrantLabels();
   const p = await chrome.permissions.getAll();
   for (const o of p.origins || []) if (!o.includes('127.0.0.1')) await chrome.permissions.remove({ origins: [o] });
   await setSites({});
@@ -436,7 +439,12 @@ $('actions').addEventListener('change', (event) => {
 let reconnectTimer = null;
 let reconnectAllowed = true;
 const cancelReconnect = () => { if (reconnectTimer) clearTimeout(reconnectTimer); reconnectTimer = null; };
-$('stop').onclick = () => { reconnectAllowed = false; cancelReconnect(); stop(); };
+$('stop').onclick = async () => {
+  reconnectAllowed = false;
+  cancelReconnect();
+  await chrome.storage.local.set({ bridgeConnectionDesired: false });
+  stop();
+};
 async function connectBridge({ automatic = false } = {}) {
   if (running || $('connect').disabled) return;
   const token = $('token').value.trim();
@@ -447,6 +455,7 @@ async function connectBridge({ automatic = false } = {}) {
     // First verify with the running server. Never persist unverified keys.
     const handshake = await verifyBridgeCredential(fetch, token);
     await saveBrowserKey(chrome, token);
+    if (!automatic) await chrome.storage.local.set({ bridgeConnectionDesired: true });
     $('keyStorageStatus').textContent = 'Ключ проверен сервером и сохранён в профиле расширения.';
     grants.reset(handshake.epoch);
     pollAbort = new AbortController();
@@ -489,6 +498,7 @@ $('forgetKey').onclick = async (event) => {
     reconnectAllowed = false;
     cancelReconnect();
     stop();
+    await chrome.storage.local.set({ bridgeConnectionDesired: false });
     await forgetBrowserKey(chrome);
     $('token').value = '';
     $('keyStorageStatus').textContent = 'Сохранённый ключ удалён. Для подключения потребуется ввести его заново.';
@@ -496,7 +506,15 @@ $('forgetKey').onclick = async (event) => {
     setStatus('Не удалось удалить ключ: ' + error.message);
   }
 };
-window.addEventListener('beforeunload', () => { reconnectAllowed = false; cancelReconnect(); stop(); });
+// Closing the panel is NOT a user disconnect request. The current UI-owned
+// polling session still ends when this document is destroyed; persisted
+// desired state allows reconnect on reopening until runtime is moved to a
+// background-owned connection service.
+window.addEventListener('beforeunload', () => {
+  reconnectAllowed = false;
+  cancelReconnect();
+  stop();
+});
 
 // ---------- локальная визуальная диагностика ----------
 $('visualCapture').onclick = async (event) => {
@@ -538,7 +556,8 @@ try {
     ? 'Ключ загружен. Проверяем подключение автоматически.'
     : savedKey.value ? 'Найден временный ключ. Нажмите «Подключить», чтобы сохранить его постоянно.'
     : 'Введите ключ один раз — он сохранится при подключении.';
-  if (savedKey.persistent && savedKey.value) void connectBridge({ automatic: true });
+  const { bridgeConnectionDesired } = await chrome.storage.local.get('bridgeConnectionDesired');
+  if (bridgeConnectionDesired === true && savedKey.value) void connectBridge({ automatic: true });
 } catch (error) {
   $('keyStorageStatus').textContent = 'Безопасное хранилище недоступно: ' + error.message;
   $('token').value = '';
