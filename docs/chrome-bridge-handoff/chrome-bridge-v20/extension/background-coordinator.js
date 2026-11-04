@@ -59,7 +59,9 @@ async function startBackgroundTransportOnce(chromeApi) {
 export async function stopBackgroundTransport(chromeApi) {
   approvals.stop();
   await new BackgroundControlGrants(chromeApi).clear();
-  await chromeApi.storage.local.set({bridgeConnectionDesired:false});
+  await chromeApi.storage.local.set({
+    bridgeConnectionDesired:false,bridgeMutationLabMode:false
+  });
   try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
   updateStatus({state:'disconnected',connected:false});
 }
@@ -101,6 +103,14 @@ export function installBackgroundCoordinator(chromeApi) {
         return dispatchReadOnly(msg.command,chromeApi);
       };
       void run().then(result=>respond({result}),e=>respond({error:e.message}));
+      return true;
+    }
+    if (msg.type === 'clear-background-controls') {
+      if (sender.url !== chromeApi.runtime.getURL('control.html')) {
+        respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
+      }
+      void new BackgroundControlGrants(chromeApi).clear()
+        .then(()=>respond({ok:true}),e=>respond({error:e.message}));
       return true;
     }
     if (msg.type === 'grant-background-control' || msg.type === 'revoke-background-control') {
