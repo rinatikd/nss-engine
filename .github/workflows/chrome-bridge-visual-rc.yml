@@ -128,6 +128,24 @@ jobs:
           if ((Get-FileHash $manifestPath).Hash -ne $originalHash) { throw 'Manifest not restored exactly' }
           if (Test-Path (Join-Path $installed 'browser-key-store.js')) { throw 'New file survived rollback' }
           Write-Output '[PASS] Windows PowerShell 5.1 dry-run/apply/restore with BOM check'
+      - name: Test supervisor probe and scheduled-task dry-run on Windows
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-watchdog-fixture'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Set-Content -LiteralPath (Join-Path $root 'Start-Bridge.ps1') -Value "Write-Output 'synthetic-launcher'"
+          $taskName = 'ChromeBridge-Server-17381'
+          if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'Unexpected task exists on CI runner' }
+          $plan = & ./deployment/register-watchdog.ps1 -BridgeRoot $root
+          if ($LASTEXITCODE -ne 0 -or (($plan -join ' ') -notmatch '\[DRY-RUN\]')) { throw 'Task setup dry-run failed' }
+          if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'Dry-run unexpectedly registered a task' }
+          $probe = & ./deployment/watch-bridge.ps1 -BridgeRoot $root -ProbeOnly
+          if ($LASTEXITCODE -notin @(0,2)) { throw 'Probe returned an unexpected status' }
+          if ((($probe -join ' ') -notmatch '\[(READY|DOWN)\]')) { throw 'Probe produced invalid status' }
+          $rm = & ./deployment/register-watchdog.ps1 -BridgeRoot $root -Remove
+          if ((($rm -join ' ') -notmatch '\[DRY-RUN\]')) { throw 'Removal dry-run failed' }
+          Write-Output '[PASS] No startup settings changed during watchdog preflight'
       - name: Package source-only Windows upgrade candidate
         if: success()
         uses: actions/upload-artifact@v4
