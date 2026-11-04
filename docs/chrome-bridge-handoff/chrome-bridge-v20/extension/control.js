@@ -446,7 +446,7 @@ async function updateBackgroundStatus() {
     running = active; // UI indication only; background owns the HTTP poll.
     $('actions').checked = false; // Never auto-enable Control in background mode.
     $('actions').disabled = true;
-    $('backgroundModeStatus').textContent = 'Фоновый режим: только диагностика; отправка запросов помощникам отключена.';
+    $('backgroundModeStatus').textContent = 'Фоновый режим: чтение разрешённых вкладок и страниц; отправка сообщений отключена.';
     const labels = {
       connected:'Подключено · фоновый режим',
       connecting:'Фоновое подключение…',
@@ -489,7 +489,7 @@ async function leaveBackgroundMode() {
 $('backgroundMode').addEventListener('change', async event => {
   if (!event.isTrusted) { $('backgroundMode').checked = backgroundMode; return; }
   const requested = $('backgroundMode').checked;
-  if (requested && !confirm('Фоновый режим пока поддерживает только диагностику и чтение статуса. Отправка сообщений Claude, Gemini и DeepSeek будет недоступна. Включить?')) {
+  if (requested && !confirm('Фоновый режим пока поддерживает диагностику и чтение разрешённых вкладок. Отправка сообщений Claude, Gemini и DeepSeek будет недоступна. Включить?')) {
     $('backgroundMode').checked = backgroundMode;
     return;
   }
