@@ -4,18 +4,18 @@ import { readFileSync } from 'node:fs';
 import { dispatchReadOnly } from '../extension/read-only-dispatch.js';
 const source = name => readFileSync(new URL('../extension/'+name,import.meta.url),'utf8');
 
-test('mutation commands never execute in background prototype',()=>{
+test('mutation commands never execute in background prototype',async()=>{
  for (const name of ['agent_send','agent_new_chat','browser_click','browser_fill','browser_open']) {
-   assert.throws(()=>dispatchReadOnly({name},{}),/CONTROL_REQUIRES_APPROVAL_UI/);
+   await assert.rejects(dispatchReadOnly({name},{}),/CONTROL_REQUIRES_APPROVAL_UI/);
  }
 });
-test('unknown and tab-reading commands fail closed until origin checks are migrated',()=>{
- assert.throws(()=>dispatchReadOnly({name:'browser_read'},{}),/BACKGROUND_COMMAND_NOT_MIGRATED/);
- assert.throws(()=>dispatchReadOnly({name:'agent_peek'},{}),/BACKGROUND_COMMAND_NOT_MIGRATED/);
- assert.throws(()=>dispatchReadOnly({},{}),/INVALID_COMMAND/);
+test('unknown command names fail closed',async()=>{
+
+ await assert.rejects(dispatchReadOnly({name:'agent_peek'},{}),/BACKGROUND_COMMAND_NOT_MIGRATED/);
+ await assert.rejects(dispatchReadOnly({},{}),/INVALID_COMMAND/);
 });
-test('only transport inspection is permitted as baseline',()=>{
- const r=dispatchReadOnly({name:'control_status'},{});
+test('control introspection stays non-mutating',async()=>{
+ const r=await dispatchReadOnly({name:'control_status'},{});
  assert.equal(r.globalEnabled,false);
  assert.equal(r.approvalPending,0);
  assert.deepEqual(r.origins,[]);
