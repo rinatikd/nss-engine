@@ -72,6 +72,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'apply failed' }
           $updated = Get-Content -LiteralPath (Join-Path $installed 'manifest.json') -Raw | ConvertFrom-Json
           if (@($updated.permissions) -notcontains 'activeTab') { throw 'Permission not installed' }
+          if ($updated.background.type -ne 'module') { throw 'Module worker not installed' }
+          if (@($updated.permissions) -notcontains 'offscreen') { throw 'Offscreen missing' }
+          if (@($updated.permissions) -notcontains 'alarms') { throw 'Alarm missing' }
           if (@($updated.optional_host_permissions) -notcontains 'https://*/*') { throw 'Optional hosts changed' }
           if (@($updated.host_permissions) -contains '<all_urls>') { throw 'Broad host access introduced' }
           if (-not (Test-Path (Join-Path $installed 'browser-key-store.js'))) { throw 'Key-store module missing' }
@@ -123,6 +126,10 @@ jobs:
           if (($bytes.Length -gt 2) -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { throw 'UTF-8 BOM added to Chrome manifest' }
           $updated = Get-Content $manifestPath -Raw | ConvertFrom-Json
           if (@($updated.permissions) -notcontains 'activeTab') { throw 'activeTab missing' }
+          if ($updated.background.type -ne 'module') { throw 'MV3 module background missing' }
+          if (@($updated.permissions) -notcontains 'offscreen') { throw 'offscreen permission missing' }
+          if (@($updated.permissions) -notcontains 'alarms') { throw 'alarms permission missing' }
+          if (-not (Test-Path (Join-Path $installed 'transport-host.html'))) { throw 'Background host missing' }
           if (-not (Test-Path (Join-Path $installed 'connection-check.js'))) { throw 'Credential check module missing' }
           if (-not (Test-Path (Join-Path $installed 'style.css'))) { throw 'Stylesheet missing' }
           if ((Get-Content (Join-Path $installed 'style.css') -Raw) -notmatch 'max-width:940px') { throw 'New styles not deployed' }
