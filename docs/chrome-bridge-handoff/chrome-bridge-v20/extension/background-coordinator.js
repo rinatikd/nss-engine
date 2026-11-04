@@ -23,13 +23,14 @@ async function ensureHost(chromeApi) {
   await creating;
 }
 export async function startBackgroundTransport(chromeApi) {
+  // Restrict access before reading secrets, not after obtaining the key.
+  await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   const {bridgeConnectionDesired, browserToken} = await chromeApi.storage.local.get(
     ['bridgeConnectionDesired','browserToken']
   );
   if (bridgeConnectionDesired !== true) return {ok:false,reason:'MANUAL_DISCONNECT'};
   if (typeof browserToken !== 'string' || !browserToken)
     return {ok:false,reason:'NO_STORED_CREDENTIAL'};
-  await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   await ensureHost(chromeApi);
   await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'start',token:browserToken});
   return {ok:true};
