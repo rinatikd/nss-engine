@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Chrome Bridge (source-only RC example)",
+  "version": "0.2.0",
+  "description": "Consent-controlled local browser bridge; review and preserve installed manifest before deployment.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Chrome Bridge — open control"
+  }
+}
