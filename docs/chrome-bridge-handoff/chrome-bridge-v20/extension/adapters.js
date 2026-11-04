@@ -37,12 +37,20 @@ export const DEFAULT_ADAPTERS = {
   // Candidate-only adapters: no new CONTROL_ORIGINS are granted by this package.
   // Their CSS selectors require live calibration before enabling write operations.
   grok: {
-    label: 'Grok (candidate)', origin: 'https://grok.com', newChatUrl: 'https://grok.com/',
+    label: 'Grok (candidate, read-only)', origin: 'https://grok.com', newChatUrl: 'https://grok.com/',
+    composer: 'textarea, [contenteditable="true"][role="textbox"]',
+    send: '', stop: '', reply: '',
+  },
+  // Cursor web Cloud Agents, not the local Cursor IDE. The page may contain
+  // task launch controls rather than a standard conversation; diagnose first.
+  cursor: {
+    label: 'Cursor Cloud Agents (candidate)', origin: 'https://cursor.com',
+    newChatUrl: 'https://cursor.com/agents',
     composer: 'textarea, [contenteditable="true"][role="textbox"]',
     send: '', stop: '', reply: '',
   },
   qwen: {
-    label: 'Qwen (candidate)', origin: 'https://chat.qwen.ai', newChatUrl: 'https://chat.qwen.ai/',
+    label: 'Qwen (candidate, read-only)', origin: 'https://chat.qwen.ai', newChatUrl: 'https://chat.qwen.ai/',
     composer: 'textarea, [contenteditable="true"][role="textbox"]',
     send: '', stop: '', reply: '',
   },
