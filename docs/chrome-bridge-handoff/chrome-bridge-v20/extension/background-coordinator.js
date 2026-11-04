@@ -1,9 +1,11 @@
 import { dispatchReadOnly } from './read-only-dispatch.js';
+import { ApprovalSession } from './approval-session.js';
 
 const PATH = 'transport-host.html';
 let creating = null;
 let status = {state:'disconnected',connected:false,error:null,updatedAt:0};
 let starting = null;
+const approvals = new ApprovalSession();
 const trusted = (sender, chromeApi) => sender?.id === chromeApi.runtime.id && !sender.tab;
 const updateStatus = (next) => {
   status = {state:next.state || 'unknown',connected:next.connected === true,
@@ -53,6 +55,7 @@ async function startBackgroundTransportOnce(chromeApi) {
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
+  approvals.stop();
   await chromeApi.storage.local.set({bridgeConnectionDesired:false});
   try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
   updateStatus({state:'disconnected',connected:false});
@@ -77,6 +80,26 @@ export function installBackgroundCoordinator(chromeApi) {
       Promise.resolve().then(() => dispatchReadOnly(msg.command,chromeApi))
         .then(result=>respond({result}),e=>respond({error:e.message}));
       return true;
+    }
+    if (msg.type === 'approval-list') {
+      // Pending metadata only, never full prompts, tokens or selectors.
+      if (sender.url !== chromeApi.runtime.getURL('control.html')) {
+        respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
+      }
+      respond({pending:approvals.list()}); return false;
+    }
+    if (msg.type === 'approval-decide') {
+      if (sender.url !== chromeApi.runtime.getURL('control.html')) {
+        respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
+      }
+      // This is only the approval-dialog transport. No execution path is
+      // activated in the background executor until identity revalidation lands.
+      try {
+        respond(approvals.decide({
+          id:msg.id, approved:msg.approved===true, trustedUserGesture:msg.trustedUserGesture===true
+        }));
+      } catch(e) { respond({error:e.message}); }
+      return false;
     }
     if (msg.type === 'start-background') {
       void startBackgroundTransport(chromeApi).then(respond, e => respond({ok:false,reason:e.message}));
