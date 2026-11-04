@@ -9,7 +9,7 @@ function fakeChrome(data={}) {
     calls,listeners,
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
-      get:async keys=>Object.fromEntries(keys.map(k=>[k,data[k]])),
+      get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
       set:async next=>{Object.assign(data,next);calls.push(['set',next]);}
     }},
     runtime:{
