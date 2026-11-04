@@ -15,7 +15,7 @@ $files = @(
   'connection-check.js', 'style.css',
   'background-coordinator.js', 'read-only-dispatch.js', 'transport-engine.js',
   'transport-worker.js', 'transport-host.js', 'transport-host.html',
-  'approval-broker.js'
+  'approval-broker.js', 'approval-session.js'
 )
 function Require([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
