@@ -40,3 +40,94 @@ jobs:
           $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $ext 'manifest.json') -Encoding UTF8
           & ./deployment/preflight-windows.ps1 -BridgeRoot $fixture -SkipPorts
           if ($LASTEXITCODE -ne 0) { throw "Read-only preflight returned $LASTEXITCODE" }
+      - name: Test Windows upgrade dry-run apply and rollback on synthetic extension
+        shell: pwsh
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-upgrade-fixture'
+          $installed = Join-Path $root 'extension'
+          New-Item -ItemType Directory -Force -Path $installed | Out-Null
+          Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $installed
+          $m = @{
+            manifest_version = 3
+            version = '0.2.0'
+            permissions = @('storage','scripting')
+            host_permissions = @('http://127.0.0.1/*')
+            optional_host_permissions = @('https://*/*')
+            background = @{ service_worker = 'background.js' }
+            action = @{ default_title = 'Chrome Bridge' }
+          }
+          $m | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $installed 'manifest.json') -Encoding UTF8
+          $originalHash = (Get-FileHash (Join-Path $installed 'manifest.json')).Hash
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -CandidateRoot .
+          if ($LASTEXITCODE -ne 0) { throw 'dry-run failed' }
+          if ((Get-FileHash (Join-Path $installed 'manifest.json')).Hash -ne $originalHash) { throw 'Dry-run changed manifest' }
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -CandidateRoot . -Apply
+          if ($LASTEXITCODE -ne 0) { throw 'apply failed' }
+          $updated = Get-Content -LiteralPath (Join-Path $installed 'manifest.json') -Raw | ConvertFrom-Json
+          if (@($updated.permissions) -notcontains 'activeTab') { throw 'Permission not installed' }
+          if (@($updated.optional_host_permissions) -notcontains 'https://*/*') { throw 'Optional hosts changed' }
+          if (@($updated.host_permissions) -contains '<all_urls>') { throw 'Broad host access introduced' }
+          if (-not (Test-Path (Join-Path $installed 'browser-key-store.js'))) { throw 'Key-store module missing' }
+          $backups = @(Get-ChildItem (Split-Path $root -Parent) -Directory -Filter 'chrome-bridge-backup-*' | Sort-Object LastWriteTime -Descending)
+          if (-not $backups.Count) { throw 'Backup not found' }
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'rollback failed' }
+          if ((Get-FileHash (Join-Path $installed 'manifest.json')).Hash -ne $originalHash) { throw 'Rollback did not restore manifest' }
+          if (Test-Path (Join-Path $installed 'browser-key-store.js')) { throw 'Rollback kept new source file' }
+          Write-Output '[PASS] staged dry-run, backup, apply, and rollback'
+
+
+  windows-powershell51:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test staged upgrade and rollback with native Windows PowerShell 5.1
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-ps51-fixture'
+          $installed = Join-Path $root 'extension'
+          New-Item -ItemType Directory -Force -Path $installed | Out-Null
+          Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $installed
+          $m = @{
+            manifest_version = 3
+            version = '0.2.0'
+            permissions = @('storage','scripting')
+            host_permissions = @('http://127.0.0.1/*')
+            optional_host_permissions = @('https://*/*')
+            background = @{ service_worker = 'background.js' }
+            action = @{ default_title = 'Chrome Bridge' }
+          }
+          $manifestPath = Join-Path $installed 'manifest.json'
+          [IO.File]::WriteAllText($manifestPath, ($m | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+          $originalHash = (Get-FileHash $manifestPath).Hash
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -CandidateRoot .
+          if ($LASTEXITCODE -ne 0) { throw 'Dry run failed' }
+          if ((Get-FileHash $manifestPath).Hash -ne $originalHash) { throw 'Dry run modified manifest' }
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -CandidateRoot . -Apply
+          if ($LASTEXITCODE -ne 0) { throw 'Apply failed' }
+          $bytes = [IO.File]::ReadAllBytes($manifestPath)
+          if (($bytes.Length -gt 2) -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { throw 'UTF-8 BOM added to Chrome manifest' }
+          $updated = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          if (@($updated.permissions) -notcontains 'activeTab') { throw 'activeTab missing' }
+          $backups = @(Get-ChildItem (Split-Path $root -Parent) -Directory -Filter 'chrome-bridge-backup-*' | Sort-Object LastWriteTime -Descending)
+          if ($backups.Count -ne 1) { throw 'Expected exactly one rollback backup' }
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Rollback failed' }
+          if ((Get-FileHash $manifestPath).Hash -ne $originalHash) { throw 'Manifest not restored exactly' }
+          if (Test-Path (Join-Path $installed 'browser-key-store.js')) { throw 'New file survived rollback' }
+          Write-Output '[PASS] Windows PowerShell 5.1 dry-run/apply/restore with BOM check'
+      - name: Package source-only Windows upgrade candidate
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-bridge-rc-windows-upgrade
+          path: |
+            docs/chrome-bridge-handoff/chrome-bridge-v20/extension/
+            docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/
+          if-no-files-found: error
+          retention-days: 7
