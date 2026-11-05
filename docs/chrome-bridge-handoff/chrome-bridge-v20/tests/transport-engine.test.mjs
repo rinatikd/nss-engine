@@ -93,3 +93,31 @@ test('expired command is rejected without execution', async () => {
   assert.equal(result.error, 'Command expired');
   t.stop();
 });
+
+test('network failure keeps stable public code and emits token-free diagnostic metadata', async () => {
+  const priorWarn = console.warn;
+  const entries = [];
+  console.warn = (...a) => entries.push(a);
+  try {
+    const transport = new BridgeTransport({
+      endpoint:'http://127.0.0.1:17481',
+      fetchImpl: async () => { throw new TypeError('test secret must never be logged'); },
+      execute: async () => ({}),
+      sleepImpl: async () => new Promise(() => {})
+    });
+    await transport.start('token-must-never-be-logged');
+    for(let i=0;i<20 && transport.lastStatus.state!=='recovering';i++) await tick();
+    assert.equal(transport.lastStatus.error,'BRIDGE_NETWORK_UNREACHABLE');
+    assert.equal(entries.length,1);
+    const [label, detail] = entries[0];
+    assert.equal(label,'[Chrome Bridge transport network]');
+    assert.equal(detail.endpoint,'http://127.0.0.1:17481');
+    assert.equal(detail.operation,'/bridge/poll');
+    assert.equal(detail.errorName,'TypeError');
+    assert.equal(JSON.stringify(entries).includes('token-must-never-be-logged'),false);
+    assert.equal(JSON.stringify(entries).includes('test secret must never be logged'),false);
+    transport.stop();
+  } finally {
+    console.warn = priorWarn;
+  }
+});
