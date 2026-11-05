@@ -549,6 +549,9 @@ async function updateBackgroundStatus() {
   if (!backgroundMode) return;
   try {
     const current = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'status'});
+    if (!current || typeof current !== 'object' || typeof current.state !== 'string') {
+      throw Error('COORDINATOR_STATUS_NO_RESPONSE');
+    }
     const active = current.connected === true;
     running = active; // UI indication only; background owns the HTTP poll.
     $('actions').checked = false; // Never auto-enable Control in background mode.
