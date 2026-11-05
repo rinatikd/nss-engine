@@ -480,10 +480,10 @@ $('backgroundGrantAll').onclick=async event=>{
     if (!candidates.length) throw Error('Нет открытых вкладок разрешённых Claude, Gemini или DeepSeek');
     const minutes=Number($('backgroundGrantMinutes').value);
     if (![15,60].includes(minutes)) throw Error('Недопустимый срок разрешения');
-    const summary=candidates.map(t=>t.origin+' (вкладка '+t.id+')').join('\\n');
+    const summary=candidates.map(t=>t.origin+' (вкладка '+t.id+')').join('\n');
     if (!window.confirm('Разрешить Control для '+candidates.length+
-      ' открытых вкладок на '+minutes+' минут?\\n'+summary+
-      '\\nКаждое действие потребует отдельного подтверждения.')) return;
+      ' открытых вкладок на '+minutes+' минут?\n'+summary+
+      '\nКаждое действие потребует отдельного подтверждения.')) return;
     let success=0;
     let failed=0;
     for (const tab of candidates) {
