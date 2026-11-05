@@ -11,6 +11,9 @@
 !/docs/
 !/tools/
 !/data/
+!/projects/
+/projects/*
+!/projects/ss_dwg_comparison/
 /data/*
 !/data/drawings/
 !/.githooks/
