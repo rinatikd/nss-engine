@@ -38,6 +38,16 @@ export class BridgeTransport {
         signal
       });
     } catch (error) {
+      // Preserve the public error code while exposing the *safe* root cause
+      // in the dedicated transport worker DevTools console. No tokens,
+      // headers, body or original exception message may enter diagnostics.
+      console.warn('[Chrome Bridge transport network]', {
+        endpoint: this.endpoint,
+        operation: path,
+        errorName: String(error?.name || 'Unknown').slice(0, 60),
+        timeout: limit.aborted === true,
+        manuallyStopped: abort.signal.aborted === true
+      });
       if (abort.signal.aborted) throw Error('POLL_STOPPED');
       if (limit.aborted) throw Error('BRIDGE_TIMEOUT');
       throw Error('BRIDGE_NETWORK_UNREACHABLE');
