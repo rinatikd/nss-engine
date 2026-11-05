@@ -8,7 +8,10 @@ export class BridgeTransport {
   constructor({ fetchImpl = fetch, execute, onStatus = () => {},
     sleepImpl = ms => new Promise(r => setTimeout(r, ms)), endpoint = DEFAULT_ENDPOINT }) {
     if (typeof execute !== 'function') throw Error('COMMAND_EXECUTOR_REQUIRED');
-    this.fetchImpl = fetchImpl;
+    // Never invoke native fetch as a BridgeTransport method: in Chromium
+    // workers, native fetch requires its original global receiver.
+    // The closure preserves injected fetchImpl for unit tests.
+    this.fetchImpl = (...args) => fetchImpl(...args);
     this.execute = execute;
     this.onStatus = onStatus;
     this.sleep = sleepImpl;
