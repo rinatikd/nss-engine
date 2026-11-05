@@ -121,3 +121,23 @@ test('network failure keeps stable public code and emits token-free diagnostic m
     console.warn = priorWarn;
   }
 });
+
+test('fetch implementation is invoked without the transport object as receiver', async () => {
+  const receivers=[];
+  let calls=0;
+  const t=new BridgeTransport({
+    fetchImpl: function(url,opts) {
+      receivers.push(this);
+      calls++;
+      if (calls===1) return Promise.resolve(jsonResponse({epoch:'e1',command:null}));
+      return new Promise((resolve,reject) => opts.signal.addEventListener('abort',()=>reject(Error('stopped')),{once:true}));
+    },
+    execute: async()=>({})
+  });
+  await t.start('test-token');
+  for(let i=0;i<30 && calls<2;i++) await tick();
+  assert.equal(calls,2);
+  assert.equal(receivers[0],undefined);
+  assert.equal(receivers[1],undefined);
+  t.stop();
+});
