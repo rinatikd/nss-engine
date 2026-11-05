@@ -1,6 +1,6 @@
 import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
 import { eligibleBackgroundControlTabs } from './control-targets.js';
-import { requireCoordinatorAck } from './coordinator-ack.js';
+import { requireCoordinatorAck, requestCoordinatorAck } from './coordinator-ack.js';
 import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { verifyBridgeCredential } from './connection-check.js';
@@ -630,8 +630,10 @@ async function switchToBackgroundMode() {
   $('actions').checked = false;
   $('actions').disabled = true;
   try {
-    const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'});
-    requireCoordinatorAck(result,'BACKGROUND_START');
+    await requestCoordinatorAck(
+      ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+      'BACKGROUND_START'
+    );
   } catch (error) {
     await chrome.storage.local.set({bridgeBackgroundMode:false,bridgeConnectionDesired:false,bridgeMutationLabMode:false});
     try { await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}); } catch {}
@@ -650,8 +652,10 @@ async function leaveBackgroundMode() {
   backgroundTimer = null;
   await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
   try {
-    const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
-    requireCoordinatorAck(result,'BACKGROUND_STOP');
+    await requestCoordinatorAck(
+      ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),
+      'BACKGROUND_STOP'
+    );
   } catch (error) {
     // Keep the background owner selected after an uncertain stop. Do not
     // expose the legacy poller, and restore status polling for diagnosis.
@@ -694,8 +698,10 @@ $('stop').onclick = async () => {
   await chrome.storage.local.set({ bridgeConnectionDesired: false, bridgeMutationLabMode: false });
   if (backgroundMode) {
     try {
-      const response = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
-      requireCoordinatorAck(response,'BACKGROUND_STOP');
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),
+        'BACKGROUND_STOP'
+      );
       running = false;
       await updateBackgroundStatus();
     } catch(error) {
@@ -714,8 +720,10 @@ async function connectBridge({ automatic = false } = {}) {
       await verifyBridgeCredential(fetch, token);
       await saveBrowserKey(chrome, token);
       await chrome.storage.local.set({bridgeConnectionDesired:true});
-      const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'});
-      requireCoordinatorAck(result,'BACKGROUND_START');
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      );
       await updateBackgroundStatus();
     } catch (e) {
       await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
@@ -850,9 +858,13 @@ try {
     await updateBackgroundStatus();
     if (bridgeConnectionDesired === true && savedKey.value) {
       // The coordinator owns the connection, not the control window.
-      void chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'})
-        .then(reply=>requireCoordinatorAck(reply,'BACKGROUND_START'))
-        .catch(error=>{ setStatus('Автоподключение: ' + error.message); });
+      void requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      ).catch(async error=>{
+        await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+        setStatus('Автоподключение: ' + error.message);
+      });
     }
   } else if (bridgeConnectionDesired === true && savedKey.value)
     void connectBridge({ automatic:true });
