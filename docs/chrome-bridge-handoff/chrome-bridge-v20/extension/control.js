@@ -1,6 +1,7 @@
 import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
 import { eligibleBackgroundControlTabs } from './control-targets.js';
 import { requireCoordinatorAck, requestCoordinatorAck } from './coordinator-ack.js';
+import { backgroundStartupDecision } from './background-mode-reconnect.js';
 import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { verifyBridgeCredential } from './connection-check.js';
@@ -629,23 +630,32 @@ async function switchToBackgroundMode() {
   $('backgroundMode').checked = true;
   $('actions').checked = false;
   $('actions').disabled = true;
-  try {
-    await requestCoordinatorAck(
-      ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
-      'BACKGROUND_START'
-    );
-  } catch (error) {
-    await chrome.storage.local.set({bridgeBackgroundMode:false,bridgeConnectionDesired:false,bridgeMutationLabMode:false});
-    try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
-    backgroundMode = false;
-    $('backgroundMode').checked = false;
-    $('mutationLab').checked = false;
-    $('actions').disabled = false;
-    running = false;
-    throw error;
+  const {bridgeConnectionDesired}=await chrome.storage.local.get('bridgeConnectionDesired');
+  const decision=backgroundStartupDecision({
+    connectionDesired:bridgeConnectionDesired,
+    hasSavedKey:!!$('token').value.trim()
+  });
+  if (decision==='start') {
+    try {
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      );
+    } catch (error) {
+      await chrome.storage.local.set({bridgeBackgroundMode:false,bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+      try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
+      backgroundMode = false;
+      $('backgroundMode').checked = false;
+      $('mutationLab').checked = false;
+      $('actions').disabled = false;
+      running = false;
+      throw error;
+    }
   }
   if (!backgroundTimer) backgroundTimer = setInterval(updateBackgroundStatus, 2500);
   await updateBackgroundStatus();
+  if (decision==='await-connect')
+    setStatus('Фоновый режим включён · нажмите «Подключить» для авторизации лабораторного моста');
 }
 async function leaveBackgroundMode() {
   if (backgroundTimer) clearInterval(backgroundTimer);
