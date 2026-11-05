@@ -1,4 +1,5 @@
 import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
+import { eligibleBackgroundControlTabs } from './control-targets.js';
 import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { verifyBridgeCredential } from './connection-check.js';
@@ -475,18 +476,7 @@ $('backgroundGrantAll').onclick=async event=>{
     if (!backgroundMode || !$('mutationLab').checked || !running)
       throw Error('Сначала подключите фоновый мост и включите экспериментальное управление');
     const sites=await getSites();
-    const tabs=await chrome.tabs.query({});
-    const candidates=[];
-    for (const tab of tabs) {
-      if (!Number.isSafeInteger(tab.id) || !tab.url) continue;
-      let origin;
-      try { origin=new URL(tab.url).origin; } catch { continue; }
-      const site=sites[origin];
-      if (!CONTROL_ORIGINS[origin] || !site || site.mode!=='chat' ||
-          site.adapter!==CONTROL_ORIGINS[origin]) continue;
-      if (!await chrome.permissions.contains({origins:[origin+'/*']})) continue;
-      candidates.push({id:tab.id,origin});
-    }
+    const candidates=await eligibleBackgroundControlTabs(chrome,sites,CONTROL_ORIGINS);
     if (!candidates.length) throw Error('Нет открытых вкладок разрешённых Claude, Gemini или DeepSeek');
     const minutes=Number($('backgroundGrantMinutes').value);
     if (![15,60].includes(minutes)) throw Error('Недопустимый срок разрешения');
