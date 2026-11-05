@@ -35,6 +35,7 @@ function refreshGrantLabels() {
   }
   const global = $('controlGlobalState');
   if (global) global.textContent = !running ? 'Мост отключён; управление недоступно'
+    : backgroundMode ? 'Глобальное разрешение действий: ВЫКЛ (обычный режим недоступен в фоновом; используйте экспериментальное управление выше)'
     : $('actions').checked ? 'Глобальное разрешение действий: ВКЛ'
     : 'Глобальное разрешение действий: ВЫКЛ';
 }
@@ -465,6 +466,64 @@ function selectedBackgroundTab() {
   if (!Number.isSafeInteger(tabId)||tabId<=0) throw Error('Укажите действительный tabId');
   return tabId;
 }
+// A single local gesture can grant *only currently open, individually approved*
+// chat tabs. This does not enable wildcard host permissions or skip per-action
+// approval. Each tab is revalidated by the background coordinator.
+$('backgroundGrantAll').onclick=async event=>{
+  if (!event.isTrusted) return;
+  try {
+    if (!backgroundMode || !$('mutationLab').checked || !running)
+      throw Error('Сначала подключите фоновый мост и включите экспериментальное управление');
+    const sites=await getSites();
+    const tabs=await chrome.tabs.query({});
+    const candidates=[];
+    for (const tab of tabs) {
+      if (!Number.isSafeInteger(tab.id) || !tab.url) continue;
+      let origin;
+      try { origin=new URL(tab.url).origin; } catch { continue; }
+      const site=sites[origin];
+      if (!CONTROL_ORIGINS[origin] || !site || site.mode!=='chat' ||
+          site.adapter!==CONTROL_ORIGINS[origin]) continue;
+      if (!await chrome.permissions.contains({origins:[origin+'/*']})) continue;
+      candidates.push({id:tab.id,origin});
+    }
+    if (!candidates.length) throw Error('Нет открытых вкладок разрешённых Claude, Gemini или DeepSeek');
+    const minutes=Number($('backgroundGrantMinutes').value);
+    if (![15,60].includes(minutes)) throw Error('Недопустимый срок разрешения');
+    const summary=candidates.map(t=>t.origin+' (вкладка '+t.id+')').join('\\n');
+    if (!window.confirm('Разрешить Control для '+candidates.length+
+      ' открытых вкладок на '+minutes+' минут?\\n'+summary+
+      '\\nКаждое действие потребует отдельного подтверждения.')) return;
+    let success=0;
+    let failed=0;
+    for (const tab of candidates) {
+      try {
+        const result=await chrome.runtime.sendMessage({
+          target:'bridge-coordinator',type:'grant-background-control',
+          tabId:tab.id,durationMinutes:minutes,localGesture:true
+        });
+        if (!result || result.error || result.origin!==tab.origin) throw Error('GRANT_FAILED');
+        success++;
+      } catch { failed++; }
+    }
+    $('backgroundGrantStatus').textContent='Общее управление: разрешено вкладок '+success+
+      ', отказано '+failed+'; каждое действие подтверждается отдельно.';
+  } catch(e) {
+    $('backgroundGrantStatus').textContent='Общее управление не подключено: '+e.message;
+  }
+};
+$('backgroundRevokeAll').onclick=async event=>{
+  if (!event.isTrusted || !backgroundMode) return;
+  try {
+    const result=await chrome.runtime.sendMessage({
+      target:'bridge-coordinator',type:'clear-background-controls'
+    });
+    if (!result?.ok) throw Error(result?.error||'REVOKE_FAILED');
+    $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
+  } catch(e) {
+    $('backgroundGrantStatus').textContent='Ошибка отключения: '+e.message;
+  }
+};
 $('backgroundGrant').onclick=async event=>{
   if (!event.isTrusted || !backgroundMode || !$('mutationLab').checked) return;
   try {
