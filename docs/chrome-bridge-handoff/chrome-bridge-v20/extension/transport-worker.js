@@ -5,7 +5,9 @@ import { BridgeTransport } from './transport-engine.js';
 const pending = new Map();
 let seq = 0;
 let transport = null;
-const dangerous = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
+// Only read-only commands and explicitly gated approved mutations are migrated.
+// browser_open and agent_new_chat remain unsupported in background mode.
+const unsupported = new Set(['browser_open','agent_new_chat']);
 const send = (data) => self.postMessage(data);
 function delegate(command) {
   // Unsupported mutating commands always fail closed; click/fill/send are
