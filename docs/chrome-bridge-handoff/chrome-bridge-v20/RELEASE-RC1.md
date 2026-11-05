@@ -20,12 +20,15 @@ Status: **DRAFT / NOT APPROVED FOR PRODUCTION** (2026-11-05)
 | Live denial | Invalid tab denied; poll without token 401; unapproved extension origin 403 | PASS, user-reported |
 | Live server outage/recovery | Port 17481 stopped while 17381/17382 stayed reachable; later automatic reconnect and read-only commands | PASS eventually; delay unmeasured |
 | Independent named reviewer ACK and signed-off verdict | Issue #94 | **PENDING** |
+| Common Control UI | Target-filter unit tests on final RC branch | **CI pending; real UI acceptance pending** |
 | Packaged extension install/rollback on disposable profile | Separate RC1 package and manual restore dry run | **PENDING** |
 | Production deployment | Never performed | **BLOCKED** |
 
 ## Threat boundary and release restrictions
 
-- Background read-only is the supported tested path. Global Control remains OFF.
+- Background read-only is the supported live-tested path. The normal-mode global actions checkbox is intentionally disabled in background mode; it is not the background mutation permission gate.
+- RC1 adds one explicit **Connect Control for all approved sites** control, limited to currently open tabs with an already configured approved Claude/Gemini/DeepSeek chat origin and an existing Chrome host permission. No wildcard permission, auto-onboard, or auto-action is introduced. Time-bounded per-tab grants (15/60 minutes), independent lab opt-in, one confirmation before batch grants, and per-command approval remain mandatory.
+- The common Control button, despite simulated target-filter unit tests, has NOT passed a real-browser mutation/grant/approval acceptance test and is NOT production-ready.
 - `browser_open` and `agent_new_chat` remain unsupported in background mode.
 - Background mutations require distinct lab opt-in, per-tab grant, and confirmation; do **not** enable or promote this experimental flow without additional live testing.
 - Browser content and agent replies are untrusted; do not log, echo, copy, or send agent/browser credentials.
