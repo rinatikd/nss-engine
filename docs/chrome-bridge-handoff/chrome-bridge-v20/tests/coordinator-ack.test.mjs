@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {requireCoordinatorAck} from '../extension/coordinator-ack.js';
+import {requireCoordinatorAck,requestCoordinatorAck} from '../extension/coordinator-ack.js';
 
 test('start and stop reject missing or malformed acknowledgements',()=>{
   for (const operation of ['BACKGROUND_START','BACKGROUND_STOP']) {
@@ -15,4 +15,28 @@ test('explicit negative coordinator reply propagates a reason',()=>{
 test('positive acknowledgement is accepted',()=>{
   const reply={ok:true};
   assert.equal(requireCoordinatorAck(reply,'BACKGROUND_STOP'),reply);
+});
+
+test('delayed or never-resolving coordinator reply is bounded and rejected',async()=>{
+  await assert.rejects(
+    requestCoordinatorAck(()=>new Promise(()=>{}),'BACKGROUND_STOP',{timeoutMs:5}),
+    /BACKGROUND_STOP:ACK_TIMEOUT/
+  );
+  await assert.rejects(
+    requestCoordinatorAck(()=>new Promise(resolve=>setTimeout(()=>resolve({ok:true}),40)),
+      'BACKGROUND_START',{timeoutMs:5}),
+    /BACKGROUND_START:ACK_TIMEOUT/
+  );
+});
+test('rejected coordinator send is not mistaken for successful ACK',async()=>{
+  await assert.rejects(
+    requestCoordinatorAck(()=>Promise.reject(Error('PORT_CLOSED')),'BACKGROUND_STOP',{timeoutMs:100}),
+    /PORT_CLOSED/
+  );
+});
+test('timely explicit ACK succeeds',async()=>{
+  assert.deepEqual(
+    await requestCoordinatorAck(()=>Promise.resolve({ok:true}),'BACKGROUND_START',{timeoutMs:100}),
+    {ok:true}
+  );
 });
