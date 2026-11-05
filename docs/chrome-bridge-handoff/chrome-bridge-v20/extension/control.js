@@ -636,7 +636,7 @@ async function switchToBackgroundMode() {
     );
   } catch (error) {
     await chrome.storage.local.set({bridgeBackgroundMode:false,bridgeConnectionDesired:false,bridgeMutationLabMode:false});
-    try { await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}); } catch {}
+    try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
     backgroundMode = false;
     $('backgroundMode').checked = false;
     $('mutationLab').checked = false;
@@ -727,7 +727,7 @@ async function connectBridge({ automatic = false } = {}) {
       await updateBackgroundStatus();
     } catch (e) {
       await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
-      try { await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}); } catch {}
+      try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
       running = false;
       setStatus('Фоновое подключение: ' + e.message);
     }
@@ -862,7 +862,7 @@ try {
         ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
         'BACKGROUND_START'
       ).catch(async error=>{
-        await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+        try { await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false}); } catch {}
         setStatus('Автоподключение: ' + error.message);
       });
     }
