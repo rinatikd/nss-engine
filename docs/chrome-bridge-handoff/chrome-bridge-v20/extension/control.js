@@ -649,8 +649,15 @@ async function leaveBackgroundMode() {
   if (backgroundTimer) clearInterval(backgroundTimer);
   backgroundTimer = null;
   await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
-  const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
-  requireCoordinatorAck(result,'BACKGROUND_STOP');
+  try {
+    const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
+    requireCoordinatorAck(result,'BACKGROUND_STOP');
+  } catch (error) {
+    // Keep the background owner selected after an uncertain stop. Do not
+    // expose the legacy poller, and restore status polling for diagnosis.
+    if (!backgroundTimer) backgroundTimer = setInterval(updateBackgroundStatus,2500);
+    throw error;
+  }
   await chrome.storage.local.set({bridgeBackgroundMode:false});
   backgroundMode = false;
   await showBackgroundApprovals();
