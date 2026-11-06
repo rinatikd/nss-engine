@@ -16,7 +16,9 @@ $names = @(
   'connection-check.js', 'browser-key-store.js', 'permissions.js',
   'approval-broker.js', 'approval-session.js',
   'mutation-dispatch.js', 'background-control-grants.js',
-  'adapters.js', 'visual-snapshot.js', 'page.js', 'secrets.js'
+  'adapters.js', 'visual-snapshot.js', 'page.js', 'secrets.js',
+  'control-targets.js', 'coordinator-ack.js', 'background-mode-reconnect.js',
+  'control-ui-guard.js', 'background-control-ui-state.js'
 )
 $installed = Join-Path ([IO.Path]::GetFullPath($BridgeRoot)) 'extension'
 $source = Join-Path ([IO.Path]::GetFullPath($CandidateRoot)) 'extension'
@@ -26,6 +28,29 @@ if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw 'Candidat
 foreach ($name in $names) {
   if (-not (Test-Path -LiteralPath (Join-Path $source $name) -PathType Leaf)) {
     throw ('Missing candidate file: ' + $name)
+  }
+}
+# Prevent a partial lab package silently inheriting stale JS modules from
+# the installed extension. All relative imports used by the candidate must
+# resolve to candidate files, not the production installation.
+foreach ($name in $names) {
+  if ($name -notlike '*.js') { continue }
+  $file = Join-Path $source $name
+  $js = [IO.File]::ReadAllText($file)
+  $imports = [regex]::Matches($js, '(?m)\\b(?:import|export)\\s+(?:[^''";]*?\\s+from\\s+)?["''](\\.[^"'']+)["'']|\\bimport\\s*\\(\\s*["''](\\.[^"'']+)["'']\\s*\\)')
+  foreach ($match in $imports) {
+    $relative = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+    $dependency = [IO.Path]::GetFullPath((Join-Path (Split-Path $file -Parent) $relative))
+    if (-not $dependency.StartsWith($source.TrimEnd('\\') + '\\',[StringComparison]::OrdinalIgnoreCase)) {
+      throw ('Candidate import escapes extension directory: ' + $name)
+    }
+    if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
+      throw ('Missing candidate import: ' + $name + ' -> ' + $relative)
+    }
+    $dependencyName = $dependency.Substring($source.TrimEnd('\\').Length + 1)
+    if ($names -notcontains $dependencyName) {
+      throw ('Unpackaged candidate import: ' + $name + ' -> ' + $dependencyName)
+    }
   }
 }
 $existingManifest = Join-Path $installed 'manifest.json'
