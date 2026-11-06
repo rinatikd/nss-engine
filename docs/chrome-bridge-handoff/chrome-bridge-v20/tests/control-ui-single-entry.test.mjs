@@ -31,3 +31,15 @@ test('isolated staging packages RC1 modules without cloning installed extension'
   assert.match(stage,/Unpackaged candidate import/);
   assert.match(stage,/Unsafe manifest icon asset path/);
 });
+
+test('lab staging remaps only the isolated fixture to 17481',()=>{
+  const stage=readFileSync(new URL('../deployment/stage-background-lab.ps1',import.meta.url),'utf8');
+  assert.match(stage,/\$prodEndpoint\s*=\s*'http:\/\/127\.0\.0\.1:17381'/);
+  assert.match(stage,/\$labEndpoint\s*=\s*'http:\/\/127\.0\.0\.1:17481'/);
+  assert.match(stage,/\$prodHost\s*=\s*'http:\/\/127\.0\.0\.1:17381\/\*'/);
+  assert.match(stage,/\$labHost\s*=\s*'http:\/\/127\.0\.0\.1:17481\/\*'/);
+  assert.match(stage,/\$m\.host_permissions\s*=\s*\$hosts/);
+  assert.match(stage,/\$original\.Replace\(\$prodEndpoint,\s*\$labEndpoint\)/);
+  assert.match(stage,/Production Bridge endpoint retained in lab JS/);
+  assert.match(stage,/if \(-not \$Apply\)/);
+});
