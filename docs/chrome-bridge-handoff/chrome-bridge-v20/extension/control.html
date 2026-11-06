@@ -7,7 +7,7 @@
 <main>
   <p class="eyebrow">AGENT HUB · RC</p>
   <h1>Chrome Bridge</h1>
-  <p>Управление подключениями и диагностикой AI-агентов. Для работы команд оставьте окно управления открытым.</p>
+  <p>Управление подключениями и диагностикой AI-агентов. В фоновом режиме чтение работает при закрытой панели. Для подтверждения действий управления откройте панель.</p>
 
   <section>
     <h2>1. Подключение</h2>
@@ -20,10 +20,11 @@
     <p id="backgroundModeStatus" class="hint">Фоновый режим отключён. До завершения миграции подтверждений используется обычное окно управления.</p>
     <label class="check"><input id="mutationLab" type="checkbox">Экспериментальное управление во фоновом режиме — каждое действие требует подтверждения (только Claude, Gemini, DeepSeek)</label>
     <div class="row">
-      <label>Вкладка для Control (tabId)<input id="backgroundGrantTabId" type="number" min="1" placeholder="tabId"></label>
       <label>Срок разрешения<select id="backgroundGrantMinutes"><option value="15">15 минут</option><option value="60">60 минут</option></select></label>
     </div>
-    <div class="row"><button id="backgroundGrant" class="secondary">Разрешить управление вкладкой</button><button id="backgroundRevoke" class="secondary">Отозвать управление вкладкой</button></div>
+    <div class="row"><button id="backgroundGrantAll" class="secondary">Подключить управление ко всем разрешённым сайтам</button><button id="backgroundRevokeAll" class="secondary">Отключить управление всеми сайтами</button></div>
+    <p id="backgroundGrantPrerequisite" class="hint" role="status">Проверяем условия подключения общего управления…</p>
+    <p class="hint">Общая кнопка действует только на открытые вкладки разрешённых AI-чатов Claude, Gemini и DeepSeek, в экспериментальном режиме управления и на ограниченный срок. Каждая команда по-прежнему подтверждается отдельно.</p>
     <p id="backgroundGrantStatus" class="hint">По умолчанию управление отключено. Для отправки нужен отдельный запрос подтверждения.</p>
         <p id="status" role="status">Отключено</p>
   </section>
@@ -45,7 +46,7 @@
     <h2>3. Безопасность</h2>
     <label class="check"><input id="actions" type="checkbox">Разрешить запросы на нажатия и ввод (browser_click / browser_fill — каждый подтверждается ниже)</label>
     <p id="controlGlobalState" role="status">Глобальное разрешение действий: ВЫКЛ</p>
-    <p class="hint">На каждом разрешённом сайте теперь есть отдельные кнопки «Подключить управление» и «Отключить управление». Для подключения нужен работающий мост, установленное глобальное разрешение и локальное подтверждение. При отключении разрешение отзывается только для выбранного сайта.</p>
+    <p class="hint">В обычном режиме общий переключатель разрешает запросы действий только вместе с локальным разрешением сайта. В фоновом режиме он намеренно недоступен: используйте экспериментальное управление и общую кнопку выше; каждое действие подтверждается отдельно.</p>
     <label class="check"><input id="confirmReads" type="checkbox">Подтверждать каждое чтение страницы (browser_read)</label>
   </section>
 
@@ -85,4 +86,5 @@
   </details>
 </main>
 <script type="module" src="control.js"></script>
+<script type="module" src="control-ui-guard.js"></script>
 

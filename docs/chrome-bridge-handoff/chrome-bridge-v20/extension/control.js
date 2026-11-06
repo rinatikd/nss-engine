@@ -1,4 +1,7 @@
 import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
+import { eligibleBackgroundControlTabs } from './control-targets.js';
+import { requireCoordinatorAck, requestCoordinatorAck } from './coordinator-ack.js';
+import { backgroundStartupDecision } from './background-mode-reconnect.js';
 import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { verifyBridgeCredential } from './connection-check.js';
@@ -21,20 +24,11 @@ const grants = new ControlGrants();
 const timestamp = () => new Intl.DateTimeFormat('ru-RU', {timeZone:'Asia/Almaty', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}).format(new Date());
 function taskStatus(label, value, detail='') { $('taskState').textContent=label; $('taskProgress').value=value; $('taskTimes').textContent=timestamp() + (detail ? ' · '+detail : ''); }
 function refreshGrantLabels() {
-  for (const row of $('sites').children) {
-    const origin = row.dataset.origin;
-    const ttl = row.querySelector('[data-ttl]');
-    if (!origin || !ttl) continue;
-    const expires = grants.grants.get(origin);
-    const active = grants.status(origin, running && $('actions').checked).allowed;
-    ttl.textContent = active ? 'Управление разрешено: ещё ' + Math.ceil((expires - Date.now()) / 60000) + ' мин' : 'Управление отключено';
-    const connect = row.querySelector('[data-connect-control]');
-    const disconnect = row.querySelector('[data-disconnect-control]');
-    if (connect) connect.disabled = active || !running;
-    if (disconnect) disconnect.disabled = !expires;
-  }
+  // Individual Control grants are intentionally not offered in the site list.
+  // Only the global background Control action grants temporary tab permissions.
   const global = $('controlGlobalState');
   if (global) global.textContent = !running ? 'Мост отключён; управление недоступно'
+    : backgroundMode ? 'Фоновое управление: используйте общие кнопки выше (каждое действие подтверждается отдельно)'
     : $('actions').checked ? 'Глобальное разрешение действий: ВКЛ'
     : 'Глобальное разрешение действий: ВЫКЛ';
 }
@@ -95,36 +89,6 @@ async function renderSites() {
       try { await chrome.permissions.remove({ origins: [origin + '/*'] }); } catch { /* уже снято */ }
       await renderSites();
     };
-    if (CONTROL_ORIGINS[origin]) {
-      const connect = document.createElement('button');
-      connect.dataset.connectControl = '';
-      connect.textContent = 'Подключить управление';
-      connect.onclick = (event) => {
-        try {
-          if (!running || !event.isTrusted) throw Error('Сначала подключите мост; требуется локальный клик');
-          if (!$('actions').checked) throw Error('Включите глобальное разрешение действий в разделе «Безопасность»');
-          const minutes = Number($('controlDuration').value);
-          if (!window.confirm('Разрешить управление ' + origin + ' на ' + minutes + ' мин? Отправка запросов внешнему AI потребует подтверждения; не отправляйте секреты.')) return;
-          grants.approve(origin, event.isTrusted, minutes);
-          refreshGrantLabels();
-          log('Control granted: ' + origin);
-        } catch (e) { setStatus(e.message); refreshGrantLabels(); }
-      };
-      const disconnect = document.createElement('button');
-      disconnect.dataset.disconnectControl = '';
-      disconnect.className = 'secondary';
-      disconnect.textContent = 'Отключить управление';
-      disconnect.onclick = (event) => {
-        if (!event.isTrusted) { setStatus('Требуется локальный клик'); return; }
-        grants.revoke(origin);
-        refreshGrantLabels();
-        log('Control revoked: ' + origin);
-      };
-      const ttl = document.createElement('span');
-      ttl.className = 'tag';
-      ttl.dataset.ttl = '';
-      li.append(ttl, connect, disconnect);
-    }
     li.append(left, rm);
     ul.append(li);
   }
@@ -453,47 +417,60 @@ $('mutationLab').addEventListener('change',async event=>{
       await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'clear-background-controls'});
     }
     $('backgroundGrantStatus').textContent=enabled ?
-      'Лабораторный режим включён. Выберите вкладку и разрешите Control вручную.' :
+      'Лабораторный режим включён. Используйте общую кнопку Control для открытых разрешённых вкладок.' :
       'Управление отключено';
   } catch(e) {
     $('mutationLab').checked=!enabled;
     setStatus('Ошибка настройки управления: '+e.message);
   }
 });
-function selectedBackgroundTab() {
-  const tabId=Number($('backgroundGrantTabId').value);
-  if (!Number.isSafeInteger(tabId)||tabId<=0) throw Error('Укажите действительный tabId');
-  return tabId;
-}
-$('backgroundGrant').onclick=async event=>{
-  if (!event.isTrusted || !backgroundMode || !$('mutationLab').checked) return;
+// A single local gesture can grant *only currently open, individually approved*
+// chat tabs. This does not enable wildcard host permissions or skip per-action
+// approval. Each tab is revalidated by the background coordinator.
+$('backgroundGrantAll').onclick=async event=>{
+  if (!event.isTrusted) return;
   try {
-    const tabId=selectedBackgroundTab();
-    const durationMinutes=Number($('backgroundGrantMinutes').value);
-    const tab=await chrome.tabs.get(tabId);
-    if (!window.confirm('Разрешить Control для вкладки '+tabId+' на '+durationMinutes+
-      ' минут?\n'+new URL(tab.url).origin+'\nЛюбое действие дополнительно запрашивает подтверждение.')) return;
-    const result=await chrome.runtime.sendMessage({
-      target:'bridge-coordinator',type:'grant-background-control',
-      tabId,durationMinutes,localGesture:true
-    });
-    if(result.error)throw Error(result.error);
-    $('backgroundGrantStatus').textContent='Control разрешён для '+result.origin+
-      ', вкладка '+tabId+', до '+new Date(result.expires).toLocaleTimeString();
-  } catch(e) { $('backgroundGrantStatus').textContent='Не удалось разрешить Control: '+e.message; }
+    if (!backgroundMode || !$('mutationLab').checked || !running)
+      throw Error('Сначала подключите фоновый мост и включите экспериментальное управление');
+    const sites=await getSites();
+    const candidates=await eligibleBackgroundControlTabs(chrome,sites,CONTROL_ORIGINS);
+    if (!candidates.length) throw Error('Нет открытых вкладок разрешённых Claude, Gemini или DeepSeek');
+    const minutes=Number($('backgroundGrantMinutes').value);
+    if (![15,60].includes(minutes)) throw Error('Недопустимый срок разрешения');
+    const summary=candidates.map(t=>t.origin+' (вкладка '+t.id+')').join('\n');
+    if (!window.confirm('Разрешить Control для '+candidates.length+
+      ' открытых вкладок на '+minutes+' минут?\n'+summary+
+      '\nКаждое действие потребует отдельного подтверждения.')) return;
+    let success=0;
+    let failed=0;
+    for (const tab of candidates) {
+      try {
+        const result=await chrome.runtime.sendMessage({
+          target:'bridge-coordinator',type:'grant-background-control',
+          tabId:tab.id,durationMinutes:minutes,localGesture:true
+        });
+        if (!result || result.error || result.origin!==tab.origin) throw Error('GRANT_FAILED');
+        success++;
+      } catch { failed++; }
+    }
+    $('backgroundGrantStatus').textContent='Общее управление: разрешено вкладок '+success+
+      ', отказано '+failed+'; каждое действие подтверждается отдельно.';
+  } catch(e) {
+    $('backgroundGrantStatus').textContent='Общее управление не подключено: '+e.message;
+  }
 };
-$('backgroundRevoke').onclick=async event=>{
+$('backgroundRevokeAll').onclick=async event=>{
   if (!event.isTrusted || !backgroundMode) return;
   try {
-    const tabId=selectedBackgroundTab();
     const result=await chrome.runtime.sendMessage({
-      target:'bridge-coordinator',type:'revoke-background-control',tabId
+      target:'bridge-coordinator',type:'clear-background-controls'
     });
-    if(result.error)throw Error(result.error);
-    $('backgroundGrantStatus').textContent='Control для вкладки '+tabId+' отозван.';
-  } catch(e) { $('backgroundGrantStatus').textContent='Ошибка отзыва Control: '+e.message; }
+    if (!result?.ok) throw Error(result?.error||'REVOKE_FAILED');
+    $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
+  } catch(e) {
+    $('backgroundGrantStatus').textContent='Ошибка отключения: '+e.message;
+  }
 };
-
 let backgroundTimer = null;
 async function showBackgroundApprovals() {
   const box = $('backgroundApprovals');
@@ -579,16 +556,48 @@ async function switchToBackgroundMode() {
   $('backgroundMode').checked = true;
   $('actions').checked = false;
   $('actions').disabled = true;
-  const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'});
-  if (!result.ok && result.reason !== 'MANUAL_DISCONNECT') setStatus('Фоновый режим: ' + result.reason);
+  const {bridgeConnectionDesired}=await chrome.storage.local.get('bridgeConnectionDesired');
+  const decision=backgroundStartupDecision({
+    connectionDesired:bridgeConnectionDesired,
+    hasSavedKey:!!$('token').value.trim()
+  });
+  if (decision==='start') {
+    try {
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      );
+    } catch (error) {
+      await chrome.storage.local.set({bridgeBackgroundMode:false,bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+      try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
+      backgroundMode = false;
+      $('backgroundMode').checked = false;
+      $('mutationLab').checked = false;
+      $('actions').disabled = false;
+      running = false;
+      throw error;
+    }
+  }
   if (!backgroundTimer) backgroundTimer = setInterval(updateBackgroundStatus, 2500);
   await updateBackgroundStatus();
+  if (decision==='await-connect')
+    setStatus('Фоновый режим включён · нажмите «Подключить» для авторизации лабораторного моста');
 }
 async function leaveBackgroundMode() {
   if (backgroundTimer) clearInterval(backgroundTimer);
   backgroundTimer = null;
-  const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
-  if (!result.ok) throw Error(result.reason || 'BACKGROUND_STOP_FAILED');
+  await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+  try {
+    await requestCoordinatorAck(
+      ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),
+      'BACKGROUND_STOP'
+    );
+  } catch (error) {
+    // Keep the background owner selected after an uncertain stop. Do not
+    // expose the legacy poller, and restore status polling for diagnosis.
+    if (!backgroundTimer) backgroundTimer = setInterval(updateBackgroundStatus,2500);
+    throw error;
+  }
   await chrome.storage.local.set({bridgeBackgroundMode:false});
   backgroundMode = false;
   await showBackgroundApprovals();
@@ -622,12 +631,19 @@ const cancelReconnect = () => { if (reconnectTimer) clearTimeout(reconnectTimer)
 $('stop').onclick = async () => {
   reconnectAllowed = false;
   cancelReconnect();
-  await chrome.storage.local.set({ bridgeConnectionDesired: false });
+  await chrome.storage.local.set({ bridgeConnectionDesired: false, bridgeMutationLabMode: false });
   if (backgroundMode) {
-    const response = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
-    if (!response.ok) setStatus('Фоновое отключение не подтверждено');
-    running = false;
-    await updateBackgroundStatus();
+    try {
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),
+        'BACKGROUND_STOP'
+      );
+      running = false;
+      await updateBackgroundStatus();
+    } catch(error) {
+      running = false;
+      setStatus('Фоновое отключение не подтверждено: ' + error.message);
+    }
   } else stop();
 };
 async function connectBridge({ automatic = false } = {}) {
@@ -640,10 +656,17 @@ async function connectBridge({ automatic = false } = {}) {
       await verifyBridgeCredential(fetch, token);
       await saveBrowserKey(chrome, token);
       await chrome.storage.local.set({bridgeConnectionDesired:true});
-      const result = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'});
-      if (!result.ok) throw Error(result.reason || 'BACKGROUND_START_FAILED');
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      );
       await updateBackgroundStatus();
-    } catch (e) { setStatus('Фоновое подключение: ' + e.message); }
+    } catch (e) {
+      await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+      try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
+      running = false;
+      setStatus('Фоновое подключение: ' + e.message);
+    }
     finally { $('connect').disabled = false; }
     return;
   }
@@ -771,7 +794,13 @@ try {
     await updateBackgroundStatus();
     if (bridgeConnectionDesired === true && savedKey.value) {
       // The coordinator owns the connection, not the control window.
-      void chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'});
+      void requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      ).catch(async error=>{
+        try { await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false}); } catch {}
+        setStatus('Автоподключение: ' + error.message);
+      });
     }
   } else if (bridgeConnectionDesired === true && savedKey.value)
     void connectBridge({ automatic:true });
