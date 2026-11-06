@@ -80,14 +80,13 @@ Write-Output '[PLAN] No credentials or server configuration are copied'
 if (-not $Apply) { Write-Output '[DRY-RUN] No output was created'; exit 0 }
 $temp = $out + '-tmp-' + [guid]::NewGuid().ToString('N')
 try {
-  # Construct from an empty directory, not an installed-tree clone.
-  # The installed tree might contain token-bearing config, logs or stale code.
+  # Build from audited source files only: never clone the installed extension,
+  # which could contain credentials, stale JS, or local configuration.
   New-Item -ItemType Directory -Path $temp -Force | Out-Null
   foreach ($name in $names) {
     Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $temp $name) -Force
   }
-  # Only copy icon images explicitly referenced by the trusted local manifest.
-  # Never copy config.json, browserToken, logs, or arbitrary installed files.
+  # Preserve only explicitly declared image assets used by the local MV3 manifest.
   $iconRefs = @()
   if ($m.PSObject.Properties['icons']) {
     if ($m.icons -is [string]) { $iconRefs += $m.icons }
@@ -99,31 +98,13 @@ try {
     else { $iconRefs += @($ico.PSObject.Properties | ForEach-Object { $_.Value }) }
   }
   foreach ($asset in ($iconRefs | Select-Object -Unique)) {
-    if ($asset -isnot [string] -or $asset -notmatch '^[a-zA-Z0-9_./-]+\\.(png|jpg|jpeg|webp)
-  [IO.File]::WriteAllText((Join-Path $temp 'manifest.json'),
-    ($m | ConvertTo-Json -Depth 50) + [Environment]::NewLine,
-    (New-Object System.Text.UTF8Encoding($false)))
-  $node = Get-Command node -ErrorAction Stop
-  foreach ($name in $names) {
-    if ($name -like '*.js') {
-      & $node.Source --check (Join-Path $temp $name)
-      if ($LASTEXITCODE -ne 0) { throw ('Node syntax check failed: ' + $name) }
-    }
-  }
-  Move-Item -LiteralPath $temp -Destination $out
-  Write-Output ('[STAGED] ' + $out)
-  Write-Output '[NOTE] New unpacked extension may have a different Chrome ID. Do not change pinned server configuration for testing without a separate plan.'
-} finally {
-  if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
-}
- -or $asset.Contains('..')) {
+    if ($asset -isnot [string] -or $asset -notmatch '^[a-zA-Z0-9_./-]+\.(png|jpg|jpeg|webp)$' -or $asset.Contains('..')) {
       throw 'Unsafe manifest icon asset path'
     }
     $assetSource = Join-Path $installed $asset
     if (-not (Test-Path -LiteralPath $assetSource -PathType Leaf)) { throw ('Missing manifest icon asset: ' + $asset) }
     $destination = Join-Path $temp $asset
-    $parent = Split-Path $destination -Parent
-    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force | Out-Null
     Copy-Item -LiteralPath $assetSource -Destination $destination
   }
   if ($m.PSObject.Properties['content_scripts'] -and @($m.content_scripts).Count -gt 0) {
