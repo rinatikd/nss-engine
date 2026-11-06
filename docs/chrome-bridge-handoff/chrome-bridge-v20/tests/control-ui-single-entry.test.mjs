@@ -39,6 +39,8 @@ test('lab staging remaps only the isolated fixture to 17481',()=>{
   assert.match(stage,/\$prodHost\s*=\s*'http:\/\/127\.0\.0\.1:17381\/\*'/);
   assert.match(stage,/\$labHost\s*=\s*'http:\/\/127\.0\.0\.1:17481\/\*'/);
   assert.match(stage,/\$m\.host_permissions\s*=\s*\$hosts/);
+  assert.match(stage,/\$loopbackWildcard\s*=\s*'http:\/\/127\.0\.0\.1\/\*'/);
+  assert.match(stage,/\$_\s*-ne\s*\$loopbackWildcard/);
   assert.match(stage,/\$original\.Replace\(\$prodEndpoint,\s*\$labEndpoint\)/);
   assert.match(stage,/Production Bridge endpoint retained in lab JS/);
   assert.match(stage,/if \(-not \$Apply\)/);
