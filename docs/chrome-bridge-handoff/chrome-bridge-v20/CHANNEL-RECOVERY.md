@@ -44,3 +44,19 @@ New `tests/mcp-channel-smoke.test.mjs` launches the repository's `createBridge` 
 GitHub Actions commit `413ae0126c11367a68b77d3ce0fe73227f69ead5`: **Source checks PASS; Chrome Bridge Visual RC PASS; RC1 Control Gates PASS**, with the new smoke test explicitly included in Visual RC. This provides evidence the *repository MCP server handler works in an isolated CI process*. It does **not** test the user's active Windows server, tunnel, ChatGPT plugin routing or credentials. Consequently, internal tool failure in this ChatGPT session remains a **connector/session/upstream failure of unknown precise cause**, not a verified defect in the server implementation.
 
 Next real test must obtain a non-sensitive status from the actual **ChatGPT-connected** MCP instance or a sanitized HTTP status and process health from that same production endpoint. Do not use lab `17481` evidence to certify the `17381/17382` connector.
+
+## Production link probe, no secrets / no mutation (2026-11-06)
+
+`deployment/diagnose-mcp-link.ps1` is an additional, strictly read-only PowerShell 5.1 diagnostic. It checks loopback TCP reachability and listener process name for ports 17381 and 17382, then sends **anonymous GET /mcp** with no Authorization and does not read HTTP bodies. It never executes `tools/call`, touches config, starts/stops a process, modifies a tunnel or displays process command lines. A 401/403/405 status may be normal and is not evidence of a failed service; a 200 status is not proof that the authenticated plugin path works.
+
+For an *authorized Windows operator* who already has the repository checkout, the read-only command is:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\deployment\diagnose-mcp-link.ps1"
+```
+
+Run from `docs/chrome-bridge-handoff/chrome-bridge-v20` if/when the actual Windows host is reachable. Redact local paths/identities before sharing results. **Do not substitute CI's synthetic host output for a production-port observation.**
+
+Regression test: `tests/diagnose-mcp-link.test.mjs`, executed both in Linux source checks and real GitHub-hosted Windows PowerShell 5.1 runner. On commit `e603115b544c9399dafa34ba04d0a7df09f644c9`, all three checks passed; the Visual RC Windows job specifically reports `Verify no-secret MCP link diagnostic on Windows PowerShell 5.1: success`. This proves the *probe script runs on a Windows CI host*, not the user's computer.
+
+The direct Chrome_Bridge MCP tool still returns `The tool failed internally` from this ChatGPT session, so the channel stays `BLOCKED`. There is no authorization to claim assistant delivery based only on the GitHub request queue.
