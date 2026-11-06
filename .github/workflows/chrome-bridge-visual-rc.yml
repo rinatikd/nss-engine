@@ -168,6 +168,12 @@ jobs:
           $rm = & ./deployment/register-watchdog.ps1 -BridgeRoot $root -Remove
           if ((($rm -join ' ') -notmatch '\[DRY-RUN\]')) { throw 'Removal dry-run failed' }
           Write-Output '[PASS] No startup settings changed during watchdog preflight'
+      - name: Verify no-secret MCP link diagnostic on Windows PowerShell 5.1
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          node --test tests/diagnose-mcp-link.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'MCP link diagnostic failed' }
       - name: Stage separate MV3 background lab manifest safely
         shell: powershell
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
