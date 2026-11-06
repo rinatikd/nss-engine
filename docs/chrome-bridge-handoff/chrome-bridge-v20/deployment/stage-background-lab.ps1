@@ -72,7 +72,7 @@ foreach ($permission in @('activeTab','offscreen','alarms')) {
   if ($perms -notcontains $permission) { $perms += $permission }
 }
 $m.permissions = $perms
-$m.background | Add-Member -MemberType NoteProperty -Name type -Value 'module'
+$m.background | Add-Member -MemberType NoteProperty -Name type -Value 'module' -Force
 # A lab package must never target the live Bridge endpoint. Replace only the
 # exact loopback production host, retaining any separately approved site origins.
 $prodHost = 'http://127.0.0.1:17381/*'
@@ -81,7 +81,6 @@ $hosts = @($m.host_permissions | Where-Object { $_ -ne $prodHost })
 if ($hosts -notcontains $labHost) { $hosts += $labHost }
 $m.host_permissions = $hosts
 if (@($m.host_permissions) -contains $prodHost) { throw 'Production Bridge host remained in lab manifest' }
- -Force
 Write-Output '[PLAN] Separate background lab candidate only; no installed files changed'
 Write-Output ('[PLAN] Output: ' + $out)
 Write-Output '[PLAN] Manifest adds offscreen + alarms, module background type; Bridge endpoint 17381 -> 17481'
