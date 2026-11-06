@@ -37,17 +37,17 @@ foreach ($name in $names) {
   if ($name -notlike '*.js') { continue }
   $file = Join-Path $source $name
   $js = [IO.File]::ReadAllText($file)
-  $imports = [regex]::Matches($js, '(?m)\\b(?:import|export)\\s+(?:[^''";]*?\\s+from\\s+)?["''](\\.[^"'']+)["'']|\\bimport\\s*\\(\\s*["''](\\.[^"'']+)["'']\\s*\\)')
+  $imports = [regex]::Matches($js, '(?m)\b(?:import|export)\s+(?:[^''";]*?\s+from\s+)?["''](\.[^"'']+)["'']|\bimport\s*\(\s*["''](\.[^"'']+)["'']\s*\)')
   foreach ($match in $imports) {
     $relative = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
     $dependency = [IO.Path]::GetFullPath((Join-Path (Split-Path $file -Parent) $relative))
-    if (-not $dependency.StartsWith($source.TrimEnd('\\') + '\\',[StringComparison]::OrdinalIgnoreCase)) {
+    if (-not $dependency.StartsWith($source.TrimEnd('\') + '\',[StringComparison]::OrdinalIgnoreCase)) {
       throw ('Candidate import escapes extension directory: ' + $name)
     }
     if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
       throw ('Missing candidate import: ' + $name + ' -> ' + $relative)
     }
-    $dependencyName = $dependency.Substring($source.TrimEnd('\\').Length + 1)
+    $dependencyName = $dependency.Substring($source.TrimEnd('\').Length + 1)
     if ($names -notcontains $dependencyName) {
       throw ('Unpackaged candidate import: ' + $name + ' -> ' + $dependencyName)
     }
