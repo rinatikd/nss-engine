@@ -72,10 +72,19 @@ foreach ($permission in @('activeTab','offscreen','alarms')) {
   if ($perms -notcontains $permission) { $perms += $permission }
 }
 $m.permissions = $perms
-$m.background | Add-Member -MemberType NoteProperty -Name type -Value 'module' -Force
+$m.background | Add-Member -MemberType NoteProperty -Name type -Value 'module'
+# A lab package must never target the live Bridge endpoint. Replace only the
+# exact loopback production host, retaining any separately approved site origins.
+$prodHost = 'http://127.0.0.1:17381/*'
+$labHost = 'http://127.0.0.1:17481/*'
+$hosts = @($m.host_permissions | Where-Object { $_ -ne $prodHost })
+if ($hosts -notcontains $labHost) { $hosts += $labHost }
+$m.host_permissions = $hosts
+if (@($m.host_permissions) -contains $prodHost) { throw 'Production Bridge host remained in lab manifest' }
+ -Force
 Write-Output '[PLAN] Separate background lab candidate only; no installed files changed'
 Write-Output ('[PLAN] Output: ' + $out)
-Write-Output '[PLAN] Manifest adds offscreen + alarms and module background type'
+Write-Output '[PLAN] Manifest adds offscreen + alarms, module background type; Bridge endpoint 17381 -> 17481'
 Write-Output '[PLAN] No credentials or server configuration are copied'
 if (-not $Apply) { Write-Output '[DRY-RUN] No output was created'; exit 0 }
 $temp = $out + '-tmp-' + [guid]::NewGuid().ToString('N')
@@ -85,6 +94,22 @@ try {
   New-Item -ItemType Directory -Path $temp -Force | Out-Null
   foreach ($name in $names) {
     Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $temp $name) -Force
+  }
+  # Rewrite only the known loopback Bridge endpoint in the isolated copy.
+  # The candidate source and installed production extension are never edited.
+  $prodEndpoint = 'http://127.0.0.1:17381'
+  $labEndpoint = 'http://127.0.0.1:17481'
+  foreach ($name in @('control.js', 'connection-check.js', 'transport-engine.js')) {
+    $target = Join-Path $temp $name
+    $original = [IO.File]::ReadAllText($target)
+    if (-not $original.Contains($prodEndpoint)) { throw ('Expected production endpoint missing in candidate: ' + $name) }
+    $converted = $original.Replace($prodEndpoint, $labEndpoint)
+    [IO.File]::WriteAllText($target, $converted, (New-Object System.Text.UTF8Encoding($false)))
+  }
+  foreach ($name in $names) {
+    if ($name -notlike '*.js') { continue }
+    $text = [IO.File]::ReadAllText((Join-Path $temp $name))
+    if ($text.Contains($prodEndpoint)) { throw ('Production Bridge endpoint retained in lab JS: ' + $name) }
   }
   # Preserve only explicitly declared image assets used by the local MV3 manifest.
   $iconRefs = @()
@@ -122,6 +147,7 @@ try {
   }
   Move-Item -LiteralPath $temp -Destination $out
   Write-Output ('[STAGED] ' + $out)
+  Write-Output '[CHECK] Lab JS and manifest use 17481; production 17381 endpoint excluded'
   Write-Output '[NOTE] New unpacked extension may have a different Chrome ID. Do not change pinned server configuration for testing without a separate plan.'
 } finally {
   if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
