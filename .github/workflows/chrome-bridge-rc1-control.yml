@@ -29,4 +29,4 @@ jobs:
       - name: Independent RC1 regression matrix
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
-          node --test tests/background-mode-reconnect.test.mjs tests/coordinator-ack.test.mjs tests/control-targets.test.mjs tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/background-control-grants.test.mjs tests/background-readonly-security.test.mjs tests/transport-recovery-security.test.mjs
+          node --test tests/control-ui-single-entry.test.mjs tests/background-mode-reconnect.test.mjs tests/coordinator-ack.test.mjs tests/control-targets.test.mjs tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/background-control-grants.test.mjs tests/background-readonly-security.test.mjs tests/transport-recovery-security.test.mjs
