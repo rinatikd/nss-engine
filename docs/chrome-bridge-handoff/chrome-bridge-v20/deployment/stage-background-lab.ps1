@@ -77,10 +77,15 @@ $m.background | Add-Member -MemberType NoteProperty -Name type -Value 'module' -
 # exact loopback production host, retaining any separately approved site origins.
 $prodHost = 'http://127.0.0.1:17381/*'
 $labHost = 'http://127.0.0.1:17481/*'
-$hosts = @($m.host_permissions | Where-Object { $_ -ne $prodHost })
+# Existing installations may use a port-agnostic loopback pattern.
+# Do not retain it in the lab manifest: it would also authorize port 17381.
+$loopbackWildcard = 'http://127.0.0.1/*'
+$hosts = @($m.host_permissions | Where-Object { $_ -ne $prodHost -and $_ -ne $loopbackWildcard })
 if ($hosts -notcontains $labHost) { $hosts += $labHost }
 $m.host_permissions = $hosts
-if (@($m.host_permissions) -contains $prodHost) { throw 'Production Bridge host remained in lab manifest' }
+if (@($m.host_permissions) -contains $prodHost -or @($m.host_permissions) -contains $loopbackWildcard) {
+  throw 'Production Bridge access remained in lab manifest'
+}
 Write-Output '[PLAN] Separate background lab candidate only; no installed files changed'
 Write-Output ('[PLAN] Output: ' + $out)
 Write-Output '[PLAN] Manifest adds offscreen + alarms, module background type; Bridge endpoint 17381 -> 17481'
