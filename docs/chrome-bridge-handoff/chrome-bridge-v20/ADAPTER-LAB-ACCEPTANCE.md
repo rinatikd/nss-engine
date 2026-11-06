@@ -18,7 +18,7 @@ $branch = 'fix/bridge-claude-gemini-send-adapters-20261106'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $worktree = "C:\Engineering\ChromeBridge-Adapters-Source-$stamp"
 $lab = "C:\Engineering\ChromeBridge-Adapters-Lab-$stamp"
-git -C $repo fetch origin $branch
+git -C $repo fetch origin "$($branch):refs/remotes/origin/$($branch)"
 if ($LASTEXITCODE -ne 0) { throw 'Fetch failed' }
 git -C $repo worktree add --detach $worktree "origin/$branch"
 if ($LASTEXITCODE -ne 0) { throw 'Isolated worktree setup failed' }
