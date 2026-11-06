@@ -17,6 +17,6 @@ test('duplicate per-tab Control controls and their handlers are absent',()=>{
 });
 test('site list does not create redundant legacy Control buttons or misleading status',()=>{
   assert.doesNotMatch(js,/dataset\.connectControl|dataset\.disconnectControl|dataset\.ttl/);
-  assert.doesNotMatch(js,/Управление отключено/);
+  assert.doesNotMatch(js,/ttl\.textContent\s*=/);
   assert.match(js,/li\.append\(left, rm\)/);
 });
