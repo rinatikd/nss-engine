@@ -24,21 +24,11 @@ const grants = new ControlGrants();
 const timestamp = () => new Intl.DateTimeFormat('ru-RU', {timeZone:'Asia/Almaty', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}).format(new Date());
 function taskStatus(label, value, detail='') { $('taskState').textContent=label; $('taskProgress').value=value; $('taskTimes').textContent=timestamp() + (detail ? ' · '+detail : ''); }
 function refreshGrantLabels() {
-  for (const row of $('sites').children) {
-    const origin = row.dataset.origin;
-    const ttl = row.querySelector('[data-ttl]');
-    if (!origin || !ttl) continue;
-    const expires = grants.grants.get(origin);
-    const active = grants.status(origin, running && $('actions').checked).allowed;
-    ttl.textContent = active ? 'Управление разрешено: ещё ' + Math.ceil((expires - Date.now()) / 60000) + ' мин' : 'Управление отключено';
-    const connect = row.querySelector('[data-connect-control]');
-    const disconnect = row.querySelector('[data-disconnect-control]');
-    if (connect) connect.disabled = active || !running;
-    if (disconnect) disconnect.disabled = !expires;
-  }
+  // Individual Control grants are intentionally not offered in the site list.
+  // Only the global background Control action grants temporary tab permissions.
   const global = $('controlGlobalState');
   if (global) global.textContent = !running ? 'Мост отключён; управление недоступно'
-    : backgroundMode ? 'Глобальное разрешение действий: ВЫКЛ (обычный режим недоступен в фоновом; используйте экспериментальное управление выше)'
+    : backgroundMode ? 'Фоновое управление: используйте общие кнопки выше (каждое действие подтверждается отдельно)'
     : $('actions').checked ? 'Глобальное разрешение действий: ВКЛ'
     : 'Глобальное разрешение действий: ВЫКЛ';
 }
@@ -99,36 +89,6 @@ async function renderSites() {
       try { await chrome.permissions.remove({ origins: [origin + '/*'] }); } catch { /* уже снято */ }
       await renderSites();
     };
-    if (CONTROL_ORIGINS[origin]) {
-      const connect = document.createElement('button');
-      connect.dataset.connectControl = '';
-      connect.textContent = 'Подключить управление';
-      connect.onclick = (event) => {
-        try {
-          if (!running || !event.isTrusted) throw Error('Сначала подключите мост; требуется локальный клик');
-          if (!$('actions').checked) throw Error('Включите глобальное разрешение действий в разделе «Безопасность»');
-          const minutes = Number($('controlDuration').value);
-          if (!window.confirm('Разрешить управление ' + origin + ' на ' + minutes + ' мин? Отправка запросов внешнему AI потребует подтверждения; не отправляйте секреты.')) return;
-          grants.approve(origin, event.isTrusted, minutes);
-          refreshGrantLabels();
-          log('Control granted: ' + origin);
-        } catch (e) { setStatus(e.message); refreshGrantLabels(); }
-      };
-      const disconnect = document.createElement('button');
-      disconnect.dataset.disconnectControl = '';
-      disconnect.className = 'secondary';
-      disconnect.textContent = 'Отключить управление';
-      disconnect.onclick = (event) => {
-        if (!event.isTrusted) { setStatus('Требуется локальный клик'); return; }
-        grants.revoke(origin);
-        refreshGrantLabels();
-        log('Control revoked: ' + origin);
-      };
-      const ttl = document.createElement('span');
-      ttl.className = 'tag';
-      ttl.dataset.ttl = '';
-      li.append(ttl, connect, disconnect);
-    }
     li.append(left, rm);
     ul.append(li);
   }
@@ -457,18 +417,13 @@ $('mutationLab').addEventListener('change',async event=>{
       await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'clear-background-controls'});
     }
     $('backgroundGrantStatus').textContent=enabled ?
-      'Лабораторный режим включён. Выберите вкладку и разрешите Control вручную.' :
+      'Лабораторный режим включён. Используйте общую кнопку Control для открытых разрешённых вкладок.' :
       'Управление отключено';
   } catch(e) {
     $('mutationLab').checked=!enabled;
     setStatus('Ошибка настройки управления: '+e.message);
   }
 });
-function selectedBackgroundTab() {
-  const tabId=Number($('backgroundGrantTabId').value);
-  if (!Number.isSafeInteger(tabId)||tabId<=0) throw Error('Укажите действительный tabId');
-  return tabId;
-}
 // A single local gesture can grant *only currently open, individually approved*
 // chat tabs. This does not enable wildcard host permissions or skip per-action
 // approval. Each tab is revalidated by the background coordinator.
@@ -516,35 +471,6 @@ $('backgroundRevokeAll').onclick=async event=>{
     $('backgroundGrantStatus').textContent='Ошибка отключения: '+e.message;
   }
 };
-$('backgroundGrant').onclick=async event=>{
-  if (!event.isTrusted || !backgroundMode || !$('mutationLab').checked) return;
-  try {
-    const tabId=selectedBackgroundTab();
-    const durationMinutes=Number($('backgroundGrantMinutes').value);
-    const tab=await chrome.tabs.get(tabId);
-    if (!window.confirm('Разрешить Control для вкладки '+tabId+' на '+durationMinutes+
-      ' минут?\n'+new URL(tab.url).origin+'\nЛюбое действие дополнительно запрашивает подтверждение.')) return;
-    const result=await chrome.runtime.sendMessage({
-      target:'bridge-coordinator',type:'grant-background-control',
-      tabId,durationMinutes,localGesture:true
-    });
-    if(result.error)throw Error(result.error);
-    $('backgroundGrantStatus').textContent='Control разрешён для '+result.origin+
-      ', вкладка '+tabId+', до '+new Date(result.expires).toLocaleTimeString();
-  } catch(e) { $('backgroundGrantStatus').textContent='Не удалось разрешить Control: '+e.message; }
-};
-$('backgroundRevoke').onclick=async event=>{
-  if (!event.isTrusted || !backgroundMode) return;
-  try {
-    const tabId=selectedBackgroundTab();
-    const result=await chrome.runtime.sendMessage({
-      target:'bridge-coordinator',type:'revoke-background-control',tabId
-    });
-    if(result.error)throw Error(result.error);
-    $('backgroundGrantStatus').textContent='Control для вкладки '+tabId+' отозван.';
-  } catch(e) { $('backgroundGrantStatus').textContent='Ошибка отзыва Control: '+e.message; }
-};
-
 let backgroundTimer = null;
 async function showBackgroundApprovals() {
   const box = $('backgroundApprovals');
