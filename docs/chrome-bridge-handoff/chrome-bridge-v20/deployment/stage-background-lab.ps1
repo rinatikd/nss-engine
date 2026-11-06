@@ -80,9 +80,54 @@ Write-Output '[PLAN] No credentials or server configuration are copied'
 if (-not $Apply) { Write-Output '[DRY-RUN] No output was created'; exit 0 }
 $temp = $out + '-tmp-' + [guid]::NewGuid().ToString('N')
 try {
-  Copy-Item -LiteralPath $installed -Destination $temp -Recurse -Force
+  # Construct from an empty directory, not an installed-tree clone.
+  # The installed tree might contain token-bearing config, logs or stale code.
+  New-Item -ItemType Directory -Path $temp -Force | Out-Null
   foreach ($name in $names) {
     Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $temp $name) -Force
+  }
+  # Only copy icon images explicitly referenced by the trusted local manifest.
+  # Never copy config.json, browserToken, logs, or arbitrary installed files.
+  $iconRefs = @()
+  if ($m.PSObject.Properties['icons']) {
+    if ($m.icons -is [string]) { $iconRefs += $m.icons }
+    else { $iconRefs += @($m.icons.PSObject.Properties | ForEach-Object { $_.Value }) }
+  }
+  if ($m.PSObject.Properties['action'] -and $m.action -and $m.action.PSObject.Properties['default_icon']) {
+    $ico = $m.action.default_icon
+    if ($ico -is [string]) { $iconRefs += $ico }
+    else { $iconRefs += @($ico.PSObject.Properties | ForEach-Object { $_.Value }) }
+  }
+  foreach ($asset in ($iconRefs | Select-Object -Unique)) {
+    if ($asset -isnot [string] -or $asset -notmatch '^[a-zA-Z0-9_./-]+\\.(png|jpg|jpeg|webp)
+  [IO.File]::WriteAllText((Join-Path $temp 'manifest.json'),
+    ($m | ConvertTo-Json -Depth 50) + [Environment]::NewLine,
+    (New-Object System.Text.UTF8Encoding($false)))
+  $node = Get-Command node -ErrorAction Stop
+  foreach ($name in $names) {
+    if ($name -like '*.js') {
+      & $node.Source --check (Join-Path $temp $name)
+      if ($LASTEXITCODE -ne 0) { throw ('Node syntax check failed: ' + $name) }
+    }
+  }
+  Move-Item -LiteralPath $temp -Destination $out
+  Write-Output ('[STAGED] ' + $out)
+  Write-Output '[NOTE] New unpacked extension may have a different Chrome ID. Do not change pinned server configuration for testing without a separate plan.'
+} finally {
+  if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
+}
+ -or $asset.Contains('..')) {
+      throw 'Unsafe manifest icon asset path'
+    }
+    $assetSource = Join-Path $installed $asset
+    if (-not (Test-Path -LiteralPath $assetSource -PathType Leaf)) { throw ('Missing manifest icon asset: ' + $asset) }
+    $destination = Join-Path $temp $asset
+    $parent = Split-Path $destination -Parent
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    Copy-Item -LiteralPath $assetSource -Destination $destination
+  }
+  if ($m.PSObject.Properties['content_scripts'] -and @($m.content_scripts).Count -gt 0) {
+    throw 'Content scripts require explicit audited packaging; refusing installed tree import'
   }
   [IO.File]::WriteAllText((Join-Path $temp 'manifest.json'),
     ($m | ConvertTo-Json -Depth 50) + [Environment]::NewLine,
