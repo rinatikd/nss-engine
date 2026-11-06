@@ -25,6 +25,9 @@ jobs:
       - name: Verify read-only MCP route diagnostic safety and native Windows test when available
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/diagnose-mcp-link.test.mjs
+      - name: Verify Claude and Gemini adapter selectors and fail-closed dispatch
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/claude-gemini-adapters.test.mjs
       - name: Syntax check changed extension files
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
