@@ -204,6 +204,8 @@ jobs:
           if (@($labManifest.permissions) -notcontains 'alarms') { throw 'Alarms permission missing' }
           if ((Get-Content (Join-Path $installed 'manifest.json') -Raw | ConvertFrom-Json).background.type) { throw 'Installed manifest modified' }
           if (-not (Test-Path (Join-Path $out 'transport-worker.js'))) { throw 'Worker missing' }
+          & ./deployment/verify-adapter-lab.ps1 -LabRoot $out
+          if ($LASTEXITCODE -ne 0) { throw 'Adapter lab package validation failed' }
           Write-Output '[PASS] MV3 background lab prepared without modifying the installed extension'
       - name: Package source-only Windows upgrade candidate
         if: success()
