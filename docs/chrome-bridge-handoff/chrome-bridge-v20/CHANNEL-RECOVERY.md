@@ -36,3 +36,11 @@ Use `Get-NetTCPConnection -State Listen -LocalPort 17381,17382` and `Get-CimInst
 - Keep live server `17381/17382`, tunnel, credentials, installation and production Chrome profile unchanged. All code changes require separate review and rollout.
 
 **Release and channel verdict: BLOCKED.** Lab UI works, but ChatGPT-to-helper delivery cannot be claimed until its actual transport and recipient independently respond.
+
+## Isolated MCP server test (2026-11-06)
+
+New `tests/mcp-channel-smoke.test.mjs` launches the repository's `createBridge` on an ephemeral 127.0.0.1 port using synthetic agent/browser tokens. It verifies `initialize`, `ping`, `tools/list`, **`browser_status` with no connected browser**, and a structured `agent_list` disconnection error. Invalid agent token, browser token presented as agent token, unauthorized extension Origin and wrong pinned extension ID must be rejected with 401/403.
+
+GitHub Actions commit `413ae0126c11367a68b77d3ce0fe73227f69ead5`: **Source checks PASS; Chrome Bridge Visual RC PASS; RC1 Control Gates PASS**, with the new smoke test explicitly included in Visual RC. This provides evidence the *repository MCP server handler works in an isolated CI process*. It does **not** test the user's active Windows server, tunnel, ChatGPT plugin routing or credentials. Consequently, internal tool failure in this ChatGPT session remains a **connector/session/upstream failure of unknown precise cause**, not a verified defect in the server implementation.
+
+Next real test must obtain a non-sensitive status from the actual **ChatGPT-connected** MCP instance or a sanitized HTTP status and process health from that same production endpoint. Do not use lab `17481` evidence to certify the `17381/17382` connector.
