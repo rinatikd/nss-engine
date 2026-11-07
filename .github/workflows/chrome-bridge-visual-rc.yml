@@ -22,6 +22,9 @@ jobs:
       - name: Verify MCP handshake independently of browser availability
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/mcp-channel-smoke.test.mjs
+      - name: Require real loaded MV3 service worker in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/mv3-browser-smoke.test.mjs
       - name: Verify Gemini adapter DOM in real disposable Chromium
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/chromium-adapter-dom.test.mjs
