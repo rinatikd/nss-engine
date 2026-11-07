@@ -45,3 +45,11 @@ test('lab staging remaps only the isolated fixture to 17481',()=>{
   assert.match(stage,/Production Bridge endpoint retained in lab JS/);
   assert.match(stage,/if \(-not \$Apply\)/);
 });
+
+
+test('background UI describes the opt-in mutation lab accurately',()=>{
+  assert.match(js,/Фоновый режим: чтение доступно\. Отправка возможна только в экспериментальном Control/);
+  assert.match(js,/Отправка сообщений Claude, Gemini и DeepSeek требует отдельного включения экспериментального Control/);
+  assert.match(js,/Каждая команда потребует отдельного подтверждения/);
+  assert.doesNotMatch(js,/Отправка сообщений Claude, Gemini и DeepSeek будет недоступна/);
+});
