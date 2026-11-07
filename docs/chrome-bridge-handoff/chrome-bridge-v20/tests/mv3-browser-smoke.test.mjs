@@ -74,14 +74,11 @@ test('real browser loads unpacked RC1 MV3 service worker in isolated profile', {
       const value=Number(fs.readFileSync(portFile,'utf8').split(/\r?\n/)[0]);
       return Number.isSafeInteger(value)&&value>0?value:null;
     },15000,'DEBUG_PORT');
-    const expectedId=await until(async()=>{
-      const preferences=path.join(profile,'Default','Preferences');
-      if(!fs.existsSync(preferences))return null;
-      let data;
-      try{data=JSON.parse(fs.readFileSync(preferences,'utf8'));}catch{return null;}
-      return Object.entries(data.extensions?.settings||{})
-        .find(([_id,settings])=>settings.manifest?.name==='RC1 MV3 Disposable Acceptance')?.[0] || null;
-    },12000,'REGISTERED_TEST_EXTENSION');
+    // Chromium's GenerateIdForPath derives unpacked extension identity from
+    // SHA-256 of the canonical absolute directory path on Linux.
+    const digest=(await import('node:crypto')).createHash('sha256')
+      .update(path.resolve(ext)).digest('hex').slice(0,32);
+    const expectedId=[...digest].map(h=>'abcdefghijklmnop'[parseInt(h,16)]).join('');
     let lastTargets=[];
     let worker;
     try {
