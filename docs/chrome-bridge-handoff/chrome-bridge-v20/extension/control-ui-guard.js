@@ -8,6 +8,9 @@ const mode=document.getElementById('backgroundMode');
 const lab=document.getElementById('mutationLab');
 let disposed=false;
 let generation=0;
+// The grant coordinator is authoritative; never infer a successful revoke from a click.
+export async function refreshBackgroundControlButtons() { await refresh(); }
+window.addEventListener('bridge-background-grants-changed',()=>{void refresh();});
 
 async function refresh() {
   const current=++generation;
