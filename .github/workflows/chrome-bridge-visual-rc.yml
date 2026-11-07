@@ -32,6 +32,11 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
         run: node --test tests/mv3-browser-smoke.test.mjs
+      - name: Exercise real MV3 offscreen and closed-panel lifecycle
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-background-lifecycle.test.mjs
       - name: Verify Gemini adapter DOM in real disposable Chromium
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/chromium-adapter-dom.test.mjs
