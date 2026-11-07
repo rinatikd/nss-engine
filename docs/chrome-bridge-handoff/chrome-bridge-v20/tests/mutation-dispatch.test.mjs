@@ -168,6 +168,6 @@ test('host permission revoked after approval blocks mutation',async()=>{
  const hasPermission=f.chromeApi.permissions.contains;
  f.chromeApi.permissions.contains=async (...args)=>
    f.state.allowAt ? hasPermission(...args) : false;
- await assert.rejects(execute(cmd('agent_send'),f),/ORIGIN_NOT_PERMITTED/);
+ await assert.rejects(execute(cmd('agent_send'),f),/HOST_PERMISSION_MISSING/);
  assert.equal(f.state.injections.includes('agent_send'),false);
 });
