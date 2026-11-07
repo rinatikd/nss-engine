@@ -105,7 +105,7 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
    const diagnostic=await c.eval('JSON.stringify({url:location.href,ready:document.readyState,chrome:typeof chrome,storage:typeof chrome!=="undefined" && !!chrome.storage?.local,runtime:typeof chrome!=="undefined" && !!chrome.runtime?.id})');
    console.log('[MV3 CONTROL] page diagnostic:',diagnostic);
    await until(()=>c.eval('typeof chrome!=="undefined" && !!chrome.storage?.local && !!chrome.runtime?.id'),6000,'CONTROL_READY');
-   return {id:created.targetId,cdp:c};
+   return {id:tab.id,cdp:c};
   }
   async function browserStatus(){
    const r=await fetch('http://127.0.0.1:17481/mcp',{
