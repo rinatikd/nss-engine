@@ -100,7 +100,7 @@ export function installBackgroundCoordinator(chromeApi) {
           throw Error('BACKGROUND_TRANSPORT_DISABLED');
         const name=msg.command?.name;
         if (['browser_click','browser_fill','agent_send'].includes(name)) {
-          if (bridgeMutationLabMode!==true) throw Error('BACKGROUND_MUTATIONS_DISABLED');
+          if (bridgeMutationLabMode!==true) throw Object.assign(Error('BACKGROUND_MUTATIONS_DISABLED'), {dispatchState:'BLOCKED'});
           const grants=new BackgroundControlGrants(chromeApi);
           return dispatchMutation(msg.command,chromeApi,{
             approvals,
@@ -117,7 +117,12 @@ export function installBackgroundCoordinator(chromeApi) {
         }
         return dispatchReadOnly(msg.command,chromeApi);
       };
-      void run().then(result=>respond({result}),e=>respond({error:e.message}));
+      void run().then(result=>respond({result}),e=>respond({
+        error:e.message,
+        // Only the trusted coordinator can assert no DOM execution occurred.
+        dispatchState:['BLOCKED','NOT_PERFORMED'].includes(e.dispatchState)
+          ? e.dispatchState : 'UNKNOWN'
+      }));
       return true;
     }
     if (msg.type === 'background-control-status') {
