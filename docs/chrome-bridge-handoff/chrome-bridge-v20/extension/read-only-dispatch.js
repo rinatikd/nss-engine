@@ -1,9 +1,12 @@
 import { pageAction } from './page.js';
 import { redact } from './secrets.js';
+import { CONTROL_ORIGINS } from './permissions.js';
+import { mergeAdapters } from './adapters.js';
 
 const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
 const LOCAL = new Set(['localhost','127.0.0.1','[::1]']);
-const ALLOWED = new Set(['browser_tabs','browser_read','control_status']);
+const ALLOWED = new Set(['browser_tabs','browser_read','control_status',
+  'agent_probe','agent_selftest','agent_context','agent_peek']);
 
 export async function permittedTab(chromeApi, tabId) {
   if (!Number.isSafeInteger(tabId) || tabId <= 0) throw Error('INVALID_TAB_ID');
@@ -43,6 +46,49 @@ export async function dispatchReadOnly(command, chromeApi) {
       } catch { /* do not disclose unapproved tabs */ }
     }
     return out;
+  }
+  if (['agent_probe','agent_selftest','agent_context','agent_peek'].includes(command.name)) {
+    const tabId=command.args?.tabId;
+    const {tab,origin,site}=await permittedTab(chromeApi,tabId);
+    // These are diagnosis/read operations only, never a write permission.
+    if (!Object.hasOwn(CONTROL_ORIGINS,origin) ||
+        site.mode!=='chat' || site.adapter!==CONTROL_ORIGINS[origin])
+      throw Error('AGENT_SITE_NOT_APPROVED');
+    const {adapters} = await chromeApi.storage.local.get('adapters');
+    let overrides;
+    try { overrides=JSON.parse(adapters || '{}'); }
+    catch { throw Error('INVALID_ADAPTER_CONFIGURATION'); }
+    const adapter=mergeAdapters(overrides)[site.adapter];
+    if (!adapter || adapter.origin!==origin)
+      throw Error('ADAPTER_ORIGIN_MISMATCH');
+    const action=command.name==='agent_probe'?'agent_selftest':command.name;
+    const results=await chromeApi.scripting.executeScript({
+      target:{tabId},func:pageAction,args:[action,{adapter},origin]
+    });
+    const result=results?.[0]?.result;
+    if (!result || result.error) throw Error(result?.error || 'AGENT_DIAGNOSTIC_FAILED');
+    const check=await chromeApi.tabs.get(tabId);
+    if (check.url!==tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    if (command.name==='agent_probe') {
+      if (!result.composer || !result.send) throw Error('INVALID_PROBE_RESULT');
+      return {adapter:site.adapter,
+        // The send button may be invisible on an empty composer; binding
+        // remains possible, but adapterVerified is only true when both are visible.
+        verified:result.composer.visible===1 && result.send.visible===1};
+    }
+    if (command.name==='agent_context') {
+      if (typeof result.verified!=='boolean' || result.origin!==origin ||
+          (result.conversationId!=null && typeof result.conversationId!=='string'))
+        throw Error('INVALID_AGENT_CONTEXT');
+      return result;
+    }
+    if (command.name==='agent_peek') {
+      if (!Number.isSafeInteger(result.count) ||
+          typeof result.text!=='string' || typeof result.generating!=='boolean')
+        throw Error('INVALID_PEEK_RESULT');
+      return {...result,text:redact(result.text)};
+    }
+    return result;
   }
   if (command.name === 'browser_read') {
     const tabId = command.args?.tabId;
