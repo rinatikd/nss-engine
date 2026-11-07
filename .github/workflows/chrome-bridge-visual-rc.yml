@@ -233,6 +233,16 @@ jobs:
           & ./deployment/verify-adapter-lab.ps1 -LabRoot $out
           if ($LASTEXITCODE -ne 0) { throw 'Adapter lab package validation failed' }
           Write-Output '[PASS] MV3 background lab prepared without modifying the installed extension'
+          & ./deployment/write-lab-release-manifest.ps1 -LabRoot $out -OutputPath (Join-Path $env:RUNNER_TEMP 'chrome-bridge-rc1-lab-evidence.json') -CommitSha $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Release evidence generation failed' }
+      - name: Upload immutable lab file-hash evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-bridge-rc1-lab-hashes
+          path: ${{ runner.temp }}/chrome-bridge-rc1-lab-evidence.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Package source-only Windows upgrade candidate
         if: success()
         uses: actions/upload-artifact@v4
