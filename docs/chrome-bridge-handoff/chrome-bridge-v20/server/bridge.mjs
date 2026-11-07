@@ -167,11 +167,16 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     try { r = await enqueue('agent_send', { tabId: a.tabId, text, expectedOrigin: context.origin, expectedConversationId: context.conversationId }); }
     catch (error) {
       a.sending = null;
-      const outcome = classifySend(error?.dispatchState === 'NOT_PERFORMED' ? { dispatched: false } : null);
+      const outcome = classifySend(error?.dispatchState === 'BLOCKED'
+        ? {dispatched:false,controlDenied:true}
+        : error?.dispatchState === 'NOT_PERFORMED' ? {dispatched:false} : null);
       const deliveryStatus = journalStatus(outcome);
       try { sendJournal.settle(requestId, deliveryStatus); } catch { /* Keep the write-ahead UNKNOWN record. */ }
       return { sent: false, transportConfirmed: false, deliveryStatus, sendOutcome: outcome.state,
-        outcomeReasons: outcome.reasons, requestId,
+        outcomeReasons: outcome.reasons,
+        // Only stable diagnostic codes, never arbitrary provider text.
+        failureCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message || '')
+          ? error.message : null, requestId,
         hint: deliveryStatus === 'UNKNOWN' ? 'Dispatch result is unknown. Inspect the chat before any new submission; do not retry automatically.' : 'No browser dispatch occurred. This requestId remains consumed; a new explicit request is required.' };
     }
     const outcome = classifySend({ dispatched: true }); // Transport response is not attributed delivery evidence.
@@ -308,7 +313,12 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         pending.delete(body.id);
         activeId = null;
         lastSeen = Date.now();
-        body.error ? p.reject(Object.assign(Error(String(body.error)), { dispatchState: 'UNKNOWN' })) : p.resolve(body.result);
+        body.error ? p.reject(Object.assign(Error(String(body.error)), {
+          // Only an explicit pre-DOM acknowledgement can mark the command
+          // not performed. Absent/ambiguous metadata is always UNKNOWN.
+          dispatchState:['BLOCKED','NOT_PERFORMED'].includes(body.dispatchState)
+            ? body.dispatchState : 'UNKNOWN'
+        })) : p.resolve(body.result);
         json(res, 200, { ok: true });
         wake();
       } else json(res, 404, { error: 'Not found' });
