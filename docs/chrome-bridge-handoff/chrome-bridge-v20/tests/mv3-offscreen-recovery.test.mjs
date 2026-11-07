@@ -93,6 +93,7 @@ test('actual MV3 offscreen reconnects through extension reload without control U
   }
   cdp=await Cdp.connect(initial.webSocketDebuggerUrl);
   await cdp.call('Runtime.enable');
+  await until(()=>cdp.eval('typeof chrome!=="undefined" && !!chrome.storage?.local && !!chrome.runtime?.id'),10000,'WORKER_API_READY');
   const settings={bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken};
   const set=await cdp.eval('(async()=>{await chrome.storage.local.set('+JSON.stringify(settings)+');return true})()');
   assert.equal(set,true,'extension worker storage set');
