@@ -136,6 +136,7 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   control?.cdp.close();browserCdp?.close();
   if(chromeProc&&!chromeProc.killed){try{process.kill(-chromeProc.pid,'SIGTERM');}catch{chromeProc.kill('SIGTERM');}}
   if(bridge?.listening)await new Promise(resolve=>bridge.close(resolve));
-  fs.rmSync(dir,{recursive:true,force:true,maxRetries:12,retryDelay:200});
+  try { fs.rmSync(dir,{recursive:true,force:true,maxRetries:12,retryDelay:200}); }
+  catch (error) { console.warn('[MV3 TEST] CI temporary profile cleanup deferred:',error.code); }
  }
 });
