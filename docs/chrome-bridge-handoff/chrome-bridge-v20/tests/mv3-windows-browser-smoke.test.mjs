@@ -65,8 +65,6 @@ test('native Windows Chrome for Testing loads exact lab MV3 worker and control p
   host_permissions:['http://127.0.0.1:17481/*'],
   action:{default_title:'Windows test'}
  }));
- const digest=crypto.createHash('sha256').update(path.resolve(ext)).digest('hex').slice(0,32);
- const id=[...digest].map(c=>'abcdefghijklmnop'[parseInt(c,16)]).join('');
  let child=null,worker=null,control=null;
  try{
   child=spawn(chrome,[
@@ -82,23 +80,35 @@ test('native Windows Chrome for Testing loads exact lab MV3 worker and control p
    return Number(fs.readFileSync(file,'utf8').split(/\r?\n/)[0]);
   },15000,'DEBUG_PORT');
   const list=async()=>(await (await fetch('http://127.0.0.1:'+port+'/json/list')).json());
-  let target;
-  try {
-   target=await until(async()=>(await list()).find(t=>t.type==='service_worker'&&t.url==='chrome-extension://'+id+'/background.js'),15000,'EXACT_WORKER');
-  } catch(error) {
-   const inventory=await list();
-   console.error('[WIN MV3] expected extension ID',id);
-   console.error('[WIN MV3] browser targets',JSON.stringify(inventory.map(t=>({type:t.type,url:t.url}))));
-   const prefs=path.join(profile,'Default','Preferences');
-   if(fs.existsSync(prefs)) {
-    try {
-     const data=JSON.parse(fs.readFileSync(prefs,'utf8'));
-     console.error('[WIN MV3] registered extension IDs',
-       JSON.stringify(Object.keys(data.extensions?.settings||{})));
-    } catch(e) {console.error('[WIN MV3] prefs read error',e.message);}
+  // Windows canonical path hashing differs from the simple POSIX algorithm.
+  // Identify the exact test extension by reading its privileged MV3 manifest.
+  let id=null;
+  const examined=[];
+  const target=await until(async()=>{
+   const candidates=(await list()).filter(t=>t.type==='service_worker' &&
+     /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
+   for(const t of candidates){
+    let connection;
+    try{
+     connection=await Cdp.connect(t.webSocketDebuggerUrl);
+     await connection.call('Runtime.enable');
+     const d=await connection.eval('typeof chrome!=="undefined" && chrome.runtime?.getManifest ? ({id:chrome.runtime.id,name:chrome.runtime.getManifest().name,hosts:chrome.runtime.getManifest().host_permissions}) : null');
+     examined.push({url:t.url,name:d?.name||null});
+     if(d?.name==='Chrome Bridge Windows MV3 isolated smoke' &&
+        d.id===t.url.split('/')[2] &&
+        d.hosts?.includes('http://127.0.0.1:17481/*') &&
+        !d.hosts?.includes('http://127.0.0.1:17381/*')){
+       id=d.id;
+       return t;
+     }
+    }catch{}
+    finally{connection?.close();}
    }
-   throw error;
-  }
+   return null;
+  },15000,'MATCHED_MANIFEST_WORKER').catch(err=>{
+    console.error('[WIN MV3] checked worker manifests:',JSON.stringify(examined.slice(-10)));
+    throw err;
+  });
   worker=await Cdp.connect(target.webSocketDebuggerUrl);
   await worker.call('Runtime.enable');
   await until(()=>worker.eval('typeof chrome!=="undefined" && !!chrome.runtime?.id && !!chrome.storage?.local'),7000,'WORKER_API');
