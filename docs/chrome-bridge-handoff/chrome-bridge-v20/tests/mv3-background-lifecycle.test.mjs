@@ -74,11 +74,12 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
     '--remote-allow-origins=*','--user-data-dir='+profile,'--load-extension='+ext,
     '--disable-extensions-except='+ext,'--remote-debugging-port=0','about:blank'],{stdio:'ignore',detached:true});
   port=await portOf(profile);
+  const idHash=crypto.createHash('sha256').update(path.resolve(ext)).digest('hex').slice(0,32);
+  const extensionId=[...idHash].map(h=>'abcdefghijklmnop'[parseInt(h,16)]).join('');
   const worker=await until(async()=>{
    const list=await targets(port);
-   return list.find(t=>t.type==='service_worker' && /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
-  },12000,'SERVICE_WORKER');
-  const extensionId=worker.url.split('/')[2];
+   return list.find(t=>t.type==='service_worker' && t.url==='chrome-extension://'+extensionId+'/background.js');
+  },12000,'EXACT_UNPACKED_SERVICE_WORKER');
   bridge=createBridge({browserToken,agentToken,extensionId},{pollHold:400,timeout:3000});
   await new Promise(resolve=>bridge.listen(17481,'127.0.0.1',resolve));
   const version=await (await fetch('http://127.0.0.1:'+port+'/json/version')).json();
