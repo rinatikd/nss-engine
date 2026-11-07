@@ -122,3 +122,96 @@ test('two concurrent send requests to one agent dispatch at most once', { timeou
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+
+test('lost browser ACK returns UNKNOWN and identical requestId cannot send twice', { timeout: 15000 }, async () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-lost-ack-'));
+  const config = {
+    agentToken: crypto.randomBytes(32).toString('hex'),
+    browserToken: crypto.randomBytes(32).toString('hex'),
+    extensionId: 'b'.repeat(32)
+  };
+  const server = createBridge(config, { stateDir, timeout: 350, pollHold: 40 });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const endpoint = 'http://127.0.0.1:' + server.address().port;
+  const controller = new AbortController();
+  let running = true, sendDispatches = 0;
+  let workerError = null;
+  const post = async (route, body, browser = false) => {
+    const response = await fetch(endpoint + route, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer ' + (browser ? config.browserToken : config.agentToken),
+        ...(browser ? { origin: 'chrome-extension://' + config.extensionId } : {})
+      },
+      body: JSON.stringify(body)
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const call = async (name, args, id) => {
+    const r = await post('/mcp', {
+      jsonrpc: '2.0', id, method: 'tools/call',
+      params: { name, arguments: args }
+    });
+    return { error: r.result.isError ? r.result.content[0].text : null,
+      value: r.result.isError ? null : JSON.parse(r.result.content[0].text) };
+  };
+  const responder = (async () => {
+    while (running) {
+      let item;
+      try { item = await post('/bridge/poll', {}, true); }
+      catch (error) {
+        if (!running || controller.signal.aborted) break;
+        workerError = error; break;
+      }
+      if (!item.command) continue;
+      const cmd = item.command;
+      if (cmd.name === 'agent_send') {
+        // The browser received this command but its result/ACK was lost.
+        sendDispatches++;
+        continue;
+      }
+      const result = cmd.name === 'agent_probe'
+        ? { adapter: 'claude', verified: true }
+        : cmd.name === 'agent_context'
+          ? { verified: true, origin: 'https://claude.ai',
+              conversationId: 'synthetic-conversation-1234' }
+          : null;
+      if (!result) throw Error('Unexpected command: ' + cmd.name);
+      try { await post('/bridge/result', { id: cmd.id, result }, true); }
+      catch (error) {
+        if (!running || controller.signal.aborted) break;
+        workerError = error; break;
+      }
+    }
+  })();
+  try {
+    const bound = await call('agent_bind', { name: 'claude', tabId: 456 }, 11);
+    assert.equal(bound.error, null);
+    const payload = {
+      name: 'claude', text: 'Synthetic lost ACK request', requestId: 'req-lost-ack'
+    };
+    const first = await call('agent_send', payload, 12);
+    assert.equal(first.error, null);
+    assert.equal(first.value.sent, false);
+    assert.equal(first.value.deliveryStatus, 'UNKNOWN');
+    assert.equal(sendDispatches, 1);
+    const retry = await call('agent_send', payload, 13);
+    assert.equal(retry.error, null);
+    assert.equal(retry.value.duplicate, true);
+    assert.equal(retry.value.deliveryStatus, 'UNKNOWN');
+    assert.equal(sendDispatches, 1, 'identical requestId must not redispatch');
+    const journal = fs.readFileSync(path.join(stateDir, 'send-journal.json'), 'utf8');
+    assert.ok(!journal.includes(payload.text), 'do not persist prompt text');
+    assert.equal(workerError, null);
+  } finally {
+    running = false;
+    controller.abort();
+    await responder;
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
