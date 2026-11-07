@@ -53,3 +53,19 @@ test('grant expires and does not automatically renew',async()=>{
  t+=15*60*1000;
  assert.equal(await g.require('https://claude.ai',9),null);
 });
+
+test('status count changes after grant, revoke, expiry and clear without exposing credentials',async()=>{
+ const chrome=chromeMock();
+ let now=1700000000000;
+ const grants=new BackgroundControlGrants(chrome,{now:()=>now});
+ assert.equal(await grants.activeCount(),0);
+ await grants.grant({tabId:9,durationMinutes:15,localGesture:true});
+ await grants.grant({tabId:10,durationMinutes:60,localGesture:true});
+ assert.equal(await grants.activeCount(),2);
+ await grants.revoke(9);
+ assert.equal(await grants.activeCount(),1);
+ now+=60*60*1000;
+ assert.equal(await grants.activeCount(),0);
+ await grants.clear();
+ assert.equal(await grants.activeCount(),0);
+});
