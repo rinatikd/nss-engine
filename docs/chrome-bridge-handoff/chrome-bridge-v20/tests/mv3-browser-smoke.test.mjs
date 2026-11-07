@@ -74,6 +74,14 @@ test('real browser loads unpacked RC1 MV3 service worker in isolated profile', {
       const value=Number(fs.readFileSync(portFile,'utf8').split(/\r?\n/)[0]);
       return Number.isSafeInteger(value)&&value>0?value:null;
     },15000,'DEBUG_PORT');
+    const expectedId=await until(async()=>{
+      const preferences=path.join(profile,'Default','Preferences');
+      if(!fs.existsSync(preferences))return null;
+      let data;
+      try{data=JSON.parse(fs.readFileSync(preferences,'utf8'));}catch{return null;}
+      return Object.entries(data.extensions?.settings||{})
+        .find(([_id,settings])=>settings.manifest?.name==='RC1 MV3 Disposable Acceptance')?.[0] || null;
+    },12000,'REGISTERED_TEST_EXTENSION');
     let lastTargets=[];
     let worker;
     try {
@@ -81,7 +89,7 @@ test('real browser loads unpacked RC1 MV3 service worker in isolated profile', {
         const tabs=await targetList(port);
         lastTargets=tabs.map(t=>({type:t.type,url:String(t.url).slice(0,150)}));
         return tabs.find(t=>t.type==='service_worker' &&
-          /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
+          t.url==='chrome-extension://'+expectedId+'/background.js');
       },15000,'EXTENSION_SERVICE_WORKER');
     } catch(error) {
       console.error('[MV3 DIAGNOSTICS] browser:',chrome);
