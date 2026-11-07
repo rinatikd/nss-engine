@@ -52,6 +52,12 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bridge-mv3-lifecycle-'));
  const ext=path.join(dir,'extension'),profile=path.join(dir,'profile');
  fs.mkdirSync(ext);fs.mkdirSync(profile);
+ // Chrome >= 156 disables unpacked extensions on reload when Developer Mode
+ // is off (DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION, 1<<24).
+ // These preferences exist ONLY in this disposable CI Chrome profile.
+ fs.mkdirSync(path.join(profile,'Default'),{recursive:true});
+ fs.writeFileSync(path.join(profile,'Default','Preferences'),
+   JSON.stringify({extensions:{ui:{developer_mode:true}}}));
  for(const name of fs.readdirSync(path.join(root,'extension'))){
   const src=path.join(root,'extension',name);
   if(!fs.statSync(src).isFile()||!/\.(js|css|html)$/.test(name))continue;
