@@ -99,7 +99,24 @@ test('actual MV3 offscreen reconnects through extension reload without control U
   // A real extension restart makes background.js run maintainBackgroundIfEnabled.
   try{await cdp.eval('chrome.runtime.reload();true');}catch{}
   cdp.close();cdp=null;
-  await until(async()=> (await status()).connected,16000,'RECONNECTED_AFTER_RELOAD');
+  try {
+    await until(async()=> (await status()).connected,16000,'RECONNECTED_AFTER_RELOAD');
+  } catch(error) {
+    const inventory=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();
+    console.error('[MV3 RELOAD DIAGNOSTIC] targets:',JSON.stringify(
+      inventory.map(t=>({type:t.type,url:String(t.url).slice(0,130)}))));
+    const preferences=path.join(profile,'Default','Preferences');
+    if(fs.existsSync(preferences)){
+      try {
+        const data=JSON.parse(fs.readFileSync(preferences,'utf8'));
+        const entry=data.extensions?.settings?.[extensionId];
+        console.error('[MV3 RELOAD DIAGNOSTIC] test extension prefs:',
+          JSON.stringify({known:!!entry,state:entry?.state,disable_reasons:entry?.disable_reasons,
+            manifestName:entry?.manifest?.name}));
+      }catch{}
+    }
+    throw error;
+  }
   const resumed=await until(findWorker,10000,'RELOADED_WORKER');
   cdp=await Cdp.connect(resumed.webSocketDebuggerUrl);
   await cdp.call('Runtime.enable');
