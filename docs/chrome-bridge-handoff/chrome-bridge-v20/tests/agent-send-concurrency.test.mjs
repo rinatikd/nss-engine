@@ -215,3 +215,104 @@ test('lost browser ACK returns UNKNOWN and identical requestId cannot send twice
     fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+
+test('server restart preserves UNKNOWN journal and forbids replay', { timeout: 15000 }, async () => {
+  const stateDir=fs.mkdtempSync(path.join(os.tmpdir(),'bridge-restart-journal-'));
+  const config={
+    agentToken:crypto.randomBytes(32).toString('hex'),
+    browserToken:crypto.randomBytes(32).toString('hex'),
+    extensionId:'c'.repeat(32)
+  };
+  const payload={name:'claude',text:'Synthetic request before restart',requestId:'restart-stable-id'};
+  let sendDispatches=0;
+  let firstServer=null;
+  let secondServer=null;
+  let stopPolling=false;
+  const controller=new AbortController();
+  let pollTask=null;
+  async function boot() {
+    const server=createBridge(config,{stateDir,timeout:400,pollHold:40});
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    return {server,endpoint:'http://127.0.0.1:'+server.address().port};
+  }
+  async function post(base,route,body,browser=false,signal=undefined) {
+    const response=await fetch(base+route,{
+      method:'POST',signal,
+      headers:{
+        'content-type':'application/json',
+        authorization:'Bearer '+(browser?config.browserToken:config.agentToken),
+        ...(browser?{origin:'chrome-extension://'+config.extensionId}:{})
+      },body:JSON.stringify(body)
+    });
+    assert.equal(response.status,200,route);
+    return response.json();
+  }
+  async function call(base,name,args,id) {
+    const r=await post(base,'/mcp',{
+      jsonrpc:'2.0',id,method:'tools/call',
+      params:{name,arguments:args}
+    });
+    return r.result.isError
+      ? {error:r.result.content[0].text}
+      : {value:JSON.parse(r.result.content[0].text)};
+  }
+  try {
+    const first=await boot();firstServer=first.server;
+    pollTask=(async()=>{
+      while(!stopPolling){
+        let response;
+        try {response=await post(first.endpoint,'/bridge/poll',{},true,controller.signal);}
+        catch(e) {if(stopPolling || controller.signal.aborted) break;throw e;}
+        const cmd=response.command;
+        if(!cmd)continue;
+        if(cmd.name==='agent_send'){
+          // Simulate browser seeing the send but losing its result/ACK.
+          sendDispatches++;
+          continue;
+        }
+        const result=cmd.name==='agent_probe'
+          ? {adapter:'claude',verified:true}
+          : cmd.name==='agent_context'
+            ? {verified:true,origin:'https://claude.ai',conversationId:'synthetic-restart-1234'}
+            : null;
+        if(!result)throw Error('Unexpected command '+cmd.name);
+        await post(first.endpoint,'/bridge/result',{id:cmd.id,result},true,controller.signal);
+      }
+    })();
+    assert.equal((await call(first.endpoint,'agent_bind',{name:'claude',tabId:901},1)).value.bound,'claude');
+    const attempted=await call(first.endpoint,'agent_send',payload,2);
+    assert.equal(attempted.value.deliveryStatus,'UNKNOWN');
+    assert.equal(attempted.value.sent,false);
+    assert.equal(sendDispatches,1);
+
+    // Stop the real first HTTP server and emulate process restart with same state.
+    stopPolling=true;controller.abort();
+    await pollTask;pollTask=null;
+    await new Promise(resolve=>firstServer.close(resolve));firstServer=null;
+    assert.equal(fs.existsSync(path.join(stateDir,'send-journal.json')),true);
+    assert.equal(fs.existsSync(path.join(stateDir,'agents.json')),true);
+    const second=await boot();secondServer=second.server;
+    // No browser poller is connected after restart. This must still be a
+    // non-mutating journal lookup, not an enqueue or a second send.
+    const replay=await call(second.endpoint,'agent_send',payload,3);
+    assert.equal(replay.error,undefined);
+    assert.equal(replay.value.duplicate,true);
+    assert.equal(replay.value.sent,false);
+    assert.equal(replay.value.deliveryStatus,'UNKNOWN');
+    assert.equal(sendDispatches,1);
+    const conflicting=await call(second.endpoint,'agent_send',{
+      ...payload,text:'Different text with reused requestId'
+    },4);
+    assert.match(conflicting.error||'',/SEND_ID_CONFLICT/);
+    assert.equal(sendDispatches,1);
+    const persisted=fs.readFileSync(path.join(stateDir,'send-journal.json'),'utf8');
+    assert.equal(persisted.includes(payload.text),false);
+  } finally {
+    stopPolling=true;controller.abort();
+    if(pollTask)await pollTask.catch(()=>{});
+    if(firstServer?.listening)await new Promise(resolve=>firstServer.close(resolve));
+    if(secondServer?.listening)await new Promise(resolve=>secondServer.close(resolve));
+    fs.rmSync(stateDir,{recursive:true,force:true});
+  }
+});
