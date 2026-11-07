@@ -82,7 +82,23 @@ test('native Windows Chrome for Testing loads exact lab MV3 worker and control p
    return Number(fs.readFileSync(file,'utf8').split(/\r?\n/)[0]);
   },15000,'DEBUG_PORT');
   const list=async()=>(await (await fetch('http://127.0.0.1:'+port+'/json/list')).json());
-  const target=await until(async()=>(await list()).find(t=>t.type==='service_worker'&&t.url==='chrome-extension://'+id+'/background.js'),15000,'EXACT_WORKER');
+  let target;
+  try {
+   target=await until(async()=>(await list()).find(t=>t.type==='service_worker'&&t.url==='chrome-extension://'+id+'/background.js'),15000,'EXACT_WORKER');
+  } catch(error) {
+   const inventory=await list();
+   console.error('[WIN MV3] expected extension ID',id);
+   console.error('[WIN MV3] browser targets',JSON.stringify(inventory.map(t=>({type:t.type,url:t.url}))));
+   const prefs=path.join(profile,'Default','Preferences');
+   if(fs.existsSync(prefs)) {
+    try {
+     const data=JSON.parse(fs.readFileSync(prefs,'utf8'));
+     console.error('[WIN MV3] registered extension IDs',
+       JSON.stringify(Object.keys(data.extensions?.settings||{})));
+    } catch(e) {console.error('[WIN MV3] prefs read error',e.message);}
+   }
+   throw error;
+  }
   worker=await Cdp.connect(target.webSocketDebuggerUrl);
   await worker.call('Runtime.enable');
   await until(()=>worker.eval('typeof chrome!=="undefined" && !!chrome.runtime?.id && !!chrome.storage?.local'),7000,'WORKER_API');
