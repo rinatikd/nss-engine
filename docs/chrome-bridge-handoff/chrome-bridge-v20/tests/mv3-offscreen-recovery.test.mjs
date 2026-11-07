@@ -45,6 +45,12 @@ test('actual MV3 offscreen reconnects through extension reload without control U
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bridge-offscreen-e2e-'));
  const ext=path.join(dir,'ext'),profile=path.join(dir,'profile');
  fs.mkdirSync(ext);fs.mkdirSync(profile);
+ // Chrome >= 156 disables unpacked extensions on reload when Developer Mode
+ // is off (DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION, 1<<24).
+ // These preferences exist ONLY in this disposable CI Chrome profile.
+ fs.mkdirSync(path.join(profile,'Default'),{recursive:true});
+ fs.writeFileSync(path.join(profile,'Default','Preferences'),
+   JSON.stringify({extensions:{ui:{developer_mode:true}}}));
  for(const n of fs.readdirSync(new URL('../extension/',import.meta.url))){
   const src=new URL('../extension/'+n,import.meta.url);
   if(!/\.(js|html|css)$/.test(n)||!fs.statSync(src).isFile())continue;
