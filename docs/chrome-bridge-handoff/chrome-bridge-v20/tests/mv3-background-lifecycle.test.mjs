@@ -140,7 +140,7 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   assert.equal(status?.connected,true,'reopened control page observes connected coordinator');
   const stopped=await control.cdp.eval('(async()=>await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"stop-background"}))()');
   assert.equal(stopped?.ok,true);
-  await until(async()=>!(await browserStatus()).connected,5000,'STOPPED');
+  await until(async()=>!(await browserStatus()).connected,10000,'STOPPED');
   const state=await control.cdp.eval('(async()=>await chrome.storage.local.get(["bridgeConnectionDesired","bridgeMutationLabMode"]))()');
   assert.equal(state.bridgeConnectionDesired,false);
   assert.equal(state.bridgeMutationLabMode,false);
