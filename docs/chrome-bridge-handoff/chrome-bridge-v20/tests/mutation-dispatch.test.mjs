@@ -171,3 +171,40 @@ test('host permission revoked after approval blocks mutation',async()=>{
  await assert.rejects(execute(cmd('agent_send'),f),/HOST_PERMISSION_MISSING/);
  assert.equal(f.state.injections.includes('agent_send'),false);
 });
+
+test('missing Claude grant is a provably blocked pre-send action',async()=>{
+ const f=fixture();
+ await assert.rejects(dispatchMutation(cmd('agent_send'),f.chromeApi,{
+   approvals:f.approvals,controlGrant:async()=>null,stillEnabled:async()=>true
+ }),e=>{
+   assert.equal(e.message,'EXPLICIT_CONTROL_GRANT_REQUIRED');
+   assert.equal(e.dispatchState,'BLOCKED');
+   return true;
+ });
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(f.state.injections.includes('agent_send'),false);
+});
+test('user denial is blocked, bad context is not performed, neither sends',async()=>{
+ for(const [opts,state] of [[{deny:true},'BLOCKED'],[{conversationChanged:true},'NOT_PERFORMED']]){
+  const f=fixture(opts);
+  await assert.rejects(execute(cmd('agent_send'),f),e=>{
+   assert.equal(e.dispatchState,state);return true;
+  });
+  assert.equal(f.state.injections.includes('agent_send'),false);
+ }
+});
+test('unknown outcome after DOM send injection remains UNKNOWN',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ f.chromeApi.scripting.executeScript=async payload=>{
+  if(payload.args[0]==='agent_send')throw Error('INJECTION_RESPONSE_LOST');
+  return original(payload);
+ };
+ await assert.rejects(execute(cmd('agent_send'),f),e=>{
+  assert.equal(e.message,'INJECTION_RESPONSE_LOST');
+  assert.equal(e.dispatchState,undefined);
+  return true;
+ });
+ assert.equal(f.state.injections.includes('agent_send'),false);
+ assert.equal(f.state.approvalCount,1);
+});
