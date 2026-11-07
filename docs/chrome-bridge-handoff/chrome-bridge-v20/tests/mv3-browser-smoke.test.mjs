@@ -110,6 +110,7 @@ test('real browser loads unpacked RC1 MV3 service worker in isolated profile', {
         sleep(2500).then(()=>{if(proc.exitCode===null)proc.kill('SIGKILL');})
       ]);
     }
-    fs.rmSync(temp,{recursive:true,force:true,maxRetries:12,retryDelay:200});
+    try { fs.rmSync(temp,{recursive:true,force:true,maxRetries:12,retryDelay:200}); }
+    catch (error) { console.warn('[MV3 TEST] CI temporary profile cleanup deferred:',error.code); }
   }
 });
