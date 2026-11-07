@@ -6,7 +6,8 @@ test('real UI guard module renders four prerequisite states without a live brows
     {mode:false,lab:false,connected:false,grants:0,expected:true,revoke:true,reason:'фоновый режим'},
     {mode:true,lab:false,connected:true,grants:0,expected:true,revoke:true,reason:'экспериментальное'},
     {mode:true,lab:true,connected:false,grants:0,expected:true,revoke:true,reason:'подключите'},
-    {mode:true,lab:true,connected:true,grants:0,expected:false,revoke:true,reason:'Управление отключено'}\n    ,{mode:true,lab:true,connected:true,grants:2,expected:true,revoke:false,reason:'Действует временное управление'}
+    {mode:true,lab:true,connected:true,grants:0,expected:false,revoke:true,reason:'Управление отключено'},
+    {mode:true,lab:true,connected:true,grants:2,expected:true,revoke:false,reason:'Действует временное управление'}
   ];
   for (let i=0;i<scenarios.length;i++) {
     const s=scenarios[i];
