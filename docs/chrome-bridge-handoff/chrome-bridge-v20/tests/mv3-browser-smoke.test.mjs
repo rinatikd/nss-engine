@@ -65,7 +65,7 @@ test('real browser loads unpacked RC1 MV3 service worker in isolated profile', {
       '--disable-background-networking','--user-data-dir='+profile,
       '--disable-extensions-except='+ext,'--load-extension='+ext,
       '--remote-debugging-port=0','about:blank'
-    ],{stdio:['ignore','ignore','pipe']});
+    ],{stdio:['ignore','ignore','pipe'],detached:true});
     proc.stderr.on('data',chunk=>{stderr+=chunk.toString();if(stderr.length>50000)stderr=stderr.slice(-50000);});
     const portFile=path.join(profile,'DevToolsActivePort');
     const port=await until(async()=>{
@@ -104,12 +104,12 @@ test('real browser loads unpacked RC1 MV3 service worker in isolated profile', {
     // Do not treat this as approval of offscreen/recovery/Control/Windows E2E.
   }finally{
     if(proc&&!proc.killed){
-      proc.kill('SIGTERM');
+      try { process.kill(-proc.pid,'SIGTERM'); } catch { proc.kill('SIGTERM'); }
       await Promise.race([
         new Promise(resolve=>proc.once('close',resolve)),
         sleep(2500).then(()=>{if(proc.exitCode===null)proc.kill('SIGKILL');})
       ]);
     }
-    fs.rmSync(temp,{recursive:true,force:true});
+    fs.rmSync(temp,{recursive:true,force:true,maxRetries:12,retryDelay:200});
   }
 });
