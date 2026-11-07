@@ -419,6 +419,7 @@ $('mutationLab').addEventListener('change',async event=>{
     $('backgroundGrantStatus').textContent=enabled ?
       'Лабораторный режим включён. Используйте общую кнопку Control для открытых разрешённых вкладок.' :
       'Управление отключено';
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
   } catch(e) {
     $('mutationLab').checked=!enabled;
     setStatus('Ошибка настройки управления: '+e.message);
@@ -455,6 +456,7 @@ $('backgroundGrantAll').onclick=async event=>{
     }
     $('backgroundGrantStatus').textContent='Общее управление: разрешено вкладок '+success+
       ', отказано '+failed+'; каждое действие подтверждается отдельно.';
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
   } catch(e) {
     $('backgroundGrantStatus').textContent='Общее управление не подключено: '+e.message;
   }
@@ -467,6 +469,7 @@ $('backgroundRevokeAll').onclick=async event=>{
     });
     if (!result?.ok) throw Error(result?.error||'REVOKE_FAILED');
     $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
   } catch(e) {
     $('backgroundGrantStatus').textContent='Ошибка отключения: '+e.message;
   }
