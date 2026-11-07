@@ -74,11 +74,30 @@ test('real browser loads unpacked RC1 MV3 service worker in isolated profile', {
       const value=Number(fs.readFileSync(portFile,'utf8').split(/\r?\n/)[0]);
       return Number.isSafeInteger(value)&&value>0?value:null;
     },15000,'DEBUG_PORT');
-    const worker=await until(async()=>{
-      const tabs=await targetList(port);
-      return tabs.find(t=>t.type==='service_worker' &&
-        /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
-    },15000,'EXTENSION_SERVICE_WORKER');
+    let lastTargets=[];
+    let worker;
+    try {
+      worker=await until(async()=>{
+        const tabs=await targetList(port);
+        lastTargets=tabs.map(t=>({type:t.type,url:String(t.url).slice(0,150)}));
+        return tabs.find(t=>t.type==='service_worker' &&
+          /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
+      },15000,'EXTENSION_SERVICE_WORKER');
+    } catch(error) {
+      console.error('[MV3 DIAGNOSTICS] browser:',chrome);
+      console.error('[MV3 DIAGNOSTICS] version:',
+        spawnSync(chrome,['--version'],{encoding:'utf8'}).stdout.trim());
+      console.error('[MV3 DIAGNOSTICS] targets:',JSON.stringify(lastTargets));
+      const preferences=path.join(profile,'Default','Preferences');
+      if(fs.existsSync(preferences)){
+        const data=JSON.parse(fs.readFileSync(preferences,'utf8'));
+        console.error('[MV3 DIAGNOSTICS] extension ids:',
+          JSON.stringify(Object.keys(data.extensions?.settings||{})));
+      }
+      console.error('[MV3 DIAGNOSTICS] extension errors:',
+        stderr.split('\n').filter(line=>/extension|service.worker|manifest/i.test(line)).slice(-12).join('\n').slice(0,2000));
+      throw error;
+    }
     assert.ok(worker.webSocketDebuggerUrl,'real extension service worker has CDP target');
     assert.match(worker.url,/chrome-extension:\/\/[a-p]{32}\/background\.js/);
     console.log('[MV3 REAL] service worker discovered: extension loaded, type='+worker.type);
