@@ -32,6 +32,11 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
         run: node --test tests/mv3-browser-smoke.test.mjs
+      - name: Exercise actual MV3 offscreen recovery without UI
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-offscreen-recovery.test.mjs
       - name: Exercise real MV3 offscreen and closed-panel lifecycle
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         env:
