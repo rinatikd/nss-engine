@@ -17,3 +17,23 @@ test('Control button enables only when all three conditions hold',()=>{
   const state=backgroundControlUiState({backgroundMode:true,connected:true,mutationEnabled:true});
   assert.equal(state.grantAllDisabled,false);
 });
+
+test('global Control buttons switch after grant and revoke without changing experimental mode',()=>{
+  const base={backgroundMode:true,connected:true,mutationEnabled:true};
+  const noGrants=backgroundControlUiState({...base,activeCount:0,grantsKnown:true});
+  assert.equal(noGrants.grantAllDisabled,false);
+  assert.equal(noGrants.revokeAllDisabled,true);
+  const active=backgroundControlUiState({...base,activeCount:2,grantsKnown:true});
+  assert.equal(active.grantAllDisabled,true);
+  assert.equal(active.revokeAllDisabled,false);
+  const revoked=backgroundControlUiState({...base,activeCount:0,grantsKnown:true});
+  assert.equal(revoked.grantAllDisabled,false);
+  assert.equal(revoked.revokeAllDisabled,true);
+});
+test('grant state unavailable fails closed while coordinator is not reachable',()=>{
+  const state=backgroundControlUiState({
+    backgroundMode:true,connected:true,mutationEnabled:true,grantsKnown:false
+  });
+  assert.equal(state.grantAllDisabled,true);
+  assert.equal(state.revokeAllDisabled,true);
+});
