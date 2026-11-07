@@ -65,7 +65,7 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   host_permissions:['http://127.0.0.1:17481/*'],
   action:{default_title:'MV3 isolated test'}
  }));
- let chromeProc,bridge,port,control=null,browserCdp=null;
+ let chromeProc,bridge,port,control=null,browserCdp=null,workerCdp=null;
  const browserToken=crypto.randomBytes(32).toString('hex');
  const agentToken=crypto.randomBytes(32).toString('hex');
  try{
@@ -83,11 +83,15 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   await new Promise(resolve=>bridge.listen(17481,'127.0.0.1',resolve));
   const version=await (await fetch('http://127.0.0.1:'+port+'/json/version')).json();
   browserCdp=await Cdp.connect(version.webSocketDebuggerUrl);
+  workerCdp=await Cdp.connect(worker.webSocketDebuggerUrl);
+  await workerCdp.call('Runtime.enable');
   async function openPanel(){
-   const created=await browserCdp.call('Target.createTarget',{url:'chrome-extension://'+extensionId+'/control.html'});
+   // Create the control tab from the extension itself. DevTools Target.createTarget
+   // to a chrome-extension: URL may be blocked by Chrome security navigation.
+   await workerCdp.eval('(async()=>{await chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true});return true})()');
    const tab=await until(async()=>{
     const list=await targets(port);
-    return list.find(t=>t.id===created.targetId && t.webSocketDebuggerUrl);
+    return list.find(t=>t.type==='page' && t.url==='chrome-extension://'+extensionId+'/control.html' && t.webSocketDebuggerUrl);
    },8000,'CONTROL_TAB');
    const c=await Cdp.connect(tab.webSocketDebuggerUrl);
    await c.call('Runtime.enable');
@@ -135,7 +139,7 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   assert.equal(state.bridgeMutationLabMode,false);
   console.log('[MV3 E2E] manual stop persisted, background connection dropped');
  }finally{
-  control?.cdp.close();browserCdp?.close();
+  control?.cdp.close();workerCdp?.close();browserCdp?.close();
   if(chromeProc&&!chromeProc.killed){try{process.kill(-chromeProc.pid,'SIGTERM');}catch{chromeProc.kill('SIGTERM');}}
   if(bridge?.listening)await new Promise(resolve=>bridge.close(resolve));
   try { fs.rmSync(dir,{recursive:true,force:true,maxRetries:12,retryDelay:200}); }
