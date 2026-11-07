@@ -72,7 +72,7 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   chromeProc=spawn(display.stdout.trim(),['-a',browser,'--no-sandbox','--disable-gpu',
     '--disable-dev-shm-usage','--no-first-run','--no-default-browser-check','--disable-background-networking',
     '--remote-allow-origins=*','--user-data-dir='+profile,'--load-extension='+ext,
-    '--disable-extensions-except='+ext,'--remote-debugging-port=0','about:blank'],{stdio:'ignore'});
+    '--disable-extensions-except='+ext,'--remote-debugging-port=0','about:blank'],{stdio:'ignore',detached:true});
   port=await portOf(profile);
   const worker=await until(async()=>{
    const list=await targets(port);
@@ -134,8 +134,8 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   console.log('[MV3 E2E] manual stop persisted, background connection dropped');
  }finally{
   control?.cdp.close();browserCdp?.close();
-  if(chromeProc&&!chromeProc.killed)chromeProc.kill('SIGTERM');
+  if(chromeProc&&!chromeProc.killed){try{process.kill(-chromeProc.pid,'SIGTERM');}catch{chromeProc.kill('SIGTERM');}}
   if(bridge?.listening)await new Promise(resolve=>bridge.close(resolve));
-  fs.rmSync(dir,{recursive:true,force:true});
+  fs.rmSync(dir,{recursive:true,force:true,maxRetries:12,retryDelay:200});
  }
 });
