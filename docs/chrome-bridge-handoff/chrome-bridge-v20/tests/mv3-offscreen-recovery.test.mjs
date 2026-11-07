@@ -69,12 +69,13 @@ test('actual MV3 offscreen reconnects through extension reload without control U
    const p=path.join(profile,'DevToolsActivePort');
    return fs.existsSync(p)?Number(fs.readFileSync(p,'utf8').split(/\r?\n/)[0]):0;
   },12000,'DEBUG_PORT');
+  const idHash=crypto.createHash('sha256').update(path.resolve(ext)).digest('hex').slice(0,32);
+  const extensionId=[...idHash].map(h=>'abcdefghijklmnop'[parseInt(h,16)]).join('');
   async function findWorker(){
    const list=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();
-   return list.find(t=>t.type==='service_worker' && /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(t.url));
+   return list.find(t=>t.type==='service_worker' && t.url==='chrome-extension://'+extensionId+'/background.js');
   }
-  const initial=await until(findWorker,12000,'SERVICE_WORKER');
-  const extensionId=initial.url.split('/')[2];
+  const initial=await until(findWorker,12000,'EXACT_UNPACKED_SERVICE_WORKER');
   const config={browserToken,agentToken,extensionId};
   const startServer=async()=>{
    const s=createBridge(config,{pollHold:350,timeout:4000});
