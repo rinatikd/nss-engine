@@ -120,6 +120,14 @@ export function installBackgroundCoordinator(chromeApi) {
       void run().then(result=>respond({result}),e=>respond({error:e.message}));
       return true;
     }
+    if (msg.type === 'background-control-status') {
+      if (sender.url !== chromeApi.runtime.getURL('control.html')) {
+        respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
+      }
+      void new BackgroundControlGrants(chromeApi).activeCount()
+        .then(activeCount=>respond({activeCount}),e=>respond({error:e.message}));
+      return true;
+    }
     if (msg.type === 'clear-background-controls') {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
