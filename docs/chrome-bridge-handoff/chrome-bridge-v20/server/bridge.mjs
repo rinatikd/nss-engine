@@ -140,18 +140,29 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         hint: 'This requestId was already attempted. No new browser action was sent.' };
     }
     if (a.sending || (a.wait && !a.wait.result)) throw Error('Previous request is still pending: call agent_wait first.');
-    const context = await enqueue('agent_context', { tabId: a.tabId });
-    if (!context?.verified || !CHAT_ORIGINS.has(context.origin) || typeof context.conversationId !== 'string')
-      throw Error('SEND_CONTEXT_UNAVAILABLE: bind a provider conversation with a stable origin and conversation identifier.');
-    const conversationFp = conversationFingerprint(context.origin, context.conversationId, journalKey);
-    const fingerprint = requestFingerprint(name, a.tabId, text, journalKey, context);
-    const begun = sendJournal.begin({ requestId, agent: name, tabId: a.tabId, origin: context.origin,
-      conversationFingerprint: conversationFp, fingerprint, payloadFingerprint });
-    if (begun.duplicate) return { sent: false, transportConfirmed: begun.entry.transportConfirmed === true,
-      deliveryStatus: begun.entry.status, requestId, duplicate: true, origin: begun.entry.origin,
-      conversationFingerprint: begun.entry.conversationFingerprint,
-      hint: 'This requestId was already attempted. No new browser action was sent.' };
+    // Reserve before asynchronous context lookup: concurrent requests must not
+    // both pass the busy guard and reach browser dispatch.
     a.sending = requestId;
+    let context, conversationFp;
+    try {
+      context = await enqueue('agent_context', { tabId: a.tabId });
+      if (!context?.verified || !CHAT_ORIGINS.has(context.origin) || typeof context.conversationId !== 'string')
+        throw Error('SEND_CONTEXT_UNAVAILABLE: bind a provider conversation with a stable origin and conversation identifier.');
+      conversationFp = conversationFingerprint(context.origin, context.conversationId, journalKey);
+      const fingerprint = requestFingerprint(name, a.tabId, text, journalKey, context);
+      const begun = sendJournal.begin({ requestId, agent: name, tabId: a.tabId, origin: context.origin,
+        conversationFingerprint: conversationFp, fingerprint, payloadFingerprint });
+      if (begun.duplicate) {
+        a.sending = null;
+        return { sent: false, transportConfirmed: begun.entry.transportConfirmed === true,
+          deliveryStatus: begun.entry.status, requestId, duplicate: true, origin: begun.entry.origin,
+          conversationFingerprint: begun.entry.conversationFingerprint,
+          hint: 'This requestId was already attempted. No new browser action was sent.' };
+      }
+    } catch (error) {
+      a.sending = null;
+      throw error;
+    }
     let r;
     try { r = await enqueue('agent_send', { tabId: a.tabId, text, expectedOrigin: context.origin, expectedConversationId: context.conversationId }); }
     catch (error) {
