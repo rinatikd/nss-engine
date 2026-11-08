@@ -101,9 +101,13 @@ function fillAdapterSelect() {
   for (const [k, v] of Object.entries(DEFAULT_ADAPTERS)) { const o = document.createElement('option'); o.value = k; o.textContent = v.label; sel.append(o); }
 }
 $('mode').onchange = () => { $('adapterWrap').hidden = $('mode').value !== 'chat'; syncOrigin(); };
-$('adapter').onchange = syncOrigin;
-function syncOrigin() {
-  if ($('mode').value === 'chat' && !$('origin').value) $('origin').value = DEFAULT_ADAPTERS[$('adapter').value]?.origin || '';
+$('adapter').onchange = () => syncOrigin(true);
+function syncOrigin(force = false) {
+  if ($('mode').value !== 'chat') return;
+  const suggestedOrigin = DEFAULT_ADAPTERS[$('adapter').value]?.origin || '';
+  // Selecting an adapter fills its matching address. The field stays editable:
+  // a manually entered origin is preserved until the adapter is changed again.
+  if (force || !$('origin').value.trim()) $('origin').value = suggestedOrigin;
 }
 
 $('grant').onclick = async () => {
