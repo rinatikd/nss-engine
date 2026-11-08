@@ -86,17 +86,17 @@ public sealed class CctvCommands
             string output=Path.Combine(Path.GetDirectoryName(plan)!,Path.GetFileNameWithoutExtension(plan)+"_CCTV_result.dxf");
             if(File.Exists(output))
             {
-                var overwriteOptions=new PromptKeywordOptions("\nOutput already exists. [Overwrite/Cancel] <Cancel>: "){AllowNone=true};
+                var overwriteOptions=new PromptKeywordOptions("\nOutput already exists: "){AllowNone=true};
                 overwriteOptions.Keywords.Add("Overwrite");overwriteOptions.Keywords.Add("Cancel");overwriteOptions.Keywords.Default="Cancel";
                 var overwrite=ed.GetKeywords(overwriteOptions);
                 if(overwrite.Status!=PromptStatus.OK||!overwrite.StringResult.Equals("Overwrite",StringComparison.OrdinalIgnoreCase))return;
             }
-            var daysOptions=new PromptIntegerOptions("\nArchive retention days <30>: "){AllowNone=true,DefaultValue=30,LowerLimit=1,UpperLimit=3650};
+            var daysOptions=new PromptIntegerOptions("\nArchive retention days: "){AllowNone=true,DefaultValue=30,LowerLimit=1,UpperLimit=3650};
             var daysResult=ed.GetInteger(daysOptions);if(daysResult.Status!=PromptStatus.OK&&daysResult.Status!=PromptStatus.None)return;
             int days=daysResult.Status==PromptStatus.None?30:daysResult.Value;
 
             // F6: drawing units and wall layers are explicit; the script no longer silently assumes millimetres and treats every layer as a wall.
-            var unitOptions=new PromptKeywordOptions("\nDrawing units [Millimeters/Centimeters/Meters] <Millimeters>: "){AllowNone=true};
+            var unitOptions=new PromptKeywordOptions("\nDrawing units: "){AllowNone=true};
             unitOptions.Keywords.Add("Millimeters");unitOptions.Keywords.Add("Centimeters");unitOptions.Keywords.Add("Meters");unitOptions.Keywords.Default="Millimeters";
             var unitResult=ed.GetKeywords(unitOptions);
             if(unitResult.Status!=PromptStatus.OK&&unitResult.Status!=PromptStatus.None)return;
@@ -123,7 +123,8 @@ public sealed class CctvCommands
             var start=new ProcessStartInfo(python)
             {
                 UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,
-                RedirectStandardError=true,WorkingDirectory=module
+                RedirectStandardError=true,StandardOutputEncoding=System.Text.Encoding.UTF8,
+                StandardErrorEncoding=System.Text.Encoding.UTF8,WorkingDirectory=module
             };
             start.ArgumentList.Add("-E");start.ArgumentList.Add("-s");start.ArgumentList.Add("-X");start.ArgumentList.Add("utf8");
             start.ArgumentList.Add(script);start.ArgumentList.Add(plan);start.ArgumentList.Add(cameras);start.ArgumentList.Add(tempOutput);
