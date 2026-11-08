@@ -6,6 +6,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { createBridge } from '../server/bridge.mjs';
 
+/**
+ * Start MCP calls only after the synthetic /bridge/poll has registered.
+ * This checks a read-only server status and never grants permission, triggers
+ * a browser action, or extends the timeout of a dispatched command.
+ */
+async function waitForSyntheticBrowser(call, id) {
+  const deadline=Date.now()+3000;
+  while(Date.now()<deadline) {
+    const response=await call('browser_status',{},id);
+    if(!response.error && response.value?.connected===true)return;
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  throw Error('SYNTHETIC_BROWSER_POLL_NOT_CONNECTED');
+}
+
 // This test runs the REAL HTTP/MCP server with synthetic credentials and an
 // in-process command responder. No real Chrome profile, AI site, or Windows
 // production endpoint is contacted.
@@ -85,6 +100,7 @@ test('two concurrent send requests to one agent dispatch at most once', { timeou
     }
   })();
   try {
+    await waitForSyntheticBrowser(call, 90);
     const binding = await call('agent_bind', { name: 'claude', tabId: 123 }, 1);
     assert.equal(binding.error, null);
     assert.equal(binding.value.bound, 'claude');
@@ -189,6 +205,7 @@ test('lost browser ACK returns UNKNOWN and identical requestId cannot send twice
     }
   })();
   try {
+    await waitForSyntheticBrowser(call, 91);
     const bound = await call('agent_bind', { name: 'claude', tabId: 456 }, 11);
     assert.equal(bound.error, null);
     const payload = {
@@ -280,6 +297,7 @@ test('server restart preserves UNKNOWN journal and forbids replay', { timeout: 1
         await post(first.endpoint,'/bridge/result',{id:cmd.id,result},true,controller.signal);
       }
     })();
+    await waitForSyntheticBrowser((name,args,id)=>call(first.endpoint,name,args,id),92);
     assert.equal((await call(first.endpoint,'agent_bind',{name:'claude',tabId:901},1)).value.bound,'claude');
     const attempted=await call(first.endpoint,'agent_send',payload,2);
     assert.equal(attempted.value.deliveryStatus,'UNKNOWN');
