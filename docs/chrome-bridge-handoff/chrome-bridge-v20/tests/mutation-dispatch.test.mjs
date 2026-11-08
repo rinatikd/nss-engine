@@ -105,3 +105,106 @@ test('disabled lab blocks mutation before approval request',async()=>{
  assert.equal(f.state.approvalCount,0);
  assert.equal(f.state.injections.length,0);
 });
+
+
+test('agent_send rejects denial, changed tab, expired grant and changed conversation without dispatch',async()=>{
+ for(const opts of [{deny:true},{changed:true},{expiredGrant:true},{conversationChanged:true}]){
+   const f=fixture(opts);
+   await assert.rejects(execute(cmd('agent_send'),f),
+     /USER_DENIED|TAB_CHANGED_AFTER_APPROVAL|CONTROL_GRANT_EXPIRED|CONVERSATION_CHANGED_AFTER_APPROVAL/);
+   assert.equal(f.state.injections.includes('agent_send'),false,JSON.stringify(opts));
+   assert.equal(f.state.approvalCount,1,JSON.stringify(opts));
+ }
+});
+
+test('revoked grant after approval blocks agent_send even if preflight succeeded',async()=>{
+ const f=fixture();
+ let grantChecks=0;
+ const controlGrant=async()=>++grantChecks===1?Date.now()+120000:null;
+ await assert.rejects(
+   dispatchMutation(cmd('agent_send'),f.chromeApi,{
+     approvals:f.approvals,controlGrant,stillEnabled:async()=>true,uuid:()=> 'revoked'
+   }),
+   /CONTROL_GRANT_EXPIRED/
+ );
+ assert.equal(grantChecks,2);
+ assert.deepEqual(f.state.injections,['agent_context']);
+ assert.equal(f.state.approvalCount,1);
+});
+
+test('command expires during approval: agent_send is never injected',async()=>{
+ const f=fixture();
+ let clock=10000;
+ const approvals={request:async()=>{f.state.approvalCount++;clock+=2000;}};
+ const request={...cmd('agent_send'),expires:clock+1000};
+ await assert.rejects(
+   dispatchMutation(request,f.chromeApi,{
+     approvals,controlGrant:async()=>clock+120000,
+     stillEnabled:async()=>true,now:()=>clock,uuid:()=> 'expired'
+   }),
+   /APPROVAL_EXPIRED/
+ );
+ assert.deepEqual(f.state.injections,['agent_context']);
+ assert.equal(f.state.approvalCount,1);
+});
+
+test('changed target metadata after approval blocks browser_click',async()=>{
+ const f=fixture();
+ const realInject=f.chromeApi.scripting.executeScript;
+ let descriptions=0;
+ f.chromeApi.scripting.executeScript=async payload=>{
+   const result=await realInject(payload);
+   if(payload.args[0]==='describe' && ++descriptions===2)
+     return [{result:{...result[0].result,text:'Different target'}}];
+   return result;
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),/TARGET_CHANGED_AFTER_APPROVAL/);
+ assert.equal(descriptions,2);
+ assert.equal(f.state.injections.includes('browser_click'),false);
+});
+
+test('host permission revoked after approval blocks mutation',async()=>{
+ const f=fixture();
+ const hasPermission=f.chromeApi.permissions.contains;
+ f.chromeApi.permissions.contains=async (...args)=>
+   f.state.allowAt ? hasPermission(...args) : false;
+ await assert.rejects(execute(cmd('agent_send'),f),/HOST_PERMISSION_MISSING/);
+ assert.equal(f.state.injections.includes('agent_send'),false);
+});
+
+test('missing Claude grant is a provably blocked pre-send action',async()=>{
+ const f=fixture();
+ await assert.rejects(dispatchMutation(cmd('agent_send'),f.chromeApi,{
+   approvals:f.approvals,controlGrant:async()=>null,stillEnabled:async()=>true
+ }),e=>{
+   assert.equal(e.message,'EXPLICIT_CONTROL_GRANT_REQUIRED');
+   assert.equal(e.dispatchState,'BLOCKED');
+   return true;
+ });
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(f.state.injections.includes('agent_send'),false);
+});
+test('user denial is blocked, bad context is not performed, neither sends',async()=>{
+ for(const [opts,state] of [[{deny:true},'BLOCKED'],[{conversationChanged:true},'NOT_PERFORMED']]){
+  const f=fixture(opts);
+  await assert.rejects(execute(cmd('agent_send'),f),e=>{
+   assert.equal(e.dispatchState,state);return true;
+  });
+  assert.equal(f.state.injections.includes('agent_send'),false);
+ }
+});
+test('unknown outcome after DOM send injection remains UNKNOWN',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ f.chromeApi.scripting.executeScript=async payload=>{
+  if(payload.args[0]==='agent_send')throw Error('INJECTION_RESPONSE_LOST');
+  return original(payload);
+ };
+ await assert.rejects(execute(cmd('agent_send'),f),e=>{
+  assert.equal(e.message,'INJECTION_RESPONSE_LOST');
+  assert.equal(e.dispatchState,undefined);
+  return true;
+ });
+ assert.equal(f.state.injections.includes('agent_send'),false);
+ assert.equal(f.state.approvalCount,1);
+});

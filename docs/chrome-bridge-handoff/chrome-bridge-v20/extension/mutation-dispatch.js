@@ -36,6 +36,8 @@ async function boundTab(chromeApi, tabId, originalUrl, origin) {
 export async function dispatchMutation(cmd, chromeApi, {
   approvals, controlGrant, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
+  let executionStarted=false;
+  try {
   exactCommand(cmd);
   if (!approvals?.request || typeof controlGrant !== 'function')
     throw Error('BACKGROUND_CONTROL_NOT_CONFIGURED');
@@ -119,6 +121,16 @@ export async function dispatchMutation(cmd, chromeApi, {
   }
   if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
   // At most one dispatch. Failed confirmations are UNKNOWN, never retried.
+  executionStarted=true;
   const result=await inject(chromeApi,tab.id,origin,cmd.name,args);
   return result?.text ? {...result,text:redact(result.text)} : result;
+  } catch(error) {
+    // This flag can only be set if the single DOM mutation injection has NOT
+    // started. Post-injection errors remain UNKNOWN to prevent duplicate sends.
+    if (!executionStarted) {
+      error.dispatchState = /^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|CONTROL_SITE_DENIED)$/.test(error.message)
+        ? 'BLOCKED' : 'NOT_PERFORMED';
+    }
+    throw error;
+  }
 }

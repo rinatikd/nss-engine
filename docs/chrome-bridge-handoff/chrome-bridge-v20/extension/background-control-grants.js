@@ -25,6 +25,13 @@ export class BackgroundControlGrants {
     await this.api.storage.session.set({[KEY]:grants});
     return {tabId,origin,expires};
   }
+  async activeCount() {
+    const grants=await this.read();
+    const now=this.now();
+    return Object.values(grants).filter(entry=>entry &&
+      typeof entry.origin==='string' && Object.hasOwn(CONTROL_ORIGINS,entry.origin) &&
+      Number.isFinite(entry.expires) && entry.expires>now).length;
+  }
   async require(origin,tabId) {
     const grants=await this.read();
     const entry=grants[String(tabId)];

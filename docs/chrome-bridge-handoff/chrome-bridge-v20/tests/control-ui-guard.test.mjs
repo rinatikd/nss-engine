@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 
 test('real UI guard module renders four prerequisite states without a live browser',async()=>{
   const scenarios=[
-    {mode:false,lab:false,connected:false,expected:true,revoke:true,reason:'фоновый режим'},
-    {mode:true,lab:false,connected:true,expected:true,revoke:false,reason:'экспериментальное'},
-    {mode:true,lab:true,connected:false,expected:true,revoke:false,reason:'подключите'},
-    {mode:true,lab:true,connected:true,expected:false,revoke:false,reason:'разрешённым'}
+    {mode:false,lab:false,connected:false,grants:0,expected:true,revoke:true,reason:'фоновый режим'},
+    {mode:true,lab:false,connected:true,grants:0,expected:true,revoke:true,reason:'экспериментальное'},
+    {mode:true,lab:true,connected:false,grants:0,expected:true,revoke:true,reason:'подключите'},
+    {mode:true,lab:true,connected:true,grants:0,expected:false,revoke:true,reason:'Управление отключено'},
+    {mode:true,lab:true,connected:true,grants:2,expected:true,revoke:false,reason:'Действует временное управление'}
   ];
   for (let i=0;i<scenarios.length;i++) {
     const s=scenarios[i];
@@ -25,7 +26,7 @@ test('real UI guard module renders four prerequisite states without a live brows
     };
     globalThis.window={addEventListener:(type,fn)=>{events[type]=fn;}};
     globalThis.chrome={
-      runtime:{sendMessage:async()=>({connected:s.connected,state:s.connected?'connected':'disconnected'})}
+      runtime:{sendMessage:async({type})=>type==='background-control-status'?{activeCount:s.grants}:{connected:s.connected,state:s.connected?'connected':'disconnected'}}
     };
     await import('../extension/control-ui-guard.js?case='+i);
     await new Promise(resolve=>setTimeout(resolve,0));

@@ -141,3 +141,107 @@ test('fetch implementation is invoked without the transport object as receiver',
   assert.equal(receivers[1],undefined);
   t.stop();
 });
+
+
+test('transient 503 recovers without spawning a second poll owner', async () => {
+  let polls=0;
+  const statuses=[];
+  const backoff=[];
+  const t=new BridgeTransport({
+    fetchImpl:async(url,opts)=>{
+      if(url.endsWith('/bridge/result')) throw Error('unexpected result');
+      polls++;
+      if(polls===1) return jsonResponse({},503);
+      if(polls===2) return jsonResponse({epoch:'e1',command:null});
+      return new Promise((resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(Error('stopped')),{once:true}));
+    },
+    execute:async()=>{throw Error('unexpected execution');},
+    onStatus:s=>statuses.push(s.state),
+    sleepImpl:async ms=>backoff.push(ms)
+  });
+  await t.start('synthetic-token');
+  for(let i=0;i<60 && polls<3;i++) await tick();
+  assert.equal(polls,3,'one recovery retry and one resumed poll');
+  assert.deepEqual(backoff,[1500]);
+  assert.ok(statuses.includes('recovering'));
+  assert.equal(t.lastStatus.state,'connected');
+  assert.equal(t.active,true);
+  assert.equal(await t.start('synthetic-token'),false,'no second poll owner');
+  t.stop();
+  assert.equal(t.token,null);
+});
+
+test('extension origin rejection 403 fails closed without retry', async () => {
+  let polls=0;
+  let sleeps=0;
+  const t=new BridgeTransport({
+    fetchImpl:async()=>{polls++;return jsonResponse({},403);},
+    execute:async()=>{},
+    sleepImpl:async()=>{sleeps++;}
+  });
+  await t.start('synthetic-token');
+  for(let i=0;i<30 && t.active;i++) await tick();
+  assert.equal(t.active,false);
+  assert.equal(t.token,null);
+  assert.equal(t.lastStatus.state,'auth-failed');
+  assert.equal(t.lastStatus.error,'EXTENSION_ORIGIN_REJECTED_403');
+  assert.equal(polls,1);
+  assert.equal(sleeps,0);
+});
+
+test('manual stop aborts pending poll and does not reconnect spontaneously', async () => {
+  let polls=0;
+  let aborts=0;
+  const t=new BridgeTransport({
+    fetchImpl:async(_url,opts)=>{
+      polls++;
+      return new Promise((_resolve,reject)=>{
+        opts.signal.addEventListener('abort',()=>{aborts++;reject(Error('aborted'));},{once:true});
+      });
+    },
+    execute:async()=>{throw Error('unexpected execution');}
+  });
+  await t.start('synthetic-token');
+  for(let i=0;i<25 && polls<1;i++) await tick();
+  assert.equal(polls,1);
+  t.stop();
+  for(let i=0;i<8;i++) await tick();
+  assert.equal(aborts,1);
+  assert.equal(polls,1);
+  assert.equal(t.active,false);
+  assert.equal(t.token,null);
+});
+
+test('stop while dispatch is awaiting approval suppresses result and next poll', async () => {
+  let polls=0,results=0,executions=0;
+  let dispatchReached;
+  let releaseExecution;
+  const entered=new Promise(resolve=>dispatchReached=resolve);
+  const release=new Promise(resolve=>releaseExecution=resolve);
+  const t=new BridgeTransport({
+    fetchImpl:async(url,opts)=>{
+      if(url.endsWith('/bridge/result')) {results++;return jsonResponse({ok:true});}
+      polls++;
+      if(polls===1) return jsonResponse({epoch:'e1',command:{
+        id:'command-under-approval',name:'agent_send',args:{},expires:Date.now()+100000
+      }});
+      return new Promise((_resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(Error('stopped')),{once:true}));
+    },
+    execute:async()=>{executions++;dispatchReached();await release;return {sent:true};}
+  });
+  try {
+    await t.start('synthetic-token');
+    await entered;
+    t.stop();
+    releaseExecution();
+    for(let i=0;i<12;i++) await tick();
+    assert.equal(executions,1);
+    assert.equal(results,0,'stopped transport must not ACK stale execution');
+    assert.equal(polls,1,'stopped transport must not poll again');
+    assert.equal(t.active,false);
+    assert.equal(t.token,null);
+  } finally {
+    t.stop();
+    releaseExecution?.();
+  }
+});

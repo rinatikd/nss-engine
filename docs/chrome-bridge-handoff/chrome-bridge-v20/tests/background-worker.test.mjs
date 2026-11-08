@@ -11,7 +11,8 @@ test('mutation commands never execute in background prototype',async()=>{
 });
 test('unknown command names fail closed',async()=>{
 
- await assert.rejects(dispatchReadOnly({name:'agent_peek'},{}),/BACKGROUND_COMMAND_NOT_MIGRATED/);
+ await assert.rejects(dispatchReadOnly({name:'some_unrecognized_command'},{}),/BACKGROUND_COMMAND_NOT_MIGRATED/);
+ await assert.rejects(dispatchReadOnly({name:'agent_peek'},{}),/INVALID_TAB_ID/);
  await assert.rejects(dispatchReadOnly({},{}),/INVALID_COMMAND/);
 });
 test('control introspection stays non-mutating',async()=>{

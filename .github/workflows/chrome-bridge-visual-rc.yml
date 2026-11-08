@@ -19,12 +19,44 @@ jobs:
       - name: Run visual snapshot and grant tests
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs tests/manifest-rc.test.mjs tests/browser-key-store.test.mjs tests/connection-check.test.mjs tests/transport-engine.test.mjs tests/background-worker.test.mjs tests/background-coordinator.test.mjs tests/read-only-dispatch.test.mjs tests/approval-broker.test.mjs tests/approval-session.test.mjs tests/mutation-dispatch.test.mjs tests/background-control-grants.test.mjs
+      - name: Verify global Control connect and revoke button state transitions
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/control-ui-single-entry.test.mjs
       - name: Verify MCP handshake independently of browser availability
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/mcp-channel-smoke.test.mjs
+      - name: Install Chrome for Testing (unpacked MV3 supported)
+        id: setup-mv3-chrome
+        uses: browser-actions/setup-chrome@v2.2.0
+        with:
+          chrome-version: stable
+      - name: Require real loaded MV3 service worker in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-browser-smoke.test.mjs
+      - name: Exercise actual MV3 offscreen recovery without UI
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-offscreen-recovery.test.mjs
+      - name: Exercise real MV3 offscreen and closed-panel lifecycle
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-background-lifecycle.test.mjs
+      - name: Verify Gemini adapter DOM in real disposable Chromium
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/chromium-adapter-dom.test.mjs
+      - name: Verify concurrent agent sends are serialized over real HTTP MCP
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/agent-send-concurrency.test.mjs
       - name: Verify read-only MCP route diagnostic safety and native Windows test when available
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/diagnose-mcp-link.test.mjs
+      - name: Verify Claude and Gemini adapter selectors and fail-closed dispatch
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/claude-gemini-adapters.test.mjs
       - name: Syntax check changed extension files
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
@@ -107,6 +139,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install isolated Chrome for Testing for Windows MV3 verification
+        id: setup-windows-chrome
+        uses: browser-actions/setup-chrome@v2.2.0
+        with:
+          chrome-version: stable
+      - name: Verify real Windows MV3 worker and control UI in disposable Chrome
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-windows-chrome.outputs.chrome-path }}
+        run: |
+          node --test tests/mv3-windows-browser-smoke.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Windows MV3 browser smoke failed' }
       - name: Test staged upgrade and rollback with native Windows PowerShell 5.1
         shell: powershell
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
@@ -201,7 +246,19 @@ jobs:
           if (@($labManifest.permissions) -notcontains 'alarms') { throw 'Alarms permission missing' }
           if ((Get-Content (Join-Path $installed 'manifest.json') -Raw | ConvertFrom-Json).background.type) { throw 'Installed manifest modified' }
           if (-not (Test-Path (Join-Path $out 'transport-worker.js'))) { throw 'Worker missing' }
+          & ./deployment/verify-adapter-lab.ps1 -LabRoot $out
+          if ($LASTEXITCODE -ne 0) { throw 'Adapter lab package validation failed' }
           Write-Output '[PASS] MV3 background lab prepared without modifying the installed extension'
+          & ./deployment/write-lab-release-manifest.ps1 -LabRoot $out -OutputPath (Join-Path $env:RUNNER_TEMP 'chrome-bridge-rc1-lab-evidence.json') -CommitSha $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Release evidence generation failed' }
+      - name: Upload immutable lab file-hash evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-bridge-rc1-lab-hashes
+          path: ${{ runner.temp }}/chrome-bridge-rc1-lab-evidence.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Package source-only Windows upgrade candidate
         if: success()
         uses: actions/upload-artifact@v4

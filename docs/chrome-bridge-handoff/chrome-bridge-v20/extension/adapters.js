@@ -18,14 +18,14 @@ export const DEFAULT_ADAPTERS = {
   claude: {
     label: 'Claude', origin: 'https://claude.ai', newChatUrl: 'https://claude.ai/new',
     composer: 'div[contenteditable="true"].ProseMirror, div[contenteditable="true"][role="textbox"]',
-    send: 'button[aria-label="Send message"], button[aria-label="Send Message"]',
+    send: 'button[data-testid="chat-input-send"], button[aria-label="Send message"], button[aria-label="Send Message"]',
     stop: 'button[aria-label="Stop response"], button[aria-label="Stop Response"]',
     reply: 'div[data-is-streaming], .font-claude-response',
   },
   gemini: {
     label: 'Gemini', origin: 'https://gemini.google.com', newChatUrl: 'https://gemini.google.com/app',
     composer: 'rich-textarea .ql-editor, div.ql-editor[contenteditable="true"]',
-    send: 'button.send-button, button[aria-label="Send message"]',
+    send: 'button.send-button, button[aria-label="Send message"], button[aria-label="Send"], button[mattooltip="Send"], button[mattooltip="Send message"], button[aria-label="Отправить"], button[mattooltip="Отправить"], .send-button-container button',
     stop: 'button.stop, button[aria-label="Stop response"]',
     reply: 'message-content, .model-response-text',
   },

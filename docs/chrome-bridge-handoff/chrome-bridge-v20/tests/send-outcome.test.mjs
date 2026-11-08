@@ -12,3 +12,16 @@ test('cleared composer is insufficient',()=>{const e=base();e.userMsgAfter=2;e.c
 test('unknown result prevents duplicate send same id',()=>{const l=new SendLedger();l.begin('r');l.settle('r',{dispatched:true});assert.throws(()=>l.begin('r'),/SEND_ALREADY_ATTEMPTED/)});
 test('explicit no dispatch never confirms',()=>assert.equal(classifySend({dispatched:false}).state,SendState.NOT_PERFORMED));
 
+
+test('explicit trusted pre-dispatch Control denial is BLOCKED',()=>{
+ const result=classifySend({dispatched:false,controlDenied:true});
+ assert.equal(result.state,SendState.BLOCKED);
+ assert.deepEqual(result.reasons,['CONTROL_DENIED']);
+ assert.equal(result.autoRetry,false);
+});
+test('ambiguous post-dispatch error is still UNKNOWN and never auto-retried',()=>{
+ const result=classifySend(null);
+ assert.equal(result.state,SendState.UNKNOWN);
+ assert.deepEqual(result.reasons,['NO_EVIDENCE']);
+ assert.equal(result.autoRetry,false);
+});

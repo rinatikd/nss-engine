@@ -119,6 +119,21 @@ export async function pageAction(name, args, expectedOrigin) {
       let box = inputs.find(vis)?.parentElement;
       for (let hops = 0; box && hops < 6 && !box.querySelector('button,[role="button"]'); hops++) box = box.parentElement;
       r.diagnostics.nearInputButtons = box ? [...box.querySelectorAll('button,[role="button"]')].slice(0, 18).map(brief) : [];
+      // Read-only send-button census. No button text, labels, prompt content or URLs
+      // are returned. This helps calibrate Gemini after an asynchronous button mount.
+      const sendPatterns = {
+        dataTestId: 'button[data-testid="chat-input-send"]',
+        sendClass: 'button.send-button, .send-button-container button',
+        sendAria: 'button[aria-label="Send"], button[aria-label="Send message"], button[aria-label="Отправить"]',
+        sendTooltip: 'button[mattooltip="Send"], button[mattooltip="Send message"], button[mattooltip="Отправить"]',
+        customButton: '[role="button"][class*="send" i]',
+      };
+      r.diagnostics.sendCandidates = Object.fromEntries(
+        Object.entries(sendPatterns).map(([key, selector]) => {
+          const nodes = qa(selector).slice(0, 8);
+          return [key, { matched: nodes.length, visible: nodes.filter(vis).length, elements: nodes.slice(0, 3).map(brief) }];
+        })
+      );
       return r;
     }
 

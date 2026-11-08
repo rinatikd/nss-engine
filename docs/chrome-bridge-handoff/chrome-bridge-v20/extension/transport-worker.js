@@ -47,6 +47,11 @@ self.onmessage = (event) => {
     if (!p) return;
     clearTimeout(p.timer);
     pending.delete(msg.id);
-    if (msg.error) p.reject(Error(msg.error)); else p.resolve(msg.result);
+    if (msg.error) {
+      const error=Error(msg.error);
+      error.dispatchState=['BLOCKED','NOT_PERFORMED'].includes(msg.dispatchState)
+        ? msg.dispatchState : 'UNKNOWN';
+      p.reject(error);
+    } else p.resolve(msg.result);
   }
 };

@@ -91,18 +91,22 @@ export class BridgeTransport {
         this.status('connected');
         if (poll.command) {
           const cmd = poll.command;
-          let result, error;
+          let result, error, dispatchState;
           if (!Number.isFinite(cmd.expires) || Date.now() >= cmd.expires) {
             error = 'Command expired';
           } else {
             try { result = await this.execute(cmd); }
-            catch (e) { error = e?.message || 'Command failed'; }
+            catch (e) {
+              error = e?.message || 'Command failed';
+              dispatchState=['BLOCKED','NOT_PERFORMED'].includes(e?.dispatchState)
+                ? e.dispatchState : 'UNKNOWN';
+            }
           }
           // A non-idempotent command is never re-executed just because a result
           // acknowledgement was lost. The server must handle UNKNOWN outcomes.
           if (!this.active || gen !== this.generation) break;
           try {
-            await this.post('/bridge/result', { id: cmd.id, result, error }, abort, 10000);
+            await this.post('/bridge/result', { id: cmd.id, result, error, dispatchState }, abort, 10000);
           } catch (e) {
             this.status('recovering', 'RESULT_ACK_UNKNOWN');
             // Do not repeat the command or the result after an uncertain ACK.

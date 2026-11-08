@@ -101,9 +101,13 @@ function fillAdapterSelect() {
   for (const [k, v] of Object.entries(DEFAULT_ADAPTERS)) { const o = document.createElement('option'); o.value = k; o.textContent = v.label; sel.append(o); }
 }
 $('mode').onchange = () => { $('adapterWrap').hidden = $('mode').value !== 'chat'; syncOrigin(); };
-$('adapter').onchange = syncOrigin;
-function syncOrigin() {
-  if ($('mode').value === 'chat' && !$('origin').value) $('origin').value = DEFAULT_ADAPTERS[$('adapter').value]?.origin || '';
+$('adapter').onchange = () => syncOrigin(true);
+function syncOrigin(force = false) {
+  if ($('mode').value !== 'chat') return;
+  const suggestedOrigin = DEFAULT_ADAPTERS[$('adapter').value]?.origin || '';
+  // Selecting an adapter fills its matching address. The field stays editable:
+  // a manually entered origin is preserved until the adapter is changed again.
+  if (force || !$('origin').value.trim()) $('origin').value = suggestedOrigin;
 }
 
 $('grant').onclick = async () => {
@@ -419,6 +423,7 @@ $('mutationLab').addEventListener('change',async event=>{
     $('backgroundGrantStatus').textContent=enabled ?
       'Лабораторный режим включён. Используйте общую кнопку Control для открытых разрешённых вкладок.' :
       'Управление отключено';
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
   } catch(e) {
     $('mutationLab').checked=!enabled;
     setStatus('Ошибка настройки управления: '+e.message);
@@ -455,6 +460,7 @@ $('backgroundGrantAll').onclick=async event=>{
     }
     $('backgroundGrantStatus').textContent='Общее управление: разрешено вкладок '+success+
       ', отказано '+failed+'; каждое действие подтверждается отдельно.';
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
   } catch(e) {
     $('backgroundGrantStatus').textContent='Общее управление не подключено: '+e.message;
   }
@@ -467,6 +473,7 @@ $('backgroundRevokeAll').onclick=async event=>{
     });
     if (!result?.ok) throw Error(result?.error||'REVOKE_FAILED');
     $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
   } catch(e) {
     $('backgroundGrantStatus').textContent='Ошибка отключения: '+e.message;
   }
@@ -533,7 +540,7 @@ async function updateBackgroundStatus() {
     running = active; // UI indication only; background owns the HTTP poll.
     $('actions').checked = false; // Never auto-enable Control in background mode.
     $('actions').disabled = true;
-    $('backgroundModeStatus').textContent = 'Фоновый режим: чтение разрешённых вкладок и страниц; отправка сообщений отключена.';
+    $('backgroundModeStatus').textContent = 'Фоновый режим: чтение доступно. Отправка возможна только в экспериментальном Control с временными разрешениями и подтверждением каждого действия.';
     const labels = {
       connected:'Подключено · фоновый режим',
       connecting:'Фоновое подключение…',
@@ -612,7 +619,7 @@ async function leaveBackgroundMode() {
 $('backgroundMode').addEventListener('change', async event => {
   if (!event.isTrusted) { $('backgroundMode').checked = backgroundMode; return; }
   const requested = $('backgroundMode').checked;
-  if (requested && !confirm('Фоновый режим пока поддерживает диагностику и чтение разрешённых вкладок. Отправка сообщений Claude, Gemini и DeepSeek будет недоступна. Включить?')) {
+  if (requested && !confirm('Фоновый режим поддерживает диагностику и чтение. Отправка сообщений Claude, Gemini и DeepSeek требует отдельного включения экспериментального Control, временных разрешений и подтверждения каждого действия. Включить фоновый режим?')) {
     $('backgroundMode').checked = backgroundMode;
     return;
   }

@@ -140,27 +140,43 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         hint: 'This requestId was already attempted. No new browser action was sent.' };
     }
     if (a.sending || (a.wait && !a.wait.result)) throw Error('Previous request is still pending: call agent_wait first.');
-    const context = await enqueue('agent_context', { tabId: a.tabId });
-    if (!context?.verified || !CHAT_ORIGINS.has(context.origin) || typeof context.conversationId !== 'string')
-      throw Error('SEND_CONTEXT_UNAVAILABLE: bind a provider conversation with a stable origin and conversation identifier.');
-    const conversationFp = conversationFingerprint(context.origin, context.conversationId, journalKey);
-    const fingerprint = requestFingerprint(name, a.tabId, text, journalKey, context);
-    const begun = sendJournal.begin({ requestId, agent: name, tabId: a.tabId, origin: context.origin,
-      conversationFingerprint: conversationFp, fingerprint, payloadFingerprint });
-    if (begun.duplicate) return { sent: false, transportConfirmed: begun.entry.transportConfirmed === true,
-      deliveryStatus: begun.entry.status, requestId, duplicate: true, origin: begun.entry.origin,
-      conversationFingerprint: begun.entry.conversationFingerprint,
-      hint: 'This requestId was already attempted. No new browser action was sent.' };
+    // Reserve before asynchronous context lookup: concurrent requests must not
+    // both pass the busy guard and reach browser dispatch.
     a.sending = requestId;
+    let context, conversationFp;
+    try {
+      context = await enqueue('agent_context', { tabId: a.tabId });
+      if (!context?.verified || !CHAT_ORIGINS.has(context.origin) || typeof context.conversationId !== 'string')
+        throw Error('SEND_CONTEXT_UNAVAILABLE: bind a provider conversation with a stable origin and conversation identifier.');
+      conversationFp = conversationFingerprint(context.origin, context.conversationId, journalKey);
+      const fingerprint = requestFingerprint(name, a.tabId, text, journalKey, context);
+      const begun = sendJournal.begin({ requestId, agent: name, tabId: a.tabId, origin: context.origin,
+        conversationFingerprint: conversationFp, fingerprint, payloadFingerprint });
+      if (begun.duplicate) {
+        a.sending = null;
+        return { sent: false, transportConfirmed: begun.entry.transportConfirmed === true,
+          deliveryStatus: begun.entry.status, requestId, duplicate: true, origin: begun.entry.origin,
+          conversationFingerprint: begun.entry.conversationFingerprint,
+          hint: 'This requestId was already attempted. No new browser action was sent.' };
+      }
+    } catch (error) {
+      a.sending = null;
+      throw error;
+    }
     let r;
     try { r = await enqueue('agent_send', { tabId: a.tabId, text, expectedOrigin: context.origin, expectedConversationId: context.conversationId }); }
     catch (error) {
       a.sending = null;
-      const outcome = classifySend(error?.dispatchState === 'NOT_PERFORMED' ? { dispatched: false } : null);
+      const outcome = classifySend(error?.dispatchState === 'BLOCKED'
+        ? {dispatched:false,controlDenied:true}
+        : error?.dispatchState === 'NOT_PERFORMED' ? {dispatched:false} : null);
       const deliveryStatus = journalStatus(outcome);
       try { sendJournal.settle(requestId, deliveryStatus); } catch { /* Keep the write-ahead UNKNOWN record. */ }
       return { sent: false, transportConfirmed: false, deliveryStatus, sendOutcome: outcome.state,
-        outcomeReasons: outcome.reasons, requestId,
+        outcomeReasons: outcome.reasons,
+        // Only stable diagnostic codes, never arbitrary provider text.
+        failureCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message || '')
+          ? error.message : null, requestId,
         hint: deliveryStatus === 'UNKNOWN' ? 'Dispatch result is unknown. Inspect the chat before any new submission; do not retry automatically.' : 'No browser dispatch occurred. This requestId remains consumed; a new explicit request is required.' };
     }
     const outcome = classifySend({ dispatched: true }); // Transport response is not attributed delivery evidence.
@@ -297,7 +313,12 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         pending.delete(body.id);
         activeId = null;
         lastSeen = Date.now();
-        body.error ? p.reject(Object.assign(Error(String(body.error)), { dispatchState: 'UNKNOWN' })) : p.resolve(body.result);
+        body.error ? p.reject(Object.assign(Error(String(body.error)), {
+          // Only an explicit pre-DOM acknowledgement can mark the command
+          // not performed. Absent/ambiguous metadata is always UNKNOWN.
+          dispatchState:['BLOCKED','NOT_PERFORMED'].includes(body.dispatchState)
+            ? body.dispatchState : 'UNKNOWN'
+        })) : p.resolve(body.result);
         json(res, 200, { ok: true });
         wake();
       } else json(res, 404, { error: 'Not found' });

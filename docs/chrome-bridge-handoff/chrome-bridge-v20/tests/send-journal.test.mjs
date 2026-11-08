@@ -24,3 +24,18 @@ test('serialized journal exceeding byte limit fails before creating a record',()
 test('open, write, fsync and rename failures leave no partial journal or lock',()=>{for(const stage of ['open','write','fsync','rename']){const root=fs.mkdtempSync(path.join(os.tmpdir(),'bridge-journal-fault-'));const hmacKey=key();const tempFds=new Set();const fsOps=Object.create(fs);const fail=()=>Object.assign(Error(`injected ${stage} failure`),{code:'EIO'});fsOps.openSync=(file,...args)=>{if(stage==='open'&&String(file).endsWith('.tmp'))throw fail();const fd=fs.openSync(file,...args);if(String(file).endsWith('.tmp'))tempFds.add(fd);return fd};fsOps.writeFileSync=(file,...args)=>{if(stage==='write'&&tempFds.has(file))throw fail();return fs.writeFileSync(file,...args)};fsOps.fsyncSync=(fd)=>{if(stage==='fsync'&&tempFds.has(fd))throw fail();return fs.fsyncSync(fd)};fsOps.renameSync=(from,to)=>{if(stage==='rename')throw fail();return fs.renameSync(from,to)};try{const j=new SendJournal(root,{hmacKey,fsOps});assert.throws(()=>j.begin(fixture(hmacKey)),(error)=>error.code==='EIO');assert.equal(fs.existsSync(path.join(root,'send-journal.json')),false,stage);assert.equal(fs.existsSync(path.join(root,'send-journal.json.lock')),false,stage);assert.deepEqual(fs.readdirSync(root),[],stage)}finally{fs.rmSync(root,{recursive:true,force:true})}}});
 test('settle write failure leaves UNKNOWN durable and the request ID consumed after restart',()=>withJournal((root,j,hmacKey)=>{const f=fixture(hmacKey);j.begin(f);const fsOps=Object.create(fs);fsOps.renameSync=()=>{throw Object.assign(Error('injected settle rename failure'),{code:'EIO'})};const failing=new SendJournal(root,{hmacKey,fsOps});assert.throws(()=>failing.settle(f.requestId,'CONFIRMED'),(error)=>error.code==='EIO');const restarted=new SendJournal(root,{hmacKey});assert.equal(restarted.get(f.requestId).status,'UNKNOWN');assert.equal(restarted.begin(f).duplicate,true)}));
 
+
+
+test('agent send reserves busy slot before asynchronous context preflight and releases on failure',()=>{
+  const src=fs.readFileSync(new URL('../server/bridge.mjs',import.meta.url),'utf8');
+  const start=src.indexOf('async function agentSend(');
+  const finish=src.indexOf('  const hub = {',start);
+  assert.ok(start>=0 && finish>start,'agentSend implementation not found');
+  const fn=src.slice(start,finish);
+  const lock=fn.indexOf('a.sending = requestId;');
+  const awaitContext=fn.indexOf("await enqueue('agent_context'");
+  const dispatch=fn.indexOf("await enqueue('agent_send'");
+  assert.ok(lock>=0 && lock<awaitContext && awaitContext<dispatch,'busy slot must be set before asynchronous preflight and dispatch');
+  assert.match(fn,/catch \(error\) \{\s*a\.sending = null;\s*throw error;/,'preflight errors must release busy slot');
+  assert.match(fn,/if \(begun\.duplicate\) \{\s*a\.sending = null;/,'journal duplicate must release busy slot');
+});
