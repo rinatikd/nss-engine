@@ -11,7 +11,22 @@ using AcApp=Autodesk.AutoCAD.ApplicationServices.Core.Application;
 /// <summary>it never opens or edits the current drawing database.</summary>
 public sealed class CctvCommands
 {
-    static readonly string Root=Directory.GetParent(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!)!.FullName;
+    // Resolve inside Analyze()'s try block so invalid installation paths
+    // are reported through the command rather than a type initializer failure.
+    static string GetRoot()
+    {
+        string? assemblyDirectory=Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+        if(string.IsNullOrWhiteSpace(assemblyDirectory))
+            throw new DirectoryNotFoundException("CCTV plugin assembly directory is unavailable.");
+        string? root=Directory.GetParent(assemblyDirectory)?.FullName;
+        if(string.IsNullOrWhiteSpace(root))
+            throw new DirectoryNotFoundException("CCTV plugin parent directory is unavailable.");
+        return root;
+    }
+
+    // Editor.WriteMessage has formatting overloads. Never treat generated
+    // Python stdout or exceptions as a format string.
+    static void Print(Editor ed,string text) => ed.WriteMessage("{0}",text);
 
     [CommandMethod("NSS_CCTV_ANALYZE", CommandFlags.Modal|CommandFlags.NoUndoMarker)]
     public void Analyze()
@@ -21,9 +36,10 @@ public sealed class CctvCommands
         Editor ed=doc.Editor;
         try
         {
-            string module=Path.Combine(Root,"modules","cctv");
+            string root=GetRoot();
+            string module=Path.Combine(root,"modules","cctv");
             string script=Path.Combine(module,"cctv_cli.py");
-            string python=Path.Combine(Root,"runtime","python.exe");
+            string python=Path.Combine(root,"runtime","python.exe");
             if(!File.Exists(script)||!File.Exists(python))
                 throw new FileNotFoundException("CCTV module or packaged Python runtime is missing. Expected: "+module);
 
@@ -60,9 +76,9 @@ public sealed class CctvCommands
             string report=stdout.GetAwaiter().GetResult();string errors=stderr.GetAwaiter().GetResult();
             if(process.ExitCode!=0)throw new InvalidDataException("CCTV calculation failed (exit "+process.ExitCode+"): "+errors+report);
             if(!File.Exists(output))throw new InvalidDataException("Calculation finished without producing the output DXF.");
-            ed.WriteMessage("\nCCTV calculation complete. Source plan and active drawing were not modified.\nResult: "+output+"\n"+report);
+            Print(ed,"\nCCTV calculation complete. Source plan and active drawing were not modified.\nResult: "+output+"\n"+report);
         }
-        catch(System.Exception ex){ed.WriteMessage("\nNSS_CCTV_ANALYZE failed: "+ex.Message);}
+        catch(System.Exception ex){Print(ed,"\nNSS_CCTV_ANALYZE failed: "+ex.Message);}
     }
 
     static string? Pick(Editor ed,string prompt,string filter)
