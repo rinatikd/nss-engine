@@ -6,6 +6,7 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <OutputType>Library</OutputType>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DefineConstants>$(DefineConstants);CCTV_COMPILE_SMOKE</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../source/CctvCommands.cs" Link="CctvCommands.cs" />
