@@ -1,0 +1,22 @@
+name: CCTV CLI input and output guards
+on:
+  push:
+    branches: [agent/chatgpt/cctv-m2-input-guard]
+  pull_request:
+    paths:
+      - 'work/NSS_TKK_Editor_v0.2/modules/cctv/**'
+      - '.github/workflows/cctv-cli-guards.yml'
+permissions:
+  contents: read
+jobs:
+  cli-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run CCTV CLI guard tests
+        run: python -m unittest discover -s work/NSS_TKK_Editor_v0.2/modules/cctv/tests -p 'test_cli_guards.py' -v
+      - name: Compile Python module
+        run: python -m py_compile work/NSS_TKK_Editor_v0.2/modules/cctv/cctv_cli.py
