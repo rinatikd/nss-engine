@@ -33,8 +33,25 @@ $actualCommit = (& $git.Source -C $candidate rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $CommitSha) {
   throw ('Source checkout SHA mismatch: expected '+$CommitSha+', actual '+$actualCommit)
 }
-$dirty = & $git.Source -C $candidate status --porcelain --untracked-files=no
-if ($LASTEXITCODE -ne 0 -or @($dirty | Where-Object { $_ }).Count -gt 0) { throw 'Source checkout must be clean' }
+# The Windows checkout can show unrelated documentation / cutover script
+# changes from EOL filters. Keep a strict exact-content gate over *every*
+# executable and asset used by the staging and verification pipeline.
+$criticalPaths = @(
+  'extension',
+  'deployment/stage-background-lab.ps1',
+  'deployment/verify-adapter-lab.ps1',
+  'deployment/write-lab-release-manifest.ps1',
+  'deployment/build-rc-final-lab-package.ps1'
+)
+& $git.Source -C $candidate diff --quiet HEAD -- $criticalPaths
+if ($LASTEXITCODE -ne 0) { throw 'Release package input differs from committed source' }
+& $git.Source -C $candidate diff --cached --quiet HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Staged changes detected; refusing release packaging' }
+$untracked = @(& $git.Source -C $candidate ls-files --others --exclude-standard -- $criticalPaths)
+if ($LASTEXITCODE -ne 0 -or @($untracked | Where-Object { $_ }).Count -gt 0) {
+  throw 'Untracked package input detected'
+}
+Write-Output '[SOURCE] Critical release inputs match exact committed Git content'
 New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
 try {
   & $stageScript -BridgeRoot $installed -CandidateRoot $candidate -OutputRoot $stage -Apply
