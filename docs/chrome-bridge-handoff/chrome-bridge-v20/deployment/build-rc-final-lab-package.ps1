@@ -27,26 +27,7 @@ foreach ($script in @($stageScript,$verifyScript,$evidenceScript)) {
   if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw ('Missing source script: '+$script) }
 }
 # Source identity must be explicit to prevent packaging an unintended checkout.
-if ($CommitSha -notmatch '^[0-9a-fA-F]{40} -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
-try {
-  & $stageScript -BridgeRoot $installed -CandidateRoot $candidate -OutputRoot $stage -Apply
-  if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Staging command failed' }
-  & $verifyScript -LabRoot $stage
-  if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Verification command failed' }
-  & $evidenceScript -LabRoot $stage -OutputPath $evidence -CommitSha $CommitSha
-  if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Evidence command failed' }
-  Compress-Archive -LiteralPath $stage -DestinationPath $zip -CompressionLevel Optimal -ErrorAction Stop
-  if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw 'Zip creation failed' }
-  Write-Output ('[PACKAGE] '+$zip)
-  Write-Output ('[PACKAGE_SHA256] '+(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant())
-  Write-Output ('[EVIDENCE] '+$evidence)
-  Write-Output '[NO-GO] Disposable lab-only package. Not a production release.'
-} catch {
-  Write-Output ('[FAILED] '+$_.Exception.Message)
-  Write-Output ('[EVIDENCE] Partial output (if any) retained for inspection at '+$output)
-  throw
-}
-) { throw 'Supply exact 40-character Git commit SHA (-CommitSha)' }
+if ($CommitSha -notmatch '^[0-9a-fA-F]{40}$') { throw 'Supply exact 40-character Git commit SHA (-CommitSha)' }
 $git = Get-Command git -ErrorAction Stop
 $actualCommit = (& $git.Source -C $candidate rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $CommitSha) {
