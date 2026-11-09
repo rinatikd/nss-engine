@@ -53,7 +53,7 @@ if ($LASTEXITCODE -ne 0 -or $actualCommit -ne $CommitSha) {
   throw ('Source checkout SHA mismatch: expected '+$CommitSha+', actual '+$actualCommit)
 }
 $dirty = & $git.Source -C $candidate status --porcelain --untracked-files=no
-if ($LASTEXITCODE -ne 0 -or @($dirty).Count -gt 0) { throw 'Source checkout must be clean' }
+if ($LASTEXITCODE -ne 0 -or @($dirty | Where-Object { $_ }).Count -gt 0) { throw 'Source checkout must be clean' }
 New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
 try {
   & $stageScript -BridgeRoot $installed -CandidateRoot $candidate -OutputRoot $stage -Apply
