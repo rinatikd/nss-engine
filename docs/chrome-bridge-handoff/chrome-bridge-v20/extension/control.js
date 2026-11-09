@@ -204,6 +204,7 @@ async function waitComplete(tabId, ms) {
 }
 async function tabAndSite(tabId) {
   const tab = await chrome.tabs.get(tabId);
+  if (!tab?.url) throw Error('TAB_NOT_PERMITTED');
   const site = await siteOf(tab.url);
   const current = new URL(tab.url).origin;
   const previous = observedOrigins.get(tabId);
