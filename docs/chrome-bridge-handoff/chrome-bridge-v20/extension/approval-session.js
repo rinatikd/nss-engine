@@ -12,15 +12,29 @@ export class ApprovalSession {
   }
   list() { return this.broker.list(); }
   request(data) {
-    const item = this.broker.request(data);
+    let item;
+    try {
+      item = this.broker.request(data);
+    } catch (error) {
+      // Do not leak unexpected provider/DOM data across the transport.
+      if (/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message || '')) throw error;
+      throw Error('APPROVAL_REGISTRATION_FAILED');
+    }
     return new Promise((resolve, reject) => {
-      const delay = Math.max(1, data.expires - this.now());
-      const timer = this.schedule(() => {
-        this.waiters.delete(item.id);
-        this.broker.expire();
-        reject(Error('APPROVAL_EXPIRED'));
-      }, delay);
-      this.waiters.set(item.id, { resolve, reject, timer });
+      try {
+        const delay = Math.max(1, data.expires - this.now());
+        const timer = this.schedule(() => {
+          this.waiters.delete(item.id);
+          this.broker.expire();
+          reject(Error('APPROVAL_EXPIRED'));
+        }, delay);
+        this.waiters.set(item.id, { resolve, reject, timer });
+      } catch {
+        // Registration already succeeded, but its waiter cannot be started.
+        // Remove the orphaned approval so it cannot later be approved.
+        this.broker.pending.delete(item.id);
+        reject(Error('APPROVAL_SESSION_FAILED'));
+      }
     });
   }
   decide({ id, approved, trustedUserGesture }) {
