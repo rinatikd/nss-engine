@@ -233,8 +233,10 @@ test('unclassified approval errors emit safe APPROVAL code and never send',async
 });
 test('unclassified revalidation errors emit safe REVALIDATION code and never send',async()=>{
  const f=fixture();
- let checks=0;
- f.chromeApi.permissions.contains=async()=>{ if(++checks>1)throw Error('unsafe URL and DOM details'); return true; };
+ f.chromeApi.permissions.contains=async()=>{
+   if (!f.state.allowAt) throw Error('unsafe URL and DOM details');
+   return true;
+ };
  await assert.rejects(execute(cmd('agent_send'),f),e=>{
    assert.equal(e.message,'MUTATION_REVALIDATION_FAILED');
    assert.equal(e.dispatchState,'NOT_PERFORMED');
