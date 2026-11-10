@@ -37,6 +37,8 @@ export async function dispatchMutation(cmd, chromeApi, {
   approvals, controlGrant, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
   let executionStarted=false;
+  // Stage codes are safe metadata: never expose provider text, prompts, or DOM content.
+  let stage='PRECHECK';
   try {
   exactCommand(cmd);
   if (!approvals?.request || typeof controlGrant !== 'function')
@@ -89,11 +91,13 @@ export async function dispatchMutation(cmd, chromeApi, {
     : cmd.name === 'browser_fill'
       ? 'Поле: ' + cmd.args.selector + ' · текст: ' + redact(cmd.args.text.slice(0,80))
       : 'Элемент: ' + String(preflight.text || cmd.args.selector).slice(0,160);
+  stage='APPROVAL';
   await approvals.request({
     id:approvalId,command:cmd.name,origin,tabId:tab.id,expires,
     preview:preview.slice(0,240),contentLength:cmd.args.text?.length || 0
   });
 
+  stage='REVALIDATION';
   if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
   // Revalidate EVERYTHING after human approval and immediately before DOM
   // action; a changed origin, URL, conversation or grant must fail closed.
@@ -128,6 +132,13 @@ export async function dispatchMutation(cmd, chromeApi, {
     // This flag can only be set if the single DOM mutation injection has NOT
     // started. Post-injection errors remain UNKNOWN to prevent duplicate sends.
     if (!executionStarted) {
+      // Preserve existing stable error codes; replace free-form exceptions with
+      // bounded stage identifiers so the server can report a safe failureCode.
+      if (!/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message || '')) {
+        error = Object.assign(new Error(`MUTATION_${stage}_FAILED`), {
+          dispatchState: error?.dispatchState
+        });
+      }
       error.dispatchState = /^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|CONTROL_SITE_DENIED)$/.test(error.message)
         ? 'BLOCKED' : 'NOT_PERFORMED';
     }

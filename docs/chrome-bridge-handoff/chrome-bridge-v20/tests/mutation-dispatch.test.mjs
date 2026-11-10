@@ -208,3 +208,40 @@ test('unknown outcome after DOM send injection remains UNKNOWN',async()=>{
  assert.equal(f.state.injections.includes('agent_send'),false);
  assert.equal(f.state.approvalCount,1);
 });
+
+test('unclassified preflight errors emit safe PRECHECK code and never send',async()=>{
+ const f=fixture();
+ f.chromeApi.permissions.contains=async()=>{ throw Error('unsafe details from browser'); };
+ await assert.rejects(execute(cmd('agent_send'),f),e=>{
+   assert.equal(e.message,'MUTATION_PRECHECK_FAILED');
+   assert.equal(e.dispatchState,'NOT_PERFORMED');
+   return true;
+ });
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(f.state.injections.includes('agent_send'),false);
+});
+test('unclassified approval errors emit safe APPROVAL code and never send',async()=>{
+ const f=fixture();
+ f.approvals.request=async()=>{ f.state.approvalCount++; throw Error('unsafe approval payload'); };
+ await assert.rejects(execute(cmd('agent_send'),f),e=>{
+   assert.equal(e.message,'MUTATION_APPROVAL_FAILED');
+   assert.equal(e.dispatchState,'NOT_PERFORMED');
+   return true;
+ });
+ assert.equal(f.state.approvalCount,1);
+ assert.equal(f.state.injections.includes('agent_send'),false);
+});
+test('unclassified revalidation errors emit safe REVALIDATION code and never send',async()=>{
+ const f=fixture();
+ f.chromeApi.permissions.contains=async()=>{
+   if (!f.state.allowAt) throw Error('unsafe URL and DOM details');
+   return true;
+ };
+ await assert.rejects(execute(cmd('agent_send'),f),e=>{
+   assert.equal(e.message,'MUTATION_REVALIDATION_FAILED');
+   assert.equal(e.dispatchState,'NOT_PERFORMED');
+   return true;
+ });
+ assert.equal(f.state.approvalCount,1);
+ assert.equal(f.state.injections.includes('agent_send'),false);
+});
