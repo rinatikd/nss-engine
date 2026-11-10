@@ -44,3 +44,23 @@ test('denial rejects without granting control',async()=>{
   s.decide({id:'deny',approved:false,trustedUserGesture:true});
   await assert.rejects(p,/USER_DENIED/);
 });
+
+test('unexpected registration exception is sanitized before a waiter is scheduled',()=>{
+  clock=1000;timers.clear();const s=session();
+  s.broker.request=()=>{throw Error('untrusted tab metadata');};
+  assert.throws(()=>s.request(request('registration')),/APPROVAL_REGISTRATION_FAILED/);
+  assert.equal(s.waiters.size,0);
+  assert.equal(s.list().length,0);
+});
+test('waiter scheduling failure clears pending approval without allowing a send',async()=>{
+  clock=1000;timers.clear();
+  const s=new ApprovalSession({now:()=>clock,setTimeoutImpl:()=>{throw Error('untrusted scheduling detail');}});
+  await assert.rejects(s.request(request('schedule')),/APPROVAL_SESSION_FAILED/);
+  assert.equal(s.list().length,0);
+  assert.equal(s.waiters.size,0);
+});
+test('known broker validation code remains explicit',()=>{
+  clock=1000;timers.clear();const s=session();
+  assert.throws(()=>s.request({...request('invalid'),expires:clock-1}),/INVALID_APPROVAL_EXPIRY/);
+  assert.equal(s.list().length,0);
+});
