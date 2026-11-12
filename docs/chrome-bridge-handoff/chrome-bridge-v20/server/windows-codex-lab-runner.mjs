@@ -22,7 +22,7 @@ export function createWindowsCodexRunner({
   const active = new Map();
   return {
     async run({ requestId, workspace, prompt, timeoutSec = 120, signal }) {
-      if (typeof requestId !== 'string' || !requestId) throw Error('INVALID_REQUEST_ID');
+      if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) throw Error('INVALID_REQUEST_ID');
       if (active.has(requestId)) throw Error('RUNNER_DUPLICATE');
       if (typeof workspace !== 'string' || !path.win32.isAbsolute(workspace) ||
           workspace.startsWith('\\\\') || !fs.statSync(workspace).isDirectory()) throw Error('INVALID_WORKSPACE');
@@ -40,10 +40,13 @@ export function createWindowsCodexRunner({
         args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', workspace, '-'],
         cwd: workspace }); }
       catch (error) { active.delete(requestId); throw error; }
-      if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
-        // The native supervisor must own cleanup if it cannot return a valid handle.
-        active.delete(requestId);
-        throw Error('CODEX_LAUNCH_FAILED');
+      if (!child || !Number.isInteger(child.pid) || child.pid <= 0 ||
+          !child.stdin || !child.stdout || !child.stderr ||
+          typeof child.once !== 'function') {
+        // A malformed native launch handle is NOT proof that no child exists.
+        // Preserve the reservation and fail closed; the supervisor must own
+        // cleanup of any child it created before reporting a launch failure.
+        throw Error('CODEX_LAUNCH_UNCONFIRMED');
       }
       const state = { child, closed: false, cleanup: null };
       child.once('close', () => { state.closed = true; });
