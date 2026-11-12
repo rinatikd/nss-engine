@@ -17,6 +17,19 @@ test('self-only native supervisor returns ready then OS-verified terminated', { 
   assert.equal(result.terminated.verified, true);
   assert.equal(result.terminated.activeProcesses, 0);
   assert.equal(result.exitCode, 0);
+  // Independent Windows process-table observation: do not rely solely on
+  // the supervisor's JSON claim that the contained child has terminated.
+  // A short bounded poll allows process-table cleanup after handle closure.
+  let stillAlive = true;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try { process.kill(result.ready.pid, 0); }
+    catch (error) {
+      if (error.code === 'ESRCH') { stillAlive = false; break; }
+      throw error; // EPERM or other errors are NOT proof of termination.
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.equal(stillAlive, false, 'contained child PID must be absent from Windows process table');
 });
 test('reject invalid executable path before spawning', async () => {
   await assert.rejects(
