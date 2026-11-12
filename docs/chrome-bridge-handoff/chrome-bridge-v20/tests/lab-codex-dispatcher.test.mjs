@@ -55,3 +55,31 @@ test('cleanup failure blocks subsequent jobs', async () => {
   await assert.rejects(dispatch.submit({requestId:'cleanup-2',workspace:'test',prompt:'inspect'}), /LAB_RUNNER_CLEANUP_UNCONFIRMED/);
   assert.equal(launches, 1);
 });
+
+test('cancellation while local approval is pending prevents process launch', async () => {
+  let release;
+  const gate = createTemporaryAdminGate({
+    approve: ({kind}) => kind === 'enable' ? Promise.resolve(true) :
+      new Promise(resolve => { release = resolve; }),
+  });
+  await gate.enable({localOperator:true});
+  let launches=0;
+  const runner={async run(){launches++;},async terminateTree(){}};
+  const dispatch=createLabCodexDispatcher({gate,runner});
+  const pending=dispatch.submit({requestId:'cancel-pending',workspace:'test',prompt:'inspect'});
+  assert.equal(await dispatch.cancel('cancel-pending'),true);
+  release(true);
+  await assert.rejects(pending,/LAB_JOB_CANCELLED/);
+  assert.equal(launches,0);
+  assert.equal(dispatch.status().active,0);
+});
+test('failed cleanup does not leave active job forever', async () => {
+  const gate=createTemporaryAdminGate({approve:async()=>true});
+  await gate.enable({localOperator:true});
+  const runner={async run(){return 'ok';},async terminateTree(){throw Error('cannot verify');}};
+  const dispatch=createLabCodexDispatcher({gate,runner});
+  await assert.rejects(dispatch.submit({requestId:'failed-cleanup',workspace:'test',prompt:'inspect'}),/LAB_RUNNER_CLEANUP_UNCONFIRMED/);
+  assert.equal(dispatch.status().active,0);
+  assert.equal(dispatch.status().completed,1);
+  assert.equal(dispatch.status().cleanupFailed,true);
+});
