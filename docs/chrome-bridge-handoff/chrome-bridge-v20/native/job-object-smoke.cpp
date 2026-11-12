@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <iostream>
 #include <string>
+#include <vector>
 
 struct Handle {
     HANDLE value = nullptr;
@@ -79,23 +80,42 @@ int wmain(int argc, wchar_t** argv) {
     }
     Handle childInput(childInputRaw), parentInput(parentInputRaw);
     Handle parentOutput(parentOutputRaw), childOutput(childOutputRaw);
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof(si);
+    std::vector<unsigned char> attributeBuffer;
+    bool attributeInitialized = false;
     if (pipeEcho) {
-        si.dwFlags = STARTF_USESTDHANDLES;
-        si.hStdInput = childInput.value;
-        si.hStdOutput = childOutput.value;
-        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        // Explicitly allow only child stdin/stdout handles to be inherited.
+        SIZE_T bytes = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+        if (!bytes) { fail(L"AttributeListSize"); return 17; }
+        attributeBuffer.resize(bytes);
+        si.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeBuffer.data());
+        if (!InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &bytes)) {
+            fail(L"InitializeProcThreadAttributeList"); return 18;
+        }
+        attributeInitialized = true;
+        HANDLE allowed[] = {childInput.value, childOutput.value};
+        if (!UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                       allowed, sizeof(allowed), nullptr, nullptr)) {
+            fail(L"UpdateProcThreadAttribute");
+            DeleteProcThreadAttributeList(si.lpAttributeList);
+            return 19;
+        }
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput = childInput.value;
+        si.StartupInfo.hStdOutput = childOutput.value;
+        si.StartupInfo.hStdError = childOutput.value;
     }
     PROCESS_INFORMATION pi{};
     // Test command is fixed; no user-provided command line, shell or stdin.
     // Windows CreateProcessW takes mutable command-line storage.
     std::wstring cmd = L"\"" + exe + (killOnClose ? L"\" --child-wait" : (pipeEcho ? L"\" --child-echo" : L"\" /c exit 0"));
-    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, pipeEcho ? TRUE : FALSE,
-                        CREATE_SUSPENDED | CREATE_NO_WINDOW,
-                        nullptr, nullptr, &si, &pi)) {
-        fail(L"CreateProcessW"); return 5;
-    }
+    const BOOL created = CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, pipeEcho ? TRUE : FALSE,
+                        CREATE_SUSPENDED | CREATE_NO_WINDOW | (pipeEcho ? EXTENDED_STARTUPINFO_PRESENT : 0),
+                        nullptr, nullptr, &si.StartupInfo, &pi);
+    if (attributeInitialized) DeleteProcThreadAttributeList(si.lpAttributeList);
+    if (!created) { fail(L"CreateProcessW"); return 5; }
     Handle process(pi.hProcess);
     Handle thread(pi.hThread);
 
