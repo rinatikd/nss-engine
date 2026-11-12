@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const MAX_LINE = 64 * 1024;
 const MAX_WAIT_MS = 15000;
+const MAX_STDERR = 64 * 1024;
 const REQ_ID = /^[a-zA-Z0-9_-]{1,80}$/;
 
 export function createNativeJobObjectTransport({ supervisorExe, spawnProcess = spawn, platform = process.platform } = {}) {
@@ -27,15 +28,21 @@ export function createNativeJobObjectTransport({ supervisorExe, spawnProcess = s
       const child = spawnProcess(supervisorExe, ['--stdio-v1'], {
         windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'],
       });
-      const job = { child, requestId, buffer: '', done: false, waiters: [], failed: null };
+      const job = { child, requestId, buffer: '', done: false, waiters: [], failed: null, stderrBytes: 0 };
       jobs.set(requestId, job);
       const fail = err => {
         if (job.failed) return;
         job.failed = err;
+        // Preserve fail-closed state: never forget an unverified job.
+        try { child.kill(); } catch {}
         for (const w of job.waiters.splice(0)) w.reject(err);
       };
       child.on('error', () => fail(Error('SUPERVISOR_START_FAILED')));
       child.on('exit', () => { if (!job.done) fail(Error('SUPERVISOR_EXIT_UNCONFIRMED')); });
+      child.stderr.on('data', chunk => {
+        job.stderrBytes += chunk.length;
+        if (job.stderrBytes > MAX_STDERR) fail(Error('SUPERVISOR_STDERR_OVERFLOW'));
+      });
       child.stdout.on('data', chunk => {
         job.buffer += chunk.toString('utf8');
         if (Buffer.byteLength(job.buffer) > MAX_LINE) return fail(Error('SUPERVISOR_PROTOCOL_OVERFLOW'));
@@ -71,8 +78,9 @@ export function createNativeJobObjectTransport({ supervisorExe, spawnProcess = s
         return { pid: msg.pid, requestId, supervisor: child, stdout: child.stdout, stderr: child.stderr, stdin: child.stdin,
           once: child.once.bind(child), on: child.on.bind(child) };
       } catch (error) {
-        child.kill();
-        jobs.delete(requestId);
+        // Retain the job ID when a launched supervisor cannot confirm cleanup.
+        // A failed handshake must not silently authorize a duplicate request.
+        fail(error);
         throw error;
       }
     },
@@ -91,6 +99,7 @@ export function createNativeJobObjectTransport({ supervisorExe, spawnProcess = s
         entry.resolve = value => { clearTimeout(timer); resolve(value); };
         entry.reject = error => { clearTimeout(timer); reject(error); };
       });
+      if (job.failed) throw Error('SUPERVISOR_CLEANUP_UNCONFIRMED');
       job.child.stdin.write(JSON.stringify({ type: 'terminate', requestId: job.requestId }) + '\n');
       const msg = await ack;
       if (msg.activeProcesses !== 0 || msg.verified !== true) throw Error('SUPERVISOR_CLEANUP_UNCONFIRMED');
