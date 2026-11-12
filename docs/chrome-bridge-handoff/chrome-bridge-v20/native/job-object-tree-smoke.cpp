@@ -65,25 +65,6 @@ int wmain(int argc, wchar_t** argv) {
         TerminateJobObject(job.h, 9);
         return 24;
     }
-    // Diagnostic only: enumerate actual Job Object PIDs; do not accept extra
-    // processes as success without understanding where they came from.
-    DWORD bytes = sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 32;
-    std::string pidBuffer(bytes, '\0');
-    DWORD needed = 0;
-    if (QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
-                                  pidBuffer.data(), bytes, &needed)) {
-        auto* ids = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(pidBuffer.data());
-        std::wcerr << L"JOB_PIDS assigned=" << ids->NumberOfAssignedProcesses
-                   << L" listed=" << ids->NumberOfProcessIdsInList
-                   << L" childPid=" << child.dwProcessId << L" pids=";
-        for (DWORD i = 0; i < ids->NumberOfProcessIdsInList; ++i) {
-            std::wcerr << (i ? L"," : L"") << ids->ProcessIdList[i];
-        }
-        std::wcerr << L"\n";
-    } else {
-        std::wcerr << L"JOB_PIDS_QUERY_FAILED win32=" << GetLastError()
-                   << L" needed=" << needed << L"\n";
-    }
     if (!active(job.h, 2, 5000)) {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
         const BOOL queried = QueryInformationJobObject(job.h, JobObjectBasicAccountingInformation, &info, sizeof(info), nullptr);
@@ -98,10 +79,44 @@ int wmain(int argc, wchar_t** argv) {
         std::wcerr << L"Expected two active processes in job (child + grandchild)\n";
         return 25;
     }
+    // Observe both members only after accounting confirms two active processes.
+    // Keep a SYNCHRONIZE handle to the grandchild to avoid PID-reuse races.
+    BYTE buffer[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 32]{};
+    DWORD needed = 0;
+    if (!QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
+                                   buffer, sizeof(buffer), &needed)) {
+        TerminateJobObject(job.h, 9);
+        return 27;
+    }
+    auto* ids = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buffer);
+    if (ids->NumberOfProcessIdsInList != 2) {
+        TerminateJobObject(job.h, 9);
+        return 28;
+    }
+    DWORD grandchildPid = 0;
+    bool foundChild = false;
+    for (DWORD i = 0; i < ids->NumberOfProcessIdsInList; ++i) {
+        const DWORD pid = static_cast<DWORD>(ids->ProcessIdList[i]);
+        if (pid == child.dwProcessId) foundChild = true;
+        else grandchildPid = pid;
+    }
+    if (!foundChild || !grandchildPid) {
+        TerminateJobObject(job.h, 9);
+        return 29;
+    }
+    Handle grandchild(OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                                  FALSE, grandchildPid));
+    if (!grandchild.h || WaitForSingleObject(grandchild.h, 0) != WAIT_TIMEOUT) {
+        TerminateJobObject(job.h, 9);
+        return 30;
+    }
+    std::wcout << L"TREE_PIDS child=" << child.dwProcessId
+               << L" grandchild=" << grandchildPid << std::endl;
     // Close the last job handle, exercising KILL_ON_JOB_CLOSE (not TerminateJobObject).
     CloseHandle(job.h);
     job.h = nullptr;
     if (WaitForSingleObject(cp.h, 5000) != WAIT_OBJECT_0) return 26;
+    if (WaitForSingleObject(grandchild.h, 5000) != WAIT_OBJECT_0) return 31;
     // Independent OS-level check for the entire job: a handle to the grandchild is
     // unavailable here, so this test proves accounting reached 2 before job close
     // and the immediate child died; grandchild PID liveness remains to be verified.
