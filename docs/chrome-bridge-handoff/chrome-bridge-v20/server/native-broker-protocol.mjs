@@ -43,7 +43,9 @@ export function createBrokerFrameDecoder(expectedRequestId) {
       const at = buffer.indexOf(10);
       if (at === -1) return null;
       if (buffer.indexOf(10, at + 1) !== -1 || at !== buffer.length - 1) throw Error('IPC_TRAILING_DATA');
-      const frame = buffer.subarray(0, at);
+      // Windows native std::endl may emit CRLF. Accept only one terminal CR
+      // immediately before LF; embedded CR and extra lines remain invalid.
+      const frame = buffer.subarray(0, at > 0 && buffer[at - 1] === 13 ? at - 1 : at);
       const decoded = new TextDecoder('utf-8', { fatal: true }).decode(frame);
       finished = true;
       return decodeBrokerFrame(decoded, expectedRequestId);
