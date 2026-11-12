@@ -66,6 +66,15 @@ int wmain(int argc, wchar_t** argv) {
         return 24;
     }
     if (!active(job.h, 2, 5000)) {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
+        const BOOL queried = QueryInformationJobObject(job.h, JobObjectBasicAccountingInformation, &info, sizeof(info), nullptr);
+        std::wcerr << L"DIAGNOSTIC: queried=" << queried << L" active="
+                   << (queried ? info.ActiveProcesses : 0) << L" total="
+                   << (queried ? info.TotalProcesses : 0) << L" childExit=";
+        DWORD childExit = STILL_ACTIVE;
+        if (GetExitCodeProcess(cp.h, &childExit)) std::wcerr << childExit;
+        else std::wcerr << L"unavailable";
+        std::wcerr << L" win32=" << GetLastError() << L"\n";
         TerminateJobObject(job.h, 9);
         std::wcerr << L"Expected two active processes in job (child + grandchild)\n";
         return 25;
