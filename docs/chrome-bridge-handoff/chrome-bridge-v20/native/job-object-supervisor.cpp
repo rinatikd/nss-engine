@@ -163,6 +163,20 @@ int wmain(int argc, wchar_t** argv) {
         WaitForSingleObject(process.h, 5000);
         return code;
     }
+    if (gated) {
+        // Lab-only hold permits deterministic concurrent-launch and crash testing.
+        // No arbitrary command execution; only the contained self-child is running.
+        wchar_t holdText[16]{};
+        const DWORD count = GetEnvironmentVariableW(L"CB_LAB_GATE_HOLD_MS", holdText, 16);
+        if (count > 0 && count < 16) {
+            wchar_t* end = nullptr;
+            const unsigned long hold = wcstoul(holdText, &end, 10);
+            if (end != holdText && *end == L'\\0' && hold > 0 && hold <= 15000) {
+                std::wcout << L"GATE_HOLD_ACTIVE\n" << std::flush;
+                Sleep(static_cast<DWORD>(hold));
+            }
+        }
+    }
     if (WaitForSingleObject(process.h, 200) != WAIT_TIMEOUT) {
         std::wcerr << L"Child exited unexpectedly\n";
         return 9;
