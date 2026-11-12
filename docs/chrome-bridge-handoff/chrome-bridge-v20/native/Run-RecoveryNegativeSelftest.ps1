@@ -38,7 +38,7 @@ try {
         $exit = $LASTEXITCODE
         $after = [System.IO.File]::ReadAllBytes($marker)
         if ($exit -ne 40 -or !(Test-Path -LiteralPath $marker) -or
-            ![System.Linq.Enumerable]::SequenceEqual([byte[]]$before, [byte[]]$after)) {
+            ([Convert]::ToBase64String($before) -ne [Convert]::ToBase64String($after))) {
             throw "FAIL_CLOSED_VIOLATION: $($case.Name), exit=$exit"
         }
         $count++
