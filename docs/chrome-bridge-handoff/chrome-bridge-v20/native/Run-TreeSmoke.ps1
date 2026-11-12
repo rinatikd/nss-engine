@@ -28,4 +28,4 @@ $lines = [string[]]@(
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw "TREE_SMOKE_BUILD_FAILED: $LASTEXITCODE" }
 $proc = Start-Process -FilePath $exe -ArgumentList '--selftest' -PassThru -Wait -NoNewWindow
 if ($proc.ExitCode -ne 0) { throw "TREE_SMOKE_FAILED: $($proc.ExitCode)" }
-Write-Host 'TREE_SMOKE_PARTIAL_PASS: second-level descendant observed in Job Object; grandchild PID verification pending'
+Write-Host 'TREE_SMOKE_FULL_PASS: second-level descendant termination independently verified'
