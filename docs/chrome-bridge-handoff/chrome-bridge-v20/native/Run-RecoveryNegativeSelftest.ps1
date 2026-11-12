@@ -34,8 +34,10 @@ try {
         $marker = Join-Path $root ($case.Name + '.json')
         [System.IO.File]::WriteAllText($marker, $case.Content)
         $before = [System.IO.File]::ReadAllBytes($marker)
-        & $exe --gated-selftest $marker 2>$null
-        $exit = $LASTEXITCODE
+        $stdout = Join-Path $root ($case.Name + '.out')
+        $stderr = Join-Path $root ($case.Name + '.err')
+        $proc = Start-Process -FilePath $exe -ArgumentList @('--gated-selftest', ('"{0}"' -f $marker)) -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $exit = $proc.ExitCode
         $after = [System.IO.File]::ReadAllBytes($marker)
         if ($exit -ne 40 -or !(Test-Path -LiteralPath $marker) -or
             ([Convert]::ToBase64String($before) -ne [Convert]::ToBase64String($after))) {
