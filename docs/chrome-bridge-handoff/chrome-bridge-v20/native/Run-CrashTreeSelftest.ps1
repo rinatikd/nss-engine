@@ -44,17 +44,17 @@ try {
         Start-Sleep -Milliseconds 50
     }
     if ($output -notmatch 'CRASH_CONTROLLER_READY') { throw "CRASH_CONTROLLER_NOT_READY: $output" }
-    $pids = @([regex]::Matches($output, 'CRASH_MEMBER_PID=(\d+)') | ForEach-Object { [int]$_.Groups[1].Value })
+    $memberIds = @([regex]::Matches($output, 'CRASH_MEMBER_PID=(\d+)') | ForEach-Object { [int]$_.Groups[1].Value })
     $childMatch = [regex]::Match($output, 'CRASH_CHILD_PID=(\d+)')
     $grandMatch = [regex]::Match($output, 'CRASH_GRANDCHILD_PID=(\d+)')
-    if (!$childMatch.Success -or !$grandMatch.Success -or $pids.Count -lt 2) { throw "INCOMPLETE_MEMBER_SNAPSHOT: $output" }
+    if (!$childMatch.Success -or !$grandMatch.Success -or $memberIds.Count -lt 2) { throw "INCOMPLETE_MEMBER_SNAPSHOT: $output" }
     $childPid = [int]$childMatch.Groups[1].Value
     $grandPid = [int]$grandMatch.Groups[1].Value
-    if ($pids -notcontains $childPid -or $pids -notcontains $grandPid) { throw 'CHILD_NOT_IN_JOB_SNAPSHOT' }
-    if (@($pids | Select-Object -Unique).Count -ne $pids.Count) { throw 'DUPLICATE_MEMBER_PIDS' }
+    if ($memberIds -notcontains $childPid -or $memberIds -notcontains $grandPid) { throw 'CHILD_NOT_IN_JOB_SNAPSHOT' }
+    if (@($memberIds | Select-Object -Unique).Count -ne $memberIds.Count) { throw 'DUPLICATE_MEMBER_PIDS' }
 
     # Retain Windows process handles before killing the controller to prevent PID reuse ambiguity.
-    foreach ($memberPid in $pids) {
+    foreach ($memberPid in $memberIds) {
         $p = Get-Process -Id $memberPid -ErrorAction Stop
         if ($p.HasExited) { throw "MEMBER_EXITED_BEFORE_CRASH: $memberPid" }
         $members += $p
