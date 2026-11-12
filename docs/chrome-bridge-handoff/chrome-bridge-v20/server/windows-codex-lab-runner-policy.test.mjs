@@ -76,3 +76,19 @@ test('abort settles without waiting for child close and awaits verified tree cle
     assert.equal(verified, true);
   } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
+
+test('malformed native launch handle remains reserved and cannot be retried', { skip: process.platform !== 'win32' }, async () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'cb-runner-unknown-'));
+  let launches = 0;
+  const supervisor = {
+    async launchContained() { launches++; return { pid: 12348 }; },
+    async terminateAndVerify() { throw Error('NOT_ATTESTED'); },
+  };
+  try {
+    const runner = createWindowsCodexRunner({ executable: 'C:\\Tools\\codex.exe', supervisor, platform: 'win32' });
+    await assert.rejects(runner.run({ requestId: 'uncertain_1', workspace, prompt: 'test' }), /CODEX_LAUNCH_UNCONFIRMED/);
+    await assert.rejects(runner.run({ requestId: 'uncertain_1', workspace, prompt: 'test' }), /RUNNER_DUPLICATE/);
+    assert.equal(launches, 1);
+    await assert.rejects(runner.run({ requestId: 'invalid id', workspace, prompt: 'test' }), /INVALID_REQUEST_ID/);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+});
