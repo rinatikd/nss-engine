@@ -36,7 +36,8 @@ int wmain(int argc, wchar_t** argv) {
         Sleep(30000);
         return 0;
     }
-    if (argc != 2 || std::wstring(argv[1]) != L"--selftest") return 2;
+    const bool crashController = argc == 2 && std::wstring(argv[1]) == L"--crash-controller";
+    if (argc != 2 || (!crashController && std::wstring(argv[1]) != L"--selftest")) return 2;
     Handle job(CreateJobObjectW(nullptr, nullptr));
     if (!job.h) return 20;
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -138,6 +139,18 @@ int wmain(int argc, wchar_t** argv) {
         for (HANDLE h : members) CloseHandle(h);
         TerminateJobObject(job.h, 9);
         return 35;
+    }
+    if (crashController) {
+        // External Windows runner retains process handles, kills this controller,
+        // and checks every captured member. This process never self-releases job.
+        for (DWORD i = 0; i < all->NumberOfProcessIdsInList; ++i) {
+            std::wcout << L"CRASH_MEMBER_PID=" << static_cast<DWORD>(all->ProcessIdList[i]) << std::endl;
+        }
+        std::wcout << L"CRASH_CHILD_PID=" << child.dwProcessId << std::endl;
+        std::wcout << L"CRASH_GRANDCHILD_PID=" << grandchildPid << std::endl;
+        std::wcout << L"CRASH_CONTROLLER_READY" << std::endl;
+        Sleep(30000);
+        return 37; // Unexpected: test runner should terminate controller first.
     }
     std::wcout << L"JOB_MEMBERS_CAPTURED count=" << members.size() << std::endl;
     std::wcout << L"TREE_PIDS child=" << child.dwProcessId
