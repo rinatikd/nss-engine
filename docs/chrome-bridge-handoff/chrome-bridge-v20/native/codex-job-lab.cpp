@@ -188,6 +188,9 @@ int wmain(int argc, wchar_t** argv) {
     std::wcout << L"CODEX_JOB_CLEANUP_VERIFIED\n";
     std::wcout << L"CODEX_LAB_VERSION_LAUNCH_PASS\n";
     std::wcout << L"CODEX_LAB_CAPTURE_PASS\n";
+    // Close the capture handles before temporary-file cleanup.
+    CloseHandle(output.h); output.h = nullptr;
+    CloseHandle(error.h); error.h = nullptr;
     std::wcout << L"PRODUCTION_CHANGED: NO\n";
     return 0;
 }
