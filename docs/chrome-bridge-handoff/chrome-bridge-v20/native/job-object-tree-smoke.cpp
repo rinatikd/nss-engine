@@ -65,6 +65,25 @@ int wmain(int argc, wchar_t** argv) {
         TerminateJobObject(job.h, 9);
         return 24;
     }
+    // Diagnostic only: enumerate actual Job Object PIDs; do not accept extra
+    // processes as success without understanding where they came from.
+    DWORD bytes = sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 32;
+    std::string pidBuffer(bytes, '\\0');
+    DWORD needed = 0;
+    if (QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
+                                  pidBuffer.data(), bytes, &needed)) {
+        auto* ids = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(pidBuffer.data());
+        std::wcerr << L"JOB_PIDS assigned=" << ids->NumberOfAssignedProcesses
+                   << L" listed=" << ids->NumberOfProcessIdsInList
+                   << L" childPid=" << child.dwProcessId << L" pids=";
+        for (DWORD i = 0; i < ids->NumberOfProcessIdsInList; ++i) {
+            std::wcerr << (i ? L"," : L"") << ids->ProcessIdList[i];
+        }
+        std::wcerr << L"\n";
+    } else {
+        std::wcerr << L"JOB_PIDS_QUERY_FAILED win32=" << GetLastError()
+                   << L" needed=" << needed << L"\n";
+    }
     if (!active(job.h, 2, 5000)) {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
         const BOOL queried = QueryInformationJobObject(job.h, JobObjectBasicAccountingInformation, &info, sizeof(info), nullptr);
