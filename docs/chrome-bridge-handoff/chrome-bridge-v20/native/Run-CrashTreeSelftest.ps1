@@ -56,6 +56,7 @@ try {
     # Retain Windows process handles before killing the controller to prevent PID reuse ambiguity.
     foreach ($memberPid in $memberIds) {
         $p = Get-Process -Id $memberPid -ErrorAction Stop
+        $null = $p.Handle # Open and retain a kernel process handle before controller termination.
         if ($p.HasExited) { throw "MEMBER_EXITED_BEFORE_CRASH: $memberPid" }
         $members += $p
     }
