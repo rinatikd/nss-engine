@@ -81,7 +81,7 @@ int wmain(int argc, wchar_t** argv) {
     Handle childInput(childInputRaw), parentInput(parentInputRaw);
     Handle parentOutput(parentOutputRaw), childOutput(childOutputRaw);
     STARTUPINFOEXW si{};
-    si.StartupInfo.cb = sizeof(si);
+    si.StartupInfo.cb = pipeEcho ? sizeof(STARTUPINFOEXW) : sizeof(STARTUPINFOW);
     std::vector<unsigned char> attributeBuffer;
     bool attributeInitialized = false;
     if (pipeEcho) {
@@ -183,15 +183,23 @@ int wmain(int argc, wchar_t** argv) {
         fail(L"WaitForSingleObject");
         return 8;
     }
+    // A signaled process handle can precede asynchronous Job Object accounting
+    // updates. Poll the OS accounting state with a finite deadline.
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
-    if (!QueryInformationJobObject(job.value, JobObjectBasicAccountingInformation,
-                                   &info, sizeof(info), nullptr)) {
-        fail(L"QueryInformationJobObject"); return 9;
-    }
-    if (info.ActiveProcesses != 0) {
-        std::wcerr << L"Job still has active descendants: " << info.ActiveProcesses << L"\n";
-        TerminateJobObject(job.value, 1);
-        return 10;
+    const ULONGLONG deadline = GetTickCount64() + 3000;
+    for (;;) {
+        if (!QueryInformationJobObject(job.value, JobObjectBasicAccountingInformation,
+                                       &info, sizeof(info), nullptr)) {
+            fail(L"QueryInformationJobObject"); return 9;
+        }
+        if (info.ActiveProcesses == 0) break;
+        if (GetTickCount64() >= deadline) {
+            std::wcerr << L"Job still has active descendants after 3s: "
+                       << info.ActiveProcesses << L"\\n";
+            TerminateJobObject(job.value, 1);
+            return 10;
+        }
+        Sleep(25);
     }
     DWORD exitCode = 0;
     if (!GetExitCodeProcess(process.value, &exitCode) || exitCode != 0) {
