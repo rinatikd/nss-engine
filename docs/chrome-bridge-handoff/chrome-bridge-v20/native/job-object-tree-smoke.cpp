@@ -68,7 +68,7 @@ int wmain(int argc, wchar_t** argv) {
     // Diagnostic only: enumerate actual Job Object PIDs; do not accept extra
     // processes as success without understanding where they came from.
     DWORD bytes = sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 32;
-    std::string pidBuffer(bytes, '\\0');
+    std::string pidBuffer(bytes, '\0');
     DWORD needed = 0;
     if (QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
                                   pidBuffer.data(), bytes, &needed)) {
