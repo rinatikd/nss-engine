@@ -12,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <array>
 #pragma comment(lib, "wintrust.lib")
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "bcrypt.lib")
@@ -80,6 +81,20 @@ static bool noReparse(const std::wstring& file) {
     }
     return true;
 }
+static bool readCaptured(HANDLE file, const wchar_t* label) {
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart > 65536) return false;
+    LARGE_INTEGER origin{};
+    if (!SetFilePointerEx(file, origin, nullptr, FILE_BEGIN)) return false;
+    std::array<char, 65537> buffer{};
+    DWORD count = 0;
+    if (!ReadFile(file, buffer.data(), 65536, &count, nullptr)) return false;
+    std::cout << "CODEX_" << (label[0] == L'O' ? "STDOUT" : "STDERR")
+              << "_BYTES: " << count << "\n";
+    if (count) std::cout.write(buffer.data(), count);
+    if (count && buffer[count - 1] != '\n') std::cout << "\n";
+    return true;
+}
 static bool jobEmpty(HANDLE job) {
     for (int i = 0; i < 120; ++i) {
         JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
@@ -107,9 +122,39 @@ int wmain(int argc, wchar_t** argv) {
     if (!SetInformationJobObject(job.h, JobObjectExtendedLimitInformation, &lim, sizeof(lim))) return 24;
     // No inherited handles, shell, user-supplied arguments, workspace writes or prompt.
     std::wstring command = L"\"" + exe + L"\" --version";
+    // Redirect stdin to NUL; capture stdout/stderr into separate bounded temp files.
+    // File handles are inherited only by the lab child; no shell is involved.
+    wchar_t tempPath[MAX_PATH]{};
+    if (!GetTempPathW(MAX_PATH, tempPath)) return 33;
+    wchar_t stdoutName[MAX_PATH]{}, stderrName[MAX_PATH]{};
+    if (!GetTempFileNameW(tempPath, L"cbo", 0, stdoutName)) return 34;
+    if (!GetTempFileNameW(tempPath, L"cbe", 0, stderrName)) {
+        DeleteFileW(stdoutName);
+        return 35;
+    }
+    struct TempCleanup {
+        std::wstring a, b;
+        ~TempCleanup() { if (!a.empty()) DeleteFileW(a.c_str()); if (!b.empty()) DeleteFileW(b.c_str()); }
+    } cleanup{stdoutName, stderrName};
+    SECURITY_ATTRIBUTES sa{}; sa.nLength = sizeof(sa); sa.bInheritHandle = TRUE;
+    Handle output(CreateFileW(stdoutName, GENERIC_READ | GENERIC_WRITE,
+                              FILE_SHARE_READ, &sa, TRUNCATE_EXISTING,
+                              FILE_ATTRIBUTE_TEMPORARY, nullptr));
+    Handle error(CreateFileW(stderrName, GENERIC_READ | GENERIC_WRITE,
+                             FILE_SHARE_READ, &sa, TRUNCATE_EXISTING,
+                             FILE_ATTRIBUTE_TEMPORARY, nullptr));
+    Handle input(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                             &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+    if (!output.h || output.h == INVALID_HANDLE_VALUE ||
+        !error.h || error.h == INVALID_HANDLE_VALUE ||
+        !input.h || input.h == INVALID_HANDLE_VALUE) return 36;
     STARTUPINFOW si{}; si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = input.h;
+    si.hStdOutput = output.h;
+    si.hStdError = error.h;
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE,
+    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE,
                         CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr,
                         &si, &pi)) { std::wcerr << L"CODEX_CREATE_FAILED\n"; return 25; }
     Handle child(pi.hProcess), thread(pi.hThread);
@@ -135,9 +180,14 @@ int wmain(int argc, wchar_t** argv) {
     // Kill any descendants even after main process exits.
     if (!TerminateJobObject(job.h, 9)) return 30;
     if (!jobEmpty(job.h)) return 31;
+    if (!readCaptured(output.h, L"OUT") || !readCaptured(error.h, L"ERR")) {
+        std::wcerr << L"CODEX_CAPTURE_FAILED_OR_TOO_LARGE\n";
+        return 37;
+    }
     if (exitCode != 0) { std::wcerr << L"CODEX_EXIT_NONZERO\n"; return 32; }
     std::wcout << L"CODEX_JOB_CLEANUP_VERIFIED\n";
     std::wcout << L"CODEX_LAB_VERSION_LAUNCH_PASS\n";
+    std::wcout << L"CODEX_LAB_CAPTURE_PASS\n";
     std::wcout << L"PRODUCTION_CHANGED: NO\n";
     return 0;
 }
