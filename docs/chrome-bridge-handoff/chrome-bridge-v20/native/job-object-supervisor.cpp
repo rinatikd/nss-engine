@@ -18,6 +18,20 @@ struct ScopedHandle {
     ScopedHandle& operator=(const ScopedHandle&) = delete;
 };
 
+// IPC v1.5.2 lab-only durable restart gate. The caller supplies a private
+// absolute marker path; no production defaults or automatic stale-marker reset.
+static bool reserveGate(const wchar_t* marker) {
+    HANDLE file = CreateFileW(marker, GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    const char payload[] = "{\\\"schema\\\":1,\\\"state\\\":\\\"unclean\\\"}";
+    DWORD written = 0;
+    const BOOL ok = WriteFile(file, payload, sizeof(payload) - 1, &written, nullptr) &&
+                    written == sizeof(payload) - 1 && FlushFileBuffers(file);
+    CloseHandle(file);
+    // On write failure leave marker in place: fail closed.
+    return ok != 0;
+}
 static int error(const wchar_t* step, int code) {
     std::wcerr << step << L" failed Win32=" << GetLastError() << L"\n";
     return code;
@@ -105,7 +119,17 @@ int wmain(int argc, wchar_t** argv) {
         if (!n || n >= MAX_PATH) return 19;
         return ipcSelfOnly(exePath);
     }
-    if (argc != 2 || std::wstring(argv[1]) != L"--selftest") {
+    const bool gated = argc == 3 && std::wstring(argv[1]) == L"--gated-selftest";
+    const wchar_t* marker = gated ? argv[2] : nullptr;
+    if (gated) {
+        // This selftest-only mode deliberately refuses an existing marker.
+        if (!marker || !*marker || !reserveGate(marker)) {
+            std::wcerr << L"GATE_DENIED: existing or unwriteable reservation\n";
+            return 40;
+        }
+        std::wcout << L"GATE_RESERVED\n";
+    }
+    if (!gated && (argc != 2 || std::wstring(argv[1]) != L"--selftest")) {
         std::wcerr << L"Usage: job-object-supervisor.exe --selftest\n";
         return 2;
     }
@@ -151,6 +175,12 @@ int wmain(int argc, wchar_t** argv) {
     if (!emptyJob(job.h, 3000)) {
         std::wcerr << L"Job Object accounting not empty\n";
         return 12;
+    }
+    if (gated) {
+        // The child handle has signaled and OS job accounting reached zero.
+        // A deletion failure keeps the reservation and denies further starts.
+        if (!DeleteFileW(marker)) return error(L"DeleteFileW", 41);
+        std::wcout << L"GATE_RELEASED_OS_VERIFIED\n";
     }
     std::wcout << L"SUPERVISOR_SELFTEST_PASS\n";
     return 0;
