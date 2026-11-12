@@ -6,8 +6,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'WINDOWS_ONLY' }
 $identity = Join-Path $PSScriptRoot 'Test-CodexExecutableIdentity.ps1'
+# PowerShell scripts do not necessarily set LASTEXITCODE. Under StrictMode,
+# an unset LASTEXITCODE raises VariableIsUndefined even when the gate passed.
+# The identity script throws on failure; a normal return means success.
 & $identity
-if ($LASTEXITCODE -ne 0) { throw 'IDENTITY_GATE_FAILED' }
 $release = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex\packages\standalone\releases\0.166.0-x86_64-pc-windows-msvc\bin\codex.exe'
 $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (!(Test-Path -LiteralPath $vswhere)) { throw 'MSVC_NOT_INSTALLED' }
