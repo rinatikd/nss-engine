@@ -1,5 +1,4 @@
-# Lab-only Codex executable identity gate. Read-only; never starts Codex.
-# Pinned to operator-measured Codex CLI 0.166.0. No auto-approval on upgrades.
+# Read-only Windows lab Codex identity check. Does NOT execute Codex.
 [CmdletBinding()]
 param(
     [string]$Executable = '',
@@ -13,43 +12,16 @@ if (!$Executable) {
     $cmd = Get-Command codex.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $Executable = $cmd.Source
 }
-if (!$Executable -or !$([IO.Path]::IsPathRooted($Executable)) -or
-    $Executable -match '^[\\/]{2}' -or $Executable -notmatch '^[A-Za-z]:\\' -or
-    [IO.Path]::GetFileName($Executable) -cne 'codex.exe') { Deny 'INVALID_LOCAL_EXECUTABLE_PATH' }
-if ($ExpectedSha256 -notmatch '^[0-9A-Fa-f]{64}
-# Reject path indirection, including junctions in ancestors.
-$entry = Get-Item -LiteralPath $Executable -Force -ErrorAction Stop
-if ($entry.PSIsContainer) { Deny 'NOT_A_FILE' }
-$cursor = $entry
-while ($null -ne $cursor) {
-    if (($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        Deny 'REPARSE_POINT_IN_PATH'
-    }
-    $cursor = $cursor.Parent
+if (!$Executable -or $Executable -notmatch '^[A-Za-z]:\\' -or
+    $Executable -match '^[\\/]{2}' -or
+    [IO.Path]::GetFileName($Executable) -cne 'codex.exe') {
+    Deny 'INVALID_LOCAL_EXECUTABLE_PATH'
 }
-$before = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
-if ($before -ine $ExpectedSha256) { Deny 'HASH_MISMATCH' }
-$signature = Get-AuthenticodeSignature -LiteralPath $Executable
-if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate) { Deny 'SIGNATURE_INVALID' }
-$subject = $signature.SignerCertificate.Subject
-if ($subject -notmatch '(?:^|,\s*)O="?OpenAI OpCo, LLC"?(?:,|$)') {
-    Deny 'UNEXPECTED_SIGNER'
-}
-$after = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
-if ($after -ine $before) { Deny 'FILE_CHANGED_DURING_CHECK' }
-Write-Host 'CODEX_IDENTITY_CHECK_PASS'
-Write-Host 'SIGNATURE_STATUS: Valid'
-Write-Host "SIGNER: $subject"
-Write-Host "SHA256: $after"
-Write-Host 'CODEX_EXECUTION: DISABLED'
-Write-Host 'NOTE: Identity is checked at this instant only; native broker must prevent check-to-launch replacement.'
-) { Deny 'INVALID_EXPECTED_HASH' }
-# Reject non-canonical paths and alternate data streams before file inspection.
+if ($ExpectedSha256 -notmatch '^[0-9A-Fa-f]{64}$') { Deny 'INVALID_EXPECTED_HASH' }
 $canonical = [IO.Path]::GetFullPath($Executable)
 if ($canonical -ine $Executable -or $Executable.Substring(2).Contains(':')) {
     Deny 'NONCANONICAL_PATH'
 }
-# Reject path indirection, including junctions in ancestors.
 $entry = Get-Item -LiteralPath $Executable -Force -ErrorAction Stop
 if ($entry.PSIsContainer) { Deny 'NOT_A_FILE' }
 $cursor = $entry
@@ -74,4 +46,4 @@ Write-Host 'SIGNATURE_STATUS: Valid'
 Write-Host "SIGNER: $subject"
 Write-Host "SHA256: $after"
 Write-Host 'CODEX_EXECUTION: DISABLED'
-Write-Host 'NOTE: Identity is checked at this instant only; native broker must prevent check-to-launch replacement.'
+Write-Host 'NOTE: This check is not atomic with a future launch.'
