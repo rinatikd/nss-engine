@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWindowsCodexRunner } from './windows-codex-lab-runner.mjs';
 
-test('write-enabled lab runner never requests danger-full-access', async () => {
+test('write-enabled lab runner never requests danger-full-access', { skip: process.platform !== 'win32' }, async () => {
   const workspace = mkdtempSync(join(tmpdir(), 'cb-runner-test-'));
   const child = new EventEmitter();
   child.pid = 12345;
