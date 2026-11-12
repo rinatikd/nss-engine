@@ -24,8 +24,8 @@ Write-Host 'Building isolated Job Object smoke...'
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw "MSVC_BUILD_FAILED: $LASTEXITCODE" }
 $cases = @(
   @{ Name = 'normal-exit'; Args = @("$env:WINDIR\System32\cmd.exe") },
-  @{ Name = 'kill-on-close'; Args = @('--kill-on-close', $exe) },
-  @{ Name = 'pipe-echo'; Args = @('--pipe-echo', $exe) }
+  @{ Name = 'kill-on-close'; Args = @('--kill-on-close', ('"' + $exe + '"')) },
+  @{ Name = 'pipe-echo'; Args = @('--pipe-echo', ('"' + $exe + '"')) }
 )
 $results = @()
 foreach ($case in $cases) {
