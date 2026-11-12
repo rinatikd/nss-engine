@@ -15,6 +15,7 @@ New-Item -ItemType Directory -Path $root -Force | Out-Null
 $exe = Join-Path $root 'job-object-supervisor.exe'
 $build = Join-Path $root 'build.cmd'
 $server = Join-Path (Split-Path -Parent $PSScriptRoot) 'server'
+$previousExe = [Environment]::GetEnvironmentVariable('CB_NATIVE_SUPERVISOR_EXE', 'Process')
 try {
     [System.IO.File]::WriteAllLines($build, [string[]]@(
         '@echo off'
@@ -28,11 +29,9 @@ try {
     $env:CB_NATIVE_SUPERVISOR_EXE = $exe
     $tests = @(
         (Join-Path $server 'native-broker-protocol.test.mjs'),
-        (Join-Path $server 'native-selftest-client.test.mjs'),
-        (Join-Path $server 'native-supervisor-failure.test.mjs')
+        (Join-Path $server 'native-selftest-client.test.mjs')
     )
-    # Existing failure tests use a different fixed binary path and may skip.
-    # The dedicated selftest-client test above MUST execute and pass.
+    # Dedicated selftest-client test MUST execute and pass.
     $capture = Join-Path $root 'node-test-output.txt'
     & $node.Source --test $tests[0] $tests[1] *> $capture
     $exit = $LASTEXITCODE
@@ -47,6 +46,6 @@ try {
     Write-Host 'CODEX_EXECUTION: DISABLED'
     Write-Host 'PRODUCTION_CHANGED: NO'
 } finally {
-    Remove-Item Env:CB_NATIVE_SUPERVISOR_EXE -ErrorAction SilentlyContinue
+    [Environment]::SetEnvironmentVariable('CB_NATIVE_SUPERVISOR_EXE', $previousExe, 'Process')
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
