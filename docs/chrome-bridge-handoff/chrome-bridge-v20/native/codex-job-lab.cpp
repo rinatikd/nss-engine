@@ -106,7 +106,9 @@ static bool jobEmpty(HANDLE job) {
     return false;
 }
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 2) { std::wcerr << L"Usage: codex-job-lab.exe DIRECT_RELEASE_CODEX_EXE\n"; return 2; }
+    if (argc != 2 && argc != 4) { std::wcerr << L"Usage: codex-job-lab.exe DIRECT_RELEASE_CODEX_EXE [--exec-lab LAB_DIRECTORY]\\n"; return 2; }
+    const bool execLab = argc == 4;
+    if (execLab && std::wstring(argv[2]) != L"--exec-lab") return 2;
     const std::wstring exe(argv[1]);
     if (exe.find(L'"') != std::wstring::npos ||
         exe.find(L"..") != std::wstring::npos ||
@@ -120,8 +122,20 @@ int wmain(int argc, wchar_t** argv) {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim{};
     lim.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!SetInformationJobObject(job.h, JobObjectExtendedLimitInformation, &lim, sizeof(lim))) return 24;
-    // No inherited handles, shell, user-supplied arguments, workspace writes or prompt.
+    // Fixed prompt only. Read-only Codex sandbox is not an OS isolation boundary.
     std::wstring command = L"\"" + exe + L"\" --version";
+    std::wstring labDir;
+    if (execLab) {
+        labDir = argv[3];
+        if (labDir.size() < 4 || labDir[1] != L':' || labDir[2] != L'\\' ||
+            labDir.find(L"..") != std::wstring::npos ||
+            labDir.find(L'"') != std::wstring::npos) return 38;
+        const DWORD attrs = GetFileAttributesW(labDir.c_str());
+        if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY) ||
+            (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) return 39;
+        command = L"\"" + exe + L"\" exec --skip-git-repo-check --sandbox read-only --ephemeral "
+                  L"\"Reply with exactly: CODEX_BRIDGE_OK\"";
+    }
     // Redirect stdin to NUL; capture stdout/stderr into separate bounded temp files.
     // File handles are inherited only by the lab child; no shell is involved.
     wchar_t tempPath[MAX_PATH]{};
@@ -155,7 +169,8 @@ int wmain(int argc, wchar_t** argv) {
     si.hStdError = error.h;
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE,
-                        CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr,
+                        CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr,
+                        execLab ? labDir.c_str() : nullptr,
                         &si, &pi)) { std::wcerr << L"CODEX_CREATE_FAILED\n"; return 25; }
     Handle child(pi.hProcess), thread(pi.hThread);
     if (!AssignProcessToJobObject(job.h, child.h)) {
@@ -168,7 +183,7 @@ int wmain(int argc, wchar_t** argv) {
         return 27;
     }
     std::wcout << L"CODEX_JOB_LAUNCHED_PID: " << pi.dwProcessId << L"\n";
-    DWORD wait = WaitForSingleObject(child.h, 15000);
+    DWORD wait = WaitForSingleObject(child.h, execLab ? 90000 : 15000);
     if (wait != WAIT_OBJECT_0) {
         TerminateJobObject(job.h, 9);
         WaitForSingleObject(child.h, 5000);
@@ -186,7 +201,12 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (exitCode != 0) { std::wcerr << L"CODEX_EXIT_NONZERO\n"; return 32; }
     std::wcout << L"CODEX_JOB_CLEANUP_VERIFIED\n";
-    std::wcout << L"CODEX_LAB_VERSION_LAUNCH_PASS\n";
+    if (execLab) {
+        std::wcout << L"CODEX_LAB_EXEC_PROCESS_PASS\n";
+        std::wcout << L"CODEX_LAB_RESPONSE_REQUIRES_OPERATOR_REVIEW\n";
+    } else {
+        std::wcout << L"CODEX_LAB_VERSION_LAUNCH_PASS\n";
+    }
     std::wcout << L"CODEX_LAB_CAPTURE_PASS\n";
     // Close the capture handles before temporary-file cleanup.
     CloseHandle(output.h); output.h = nullptr;
