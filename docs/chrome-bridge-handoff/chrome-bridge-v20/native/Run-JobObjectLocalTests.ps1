@@ -1,9 +1,15 @@
 # Local-only Windows Job Object smoke tests. No Codex, MCP or production changes.
 [CmdletBinding()]
-param([string]$Source = (Join-Path $PSScriptRoot 'job-object-smoke.cpp'),
-      [string]$OutputDirectory = (Join-Path $env:TEMP 'chrome-bridge-job-object-smoke'))
+param([string]$Source = '',
+      [string]$OutputDirectory = '')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Source)) {
+  $Source = Join-Path $PSScriptRoot 'job-object-smoke.cpp'
+}
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+  $OutputDirectory = Join-Path ([System.IO.Path]::GetTempPath()) 'chrome-bridge-job-object-smoke'
+}
 if ($env:OS -ne 'Windows_NT') { throw 'WINDOWS_ONLY' }
 if (!(Test-Path -LiteralPath $Source -PathType Leaf)) { throw "Source missing: $Source" }
 $programFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86')
