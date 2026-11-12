@@ -44,3 +44,13 @@ test('newline injection and invalid identifiers are rejected', () => {
   assert.throws(() => decodeBrokerFrame(JSON.stringify(ready) + '\n', id), /IPC_INVALID_FRAME/);
   assert.throws(() => createBrokerFrameDecoder('bad id'), /IPC_INVALID_REQUEST_ID/);
 });
+
+test('native Windows CRLF frame is accepted, embedded CR remains denied', () => {
+  const bytes = Buffer.from(JSON.stringify(ready) + '\r\n');
+  const d = createBrokerFrameDecoder(id);
+  assert.equal(d.push(bytes.subarray(0, bytes.length - 1)), null);
+  assert.deepEqual(d.push(bytes.subarray(bytes.length - 1)), ready);
+  d.end();
+  const invalid = createBrokerFrameDecoder(id);
+  assert.throws(() => invalid.push(Buffer.from('{"type":"rea\rdy"}\r\n')), /IPC_INVALID_FRAME/);
+});
