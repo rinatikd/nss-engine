@@ -29,3 +29,23 @@ test('timeout is capped', async () => {
   await gate.enable({localOperator:true});
   await assert.rejects(gate.authorizeJob({requestId:'5',workspace:'x',prompt:'test',timeoutSec:301}), /INVALID_ADMIN_JOB/);
 });
+
+test('ticket is single-use and bound to exact request', async () => {
+  const gate = createTemporaryAdminGate({ approve: async () => true });
+  await gate.enable({localOperator:true});
+  const args = {requestId:'request-a',workspace:'project-a',prompt:'inspect',timeoutSec:30};
+  const grant = await gate.authorizeJob(args);
+  assert.throws(() => gate.consumeJob({...args,prompt:'modified',ticket:grant.ticket}), /ADMIN_TICKET_MISMATCH/);
+  assert.throws(() => gate.consumeJob({...args,ticket:grant.ticket}), /ADMIN_TICKET_INVALID/);
+  const next = await gate.authorizeJob(args);
+  assert.equal(gate.consumeJob({...args,ticket:next.ticket}),true);
+  assert.throws(() => gate.consumeJob({...args,ticket:next.ticket}), /ADMIN_TICKET_INVALID/);
+});
+test('disable revokes outstanding tickets', async () => {
+  const gate = createTemporaryAdminGate({ approve: async () => true });
+  await gate.enable({localOperator:true});
+  const args = {requestId:'request-b',workspace:'project-b',prompt:'inspect'};
+  const grant = await gate.authorizeJob(args);
+  gate.disable();
+  assert.throws(() => gate.consumeJob({...args,ticket:grant.ticket}), /ADMIN_TICKET_INVALID/);
+});
