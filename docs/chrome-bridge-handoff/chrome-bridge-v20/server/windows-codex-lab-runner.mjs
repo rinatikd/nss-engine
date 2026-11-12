@@ -89,6 +89,8 @@ export function createWindowsCodexRunner({
             const timeout = setTimeout(() => reject(Error('TREE_CLOSE_TIMEOUT')), 10000);
             state.child.once('close', () => { clearTimeout(timeout); resolve(); });
           });
+          // Avoid a dangling rejected close promise if taskkill fails first.
+          closed.catch(() => {});
           try { await killTree(state.child.pid); }
           catch (error) { if (!state.closed) throw error; }
           await closed;
