@@ -23,3 +23,7 @@ Native acknowledgements:
 
 ## Security rule
 Do not treat a `ready` JSON message from an arbitrary binary as proof of containment. Pin the trusted native executable and independently verify its Windows behavior in E2E tests. The transport skeleton is not connected to the dispatcher.
+
+## IPC failure-path tests (staged, not yet run)
+
+Run `node --test server/native-supervisor-failure.test.mjs` after building the native executable. Three real Windows negative tests cover malformed launch JSON, executable allowlist rejection, and EOF of the control channel after `ready`. The disconnect test currently verifies supervisor exit; **it does not independently prove the descendant PID has exited**. An OS-level descendant check, supervisor crash recovery, timeout/cancellation, and separate data/control pipes remain blocking work before general Codex execution.
