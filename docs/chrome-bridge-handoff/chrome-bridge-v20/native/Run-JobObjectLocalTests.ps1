@@ -26,17 +26,19 @@ $exe = Join-Path $outputPath 'job-object-smoke.exe'
 $report = Join-Path $outputPath 'results.json'
 # Invoke via a batch file to avoid nested cmd /s /c quoting on Windows PowerShell 5.1.
 $buildScript = Join-Path $outputPath 'build-job-object-smoke.cmd'
-$buildLines = @(
-  '@echo off',
-  'setlocal',
-  'call "' + $vcvars + '"',
-  'if errorlevel 1 exit /b 10',
-  'cl /nologo /std:c++17 /EHsc /W4 /WX /Fe:"' + $exe + '" "' + $sourcePath + '"',
+$buildLines = [string[]]@(
+  '@echo off'
+  'setlocal'
+  ('call "{0}"' -f $vcvars)
+  'if errorlevel 1 exit /b 10'
+  ('cl /nologo /std:c++17 /EHsc /W4 /WX /Fe:"{0}" "{1}"' -f $exe, $sourcePath)
   'exit /b %errorlevel%'
 )
+if ($buildLines.Count -ne 6) { throw "INVALID_BUILD_SCRIPT_LINE_COUNT: $($buildLines.Count)" }
 [System.IO.File]::WriteAllLines($buildScript, [string[]]$buildLines, [System.Text.Encoding]::ASCII)
 Write-Host 'Building isolated Job Object smoke...'
 Write-Host "Build script: $buildScript"
+Write-Host ('Build command: ' + $buildLines[4])
 & $buildScript
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw "MSVC_BUILD_FAILED: $LASTEXITCODE" }
 $cases = @(
