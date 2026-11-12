@@ -24,9 +24,20 @@ $sourcePath = (Resolve-Path -LiteralPath $Source).Path
 $outputPath = (Resolve-Path -LiteralPath $OutputDirectory).Path
 $exe = Join-Path $outputPath 'job-object-smoke.exe'
 $report = Join-Path $outputPath 'results.json'
-$buildCommand = 'call "' + $vcvars + '" && cl /nologo /std:c++17 /EHsc /W4 /WX /Fe:"' + $exe + '" "' + $sourcePath + '"'
+# Invoke via a batch file to avoid nested cmd /s /c quoting on Windows PowerShell 5.1.
+$buildScript = Join-Path $outputPath 'build-job-object-smoke.cmd'
+$buildLines = @(
+  '@echo off',
+  'setlocal',
+  'call "' + $vcvars + '"',
+  'if errorlevel 1 exit /b 10',
+  'cl /nologo /std:c++17 /EHsc /W4 /WX /Fe:"' + $exe + '" "' + $sourcePath + '"',
+  'exit /b %errorlevel%'
+)
+[System.IO.File]::WriteAllLines($buildScript, [string[]]$buildLines, [System.Text.Encoding]::ASCII)
 Write-Host 'Building isolated Job Object smoke...'
-& cmd.exe /d /s /c ('"' + $buildCommand + '"')
+Write-Host "Build script: $buildScript"
+& cmd.exe /d /c $buildScript
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw "MSVC_BUILD_FAILED: $LASTEXITCODE" }
 $cases = @(
   @{ Name = 'normal-exit'; Args = @("$env:WINDIR\System32\cmd.exe") },
