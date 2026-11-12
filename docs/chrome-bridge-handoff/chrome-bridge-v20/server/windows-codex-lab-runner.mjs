@@ -22,20 +22,35 @@ export function createWindowsCodexRunner({
   const active = new Map();
   return {
     async run({ requestId, workspace, prompt, timeoutSec = 120, signal }) {
+      if (typeof requestId !== 'string' || !requestId) throw Error('INVALID_REQUEST_ID');
       if (active.has(requestId)) throw Error('RUNNER_DUPLICATE');
       if (typeof workspace !== 'string' || !path.win32.isAbsolute(workspace) ||
           workspace.startsWith('\\\\') || !fs.statSync(workspace).isDirectory()) throw Error('INVALID_WORKSPACE');
       if (typeof prompt !== 'string' || !prompt || Buffer.byteLength(prompt) > MAX_PROMPT) throw Error('INVALID_PROMPT');
       if (!Number.isInteger(timeoutSec) || timeoutSec < 1 || timeoutSec > 300) throw Error('INVALID_TIMEOUT');
       if (signal?.aborted) throw Error('JOB_ABORTED');
+      // Reserve before async launch: a duplicate cannot race process creation.
+      const pending = { launching: true };
+      active.set(requestId, pending);
       // No shell; prompt is stdin, never interpolated into a command.
-      const child = await supervisor.launchContained({ executable,
+      let child;
+      try { child = await supervisor.launchContained({ executable,
         args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'danger-full-access', '-C', workspace, '-'],
-        cwd: workspace });
-      if (!child || !Number.isInteger(child.pid) || child.pid <= 0) throw Error('CODEX_LAUNCH_FAILED');
+        cwd: workspace }); }
+      catch (error) { active.delete(requestId); throw error; }
+      if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
+        // The native supervisor must own cleanup if it cannot return a valid handle.
+        active.delete(requestId);
+        throw Error('CODEX_LAUNCH_FAILED');
+      }
       const state = { child, closed: false, cleanup: null };
       child.once('close', () => { state.closed = true; });
       active.set(requestId, state);
+      // An abort during suspended launch must never be ignored.
+      if (signal?.aborted) {
+        await this.terminateTree(requestId);
+        throw Error('JOB_ABORTED');
+      }
       let stdout = '', stderrBytes = 0, stdoutBytes = 0;
       const onAbort = () => { void this.terminateTree(requestId).catch(() => {}); };
       signal?.addEventListener('abort', onAbort, { once: true });
