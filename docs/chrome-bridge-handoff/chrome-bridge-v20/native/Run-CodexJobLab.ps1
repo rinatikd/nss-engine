@@ -1,7 +1,7 @@
 # Builds and runs the lab-only native Codex --version Job Object proof.
 # Never connects to Chrome Bridge or changes production settings.
 [CmdletBinding()]
-param()
+param([switch]$ExecLab)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'WINDOWS_ONLY' }
@@ -30,7 +30,14 @@ try {
     ), [Text.Encoding]::ASCII)
     & $cmd
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw 'CODEX_JOB_LAB_BUILD_FAILED' }
-    & $exe $release
+    if ($ExecLab) {
+        $labDir = Join-Path $root 'empty-workspace'
+        New-Item -ItemType Directory -Path $labDir -Force | Out-Null
+        Write-Host 'CODEX_EXEC_LAB_MODE: FIXED_PROMPT_READ_ONLY'
+        & $exe $release '--exec-lab' $labDir
+    } else {
+        & $exe $release
+    }
     if ($LASTEXITCODE -ne 0) { throw "CODEX_JOB_LAB_FAILED: $LASTEXITCODE" }
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
