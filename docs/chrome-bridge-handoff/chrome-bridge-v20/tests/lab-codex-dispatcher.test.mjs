@@ -40,3 +40,18 @@ test('concurrent duplicate is rejected while approval pending', async () => {
   release(true);
   assert.equal(await pending,'ok');
 });
+
+test('cleanup failure blocks subsequent jobs', async () => {
+  const gate = createTemporaryAdminGate({ approve: async () => true });
+  await gate.enable({ localOperator: true });
+  let launches = 0;
+  const runner = {
+    async run() { launches++; return { text: 'done' }; },
+    async terminateTree() { throw Error('unconfirmed descendants'); },
+  };
+  const dispatch = createLabCodexDispatcher({gate,runner});
+  await assert.rejects(dispatch.submit({requestId:'cleanup-1',workspace:'test',prompt:'inspect'}), /LAB_RUNNER_CLEANUP_UNCONFIRMED/);
+  assert.equal(dispatch.status().cleanupFailed, true);
+  await assert.rejects(dispatch.submit({requestId:'cleanup-2',workspace:'test',prompt:'inspect'}), /LAB_RUNNER_CLEANUP_UNCONFIRMED/);
+  assert.equal(launches, 1);
+});
