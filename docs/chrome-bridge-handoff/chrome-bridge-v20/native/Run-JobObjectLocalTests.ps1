@@ -37,7 +37,7 @@ $buildLines = @(
 [System.IO.File]::WriteAllLines($buildScript, [string[]]$buildLines, [System.Text.Encoding]::ASCII)
 Write-Host 'Building isolated Job Object smoke...'
 Write-Host "Build script: $buildScript"
-& cmd.exe /d /c $buildScript
+& $buildScript
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw "MSVC_BUILD_FAILED: $LASTEXITCODE" }
 $cases = @(
   @{ Name = 'normal-exit'; Args = @("$env:WINDIR\System32\cmd.exe") },
