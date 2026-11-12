@@ -117,10 +117,6 @@ int wmain(int argc, wchar_t** argv) {
     job.h = nullptr;
     if (WaitForSingleObject(cp.h, 5000) != WAIT_OBJECT_0) return 26;
     if (WaitForSingleObject(grandchild.h, 5000) != WAIT_OBJECT_0) return 31;
-    // Independent OS-level check for the entire job: a handle to the grandchild is
-    // unavailable here, so this test proves accounting reached 2 before job close
-    // and the immediate child died; grandchild PID liveness remains to be verified.
-    std::wcout << L"TREE_SMOKE_PARTIAL_PASS: job contained 2 active processes; "
-                  L"job handle closed; child terminated; grandchild PID unverified\n";
+    std::wcout << L"TREE_SMOKE_FULL_PASS: child and grandchild handles signaled after job close\n";
     return 0;
 }
