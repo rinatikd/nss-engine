@@ -9,6 +9,7 @@ export function createLabCodexDispatcher({ gate, runner, audit = () => {}, now =
   }
   const active = new Map();
   const completed = new Set();
+  let cleanupFailed = false;
   const log = (event, requestId) => audit({ at: now(), event, requestId });
   return {
     async submit({ requestId, workspace, prompt, timeoutSec = 120 }) {
@@ -18,6 +19,7 @@ export function createLabCodexDispatcher({ gate, runner, audit = () => {}, now =
           !Number.isSafeInteger(timeoutSec) || timeoutSec < 1 || timeoutSec * 1000 > MAX_JOB_MS) {
         throw Error('INVALID_LAB_JOB');
       }
+      if (cleanupFailed) throw Error('LAB_RUNNER_CLEANUP_UNCONFIRMED');
       if (active.has(requestId) || completed.has(requestId)) throw Error('DUPLICATE_REQUEST');
       // Reserve before the first await: concurrent submissions cannot race the approval dialog.
       active.set(requestId, { state: 'approving' });
@@ -44,7 +46,12 @@ export function createLabCodexDispatcher({ gate, runner, audit = () => {}, now =
         if (state?.state === 'running') {
           state.controller.abort();
           // Confirm descendants have stopped before allowing another job.
-          await runner.terminateTree(requestId);
+          try { await runner.terminateTree(requestId); }
+          catch (error) {
+            cleanupFailed = true;
+            log('cleanup_unconfirmed', requestId);
+            throw Error('LAB_RUNNER_CLEANUP_UNCONFIRMED');
+          }
         }
         active.delete(requestId);
         completed.add(requestId);
@@ -54,10 +61,11 @@ export function createLabCodexDispatcher({ gate, runner, audit = () => {}, now =
       const state = active.get(requestId);
       if (!state || state.state !== 'running') return false;
       state.controller.abort();
-      await runner.terminateTree(requestId);
+      try { await runner.terminateTree(requestId); }
+      catch { cleanupFailed = true; log('cleanup_unconfirmed', requestId); throw Error('LAB_RUNNER_CLEANUP_UNCONFIRMED'); }
       log('cancelled', requestId);
       return true;
     },
-    status() { return { active: active.size, completed: completed.size }; },
+    status() { return { active: active.size, completed: completed.size, cleanupFailed }; },
   };
 }
