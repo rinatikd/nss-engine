@@ -39,13 +39,17 @@ try {
     if ($LASTEXITCODE -ne 20) { throw 'EXPECTED_UNC_DENIED' }
     $tests++
     $link = Join-Path $root 'redirect'
+    $linkCreated = $false
     try {
         New-Item -ItemType SymbolicLink -Path $link -Target $root -ErrorAction Stop | Out-Null
+        $linkCreated = $true
+    } catch {
+        Write-Host 'SYMLINK_CASE_SKIPPED: link creation unavailable'
+    }
+    if ($linkCreated) {
         & $exe (Join-Path $link 'codex.exe')
         if ($LASTEXITCODE -ne 22) { throw 'EXPECTED_REPARSE_DENIED' }
         $tests++
-    } catch [System.UnauthorizedAccessException] {
-        Write-Host 'SYMLINK_CASE_SKIPPED: insufficient local privilege'
     }
     Write-Host "CODEX_EXECUTABLE_PREFLIGHT_PASS: $tests cases"
     Write-Host 'NO_EXECUTABLE_ATTESTATION: signature and hash not verified'
