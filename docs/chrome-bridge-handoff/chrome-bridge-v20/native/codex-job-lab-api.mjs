@@ -31,7 +31,7 @@ function invoke(command, jobId) {
     if (jobId) args.push('-JobId', jobId);
     const child = spawn('powershell.exe', args, { windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
     let output = '', error = '', length = 0, done = false;
-    const timer = setTimeout(() => { child.kill(); reject(new Error('LAB_COMMAND_TIMEOUT')); }, 45000);
+    const timer = setTimeout(() => { if (!done) { done = true; child.kill(); reject(new Error('LAB_COMMAND_TIMEOUT')); } }, 45000);
     for (const [stream, isError] of [[child.stdout, false], [child.stderr, true]]) {
       stream.on('data', chunk => {
         length += chunk.length;
