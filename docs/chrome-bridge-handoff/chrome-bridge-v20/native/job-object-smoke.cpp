@@ -1,0 +1,211 @@
+// Windows-only native containment smoke test. No Codex, no network, no MCP.
+// Build with: cl /std:c++17 /EHsc /W4 job-object-smoke.cpp
+// Usage: job-object-smoke.exe C:\Windows\System32\cmd.exe
+// The child is created suspended and assigned to a kill-on-close Job Object
+// BEFORE it is resumed. This tests basic OS primitives, not full E2E containment.
+#define UNICODE
+#define _UNICODE
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <iostream>
+#include <string>
+#include <vector>
+
+struct Handle {
+    HANDLE value = nullptr;
+    explicit Handle(HANDLE h = nullptr) : value(h) {}
+    ~Handle() { if (value && value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+};
+
+static void fail(const wchar_t* step) {
+    std::wcerr << step << L" failed, Win32=" << GetLastError() << L"\n";
+}
+
+int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && std::wstring(argv[1]) == L"--child-echo") {
+        char input[128]{};
+        DWORD count = 0, written = 0;
+        if (!ReadFile(GetStdHandle(STD_INPUT_HANDLE), input, sizeof(input), &count, nullptr)) return 20;
+        const std::string prefix = "ECHO:";
+        if (!WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), prefix.data(), static_cast<DWORD>(prefix.size()), &written, nullptr)) return 21;
+        if (!WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), input, count, &written, nullptr)) return 22;
+        return 0;
+    }
+    if (argc == 2 && std::wstring(argv[1]) == L"--child-wait") {
+        Sleep(30000);
+        return 0;
+    }
+    if (argc != 2 && !(argc == 3 && (std::wstring(argv[1]) == L"--kill-on-close" || std::wstring(argv[1]) == L"--pipe-echo"))) {
+        std::wcerr << L"Usage: job-object-smoke.exe <absolute-local-exe>\n";
+        return 2;
+    }
+    const bool killOnClose = argc == 3 && std::wstring(argv[1]) == L"--kill-on-close";
+    const bool pipeEcho = argc == 3 && std::wstring(argv[1]) == L"--pipe-echo";
+    const std::wstring exe(argv[argc == 3 ? 2 : 1]);
+    if (exe.size() < 4 || exe[1] != L':' || exe[2] != L'\\' ||
+        exe.rfind(L"\\\\", 0) == 0) {
+        std::wcerr << L"Absolute local executable path required\n";
+        return 2;
+    }
+
+    Handle job(CreateJobObjectW(nullptr, nullptr));
+    if (!job.value) { fail(L"CreateJobObjectW"); return 3; }
+
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job.value, JobObjectExtendedLimitInformation,
+                                 &limits, sizeof(limits))) {
+        fail(L"SetInformationJobObject"); return 4;
+    }
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE childInputRaw = nullptr, parentInputRaw = nullptr;
+    HANDLE parentOutputRaw = nullptr, childOutputRaw = nullptr;
+    if (pipeEcho) {
+        if (!CreatePipe(&childInputRaw, &parentInputRaw, &sa, 0) ||
+            !CreatePipe(&parentOutputRaw, &childOutputRaw, &sa, 0)) {
+            fail(L"CreatePipe");
+            if (childInputRaw) CloseHandle(childInputRaw);
+            if (parentInputRaw) CloseHandle(parentInputRaw);
+            if (parentOutputRaw) CloseHandle(parentOutputRaw);
+            if (childOutputRaw) CloseHandle(childOutputRaw);
+            return 14;
+        }
+        SetHandleInformation(parentInputRaw, HANDLE_FLAG_INHERIT, 0);
+        SetHandleInformation(parentOutputRaw, HANDLE_FLAG_INHERIT, 0);
+    }
+    Handle childInput(childInputRaw), parentInput(parentInputRaw);
+    Handle parentOutput(parentOutputRaw), childOutput(childOutputRaw);
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = pipeEcho ? sizeof(STARTUPINFOEXW) : sizeof(STARTUPINFOW);
+    std::vector<unsigned char> attributeBuffer;
+    bool attributeInitialized = false;
+    if (pipeEcho) {
+        // Explicitly allow only child stdin/stdout handles to be inherited.
+        SIZE_T bytes = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+        if (!bytes) { fail(L"AttributeListSize"); return 17; }
+        attributeBuffer.resize(bytes);
+        si.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeBuffer.data());
+        if (!InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &bytes)) {
+            fail(L"InitializeProcThreadAttributeList"); return 18;
+        }
+        attributeInitialized = true;
+        HANDLE allowed[] = {childInput.value, childOutput.value};
+        if (!UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                       allowed, sizeof(allowed), nullptr, nullptr)) {
+            fail(L"UpdateProcThreadAttribute");
+            DeleteProcThreadAttributeList(si.lpAttributeList);
+            return 19;
+        }
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput = childInput.value;
+        si.StartupInfo.hStdOutput = childOutput.value;
+        si.StartupInfo.hStdError = childOutput.value;
+    }
+    PROCESS_INFORMATION pi{};
+    // Test command is fixed; no user-provided command line, shell or stdin.
+    // Windows CreateProcessW takes mutable command-line storage.
+    std::wstring cmd = L"\"" + exe + (killOnClose ? L"\" --child-wait" : (pipeEcho ? L"\" --child-echo" : L"\" /c exit 0"));
+    const BOOL created = CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, pipeEcho ? TRUE : FALSE,
+                        CREATE_SUSPENDED | CREATE_NO_WINDOW | (pipeEcho ? EXTENDED_STARTUPINFO_PRESENT : 0),
+                        nullptr, nullptr, &si.StartupInfo, &pi);
+    if (attributeInitialized) DeleteProcThreadAttributeList(si.lpAttributeList);
+    if (!created) { fail(L"CreateProcessW"); return 5; }
+    Handle process(pi.hProcess);
+    Handle thread(pi.hThread);
+
+    if (!AssignProcessToJobObject(job.value, process.value)) {
+        fail(L"AssignProcessToJobObject");
+        TerminateProcess(process.value, 1);
+        WaitForSingleObject(process.value, 10000);
+        return 6; // NEVER resume an uncontained process
+    }
+    if (ResumeThread(thread.value) == static_cast<DWORD>(-1)) {
+        fail(L"ResumeThread");
+        TerminateJobObject(job.value, 1);
+        WaitForSingleObject(process.value, 10000);
+        return 7;
+    }
+    if (pipeEcho) {
+        // Release child ends in parent, send a fixed payload, read the echoed reply.
+        CloseHandle(childInput.value); childInput.value = nullptr;
+        CloseHandle(childOutput.value); childOutput.value = nullptr;
+        const char payload[] = "PING";
+        DWORD written = 0, read = 0;
+        char response[32]{};
+        if (!WriteFile(parentInput.value, payload, 4, &written, nullptr) || written != 4) {
+            TerminateJobObject(job.value, 1); return 15;
+        }
+        CloseHandle(parentInput.value); parentInput.value = nullptr;
+        // This smoke child emits at most 9 bytes, far below the pipe capacity.
+        // Wait for process exit BEFORE synchronous pipe reading to avoid
+        // an unbounded ReadFile if the child stalls or retains the pipe.
+        const DWORD pipeWait = WaitForSingleObject(process.value, 10000);
+        if (pipeWait != WAIT_OBJECT_0) {
+            TerminateJobObject(job.value, 1);
+            std::wcerr << L"Pipe echo child did not exit within 10 seconds\\n";
+            return 23;
+        }
+        // Pipe reads may return partial chunks: accumulate until EOF.
+        std::string reply;
+        while (ReadFile(parentOutput.value, response, sizeof(response), &read, nullptr) && read > 0) {
+            reply.append(response, read);
+            if (reply.size() > 32) break;
+        }
+        if (reply != "ECHO:PING") {
+            TerminateJobObject(job.value, 1); return 16;
+        }
+        std::wcout << L"JOB_OBJECT_PIPE_ECHO_OK\n";
+    }
+    if (killOnClose) {
+        // The child must still be alive; closing the last job handle kills it.
+        if (WaitForSingleObject(process.value, 250) != WAIT_TIMEOUT) {
+            std::wcerr << L"Child exited before kill-on-close verification\\n";
+            return 12;
+        }
+        CloseHandle(job.value);
+        job.value = nullptr;
+        if (WaitForSingleObject(process.value, 10000) != WAIT_OBJECT_0) {
+            std::wcerr << L"Kill-on-close did not terminate child\\n";
+            return 13;
+        }
+        std::wcout << L"JOB_OBJECT_KILL_ON_CLOSE_OK\\n";
+        return 0;
+    }
+    const DWORD waited = WaitForSingleObject(process.value, 10000);
+    if (waited != WAIT_OBJECT_0) {
+        TerminateJobObject(job.value, 1);
+        fail(L"WaitForSingleObject");
+        return 8;
+    }
+    // A signaled process handle can precede asynchronous Job Object accounting
+    // updates. Poll the OS accounting state with a finite deadline.
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
+    const ULONGLONG deadline = GetTickCount64() + 3000;
+    for (;;) {
+        if (!QueryInformationJobObject(job.value, JobObjectBasicAccountingInformation,
+                                       &info, sizeof(info), nullptr)) {
+            fail(L"QueryInformationJobObject"); return 9;
+        }
+        if (info.ActiveProcesses == 0) break;
+        if (GetTickCount64() >= deadline) {
+            std::wcerr << L"Job still has active descendants after 3s: "
+                       << info.ActiveProcesses << L"\\n";
+            TerminateJobObject(job.value, 1);
+            return 10;
+        }
+        Sleep(25);
+    }
+    DWORD exitCode = 0;
+    if (!GetExitCodeProcess(process.value, &exitCode) || exitCode != 0) {
+        std::wcerr << L"Child exit code not zero\n";
+        return 11;
+    }
+    std::wcout << L"JOB_OBJECT_SMOKE_OK\n";
+    return 0;
+}

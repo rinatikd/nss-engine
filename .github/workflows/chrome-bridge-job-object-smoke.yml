@@ -1,0 +1,53 @@
+name: Chrome Bridge native Job Object smoke
+on:
+  pull_request:
+    paths:
+      - 'docs/chrome-bridge-handoff/chrome-bridge-v20/native/job-object-smoke.cpp'
+      - '.github/workflows/chrome-bridge-job-object-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-job-object:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover MSVC toolchain
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
+          if (!(Test-Path $vswhere)) { throw "vswhere missing on Windows runner" }
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw "MSVC x64 tools missing on Windows runner" }
+          $vcvars = Join-Path $vs 'VC\\Auxiliary\\Build\\vcvars64.bat'
+          if (!(Test-Path $vcvars)) { throw "vcvars64.bat missing: $vcvars" }
+          "VCVARS_PATH=$vcvars" >> $env:GITHUB_ENV
+          Write-Host "MSVC installation: $vs"
+      - name: Build native Win32 containment smoke
+        shell: cmd
+        run: |
+          call "%VCVARS_PATH%"
+          if errorlevel 1 exit /b 1
+          where cl
+          cl /nologo /std:c++17 /EHsc /W4 /WX /Fe:job-object-smoke.exe docs\\chrome-bridge-handoff\\chrome-bridge-v20\\native\\job-object-smoke.cpp
+          if errorlevel 1 exit /b 1
+      - name: Run smoke without Codex or credentials
+        shell: pwsh
+        run: |
+          & .\job-object-smoke.exe "$env:WINDIR\System32\cmd.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Native Job Object smoke failed with exit code $LASTEXITCODE" }
+      - name: Verify kill-on-close with live child
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path .\job-object-smoke.exe).Path
+          & .\job-object-smoke.exe --kill-on-close $exe
+          if ($LASTEXITCODE -ne 0) { throw "Job Object kill-on-close smoke failed with exit code $LASTEXITCODE" }
+      - name: Verify contained stdin stdout pipes
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path .\job-object-smoke.exe).Path
+          & .\job-object-smoke.exe --pipe-echo $exe
+          if ($LASTEXITCODE -ne 0) { throw "Contained pipe smoke failed with exit code $LASTEXITCODE" }
