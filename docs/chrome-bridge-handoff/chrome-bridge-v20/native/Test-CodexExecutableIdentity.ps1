@@ -30,6 +30,7 @@ $cursorPath = $entry.FullName
 while ($cursorPath) {
     $cursorItem = Get-Item -LiteralPath $cursorPath -Force -ErrorAction Stop
     if (($cursorItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Write-Warning ('Reparse point encountered: ' + $cursorPath)
         Deny 'REPARSE_POINT_IN_PATH'
     }
     $parentPath = Split-Path -Path $cursorPath -Parent
