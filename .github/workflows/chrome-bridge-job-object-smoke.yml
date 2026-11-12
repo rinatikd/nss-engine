@@ -25,3 +25,9 @@ jobs:
         run: |
           & .\job-object-smoke.exe "$env:WINDIR\System32\cmd.exe"
           if ($LASTEXITCODE -ne 0) { throw "Native Job Object smoke failed with exit code $LASTEXITCODE" }
+      - name: Verify kill-on-close with live child
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path .\job-object-smoke.exe).Path
+          & .\job-object-smoke.exe --kill-on-close $exe
+          if ($LASTEXITCODE -ne 0) { throw "Job Object kill-on-close smoke failed with exit code $LASTEXITCODE" }
