@@ -171,7 +171,7 @@ int wmain(int argc, wchar_t** argv) {
         if (count > 0 && count < 16) {
             wchar_t* end = nullptr;
             const unsigned long hold = wcstoul(holdText, &end, 10);
-            if (end != holdText && *end == L'\\0' && hold > 0 && hold <= 15000) {
+            if (end != holdText && *end == L'\0' && hold > 0 && hold <= 15000) {
                 std::wcout << L"GATE_HOLD_ACTIVE\n" << std::flush;
                 Sleep(static_cast<DWORD>(hold));
             }
