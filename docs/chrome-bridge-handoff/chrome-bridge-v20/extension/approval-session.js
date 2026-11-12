@@ -5,8 +5,9 @@ import { ApprovalBroker } from './approval-broker.js';
 export class ApprovalSession {
   constructor({ now = Date.now, setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout } = {}) {
     this.now = now;
-    this.schedule = setTimeoutImpl;
-    this.unschedule = clearTimeoutImpl;
+    // Preserve the global timer receiver in Chromium (instance method calls throw Illegal invocation).
+    this.schedule = (...args) => setTimeoutImpl.call(globalThis, ...args);
+    this.unschedule = (...args) => clearTimeoutImpl.call(globalThis, ...args);
     this.broker = new ApprovalBroker({ now });
     this.waiters = new Map();
   }
