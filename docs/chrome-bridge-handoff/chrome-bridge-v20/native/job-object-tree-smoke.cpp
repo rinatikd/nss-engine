@@ -65,80 +65,53 @@ int wmain(int argc, wchar_t** argv) {
         TerminateJobObject(job.h, 9);
         return 24;
     }
-    if (!active(job.h, 2, 5000)) {
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
-        const BOOL queried = QueryInformationJobObject(job.h, JobObjectBasicAccountingInformation, &info, sizeof(info), nullptr);
-        std::wcerr << L"DIAGNOSTIC: queried=" << queried << L" active="
-                   << (queried ? info.ActiveProcesses : 0) << L" total="
-                   << (queried ? info.TotalProcesses : 0) << L" childExit=";
-        DWORD childExit = STILL_ACTIVE;
-        if (GetExitCodeProcess(cp.h, &childExit)) std::wcerr << childExit;
-        else std::wcerr << L"unavailable";
-        std::wcerr << L" win32=" << GetLastError() << L"\n";
-        // Capture membership at failure time, not immediately after ResumeThread.
-        // The count alone cannot establish parent-child relationships.
-        BYTE members[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 64]{};
-        DWORD required = 0;
-        if (QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
-                                      members, sizeof(members), &required)) {
-            const auto* list = reinterpret_cast<const JOBOBJECT_BASIC_PROCESS_ID_LIST*>(members);
-            std::wcerr << L"JOB_PIDS_AT_FAILURE assigned=" << list->NumberOfAssignedProcesses
-                       << L" listed=" << list->NumberOfProcessIdsInList
-                       << L" childPid=" << child.dwProcessId << L" pids=";
-            for (DWORD i = 0; i < list->NumberOfProcessIdsInList; ++i) {
-                const DWORD pid = static_cast<DWORD>(list->ProcessIdList[i]);
-                std::wcerr << (i ? L"," : L"") << pid;
-                Handle member(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
-                if (member.h) {
-                    wchar_t image[MAX_PATH]{};
-                    DWORD length = MAX_PATH;
-                    if (QueryFullProcessImageNameW(member.h, 0, image, &length)) {
-                        std::wcerr << L" [" << image << L"]";
-                    }
-                }
-            }
-            std::wcerr << L"\n";
-        } else {
-            std::wcerr << L"JOB_PIDS_AT_FAILURE queryError=" << GetLastError()
-                       << L" required=" << required << L"\n";
+    // Console hosts may be assigned to the same job. Select the intended
+    // descendants by their own executable image, not by total job count.
+    // Hold process handles before closing the job to avoid PID-reuse races.
+    Handle grandchild;
+    DWORD grandchildPid = 0;
+    DWORD observedMembers = 0;
+    const ULONGLONG deadline = GetTickCount64() + 5000;
+    while (GetTickCount64() < deadline && !grandchild.h) {
+        BYTE buffer[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 64]{};
+        DWORD needed = 0;
+        if (!QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
+                                       buffer, sizeof(buffer), &needed)) {
+            TerminateJobObject(job.h, 9);
+            return 27;
         }
+        const auto* ids = reinterpret_cast<const JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buffer);
+        observedMembers = ids->NumberOfProcessIdsInList;
+        for (DWORD i = 0; i < ids->NumberOfProcessIdsInList; ++i) {
+            const DWORD pid = static_cast<DWORD>(ids->ProcessIdList[i]);
+            if (pid == child.dwProcessId) continue;
+            Handle candidate(OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                                         FALSE, pid));
+            if (!candidate.h) continue;
+            wchar_t image[MAX_PATH]{};
+            DWORD length = MAX_PATH;
+            if (!QueryFullProcessImageNameW(candidate.h, 0, image, &length)) continue;
+            if (_wcsicmp(image, exe) != 0) continue;
+            if (WaitForSingleObject(candidate.h, 0) != WAIT_TIMEOUT) continue;
+            grandchild.h = candidate.h;
+            candidate.h = nullptr;
+            grandchildPid = pid;
+            break;
+        }
+        if (!grandchild.h) Sleep(25);
+    }
+    if (!grandchild.h || !grandchildPid) {
+        std::wcerr << L"GRANDCHILD_NOT_FOUND members=" << observedMembers << L"\n";
         TerminateJobObject(job.h, 9);
-        std::wcerr << L"Expected two active processes in job (child + grandchild)\n";
         return 25;
     }
-    // Observe both members only after accounting confirms two active processes.
-    // Keep a SYNCHRONIZE handle to the grandchild to avoid PID-reuse races.
-    BYTE buffer[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 32]{};
-    DWORD needed = 0;
-    if (!QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
-                                   buffer, sizeof(buffer), &needed)) {
-        TerminateJobObject(job.h, 9);
-        return 27;
-    }
-    auto* ids = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buffer);
-    if (ids->NumberOfProcessIdsInList != 2) {
-        TerminateJobObject(job.h, 9);
-        return 28;
-    }
-    DWORD grandchildPid = 0;
-    bool foundChild = false;
-    for (DWORD i = 0; i < ids->NumberOfProcessIdsInList; ++i) {
-        const DWORD pid = static_cast<DWORD>(ids->ProcessIdList[i]);
-        if (pid == child.dwProcessId) foundChild = true;
-        else grandchildPid = pid;
-    }
-    if (!foundChild || !grandchildPid) {
+    if (WaitForSingleObject(cp.h, 0) != WAIT_TIMEOUT) {
         TerminateJobObject(job.h, 9);
         return 29;
     }
-    Handle grandchild(OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                                  FALSE, grandchildPid));
-    if (!grandchild.h || WaitForSingleObject(grandchild.h, 0) != WAIT_TIMEOUT) {
-        TerminateJobObject(job.h, 9);
-        return 30;
-    }
     std::wcout << L"TREE_PIDS child=" << child.dwProcessId
-               << L" grandchild=" << grandchildPid << std::endl;
+               << L" grandchild=" << grandchildPid
+               << L" jobMembers=" << observedMembers << std::endl;
     // Close the last job handle, exercising KILL_ON_JOB_CLOSE (not TerminateJobObject).
     CloseHandle(job.h);
     job.h = nullptr;
