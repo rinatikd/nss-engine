@@ -49,15 +49,22 @@ $cases = @(
 $results = @()
 foreach ($case in $cases) {
   Write-Host "Testing $($case.Name)..."
+  # WaitForExit alone can leave ExitCode unavailable on PowerShell 5.1's
+  # Start-Process object. Reopen the exited process by ID when needed.
   $proc = Start-Process -FilePath $exe -ArgumentList $case.Args -PassThru -NoNewWindow
   $timedOut = -not $proc.WaitForExit(15000)
   if ($timedOut) {
-    try { $proc.Kill($true) } catch { Write-Warning "Kill failed: $_" }
+    try { $proc.Kill() } catch { Write-Warning "Kill failed: $_" }
     try { $null = $proc.WaitForExit(5000) } catch {}
   }
-  if (!$timedOut) { $proc.Refresh() }
-  $code = if ($timedOut) { -1 } else { $proc.ExitCode }
-  $passed = !$timedOut -and $code -eq 0
+  $code = $null
+  if (!$timedOut) {
+    $proc.Refresh()
+    try { $code = [int]$proc.ExitCode } catch {
+      Write-Warning "ExitCode unavailable for $($case.Name): $_"
+    }
+  }
+  $passed = (!$timedOut -and $null -ne $code -and $code -eq 0)
   $results += [pscustomobject]@{ test = $case.Name; passed = $passed; exitCode = $code; timedOut = $timedOut }
   Write-Host "$($case.Name): $(if ($passed) { 'PASS' } else { 'FAIL' }) (exit=$code; timeout=$timedOut)"
 }
