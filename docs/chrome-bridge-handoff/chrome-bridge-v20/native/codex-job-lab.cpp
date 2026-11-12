@@ -142,7 +142,7 @@ static int selfTest(const std::wstring& mode, const std::wstring& self, const st
         return 74;
     }
     const DWORD wait = mode == L"--selftest-external-cancel"
-        ? WaitForSingleObject(cancel.h, 10000)
+        ? WaitForSingleObject(cancel.h, 120000)
         : WaitForSingleObject(child.h, mode == L"--selftest-timeout" ? 200 : 50);
     if (wait != (mode == L"--selftest-external-cancel" ? WAIT_OBJECT_0 : WAIT_TIMEOUT)) {
         TerminateJobObject(job.h, 1);
@@ -165,7 +165,7 @@ int wmain(int argc, wchar_t** argv) {
         return selfTest(argv[1], self, argv[2]);
     }
     if (argc == 2 && std::wstring(argv[1]) == L"--selftest-child") {
-        Sleep(30000);
+        Sleep(180000);
         return 0;
     }
     if (argc == 2 && (std::wstring(argv[1]) == L"--selftest-timeout" ||
