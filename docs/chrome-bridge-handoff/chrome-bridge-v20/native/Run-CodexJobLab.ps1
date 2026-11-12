@@ -1,7 +1,7 @@
 # Builds and runs the lab-only native Codex --version Job Object proof.
 # Never connects to Chrome Bridge or changes production settings.
 [CmdletBinding()]
-param([switch]$ExecLab, [switch]$NegativeTests)
+param([switch]$ExecLab, [switch]$NegativeTests, [switch]$ExternalCancelTest)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'WINDOWS_ONLY' }
@@ -30,7 +30,35 @@ try {
     ), [Text.Encoding]::ASCII)
     & $cmd
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw 'CODEX_JOB_LAB_BUILD_FAILED' }
-    if ($NegativeTests) {
+    if ($ExternalCancelTest) {
+        if ($ExecLab -or $NegativeTests) { throw 'TEST_MODES_MUTUALLY_EXCLUSIVE' }
+        $eventName = 'Local\CB_CodexLabCancel_' + [guid]::NewGuid().ToString('N')
+        $stdout = Join-Path $root 'external-cancel.stdout.txt'
+        $stderr = Join-Path $root 'external-cancel.stderr.txt'
+        $proc = Start-Process -FilePath $exe -ArgumentList @('--selftest-external-cancel', $eventName) -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden
+        $signal = $null
+        try {
+            for ($i = 0; $i -lt 100; $i++) {
+                try { $signal = [Threading.EventWaitHandle]::OpenExisting($eventName); break }
+                catch [Threading.WaitHandleCannotBeOpenedException] {
+                    if ($proc.HasExited) { throw 'EXTERNAL_CANCEL_CHILD_EXITED_BEFORE_SIGNAL' }
+                    Start-Sleep -Milliseconds 50
+                }
+            }
+            if (!$signal) { throw 'EXTERNAL_CANCEL_EVENT_NOT_FOUND' }
+            [void]$signal.Set()
+            if (!$proc.WaitForExit(10000)) { throw 'EXTERNAL_CANCEL_PROCESS_TIMEOUT' }
+            Get-Content -LiteralPath $stdout
+            if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+            if ($proc.ExitCode -ne 0) { throw "EXTERNAL_CANCEL_FAILED: $($proc.ExitCode)" }
+            if (!(Select-String -LiteralPath $stdout -SimpleMatch 'CODEX_JOB_EXTERNAL_CANCEL_CLEANUP_PASS' -Quiet)) { throw 'EXTERNAL_CANCEL_PASS_MARKER_MISSING' }
+            Write-Host 'CODEX_EXTERNAL_CANCEL_TEST_PASS'
+        } finally {
+            if ($signal) { $signal.Dispose() }
+            if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            $proc.Dispose()
+        }
+    } elseif ($NegativeTests) {
         if ($ExecLab) { throw 'NEGATIVE_TESTS_AND_EXEC_LAB_MUTUALLY_EXCLUSIVE' }
         & $exe '--selftest-timeout'
         if ($LASTEXITCODE -ne 0) { throw "TIMEOUT_NEGATIVE_TEST_FAILED: $LASTEXITCODE" }
@@ -45,7 +73,7 @@ try {
     } else {
         & $exe $release
     }
-    if (!$NegativeTests -and $LASTEXITCODE -ne 0) { throw "CODEX_JOB_LAB_FAILED: $LASTEXITCODE" }
+    if (!$NegativeTests -and !$ExternalCancelTest -and $LASTEXITCODE -ne 0) { throw "CODEX_JOB_LAB_FAILED: $LASTEXITCODE" }
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
