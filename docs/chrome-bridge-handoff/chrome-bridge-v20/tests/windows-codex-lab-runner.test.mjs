@@ -6,11 +6,17 @@ test('rejects non-Windows and relative executable paths', () => {
   assert.throws(() => createWindowsCodexRunner({ platform:'linux', executable:'C:\\codex.exe' }), /WINDOWS_ONLY/);
   assert.throws(() => createWindowsCodexRunner({ platform:'win32', executable:'codex.exe' }), /INVALID_CODEX_EXECUTABLE/);
 });
+test('refuses launch without native containment', () => {
+  assert.throws(() => createWindowsCodexRunner({platform:'win32',executable:'C:\\\\codex.exe'}), /JOB_OBJECT_SUPERVISOR_REQUIRED/);
+});
 test('rejects nonexistent workspace before spawning', async () => {
   let spawned = false;
   const runner = createWindowsCodexRunner({
     platform:'win32', executable:'C:\\codex.exe',
-    spawnProcess: () => { spawned = true; throw Error('SHOULD_NOT_SPAWN'); },
+    supervisor: {
+      async launchContained() { spawned = true; throw Error('SHOULD_NOT_SPAWN'); },
+      async terminateAndVerify() {},
+    },
   });
   await assert.rejects(runner.run({requestId:'x',workspace:'C:\\not-a-real-workspace-987654',prompt:'test'}));
   assert.equal(spawned,false);
