@@ -24,12 +24,17 @@ if ($canonical -ine $Executable -or $Executable.Substring(2).Contains(':')) {
 }
 $entry = Get-Item -LiteralPath $Executable -Force -ErrorAction Stop
 if ($entry.PSIsContainer) { Deny 'NOT_A_FILE' }
-$cursor = $entry
-while ($null -ne $cursor) {
-    if (($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+# FileInfo in Windows PowerShell 5.1 does not expose .Parent.
+# Traverse using literal parent paths, checking each directory through the drive root.
+$cursorPath = $entry.FullName
+while ($cursorPath) {
+    $cursorItem = Get-Item -LiteralPath $cursorPath -Force -ErrorAction Stop
+    if (($cursorItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         Deny 'REPARSE_POINT_IN_PATH'
     }
-    $cursor = $cursor.Parent
+    $parentPath = Split-Path -Path $cursorPath -Parent
+    if (!$parentPath -or $parentPath -eq $cursorPath) { break }
+    $cursorPath = $parentPath
 }
 $before = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
 if ($before -ine $ExpectedSha256) { Deny 'HASH_MISMATCH' }
