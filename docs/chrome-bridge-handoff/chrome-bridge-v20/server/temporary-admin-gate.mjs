@@ -17,15 +17,18 @@ export function createTemporaryAdminGate({
     throw Error('INVALID_SESSION_TTL');
   }
   let session = null;
+  let generation = 0;
   const tickets = new Map();
   const invalidate = () => { tickets.clear(); };
   const record = (event, fields = {}) => audit({ at: now(), event, ...fields });
   return {
     async enable({ localOperator = false } = {}) {
       if (!localOperator) throw Error('LOCAL_OPERATOR_REQUIRED');
+      const approvalGeneration = ++generation;
       if (!(await approve({ kind: 'enable', expiresInMs: maxSessionMs }))) {
         record('enable_denied'); return false;
       }
+      if (generation !== approvalGeneration) throw Error('ADMIN_APPROVAL_REVOKED');
       invalidate();
       session = { id: crypto.randomUUID(), expiresAt: now() + maxSessionMs };
       record('enabled', { sessionId: session.id, expiresAt: session.expiresAt });
@@ -45,10 +48,15 @@ export function createTemporaryAdminGate({
           !Number.isSafeInteger(timeoutSec) || timeoutSec < 1 ||
           timeoutSec * 1000 > MAX_JOB_MS) throw Error('INVALID_ADMIN_JOB');
       // Never put prompt contents, paths to secrets, or environment values in audit logs.
+      const approvedSessionId = session.id;
       const requestHash = crypto.createHash('sha256').update(requestId).digest('hex');
       const approved = await approve({ kind: 'job', requestHash, workspace, timeoutSec });
       record(approved ? 'job_approved' : 'job_denied', { requestHash, timeoutSec });
       if (!approved) throw Error('LOCAL_JOB_APPROVAL_REQUIRED');
+      if (!session || session.id !== approvedSessionId || now() >= session.expiresAt) {
+        record('job_approval_stale', { requestHash });
+        throw Error('ADMIN_SESSION_INACTIVE');
+      }
       // Opaque one-shot ticket bound to this exact request and approved job parameters.
       const ticket = crypto.randomBytes(32).toString('hex');
       const expiresAt = Math.min(session.expiresAt, now() + timeoutSec * 1000);
@@ -73,6 +81,7 @@ export function createTemporaryAdminGate({
     disable() {
       if (session) record('disabled', { sessionId: session.id });
       session = null;
+      generation++;
       invalidate();
     },
   };
