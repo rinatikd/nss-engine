@@ -31,7 +31,8 @@ export function createWindowsCodexRunner({
         ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'danger-full-access', '-C', workspace, '-'],
         { cwd: workspace, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       if (!child || !Number.isInteger(child.pid) || child.pid <= 0) throw Error('CODEX_LAUNCH_FAILED');
-      const state = { child, stopped: false, cleanup: null };
+      const state = { child, closed: false, cleanup: null };
+      child.once('close', () => { state.closed = true; });
       active.set(requestId, state);
       let stdout = '', stderrBytes = 0, stdoutBytes = 0;
       const onAbort = () => { void this.terminateTree(requestId).catch(() => {}); };
@@ -45,6 +46,7 @@ export function createWindowsCodexRunner({
             if (err) reject(err); else resolve(value);
           };
           child.on('error', () => finish(Error('CODEX_PROCESS_ERROR')));
+          if (signal?.aborted) { onAbort(); return finish(Error('JOB_ABORTED')); }
           child.stdout.on('data', chunk => {
             stdoutBytes += chunk.length;
             if (stdoutBytes > MAX_OUTPUT) { void this.terminateTree(requestId).catch(() => {}); return finish(Error('CODEX_OUTPUT_LIMIT')); }
@@ -80,7 +82,17 @@ export function createWindowsCodexRunner({
       if (!state) return;
       if (state.cleanup) return state.cleanup;
       state.cleanup = (async () => {
-        await killTree(state.child.pid);
+        // A normal process exit does not need taskkill (which would return an error).
+        // For a live parent, request termination and wait for its close event.
+        if (!state.closed) {
+          const closed = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(Error('TREE_CLOSE_TIMEOUT')), 10000);
+            state.child.once('close', () => { clearTimeout(timeout); resolve(); });
+          });
+          try { await killTree(state.child.pid); }
+          catch (error) { if (!state.closed) throw error; }
+          await closed;
+        }
         active.delete(requestId);
       })();
       return state.cleanup;
