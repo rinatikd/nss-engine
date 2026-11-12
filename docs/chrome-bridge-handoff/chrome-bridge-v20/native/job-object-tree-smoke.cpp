@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <iostream>
 #include <string>
+#include <vector>
 struct Handle {
     HANDLE h = nullptr;
     explicit Handle(HANDLE value = nullptr) : h(value) {}
@@ -98,6 +99,47 @@ int wmain(int argc, wchar_t** argv) {
         TerminateJobObject(job.h, 9);
         return 29;
     }
+    // Capture every current job member, including conhost.exe, before job close.
+    // A process handle is stronger evidence than checking a reusable PID later.
+    Sleep(100);
+    BYTE allBuffer[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 64]{};
+    DWORD allNeeded = 0;
+    if (!QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
+                                   allBuffer, sizeof(allBuffer), &allNeeded)) {
+        TerminateJobObject(job.h, 9);
+        return 32;
+    }
+    const auto* all = reinterpret_cast<const JOBOBJECT_BASIC_PROCESS_ID_LIST*>(allBuffer);
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+    if (!QueryInformationJobObject(job.h, JobObjectBasicAccountingInformation,
+                                   &accounting, sizeof(accounting), nullptr) ||
+        all->NumberOfProcessIdsInList != accounting.ActiveProcesses ||
+        accounting.ActiveProcesses < 2) {
+        TerminateJobObject(job.h, 9);
+        return 33;
+    }
+    std::vector<HANDLE> members;
+    bool sawChild = false;
+    bool sawGrandchild = false;
+    for (DWORD i = 0; i < all->NumberOfProcessIdsInList; ++i) {
+        const DWORD pid = static_cast<DWORD>(all->ProcessIdList[i]);
+        HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, pid);
+        if (!h || WaitForSingleObject(h, 0) != WAIT_TIMEOUT) {
+            if (h) CloseHandle(h);
+            for (HANDLE old : members) CloseHandle(old);
+            TerminateJobObject(job.h, 9);
+            return 34;
+        }
+        members.push_back(h);
+        if (pid == child.dwProcessId) sawChild = true;
+        if (pid == grandchildPid) sawGrandchild = true;
+    }
+    if (!sawChild || !sawGrandchild) {
+        for (HANDLE h : members) CloseHandle(h);
+        TerminateJobObject(job.h, 9);
+        return 35;
+    }
+    std::wcout << L"JOB_MEMBERS_CAPTURED count=" << members.size() << std::endl;
     std::wcout << L"TREE_PIDS child=" << child.dwProcessId
                << L" grandchild=" << grandchildPid
                << L" jobMembers=" << observedMembers << std::endl;
@@ -106,6 +148,13 @@ int wmain(int argc, wchar_t** argv) {
     job.h = nullptr;
     if (WaitForSingleObject(cp.h, 5000) != WAIT_OBJECT_0) return 26;
     if (WaitForSingleObject(grandchild.h, 5000) != WAIT_OBJECT_0) return 31;
-    std::wcout << L"TREE_SMOKE_FULL_PASS: child and grandchild handles signaled after job close\n";
+    for (HANDLE h : members) {
+        if (WaitForSingleObject(h, 5000) != WAIT_OBJECT_0) {
+            for (HANDLE held : members) CloseHandle(held);
+            return 36;
+        }
+    }
+    for (HANDLE h : members) CloseHandle(h);
+    std::wcout << L"TREE_SMOKE_FULL_PASS: all captured job member handles signaled after job close\n";
     return 0;
 }
