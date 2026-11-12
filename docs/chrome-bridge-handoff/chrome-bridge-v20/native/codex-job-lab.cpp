@@ -105,7 +105,55 @@ static bool jobEmpty(HANDLE job) {
     }
     return false;
 }
+// Deterministic native Job Object negative-path tests: no Codex, no network.
+static int selfTest(const std::wstring& mode, const std::wstring& self) {
+    Handle job(CreateJobObjectW(nullptr, nullptr));
+    if (!job.h) return 70;
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim{};
+    lim.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job.h, JobObjectExtendedLimitInformation, &lim, sizeof(lim))) return 71;
+    std::wstring cmd = L"\"" + self + L"\" --selftest-child";
+    STARTUPINFOW si{}; si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(self.c_str(), cmd.data(), nullptr, nullptr, FALSE,
+                        CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr,
+                        &si, &pi)) return 72;
+    Handle child(pi.hProcess), thread(pi.hThread);
+    if (!AssignProcessToJobObject(job.h, child.h)) {
+        TerminateProcess(child.h, 1);
+        WaitForSingleObject(child.h, 5000);
+        return 73;
+    }
+    if (ResumeThread(thread.h) == static_cast<DWORD>(-1)) {
+        TerminateJobObject(job.h, 1);
+        return 74;
+    }
+    const DWORD wait = WaitForSingleObject(child.h, mode == L"--selftest-timeout" ? 200 : 50);
+    if (wait != WAIT_TIMEOUT) {
+        TerminateJobObject(job.h, 1);
+        return 75;
+    }
+    if (!TerminateJobObject(job.h, 9)) return 76;
+    if (WaitForSingleObject(child.h, 5000) != WAIT_OBJECT_0) return 77;
+    if (!jobEmpty(job.h)) return 78;
+    if (mode == L"--selftest-timeout") std::wcout << L"CODEX_JOB_TIMEOUT_CLEANUP_PASS\n";
+    else std::wcout << L"CODEX_JOB_CANCEL_CLEANUP_PASS\n";
+    std::wcout << L"CODEX_NOT_INVOKED\n";
+    return 0;
+}
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && std::wstring(argv[1]) == L"--selftest-child") {
+        Sleep(30000);
+        return 0;
+    }
+    if (argc == 2 && (std::wstring(argv[1]) == L"--selftest-timeout" ||
+                      std::wstring(argv[1]) == L"--selftest-cancel")) {
+        wchar_t self[MAX_PATH]{};
+        const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
+        if (!n || n >= MAX_PATH) return 79;
+        return selfTest(argv[1], self);
+    }
+
     if (argc != 2 && argc != 4) { std::wcerr << L"Usage: codex-job-lab.exe DIRECT_RELEASE_CODEX_EXE [--exec-lab LAB_DIRECTORY]\\n"; return 2; }
     const bool execLab = argc == 4;
     if (execLab && std::wstring(argv[2]) != L"--exec-lab") return 2;
