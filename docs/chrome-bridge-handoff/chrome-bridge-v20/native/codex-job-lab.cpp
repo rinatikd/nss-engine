@@ -92,6 +92,12 @@ static bool readCaptured(HANDLE file, const wchar_t* label) {
     std::cout << "CODEX_" << (label[0] == L'O' ? "STDOUT" : "STDERR")
               << "_BYTES: " << count << "\n";
     if (count) std::cout.write(buffer.data(), count);
+    if (label[0] == L'E' && count) {
+        const std::string diagnostic(buffer.data(), count);
+        if (diagnostic.find("usage limit") != std::string::npos) {
+            std::cout << "CODEX_FAILURE_CLASS: USAGE_LIMIT_EXCEEDED\n";
+        }
+    }
     if (count && buffer[count - 1] != '\n') std::cout << "\n";
     return true;
 }
@@ -243,12 +249,12 @@ int wmain(int argc, wchar_t** argv) {
     // Kill any descendants even after main process exits.
     if (!TerminateJobObject(job.h, 9)) return 30;
     if (!jobEmpty(job.h)) return 31;
+    std::wcout << L"CODEX_JOB_CLEANUP_VERIFIED\n";
     if (!readCaptured(output.h, L"OUT") || !readCaptured(error.h, L"ERR")) {
         std::wcerr << L"CODEX_CAPTURE_FAILED_OR_TOO_LARGE\n";
         return 37;
     }
     if (exitCode != 0) { std::wcerr << L"CODEX_EXIT_NONZERO\n"; return 32; }
-    std::wcout << L"CODEX_JOB_CLEANUP_VERIFIED\n";
     if (execLab) {
         std::wcout << L"CODEX_LAB_EXEC_PROCESS_PASS\n";
         std::wcout << L"CODEX_LAB_RESPONSE_REQUIRES_OPERATOR_REVIEW\n";
