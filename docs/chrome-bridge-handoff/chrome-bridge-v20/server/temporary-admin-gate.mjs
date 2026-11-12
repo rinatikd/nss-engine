@@ -17,6 +17,8 @@ export function createTemporaryAdminGate({
     throw Error('INVALID_SESSION_TTL');
   }
   let session = null;
+  const tickets = new Map();
+  const invalidate = () => { tickets.clear(); };
   const record = (event, fields = {}) => audit({ at: now(), event, ...fields });
   return {
     async enable({ localOperator = false } = {}) {
@@ -24,6 +26,7 @@ export function createTemporaryAdminGate({
       if (!(await approve({ kind: 'enable', expiresInMs: maxSessionMs }))) {
         record('enable_denied'); return false;
       }
+      invalidate();
       session = { id: crypto.randomUUID(), expiresAt: now() + maxSessionMs };
       record('enabled', { sessionId: session.id, expiresAt: session.expiresAt });
       return true;
@@ -34,7 +37,7 @@ export function createTemporaryAdminGate({
     },
     async authorizeJob({ requestId, workspace, prompt, timeoutSec = 120 }) {
       if (!session || now() >= session.expiresAt) {
-        session = null; throw Error('ADMIN_SESSION_INACTIVE');
+        session = null; invalidate(); throw Error('ADMIN_SESSION_INACTIVE');
       }
       if (typeof requestId !== 'string' || !requestId ||
           typeof workspace !== 'string' || !workspace ||
@@ -46,12 +49,31 @@ export function createTemporaryAdminGate({
       const approved = await approve({ kind: 'job', requestHash, workspace, timeoutSec });
       record(approved ? 'job_approved' : 'job_denied', { requestHash, timeoutSec });
       if (!approved) throw Error('LOCAL_JOB_APPROVAL_REQUIRED');
-      // Approval must be consumed exactly once by the runner; no implicit retries.
-      return { sessionId: session.id, requestHash, expiresAt: Math.min(session.expiresAt, now() + timeoutSec * 1000) };
+      // Opaque one-shot ticket bound to this exact request and approved job parameters.
+      const ticket = crypto.randomBytes(32).toString('hex');
+      const expiresAt = Math.min(session.expiresAt, now() + timeoutSec * 1000);
+      const fingerprint = crypto.createHash('sha256').update(JSON.stringify([requestId, workspace, prompt, timeoutSec])).digest('hex');
+      tickets.set(ticket, { sessionId: session.id, fingerprint, expiresAt });
+      return { ticket, expiresAt };
+    },
+    consumeJob({ ticket, requestId, workspace, prompt, timeoutSec = 120 }) {
+      const grant = tickets.get(ticket);
+      // Consume before validating to prevent replay after a failed attempt.
+      tickets.delete(ticket);
+      if (!grant || !session || now() >= session.expiresAt || now() >= grant.expiresAt || grant.sessionId !== session.id) {
+        record('ticket_rejected'); throw Error('ADMIN_TICKET_INVALID');
+      }
+      const fingerprint = crypto.createHash('sha256').update(JSON.stringify([requestId, workspace, prompt, timeoutSec])).digest('hex');
+      if (fingerprint !== grant.fingerprint) {
+        record('ticket_mismatch'); throw Error('ADMIN_TICKET_MISMATCH');
+      }
+      record('ticket_consumed');
+      return true;
     },
     disable() {
       if (session) record('disabled', { sessionId: session.id });
       session = null;
+      invalidate();
     },
   };
 }
