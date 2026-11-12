@@ -23,11 +23,16 @@ static void fail(const wchar_t* step) {
 }
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 2) {
+    if (argc == 2 && std::wstring(argv[1]) == L"--child-wait") {
+        Sleep(30000);
+        return 0;
+    }
+    if (argc != 2 && !(argc == 3 && std::wstring(argv[1]) == L"--kill-on-close")) {
         std::wcerr << L"Usage: job-object-smoke.exe <absolute-local-exe>\n";
         return 2;
     }
-    const std::wstring exe(argv[1]);
+    const bool killOnClose = argc == 3;
+    const std::wstring exe(argv[killOnClose ? 2 : 1]);
     if (exe.size() < 4 || exe[1] != L':' || exe[2] != L'\\' ||
         exe.rfind(L"\\\\", 0) == 0) {
         std::wcerr << L"Absolute local executable path required\n";
@@ -69,6 +74,21 @@ int wmain(int argc, wchar_t** argv) {
         TerminateJobObject(job.value, 1);
         WaitForSingleObject(process.value, 10000);
         return 7;
+    }
+    if (killOnClose) {
+        // The child must still be alive; closing the last job handle kills it.
+        if (WaitForSingleObject(process.value, 250) != WAIT_TIMEOUT) {
+            std::wcerr << L"Child exited before kill-on-close verification\\n";
+            return 12;
+        }
+        CloseHandle(job.value);
+        job.value = nullptr;
+        if (WaitForSingleObject(process.value, 10000) != WAIT_OBJECT_0) {
+            std::wcerr << L"Kill-on-close did not terminate child\\n";
+            return 13;
+        }
+        std::wcout << L"JOB_OBJECT_KILL_ON_CLOSE_OK\\n";
+        return 0;
     }
     const DWORD waited = WaitForSingleObject(process.value, 10000);
     if (waited != WAIT_OBJECT_0) {
