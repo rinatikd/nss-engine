@@ -54,11 +54,17 @@ export function createWindowsCodexRunner({
         throw Error('JOB_ABORTED');
       }
       let stdout = '', stderrBytes = 0, stdoutBytes = 0;
+      let deadline;
+      const timeoutFailure = () => { void this.terminateTree(requestId).catch(() => {}); };
       const onAbort = () => { void this.terminateTree(requestId).catch(() => {}); };
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
         return await new Promise((resolve, reject) => {
           let settled = false;
+          deadline = setTimeout(() => {
+            timeoutFailure();
+            finish(Error('CODEX_TIMEOUT'));
+          }, timeoutSec * 1000);
           const finish = (err, value) => {
             if (settled) return;
             settled = true;
@@ -93,7 +99,10 @@ export function createWindowsCodexRunner({
         });
       } finally {
         signal?.removeEventListener('abort', onAbort);
-        // Keep the entry until a confirmed cleanup; caller must also await terminateTree.
+        clearTimeout(deadline);
+        // Never report a successful or failed run as complete before the native
+        // supervisor confirms that the entire Job Object is empty.
+        await this.terminateTree(requestId);
       }
     },
     async terminateTree(requestId) {
