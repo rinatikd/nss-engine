@@ -75,6 +75,33 @@ int wmain(int argc, wchar_t** argv) {
         if (GetExitCodeProcess(cp.h, &childExit)) std::wcerr << childExit;
         else std::wcerr << L"unavailable";
         std::wcerr << L" win32=" << GetLastError() << L"\n";
+        // Capture membership at failure time, not immediately after ResumeThread.
+        // The count alone cannot establish parent-child relationships.
+        BYTE members[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) * 64]{};
+        DWORD required = 0;
+        if (QueryInformationJobObject(job.h, JobObjectBasicProcessIdList,
+                                      members, sizeof(members), &required)) {
+            const auto* list = reinterpret_cast<const JOBOBJECT_BASIC_PROCESS_ID_LIST*>(members);
+            std::wcerr << L"JOB_PIDS_AT_FAILURE assigned=" << list->NumberOfAssignedProcesses
+                       << L" listed=" << list->NumberOfProcessIdsInList
+                       << L" childPid=" << child.dwProcessId << L" pids=";
+            for (DWORD i = 0; i < list->NumberOfProcessIdsInList; ++i) {
+                const DWORD pid = static_cast<DWORD>(list->ProcessIdList[i]);
+                std::wcerr << (i ? L"," : L"") << pid;
+                Handle member(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+                if (member.h) {
+                    wchar_t image[MAX_PATH]{};
+                    DWORD length = MAX_PATH;
+                    if (QueryFullProcessImageNameW(member.h, 0, image, &length)) {
+                        std::wcerr << L" [" << image << L"]";
+                    }
+                }
+            }
+            std::wcerr << L"\n";
+        } else {
+            std::wcerr << L"JOB_PIDS_AT_FAILURE queryError=" << GetLastError()
+                       << L" required=" << required << L"\n";
+        }
         TerminateJobObject(job.h, 9);
         std::wcerr << L"Expected two active processes in job (child + grandchild)\n";
         return 25;
