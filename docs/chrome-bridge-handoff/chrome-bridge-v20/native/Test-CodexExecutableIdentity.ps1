@@ -24,30 +24,78 @@ if ($canonical -ine $Executable -or $Executable.Substring(2).Contains(':')) {
 }
 $entry = Get-Item -LiteralPath $Executable -Force -ErrorAction Stop
 if ($entry.PSIsContainer) { Deny 'NOT_A_FILE' }
-# FileInfo in Windows PowerShell 5.1 does not expose .Parent.
-# Traverse using literal parent paths, checking each directory through the drive root.
+# Permit ONLY the two operator-observed junctions for this pinned release.
+# Verify their exact targets, then hash/sign the direct release file.
+$homePath = [Environment]::GetFolderPath('UserProfile')
+$installBin = Join-Path $env:LOCALAPPDATA 'Programs\OpenAI\Codex\bin'
+$current = Join-Path $homePath '.codex\packages\standalone\current'
+$release = Join-Path $homePath '.codex\packages\standalone\releases\0.166.0-x86_64-pc-windows-msvc'
+$expectedExe = Join-Path $installBin 'codex.exe'
+if ($Executable -ine $expectedExe) { Deny 'UNEXPECTED_INSTALL_PATH' }
+$expectedLinks = @{
+    $installBin = (Join-Path $current 'bin')
+    $current = $release
+}
 $cursorPath = $entry.FullName
+$linksChecked = 0
 while ($cursorPath) {
     $cursorItem = Get-Item -LiteralPath $cursorPath -Force -ErrorAction Stop
-    if (($cursorItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        Write-Warning ('Reparse point encountered: ' + $cursorPath)
-        Deny 'REPARSE_POINT_IN_PATH'
+    $isLink = ($cursorItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($isLink) {
+        if (-not $expectedLinks.ContainsKey($cursorPath)) { Deny 'UNEXPECTED_REPARSE_POINT' }
+        if ($cursorItem.LinkType -ne 'Junction') { Deny 'UNEXPECTED_REPARSE_TYPE' }
+        $targets = @($cursorItem.Target)
+        if ($targets.Count -ne 1 -or $targets[0] -ine $expectedLinks[$cursorPath]) {
+            Deny 'UNEXPECTED_JUNCTION_TARGET'
+        }
+        $linksChecked++
     }
     $parentPath = Split-Path -Path $cursorPath -Parent
     if (!$parentPath -or $parentPath -eq $cursorPath) { break }
     $cursorPath = $parentPath
 }
-$before = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
+if ($linksChecked -ne 1) { Deny 'INSTALL_JUNCTION_NOT_VERIFIED' }
+# Inspect the entire target path separately, including the second junction.
+$cursorPath = Join-Path $current 'bin\codex.exe'
+while ($cursorPath) {
+    $cursorItem = Get-Item -LiteralPath $cursorPath -Force -ErrorAction Stop
+    $isLink = ($cursorItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($isLink) {
+        if ($cursorPath -ine $current -or $cursorItem.LinkType -ne 'Junction') {
+            Deny 'UNEXPECTED_TARGET_REPARSE_POINT'
+        }
+        $targets = @($cursorItem.Target)
+        if ($targets.Count -ne 1 -or $targets[0] -ine $release) { Deny 'UNEXPECTED_RELEASE_TARGET' }
+        $linksChecked++
+    }
+    $parentPath = Split-Path -Path $cursorPath -Parent
+    if (!$parentPath -or $parentPath -eq $cursorPath) { break }
+    $cursorPath = $parentPath
+}
+if ($linksChecked -ne 2) { Deny 'RELEASE_JUNCTION_NOT_VERIFIED' }
+$directExe = Join-Path $release 'bin\codex.exe'
+$cursorPath = $directExe
+while ($cursorPath) {
+    $cursorItem = Get-Item -LiteralPath $cursorPath -Force -ErrorAction Stop
+    if (($cursorItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Deny 'DIRECT_RELEASE_REPARSE_POINT'
+    }
+    $parentPath = Split-Path -Path $cursorPath -Parent
+    if (!$parentPath -or $parentPath -eq $cursorPath) { break }
+    $cursorPath = $parentPath
+}
+$before = (Get-FileHash -LiteralPath $directExe -Algorithm SHA256).Hash
 if ($before -ine $ExpectedSha256) { Deny 'HASH_MISMATCH' }
-$signature = Get-AuthenticodeSignature -LiteralPath $Executable
+$signature = Get-AuthenticodeSignature -LiteralPath $directExe
 if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate) { Deny 'SIGNATURE_INVALID' }
 $subject = $signature.SignerCertificate.Subject
 if ($subject -notmatch '(?:^|,\s*)O="?OpenAI OpCo, LLC"?(?:,|$)') {
     Deny 'UNEXPECTED_SIGNER'
 }
-$after = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
+$after = (Get-FileHash -LiteralPath $directExe -Algorithm SHA256).Hash
 if ($after -ine $before) { Deny 'FILE_CHANGED_DURING_CHECK' }
 Write-Host 'CODEX_IDENTITY_CHECK_PASS'
+Write-Host "PINNED_JUNCTIONS_VERIFIED: $linksChecked"
 Write-Host 'SIGNATURE_STATUS: Valid'
 Write-Host "SIGNER: $subject"
 Write-Host "SHA256: $after"
