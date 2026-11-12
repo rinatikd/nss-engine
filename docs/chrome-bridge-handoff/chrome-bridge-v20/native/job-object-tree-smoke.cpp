@@ -20,17 +20,6 @@ static bool spawn(const wchar_t* exe, const wchar_t* mode, DWORD flags,
     return CreateProcessW(exe, cmd.data(), nullptr, nullptr, FALSE,
                           flags | CREATE_NO_WINDOW, nullptr, nullptr, &si, &out) != 0;
 }
-static bool active(HANDLE job, DWORD expected, DWORD timeout) {
-    const ULONGLONG deadline = GetTickCount64() + timeout;
-    do {
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};
-        if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation,
-                                       &info, sizeof(info), nullptr)) return false;
-        if (info.ActiveProcesses == expected) return true;
-        Sleep(25);
-    } while (GetTickCount64() < deadline);
-    return false;
-}
 int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wstring(argv[1]) == L"--grandchild") {
         Sleep(30000);
