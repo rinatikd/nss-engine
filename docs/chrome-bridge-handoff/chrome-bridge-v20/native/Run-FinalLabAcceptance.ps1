@@ -15,11 +15,27 @@ foreach ($test in $tests) {
     Write-Host "=== IPC FINAL: $($test.Name) ==="
     $file = Join-Path $PSScriptRoot $test.Script
     if (!(Test-Path -LiteralPath $file)) { throw "TEST_MISSING: $file" }
-    $lines = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $file 2>&1)
-    $exit = $LASTEXITCODE
-    foreach ($line in $lines) { Write-Host $line }
+    # Redirect stdout/stderr to separate lab-only files: expected native stderr
+    # must not be promoted to a terminating PowerShell error by 2>&1.
+    $captureDir = Join-Path ([System.IO.Path]::GetTempPath()) ('cb-final-capture-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $captureDir -Force | Out-Null
+    try {
+        $stdout = Join-Path $captureDir 'stdout.txt'
+        $stderr = Join-Path $captureDir 'stderr.txt'
+        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f $file)
+        ) -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        $exit = $proc.ExitCode
+        $outText = if (Test-Path $stdout) { Get-Content -LiteralPath $stdout -Raw } else { '' }
+        $errText = if (Test-Path $stderr) { Get-Content -LiteralPath $stderr -Raw } else { '' }
+        if ($outText) { Write-Host $outText }
+        if ($errText) { Write-Host $errText }
+        $combined = $outText + [Environment]::NewLine + $errText
+    } finally {
+        Remove-Item -LiteralPath $captureDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     if ($exit -ne 0) { throw "FINAL_SUITE_FAILED: $($test.Script) exit=$exit" }
-    if (($lines -join [Environment]::NewLine) -notmatch [regex]::Escape($test.Expected)) {
+    if ($combined -notmatch [regex]::Escape($test.Expected)) {
         throw "FINAL_SUITE_MISSING_PASS_MARKER: $($test.Script)"
     }
     $passed++
