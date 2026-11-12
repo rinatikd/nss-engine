@@ -24,7 +24,7 @@ static bool reserveGate(const wchar_t* marker) {
     HANDLE file = CreateFileW(marker, GENERIC_WRITE, 0, nullptr, CREATE_NEW,
                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
-    const char payload[] = "{\\\"schema\\\":1,\\\"state\\\":\\\"unclean\\\"}";
+    const char payload[] = R"({"schema":1,"state":"unclean"})";
     DWORD written = 0;
     const BOOL ok = WriteFile(file, payload, sizeof(payload) - 1, &written, nullptr) &&
                     written == sizeof(payload) - 1 && FlushFileBuffers(file);
