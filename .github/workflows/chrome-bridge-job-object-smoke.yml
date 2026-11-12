@@ -1,0 +1,27 @@
+name: Chrome Bridge native Job Object smoke
+on:
+  pull_request:
+    paths:
+      - 'docs/chrome-bridge-handoff/chrome-bridge-v20/native/job-object-smoke.cpp'
+      - '.github/workflows/chrome-bridge-job-object-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-job-object:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native Win32 containment smoke
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          cl /nologo /std:c++17 /EHsc /W4 /WX /Fe:job-object-smoke.exe docs\chrome-bridge-handoff\chrome-bridge-v20\native\job-object-smoke.cpp
+      - name: Run smoke without Codex or credentials
+        shell: pwsh
+        run: |
+          & .\job-object-smoke.exe "$env:WINDIR\System32\cmd.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Native Job Object smoke failed with exit code $LASTEXITCODE" }
