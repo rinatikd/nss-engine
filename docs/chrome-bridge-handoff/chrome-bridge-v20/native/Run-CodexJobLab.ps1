@@ -1,7 +1,7 @@
 # Builds and runs the lab-only native Codex --version Job Object proof.
 # Never connects to Chrome Bridge or changes production settings.
 [CmdletBinding()]
-param([switch]$ExecLab)
+param([switch]$ExecLab, [switch]$NegativeTests)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'WINDOWS_ONLY' }
@@ -30,7 +30,14 @@ try {
     ), [Text.Encoding]::ASCII)
     & $cmd
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw 'CODEX_JOB_LAB_BUILD_FAILED' }
-    if ($ExecLab) {
+    if ($NegativeTests) {
+        if ($ExecLab) { throw 'NEGATIVE_TESTS_AND_EXEC_LAB_MUTUALLY_EXCLUSIVE' }
+        & $exe '--selftest-timeout'
+        if ($LASTEXITCODE -ne 0) { throw "TIMEOUT_NEGATIVE_TEST_FAILED: $LASTEXITCODE" }
+        & $exe '--selftest-cancel'
+        if ($LASTEXITCODE -ne 0) { throw "CANCEL_NEGATIVE_TEST_FAILED: $LASTEXITCODE" }
+        Write-Host 'CODEX_JOB_NEGATIVE_TESTS_PASS'
+    } elseif ($ExecLab) {
         $labDir = Join-Path $root 'empty-workspace'
         New-Item -ItemType Directory -Path $labDir -Force | Out-Null
         Write-Host 'CODEX_EXEC_LAB_MODE: FIXED_PROMPT_READ_ONLY'
@@ -38,7 +45,7 @@ try {
     } else {
         & $exe $release
     }
-    if ($LASTEXITCODE -ne 0) { throw "CODEX_JOB_LAB_FAILED: $LASTEXITCODE" }
+    if (!$NegativeTests -and $LASTEXITCODE -ne 0) { throw "CODEX_JOB_LAB_FAILED: $LASTEXITCODE" }
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
