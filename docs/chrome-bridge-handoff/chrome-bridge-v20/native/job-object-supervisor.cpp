@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <iostream>
 #include <string>
+#include <regex>
 
 struct ScopedHandle {
     HANDLE h = nullptr;
@@ -32,10 +33,77 @@ static bool emptyJob(HANDLE job, DWORD timeoutMs) {
         Sleep(25);
     }
 }
+// Deliberately restricted IPC proof: the only permitted executable is this binary,
+// and the only permitted child argument is --contained-child. NOT a general runner.
+// This lightweight parser is for the fixed test protocol, not untrusted production JSON.
+static bool field(const std::string& line, const char* name, std::string& value) {
+    const std::regex pattern(std::string("\"") + name + "\"\\s*:\\s*\"([A-Za-z0-9_-]{1,80})\"");
+    std::smatch match;
+    if (!std::regex_search(line, match, pattern)) return false;
+    value = match[1].str();
+    return true;
+}
+static int ipcSelfOnly(const wchar_t* exe) {
+    std::string line;
+    if (!std::getline(std::cin, line) || line.size() > 65536) return 20;
+    std::string type, requestId;
+    if (!field(line, "type", type) || type != "launch" ||
+        !field(line, "requestId", requestId) ||
+        line.find("\"--contained-child\"") == std::string::npos) return 21;
+    // Require a JSON-escaped copy of the supervisor's own absolute executable path.
+    std::wstring own(exe);
+    std::string escaped;
+    for (wchar_t c : own) {
+        if (c > 127) return 22; // test path must be ASCII for this restricted proof
+        if (c == L'\\') escaped += "\\\\";
+        else if (c == L'"') escaped += "\\\"";
+        else escaped += static_cast<char>(c);
+    }
+    if (line.find("\"executable\":\"" + escaped + "\"") == std::string::npos) return 23;
+    ScopedHandle job(CreateJobObjectW(nullptr, nullptr));
+    if (!job.h) return 24;
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job.h, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) return 25;
+    std::wstring cmd = L"\"" + own + L"\" --contained-child";
+    STARTUPINFOW si{}; si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(exe, cmd.data(), nullptr, nullptr, FALSE,
+                        CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return 26;
+    ScopedHandle process(pi.hProcess), thread(pi.hThread);
+    if (!AssignProcessToJobObject(job.h, process.h)) {
+        TerminateProcess(process.h, 1);
+        WaitForSingleObject(process.h, 5000);
+        return 27;
+    }
+    if (ResumeThread(thread.h) == static_cast<DWORD>(-1)) {
+        TerminateJobObject(job.h, 1);
+        return 28;
+    }
+    std::cout << "{\"type\":\"ready\",\"requestId\":\"" << requestId
+              << "\",\"pid\":" << pi.dwProcessId << ",\"contained\":true}" << std::endl;
+    if (!std::getline(std::cin, line) || line.size() > 65536 ||
+        !field(line, "type", type) || type != "terminate" ||
+        !field(line, "requestId", type) || type != requestId) {
+        // Kill-on-close guarantees cleanup even if parent disconnects.
+        return 29;
+    }
+    if (!TerminateJobObject(job.h, 9)) return 30;
+    if (WaitForSingleObject(process.h, 5000) != WAIT_OBJECT_0 || !emptyJob(job.h, 3000)) return 31;
+    std::cout << "{\"type\":\"terminated\",\"requestId\":\"" << requestId
+              << "\",\"verified\":true,\"activeProcesses\":0}" << std::endl;
+    return 0;
+}
 int wmain(int argc, wchar_t** argv) {
     if (argc == 2 && std::wstring(argv[1]) == L"--contained-child") {
         Sleep(30000);
         return 0;
+    }
+    if (argc == 2 && std::wstring(argv[1]) == L"--stdio-v1") {
+        wchar_t exePath[MAX_PATH]{};
+        DWORD n = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        if (!n || n >= MAX_PATH) return 19;
+        return ipcSelfOnly(exePath);
     }
     if (argc != 2 || std::wstring(argv[1]) != L"--selftest") {
         std::wcerr << L"Usage: job-object-supervisor.exe --selftest\n";
