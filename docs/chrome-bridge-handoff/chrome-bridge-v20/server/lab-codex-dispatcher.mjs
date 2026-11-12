@@ -24,8 +24,10 @@ export function createLabCodexDispatcher({ gate, runner, audit = () => {}, now =
       // Reserve before the first await: concurrent submissions cannot race the approval dialog.
       active.set(requestId, { state: 'approving' });
       let timer;
+      let cleanupError = null;
       try {
         const grant = await gate.authorizeJob({ requestId, workspace, prompt, timeoutSec });
+        if (active.get(requestId)?.cancelled) throw Error('LAB_JOB_CANCELLED');
         gate.consumeJob({ ticket: grant.ticket, requestId, workspace, prompt, timeoutSec });
         const controller = new AbortController();
         const state = { state: 'running', controller };
@@ -49,17 +51,25 @@ export function createLabCodexDispatcher({ gate, runner, audit = () => {}, now =
           try { await runner.terminateTree(requestId); }
           catch (error) {
             cleanupFailed = true;
+            cleanupError = Error('LAB_RUNNER_CLEANUP_UNCONFIRMED', { cause: error });
             log('cleanup_unconfirmed', requestId);
-            throw Error('LAB_RUNNER_CLEANUP_UNCONFIRMED');
           }
         }
         active.delete(requestId);
         completed.add(requestId);
+        if (cleanupError) throw cleanupError;
       }
     },
     async cancel(requestId) {
       const state = active.get(requestId);
-      if (!state || state.state !== 'running') return false;
+      if (!state) return false;
+      if (state.state === 'approving') {
+        // Cannot cancel a local TTY approval prompt, but mark it revoked before it resolves.
+        state.cancelled = true;
+        log('cancel_requested_during_approval', requestId);
+        return true;
+      }
+      if (state.state !== 'running') return false;
       state.controller.abort();
       try { await runner.terminateTree(requestId); }
       catch { cleanupFailed = true; log('cleanup_unconfirmed', requestId); throw Error('LAB_RUNNER_CLEANUP_UNCONFIRMED'); }
