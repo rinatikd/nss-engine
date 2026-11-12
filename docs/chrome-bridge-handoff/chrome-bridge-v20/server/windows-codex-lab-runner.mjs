@@ -33,9 +33,11 @@ export function createWindowsCodexRunner({
       const pending = { launching: true };
       active.set(requestId, pending);
       // No shell; prompt is stdin, never interpolated into a command.
+      // Workspace-write is the maximum permitted development mode here; do not
+      // silently escalate to danger-full-access. Native supervisor is still required.
       let child;
       try { child = await supervisor.launchContained({ executable,
-        args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'danger-full-access', '-C', workspace, '-'],
+        args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-C', workspace, '-'],
         cwd: workspace }); }
       catch (error) { active.delete(requestId); throw error; }
       if (!child || !Number.isInteger(child.pid) || child.pid <= 0) {
