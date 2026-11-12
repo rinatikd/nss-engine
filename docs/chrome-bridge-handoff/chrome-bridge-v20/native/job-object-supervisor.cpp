@@ -164,6 +164,9 @@ int wmain(int argc, wchar_t** argv) {
         return code;
     }
     if (gated) {
+        std::wcout << L"GATE_CHILD_PID=" << processInfo.dwProcessId << std::endl;
+    }
+    if (gated) {
         // Lab-only hold permits deterministic concurrent-launch and crash testing.
         // No arbitrary command execution; only the contained self-child is running.
         wchar_t holdText[16]{};
