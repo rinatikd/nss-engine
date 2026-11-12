@@ -35,6 +35,11 @@ try {
         Start-Sleep -Milliseconds 50
     }
     if (!(Test-Path $out) -or ((Get-Content $out -Raw) -notmatch 'GATE_HOLD_ACTIVE')) { throw 'HOLDER_NOT_READY' }
+    $pidMatch = [regex]::Match((Get-Content $out -Raw), 'GATE_CHILD_PID=(\d+)')
+    if (!$pidMatch.Success) { throw 'CHILD_PID_NOT_REPORTED' }
+    $childPid = [int]$pidMatch.Groups[1].Value
+    $child = Get-Process -Id $childPid -ErrorAction Stop
+    if ($child.HasExited) { throw 'CHILD_ALREADY_EXITED_BEFORE_CRASH' }
     if (!(Test-Path $marker)) { throw 'RESERVATION_NOT_DURABLE' }
     Write-Host 'GATE_RACE_PASS: first supervisor reserved before child completion'
     & $exe --gated-selftest $marker
@@ -43,12 +48,15 @@ try {
     Stop-Process -Id $holder.Id -Force -ErrorAction Stop
     $holder.WaitForExit(5000) | Out-Null
     if (!$holder.HasExited) { throw 'SUPERVISOR_KILL_UNCONFIRMED' }
+    # Retained .NET Process handle guards against PID reuse and proves actual exit.
+    if (!$child.WaitForExit(5000)) { throw "CHILD_SURVIVED_SUPERVISOR_KILL: $childPid" }
+    Write-Host 'GATE_CRASH_PASS: child process handle signaled after supervisor kill'
     if (!(Test-Path $marker)) { throw 'CRASH_MARKER_MISSING' }
     Write-Host 'GATE_CRASH_PASS: durable marker survived supervisor termination'
     & $exe --gated-selftest $marker
     if ($LASTEXITCODE -ne 40 -or !(Test-Path $marker)) { throw "CRASH_RESTART_NOT_DENIED: $LASTEXITCODE" }
     Write-Host 'GATE_CRASH_PASS: restart denied after unverified cleanup'
-    Write-Host 'GATE_CRASH_RACE_SELFTEST_PASS: 4/4'
+    Write-Host 'GATE_CRASH_RACE_SELFTEST_PASS: 5/5'
 } finally {
     Remove-Item Env:\CB_LAB_GATE_HOLD_MS -ErrorAction SilentlyContinue
     if ($null -ne $holder -and !$holder.HasExited) {
