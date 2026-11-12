@@ -31,3 +31,9 @@ jobs:
           $exe = (Resolve-Path .\job-object-smoke.exe).Path
           & .\job-object-smoke.exe --kill-on-close $exe
           if ($LASTEXITCODE -ne 0) { throw "Job Object kill-on-close smoke failed with exit code $LASTEXITCODE" }
+      - name: Verify contained stdin stdout pipes
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path .\job-object-smoke.exe).Path
+          & .\job-object-smoke.exe --pipe-echo $exe
+          if ($LASTEXITCODE -ne 0) { throw "Contained pipe smoke failed with exit code $LASTEXITCODE" }
