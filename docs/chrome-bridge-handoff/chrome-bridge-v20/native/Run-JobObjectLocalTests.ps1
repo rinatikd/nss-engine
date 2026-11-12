@@ -55,10 +55,11 @@ foreach ($case in $cases) {
     try { $proc.Kill($true) } catch { Write-Warning "Kill failed: $_" }
     try { $null = $proc.WaitForExit(5000) } catch {}
   }
+  if (!$timedOut) { $proc.Refresh() }
   $code = if ($timedOut) { -1 } else { $proc.ExitCode }
   $passed = !$timedOut -and $code -eq 0
   $results += [pscustomobject]@{ test = $case.Name; passed = $passed; exitCode = $code; timedOut = $timedOut }
-  Write-Host "$($case.Name): $(if ($passed) { 'PASS' } else { 'FAIL' })"
+  Write-Host "$($case.Name): $(if ($passed) { 'PASS' } else { 'FAIL' }) (exit=$code; timeout=$timedOut)"
 }
 ConvertTo-Json -InputObject $results -Depth 5 | Set-Content -LiteralPath $report -Encoding UTF8
 Write-Host "Report: $report"
