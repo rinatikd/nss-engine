@@ -142,6 +142,15 @@ int wmain(int argc, wchar_t** argv) {
             TerminateJobObject(job.value, 1); return 15;
         }
         CloseHandle(parentInput.value); parentInput.value = nullptr;
+        // This smoke child emits at most 9 bytes, far below the pipe capacity.
+        // Wait for process exit BEFORE synchronous pipe reading to avoid
+        // an unbounded ReadFile if the child stalls or retains the pipe.
+        const DWORD pipeWait = WaitForSingleObject(process.value, 10000);
+        if (pipeWait != WAIT_OBJECT_0) {
+            TerminateJobObject(job.value, 1);
+            std::wcerr << L"Pipe echo child did not exit within 10 seconds\\n";
+            return 23;
+        }
         // Pipe reads may return partial chunks: accumulate until EOF.
         std::string reply;
         while (ReadFile(parentOutput.value, response, sizeof(response), &read, nullptr) && read > 0) {
