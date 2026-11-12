@@ -35,7 +35,18 @@ try {
         $eventName = 'Local\CB_CodexLabCancel_' + [guid]::NewGuid().ToString('N')
         $stdout = Join-Path $root 'external-cancel.stdout.txt'
         $stderr = Join-Path $root 'external-cancel.stderr.txt'
-        $proc = Start-Process -FilePath $exe -ArgumentList @('--selftest-external-cancel', $eventName) -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $exe
+        $psi.Arguments = '--selftest-external-cancel ' + $eventName
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        if (!$proc.Start()) { throw 'EXTERNAL_CANCEL_PROCESS_START_FAILED' }
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
         $signal = $null
         try {
             for ($i = 0; $i -lt 100; $i++) {
@@ -48,10 +59,17 @@ try {
             if (!$signal) { throw 'EXTERNAL_CANCEL_EVENT_NOT_FOUND' }
             [void]$signal.Set()
             if (!$proc.WaitForExit(10000)) { throw 'EXTERNAL_CANCEL_PROCESS_TIMEOUT' }
-            Get-Content -LiteralPath $stdout
-            if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
-            if ($proc.ExitCode -ne 0) { throw "EXTERNAL_CANCEL_FAILED: $($proc.ExitCode)" }
-            if (!(Select-String -LiteralPath $stdout -SimpleMatch 'CODEX_JOB_EXTERNAL_CANCEL_CLEANUP_PASS' -Quiet)) { throw 'EXTERNAL_CANCEL_PASS_MARKER_MISSING' }
+            $proc.WaitForExit()
+            $outputText = $outTask.GetAwaiter().GetResult()
+            $errorText = $errTask.GetAwaiter().GetResult()
+            [IO.File]::WriteAllText($stdout, $outputText, [Text.Encoding]::UTF8)
+            [IO.File]::WriteAllText($stderr, $errorText, [Text.Encoding]::UTF8)
+            Write-Host $outputText
+            if ($errorText) { Write-Host $errorText }
+            $exitCode = [int]$proc.ExitCode
+            Write-Host "CODEX_EXTERNAL_CANCEL_EXIT_CODE: $exitCode"
+            if ($exitCode -ne 0) { throw "EXTERNAL_CANCEL_FAILED: $exitCode" }
+            if (!$outputText.Contains('CODEX_JOB_EXTERNAL_CANCEL_CLEANUP_PASS')) { throw 'EXTERNAL_CANCEL_PASS_MARKER_MISSING' }
             Write-Host 'CODEX_EXTERNAL_CANCEL_TEST_PASS'
         } finally {
             if ($signal) { $signal.Dispose() }
