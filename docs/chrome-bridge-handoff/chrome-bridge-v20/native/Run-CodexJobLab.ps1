@@ -1,7 +1,7 @@
 # Builds and runs the lab-only native Codex --version Job Object proof.
 # Never connects to Chrome Bridge or changes production settings.
 [CmdletBinding()]
-param([switch]$ExecLab, [switch]$NegativeTests, [switch]$ExternalCancelTest)
+param([switch]$ExecLab, [switch]$NegativeTests, [switch]$ExternalCancelTest, [switch]$JobLifecycleTest)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'WINDOWS_ONLY' }
@@ -30,7 +30,60 @@ try {
     ), [Text.Encoding]::ASCII)
     & $cmd
     if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $exe)) { throw 'CODEX_JOB_LAB_BUILD_FAILED' }
-    if ($ExternalCancelTest) {
+    if ($JobLifecycleTest) {
+        if ($ExecLab -or $NegativeTests -or $ExternalCancelTest) { throw 'TEST_MODES_MUTUALLY_EXCLUSIVE' }
+        # Single-session, in-memory job registry; no persistent broker or Chrome Bridge integration.
+        $jobs = @{}
+        $jobId = [guid]::NewGuid().ToString('N')
+        $eventName = 'Local\CB_CodexLabCancel_' + $jobId
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $exe
+        $psi.Arguments = '--selftest-external-cancel ' + $eventName
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $psi
+        if (!$proc.Start()) { throw 'JOB_START_FAILED' }
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        $signal = $null
+        $jobs[$jobId] = @{ Process = $proc; State = 'STARTING'; Event = $eventName }
+        try {
+            Write-Host "CODEX_JOB_ID: $jobId"
+            Write-Host "CODEX_JOB_START: STARTING"
+            for ($i = 0; $i -lt 100; $i++) {
+                try { $signal = [Threading.EventWaitHandle]::OpenExisting($eventName); break }
+                catch [Threading.WaitHandleCannotBeOpenedException] {
+                    if ($proc.HasExited) { throw 'JOB_EXITED_BEFORE_READY' }
+                    Start-Sleep -Milliseconds 50
+                }
+            }
+            if (!$signal) { throw 'JOB_READY_TIMEOUT' }
+            $jobs[$jobId].State = 'RUNNING'
+            Write-Host "CODEX_JOB_STATUS: $($jobs[$jobId].State)"
+            if (!$jobs.ContainsKey($jobId)) { throw 'JOB_ID_NOT_FOUND' }
+            [void]$signal.Set()
+            $jobs[$jobId].State = 'CANCELLING'
+            Write-Host "CODEX_JOB_CANCEL: SIGNAL_SENT"
+            if (!$proc.WaitForExit(10000)) { throw 'JOB_CANCEL_TIMEOUT' }
+            $proc.WaitForExit()
+            $outputText = $outTask.GetAwaiter().GetResult()
+            $errorText = $errTask.GetAwaiter().GetResult()
+            if ($errorText) { Write-Host $errorText }
+            if ($proc.ExitCode -ne 0) { throw "JOB_EXIT_NONZERO: $($proc.ExitCode)" }
+            if (!$outputText.Contains('CODEX_JOB_EXTERNAL_CANCEL_CLEANUP_PASS')) { throw 'JOB_CLEANUP_MARKER_MISSING' }
+            $jobs[$jobId].State = 'CANCELLED'
+            Write-Host "CODEX_JOB_STATUS: $($jobs[$jobId].State)"
+            Write-Host 'CODEX_JOB_LIFECYCLE_TEST_PASS'
+            Write-Host 'CODEX_NOT_INVOKED'
+        } finally {
+            if ($signal) { $signal.Dispose() }
+            if (!$proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            $proc.Dispose()
+        }
+    } elseif ($ExternalCancelTest) {
         if ($ExecLab -or $NegativeTests) { throw 'TEST_MODES_MUTUALLY_EXCLUSIVE' }
         $eventName = 'Local\CB_CodexLabCancel_' + [guid]::NewGuid().ToString('N')
         $stdout = Join-Path $root 'external-cancel.stdout.txt'
@@ -91,7 +144,7 @@ try {
     } else {
         & $exe $release
     }
-    if (!$NegativeTests -and !$ExternalCancelTest -and $LASTEXITCODE -ne 0) { throw "CODEX_JOB_LAB_FAILED: $LASTEXITCODE" }
+    if (!$NegativeTests -and !$ExternalCancelTest -and !$JobLifecycleTest -and $LASTEXITCODE -ne 0) { throw "CODEX_JOB_LAB_FAILED: $LASTEXITCODE" }
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
