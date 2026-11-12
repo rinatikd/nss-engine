@@ -1,0 +1,45 @@
+# Lab-only Codex executable identity gate. Read-only; never starts Codex.
+# Pinned to operator-measured Codex CLI 0.166.0. No auto-approval on upgrades.
+[CmdletBinding()]
+param(
+    [string]$Executable = '',
+    [string]$ExpectedSha256 = '9D563EE4E0441FF9D59D612013E0460DDF8E5709735C2D9F6B98B7EF8CA4EB42'
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+if ($env:OS -ne 'Windows_NT') { throw 'WINDOWS_ONLY' }
+function Deny([string]$Reason) { throw "CODEX_IDENTITY_DENIED: $Reason" }
+if (!$Executable) {
+    $cmd = Get-Command codex.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $Executable = $cmd.Source
+}
+if (!$Executable -or !$([IO.Path]::IsPathRooted($Executable)) -or
+    $Executable -match '^[\\/]{2}' -or $Executable -notmatch '^[A-Za-z]:\\' -or
+    [IO.Path]::GetFileName($Executable) -cne 'codex.exe') { Deny 'INVALID_LOCAL_EXECUTABLE_PATH' }
+if ($ExpectedSha256 -notmatch '^[0-9A-Fa-f]{64}$') { Deny 'INVALID_EXPECTED_HASH' }
+# Reject path indirection, including junctions in ancestors.
+$entry = Get-Item -LiteralPath $Executable -Force -ErrorAction Stop
+if ($entry.PSIsContainer) { Deny 'NOT_A_FILE' }
+$cursor = $entry
+while ($null -ne $cursor) {
+    if (($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        Deny 'REPARSE_POINT_IN_PATH'
+    }
+    $cursor = $cursor.Parent
+}
+$before = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
+if ($before -ine $ExpectedSha256) { Deny 'HASH_MISMATCH' }
+$signature = Get-AuthenticodeSignature -LiteralPath $Executable
+if ($signature.Status -ne 'Valid' -or !$signature.SignerCertificate) { Deny 'SIGNATURE_INVALID' }
+$subject = $signature.SignerCertificate.Subject
+if ($subject -notmatch '(?:^|,\s*)O="?OpenAI OpCo, LLC"?(?:,|$)') {
+    Deny 'UNEXPECTED_SIGNER'
+}
+$after = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
+if ($after -ine $before) { Deny 'FILE_CHANGED_DURING_CHECK' }
+Write-Host 'CODEX_IDENTITY_CHECK_PASS'
+Write-Host 'SIGNATURE_STATUS: Valid'
+Write-Host "SIGNER: $subject"
+Write-Host "SHA256: $after"
+Write-Host 'CODEX_EXECUTION: DISABLED'
+Write-Host 'NOTE: Identity is checked at this instant only; native broker must prevent check-to-launch replacement.'
