@@ -55,3 +55,24 @@ test('nonzero Codex exit still awaits native tree cleanup', { skip: process.plat
     assert.equal(cleaned, true);
   } finally { rmSync(workspace, { recursive: true, force: true }); }
 });
+
+test('abort settles without waiting for child close and awaits verified tree cleanup', { skip: process.platform !== 'win32' }, async () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'cb-runner-abort-'));
+  const controller = new AbortController();
+  const child = new EventEmitter();
+  child.pid = 12347;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = new EventEmitter();
+  child.stdin.end = () => queueMicrotask(() => controller.abort());
+  let verified = false;
+  const supervisor = {
+    async launchContained() { return child; },
+    async terminateAndVerify() { verified = true; },
+  };
+  try {
+    const runner = createWindowsCodexRunner({ executable: 'C:\\Tools\\codex.exe', supervisor, platform: 'win32' });
+    await assert.rejects(runner.run({ requestId: 'abort_1', workspace, prompt: 'test', signal: controller.signal }), /JOB_ABORTED/);
+    assert.equal(verified, true);
+  } finally { rmSync(workspace, { recursive: true, force: true }); }
+});
