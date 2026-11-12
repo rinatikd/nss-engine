@@ -54,7 +54,7 @@ int wmain(int argc, wchar_t** argv) {
     PROCESS_INFORMATION pi{};
     // Test command is fixed; no user-provided command line, shell or stdin.
     // Windows CreateProcessW takes mutable command-line storage.
-    std::wstring cmd = L"\"" + exe + L"\" /c exit 0";
+    std::wstring cmd = L"\"" + exe + (killOnClose ? L"\" --child-wait" : L"\" /c exit 0");
     if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE,
                         CREATE_SUSPENDED | CREATE_NO_WINDOW,
                         nullptr, nullptr, &si, &pi)) {
