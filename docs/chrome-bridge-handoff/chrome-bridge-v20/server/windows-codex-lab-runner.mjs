@@ -1,7 +1,6 @@
 // Experimental Windows-only Codex supervisor for a LOCAL, explicitly approved lab.
 // Not connected to production MCP. Runs with the permissions of the current Windows user.
 // No elevation, credential changes, firewall changes or shell invocation.
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -10,13 +9,16 @@ const MAX_PROMPT = 32768;
 
 export function createWindowsCodexRunner({
   executable,
-  spawnProcess = spawn,
-  killTree = defaultKillTree,
+  supervisor,
   platform = process.platform,
 } = {}) {
   if (platform !== 'win32') throw Error('WINDOWS_ONLY');
   if (typeof executable !== 'string' || !path.win32.isAbsolute(executable) ||
       executable.startsWith('\\\\') || !/\.exe$/i.test(executable)) throw Error('INVALID_CODEX_EXECUTABLE');
+  // A native Windows Job Object supervisor must launch suspended, assign to a job,
+  // then resume. Plain spawn/taskkill is not sufficient process containment.
+  if (!supervisor || typeof supervisor.launchContained !== 'function' ||
+      typeof supervisor.terminateAndVerify !== 'function') throw Error('JOB_OBJECT_SUPERVISOR_REQUIRED');
   const active = new Map();
   return {
     async run({ requestId, workspace, prompt, timeoutSec = 120, signal }) {
@@ -27,9 +29,9 @@ export function createWindowsCodexRunner({
       if (!Number.isInteger(timeoutSec) || timeoutSec < 1 || timeoutSec > 300) throw Error('INVALID_TIMEOUT');
       if (signal?.aborted) throw Error('JOB_ABORTED');
       // No shell; prompt is stdin, never interpolated into a command.
-      const child = spawnProcess(executable,
-        ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'danger-full-access', '-C', workspace, '-'],
-        { cwd: workspace, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = await supervisor.launchContained({ executable,
+        args: ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'danger-full-access', '-C', workspace, '-'],
+        cwd: workspace });
       if (!child || !Number.isInteger(child.pid) || child.pid <= 0) throw Error('CODEX_LAUNCH_FAILED');
       const state = { child, closed: false, cleanup: null };
       child.once('close', () => { state.closed = true; });
@@ -82,34 +84,12 @@ export function createWindowsCodexRunner({
       if (!state) return;
       if (state.cleanup) return state.cleanup;
       state.cleanup = (async () => {
-        // A normal process exit does not need taskkill (which would return an error).
-        // For a live parent, request termination and wait for its close event.
-        if (!state.closed) {
-          const closed = new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(Error('TREE_CLOSE_TIMEOUT')), 10000);
-            state.child.once('close', () => { clearTimeout(timeout); resolve(); });
-          });
-          // Avoid a dangling rejected close promise if taskkill fails first.
-          closed.catch(() => {});
-          try { await killTree(state.child.pid); }
-          catch (error) { if (!state.closed) throw error; }
-          await closed;
-        }
+        // Native supervisor must verify the entire Job Object is empty, even if
+        // the parent already exited. Never infer descendant exit from 'close'.
+        await supervisor.terminateAndVerify(state.child);
         active.delete(requestId);
       })();
       return state.cleanup;
     },
   };
-}
-
-async function defaultKillTree(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) throw Error('INVALID_PID');
-  // taskkill is the built-in Windows process-tree termination utility.
-  // A successful return is not an OS-level guarantee against escaped descendants.
-  await new Promise((resolve, reject) => {
-    const p = spawn('taskkill.exe', ['/PID', String(pid), '/T', '/F'],
-      { shell: false, windowsHide: true, stdio: 'ignore' });
-    p.once('error', () => reject(Error('TREE_KILL_FAILED')));
-    p.once('close', code => code === 0 ? resolve() : reject(Error('TREE_KILL_UNCONFIRMED')));
-  });
 }
