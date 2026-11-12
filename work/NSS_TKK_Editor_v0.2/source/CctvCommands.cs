@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
@@ -13,6 +14,43 @@ public sealed class CctvCommands
 {
     // Resolve inside Analyze()'s try block so invalid installation paths
     // are reported through the command rather than a type initializer failure.
+    const int DefaultTimeoutSeconds=120;
+    const int VkEscape=0x1B;
+    [DllImport("user32.dll")]static extern short GetAsyncKeyState(int virtualKey);
+
+    // Timeout can be set with NSS_CCTV_TIMEOUT_SECONDS (10..3600); anything else falls back to the default.
+    static int TimeoutSeconds()
+    {
+        string? raw=Environment.GetEnvironmentVariable("NSS_CCTV_TIMEOUT_SECONDS");
+        return int.TryParse(raw,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out int value)&&value>=10&&value<=3600?value:DefaultTimeoutSeconds;
+    }
+
+    // Keeps the AutoCAD window alive while waiting. The compile-smoke project has no WinForms, so it defines CCTV_COMPILE_SMOKE.
+    static void PumpMessages()
+    {
+#if !CCTV_COMPILE_SMOKE
+        System.Windows.Forms.Application.DoEvents();
+#endif
+    }
+
+    static void StopProcess(Process process)
+    {
+        try{if(!process.HasExited){process.Kill(true);process.WaitForExit(2000);}}
+        catch(System.Exception e) when(e is System.InvalidOperationException or System.ComponentModel.Win32Exception or System.NotSupportedException){}
+    }
+
+    static string Drain(Task<string> task,int milliseconds)
+    {
+        try{return task.Wait(milliseconds)?task.Result:"";}
+        catch(System.AggregateException){return "";}
+    }
+
+    static void DeleteQuietly(string path)
+    {
+        try{if(File.Exists(path))File.Delete(path);}
+        catch(System.Exception e) when(e is IOException or System.UnauthorizedAccessException){}
+    }
+
     static string GetRoot()
     {
         string? assemblyDirectory=Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
@@ -48,35 +86,89 @@ public sealed class CctvCommands
             string output=Path.Combine(Path.GetDirectoryName(plan)!,Path.GetFileNameWithoutExtension(plan)+"_CCTV_result.dxf");
             if(File.Exists(output))
             {
-                var overwriteOptions=new PromptKeywordOptions("\nOutput already exists. [Overwrite/Cancel] <Cancel>: "){AllowNone=true};
+                var overwriteOptions=new PromptKeywordOptions("\nOutput already exists: "){AllowNone=true};
                 overwriteOptions.Keywords.Add("Overwrite");overwriteOptions.Keywords.Add("Cancel");overwriteOptions.Keywords.Default="Cancel";
                 var overwrite=ed.GetKeywords(overwriteOptions);
                 if(overwrite.Status!=PromptStatus.OK||!overwrite.StringResult.Equals("Overwrite",StringComparison.OrdinalIgnoreCase))return;
             }
-            var daysOptions=new PromptIntegerOptions("\nArchive retention days <30>: "){AllowNone=true,DefaultValue=30,LowerLimit=1,UpperLimit=3650};
-            var daysResult=ed.GetInteger(daysOptions);if(daysResult.Status==PromptStatus.Cancel)return;
+            var daysOptions=new PromptIntegerOptions("\nArchive retention days: "){AllowNone=true,DefaultValue=30,LowerLimit=1,UpperLimit=3650};
+            var daysResult=ed.GetInteger(daysOptions);if(daysResult.Status!=PromptStatus.OK&&daysResult.Status!=PromptStatus.None)return;
             int days=daysResult.Status==PromptStatus.None?30:daysResult.Value;
 
+            // F6: drawing units and wall layers are explicit; the script no longer silently assumes millimetres and treats every layer as a wall.
+            var unitOptions=new PromptKeywordOptions("\nDrawing units: "){AllowNone=true};
+            unitOptions.Keywords.Add("Millimeters");unitOptions.Keywords.Add("Centimeters");unitOptions.Keywords.Add("Meters");unitOptions.Keywords.Default="Millimeters";
+            var unitResult=ed.GetKeywords(unitOptions);
+            if(unitResult.Status!=PromptStatus.OK&&unitResult.Status!=PromptStatus.None)return;
+            string unitName=unitResult.Status==PromptStatus.OK?unitResult.StringResult:"Millimeters";
+            double unitToMeters=unitName.Equals("Meters",StringComparison.OrdinalIgnoreCase)?1.0:unitName.Equals("Centimeters",StringComparison.OrdinalIgnoreCase)?0.01:0.001;
+
+            var layerOptions=new PromptStringOptions("\nWall layers, comma-separated (Enter = all layers): "){AllowSpaces=true};
+            var layerResult=ed.GetString(layerOptions);
+            if(layerResult.Status!=PromptStatus.OK&&layerResult.Status!=PromptStatus.None)return;
+            var layerNames=new System.Collections.Generic.List<string>();
+            if(layerResult.Status==PromptStatus.OK)
+                foreach(string part in layerResult.StringResult.Replace("\r"," ").Replace("\n"," ").Split(','))
+                {
+                    string layerName=part.Trim();
+                    if(layerName.Length>0)layerNames.Add(layerName);
+                }
+            string layers=string.Join(",",layerNames);
+            if(layers.Length>500)throw new ArgumentException("Wall layer list is too long (limit 500 characters).");
+            if(layers.Length==0)Print(ed,"\nNo wall layers given: every layer in the plan is treated as a wall.");
+
+            // The script writes to a private temporary file; the real output is replaced only after a verified success.
+            string tempOutput=output+"."+Guid.NewGuid().ToString("N")+".tmp";
+            DateTime startedUtc=DateTime.UtcNow;
             var start=new ProcessStartInfo(python)
             {
                 UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,
-                RedirectStandardError=true,WorkingDirectory=module
+                RedirectStandardError=true,StandardOutputEncoding=System.Text.Encoding.UTF8,
+                StandardErrorEncoding=System.Text.Encoding.UTF8,WorkingDirectory=module
             };
             start.ArgumentList.Add("-E");start.ArgumentList.Add("-s");start.ArgumentList.Add("-X");start.ArgumentList.Add("utf8");
-            start.ArgumentList.Add(script);start.ArgumentList.Add(plan);start.ArgumentList.Add(cameras);start.ArgumentList.Add(output);
+            start.ArgumentList.Add(script);start.ArgumentList.Add(plan);start.ArgumentList.Add(cameras);start.ArgumentList.Add(tempOutput);
             start.ArgumentList.Add("--days");start.ArgumentList.Add(days.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            start.ArgumentList.Add("--unit");start.ArgumentList.Add(unitToMeters.ToString("R",System.Globalization.CultureInfo.InvariantCulture));
+            if(layers.Length>0){start.ArgumentList.Add("--layers");start.ArgumentList.Add(layers);}
             start.Environment["PYTHONIOENCODING"]="utf-8";
             using var process=Process.Start(start)??throw new IOException("Python process did not start");
-            Task<string> stdout=process.StandardOutput.ReadToEndAsync();Task<string> stderr=process.StandardError.ReadToEndAsync();
-            if(!process.WaitForExit(120000))
+            try
             {
-                process.Kill(true);process.WaitForExit();
-                throw new TimeoutException("CCTV calculation exceeded 120 seconds.");
+                Task<string> stdout=process.StandardOutput.ReadToEndAsync();Task<string> stderr=process.StandardError.ReadToEndAsync();
+                int timeoutSeconds=TimeoutSeconds();
+                DateTime deadline=DateTime.UtcNow.AddSeconds(timeoutSeconds);
+                string? stopReason=null;
+                Print(ed,"\nCCTV calculation started. Press ESC to cancel (timeout "+timeoutSeconds+" s).");
+                while(!process.WaitForExit(100))
+                {
+                    PumpMessages();
+                    if((GetAsyncKeyState(VkEscape)&0x8000)!=0){stopReason="cancelled";break;}
+                    if(DateTime.UtcNow>=deadline){stopReason="timeout";break;}
+                }
+                // If the process finished between the last poll and the stop check, treat it as completed.
+                if(stopReason!=null&&!process.HasExited)
+                {
+                    StopProcess(process);
+                    string partialErrors=Drain(stderr,2000);
+                    if(stopReason=="cancelled"){Print(ed,"\nCCTV calculation cancelled. No result was written.");return;}
+                    throw new TimeoutException("CCTV calculation exceeded "+timeoutSeconds+" seconds. "+partialErrors);
+                }
+                process.WaitForExit();
+                string report=Drain(stdout,5000);string errors=Drain(stderr,5000);
+                if(process.ExitCode!=0)throw new InvalidDataException("CCTV calculation failed (exit "+process.ExitCode+"): "+errors+report);
+                var produced=new FileInfo(tempOutput);
+                if(!produced.Exists||produced.Length==0||produced.LastWriteTimeUtc<startedUtc.AddSeconds(-2))
+                    throw new InvalidDataException("Calculation finished without producing a fresh output DXF.");
+                File.Move(tempOutput,output,true);
+                Print(ed,"\nCCTV calculation complete. Source plan and active drawing were not modified.\nResult: "+output+"\n"+report);
             }
-            string report=stdout.GetAwaiter().GetResult();string errors=stderr.GetAwaiter().GetResult();
-            if(process.ExitCode!=0)throw new InvalidDataException("CCTV calculation failed (exit "+process.ExitCode+"): "+errors+report);
-            if(!File.Exists(output))throw new InvalidDataException("Calculation finished without producing the output DXF.");
-            Print(ed,"\nCCTV calculation complete. Source plan and active drawing were not modified.\nResult: "+output+"\n"+report);
+            finally
+            {
+                // Any exit path: no stray Python process and no stray temporary file (after a successful move it no longer exists).
+                StopProcess(process);
+                DeleteQuietly(tempOutput);
+            }
         }
         catch(System.Exception ex){Print(ed,"\nNSS_CCTV_ANALYZE failed: "+ex.Message);}
     }
@@ -85,7 +177,7 @@ public sealed class CctvCommands
     {
         var options=new PromptOpenFileOptions("\n"+prompt+": "){Filter=filter};
         var result=ed.GetFileNameForOpen(options);
-        if(result.Status==PromptStatus.Cancel)return null;
+        if(result.Status!=PromptStatus.OK)return null;
         string path=Path.GetFullPath(result.StringResult);
         if(!File.Exists(path))throw new FileNotFoundException("Selected file does not exist.",path);
         return path;

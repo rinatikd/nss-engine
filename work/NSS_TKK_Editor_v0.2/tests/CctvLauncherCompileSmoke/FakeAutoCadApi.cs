@@ -31,6 +31,11 @@ namespace Autodesk.AutoCAD.EditorInput
         public int LowerLimit { get; set; }
         public int UpperLimit { get; set; }
     }
+    public sealed class PromptStringOptions
+    {
+        public PromptStringOptions(string message) {}
+        public bool AllowSpaces { get; set; }
+    }
     public sealed class PromptOpenFileOptions
     {
         public PromptOpenFileOptions(string message) {}
@@ -47,6 +52,7 @@ namespace Autodesk.AutoCAD.EditorInput
         public void WriteMessage(string format, params object[] args) {}
         public PromptResult GetKeywords(PromptKeywordOptions p) => new();
         public PromptResult GetInteger(PromptIntegerOptions p) => new();
+        public PromptResult GetString(PromptStringOptions p) => new();
         public PromptResult GetFileNameForOpen(PromptOpenFileOptions p) => new();
     }
 }

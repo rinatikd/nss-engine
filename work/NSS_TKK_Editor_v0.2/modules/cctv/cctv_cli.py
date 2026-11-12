@@ -44,6 +44,6 @@ if not cams:
 rows = c.report_rows(cams, a.days)
 tot = c.storage_total_tb(cams, a.days, 0.2)
 c.build_drawing(cams, walls, a.out, a.unit, a.level)
-for r in rows: print(r)
+for r in rows: print("; ".join(f"{k}: {v}" for k, v in r.items()))
 print(f"Архив {a.days} сут (+20%): {tot:.3f} ТБ")
 if a.xlsx: c.write_xlsx(rows, a.xlsx, tot, a.days)
