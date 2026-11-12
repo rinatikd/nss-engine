@@ -142,8 +142,13 @@ int wmain(int argc, wchar_t** argv) {
             TerminateJobObject(job.value, 1); return 15;
         }
         CloseHandle(parentInput.value); parentInput.value = nullptr;
-        if (!ReadFile(parentOutput.value, response, sizeof(response), &read, nullptr) ||
-            std::string(response, read) != "ECHO:PING") {
+        // Pipe reads may return partial chunks: accumulate until EOF.
+        std::string reply;
+        while (ReadFile(parentOutput.value, response, sizeof(response), &read, nullptr) && read > 0) {
+            reply.append(response, read);
+            if (reply.size() > 32) break;
+        }
+        if (reply != "ECHO:PING") {
             TerminateJobObject(job.value, 1); return 16;
         }
         std::wcout << L"JOB_OBJECT_PIPE_ECHO_OK\n";
