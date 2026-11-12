@@ -112,7 +112,14 @@ static bool jobEmpty(HANDLE job) {
     return false;
 }
 // Deterministic native Job Object negative-path tests: no Codex, no network.
-static int selfTest(const std::wstring& mode, const std::wstring& self) {
+static int selfTest(const std::wstring& mode, const std::wstring& self, const std::wstring& cancelName = L"") {
+    Handle cancel;
+    if (mode == L"--selftest-external-cancel") {
+        if (cancelName.rfind(L"Local\\CB_CodexLabCancel_", 0) != 0 || cancelName.size() > 110) return 80;
+        cancel.h = CreateEventW(nullptr, TRUE, FALSE, cancelName.c_str());
+        if (!cancel.h || GetLastError() == ERROR_ALREADY_EXISTS) return 81;
+        std::wcout << L"CODEX_EXTERNAL_CANCEL_READY\n" << std::flush;
+    }
     Handle job(CreateJobObjectW(nullptr, nullptr));
     if (!job.h) return 70;
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim{};
@@ -134,8 +141,10 @@ static int selfTest(const std::wstring& mode, const std::wstring& self) {
         TerminateJobObject(job.h, 1);
         return 74;
     }
-    const DWORD wait = WaitForSingleObject(child.h, mode == L"--selftest-timeout" ? 200 : 50);
-    if (wait != WAIT_TIMEOUT) {
+    const DWORD wait = mode == L"--selftest-external-cancel"
+        ? WaitForSingleObject(cancel.h, 10000)
+        : WaitForSingleObject(child.h, mode == L"--selftest-timeout" ? 200 : 50);
+    if (wait != (mode == L"--selftest-external-cancel" ? WAIT_OBJECT_0 : WAIT_TIMEOUT)) {
         TerminateJobObject(job.h, 1);
         return 75;
     }
@@ -143,11 +152,18 @@ static int selfTest(const std::wstring& mode, const std::wstring& self) {
     if (WaitForSingleObject(child.h, 5000) != WAIT_OBJECT_0) return 77;
     if (!jobEmpty(job.h)) return 78;
     if (mode == L"--selftest-timeout") std::wcout << L"CODEX_JOB_TIMEOUT_CLEANUP_PASS\n";
+    else if (mode == L"--selftest-external-cancel") std::wcout << L"CODEX_JOB_EXTERNAL_CANCEL_CLEANUP_PASS\n";
     else std::wcout << L"CODEX_JOB_CANCEL_CLEANUP_PASS\n";
     std::wcout << L"CODEX_NOT_INVOKED\n";
     return 0;
 }
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 3 && std::wstring(argv[1]) == L"--selftest-external-cancel") {
+        wchar_t self[MAX_PATH]{};
+        const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
+        if (!n || n >= MAX_PATH) return 79;
+        return selfTest(argv[1], self, argv[2]);
+    }
     if (argc == 2 && std::wstring(argv[1]) == L"--selftest-child") {
         Sleep(30000);
         return 0;
