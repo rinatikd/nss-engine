@@ -115,6 +115,43 @@ production Chrome Bridge and the 17487 gateway unchanged. Roll back by removing
 `PS_DIRECT_CHAT_READONLY_ENABLED` and restarting the service. Never expose the
 local approval URL or bearer tokens through the tunnel or ChatGPT.
 
+## Single-window Work PC stack (experimental)
+
+The new `Start-PowerShell-Direct-Stack.ps1` works in two explicit stages
+from the validation worktree. **No running process is stopped by Check.**
+
+```powershell
+$root='C:/Engineering/ChromeBridge-PowerShell-Direct-Validation'
+& "$root/tools/powershell-direct/Start-PowerShell-Direct-Stack.ps1" -Mode Check
+```
+
+If Check passes, close unrelated terminal windows only after identifying their
+functions. The supervisor can replace **only the verified** 17486 server and
+18086 `powershell-direct-work` tunnel. It **never stops 17487**, production
+Chrome Bridge, or other tunnel profiles. To opt in to this replacement:
+
+```powershell
+& "$root/tools/powershell-direct/Start-PowerShell-Direct-Stack.ps1" -Mode Cutover
+```
+
+Enter the existing control-plane runtime API key locally through the hidden
+prompt (unless the current console already supplies `CONTROL_PLANE_API_KEY`).
+The supervisor creates the PowerShell service and fresh MCP agent token in the
+same Node process and passes the agent token to the child tunnel **only in process
+environment**. It neither prints nor stores the token or local approval URL.
+It validates that `powershell_chat_readonly` exists in the local MCP tool
+registry before starting the child tunnel. Leave this one console running.
+
+The ChatGPT permission for the private plugin **must remain Always ask**.
+After cutover, reconnect/refresh the plugin's discovered tools, then confirm
+the fourth tool is visible in ChatGPT. **A passing unit test does not prove
+that ChatGPT will present an approval dialog**, nor does it prove the tunnel is
+ready: verify 18086 health and an end-to-end test before claiming success.
+If the new stack fails, the old server/tunnel will already have been stopped;
+recovery requires restarting the old configuration with its own new tokens.
+This launcher intentionally has no unattended auto-restart, no credential
+persistence and no claim of production readiness.
+
 ## Release blockers
 
 - Windows unit tests, service startup and end-to-end deny/approve/expiry/replay/missing-executable tests with an actual local operator.
