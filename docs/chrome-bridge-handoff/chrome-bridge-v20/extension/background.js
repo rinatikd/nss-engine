@@ -1,5 +1,19 @@
 import { installBackgroundCoordinator, startBackgroundTransport } from './background-coordinator.js';
+import { SelectedReadTabs } from './selected-read-tabs.js';
 installBackgroundCoordinator(chrome);
+
+// A URL change permanently revokes the selected read scope for that tab,
+// including a navigation away and back to the same conversation before TTL.
+// No page or prompt contents are logged.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (typeof changeInfo.url === 'string') {
+    void new SelectedReadTabs(chrome).revoke(tabId).catch(() => {});
+  }
+});
+chrome.tabs.onRemoved.addListener(tabId => {
+  void new SelectedReadTabs(chrome).revoke(tabId).catch(() => {});
+});
+
 
 async function maintainBackgroundIfEnabled() {
   try {
