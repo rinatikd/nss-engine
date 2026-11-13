@@ -11,9 +11,9 @@ const clean=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(obj));};
 
 export class PowerShellApprovalService {
- constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved}={}){
+ constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace}={}){
   if(!root||!path.win32.isAbsolute(root)||port!==PORT)throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
-  this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;
+  this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
   this.jobs=new Map();this.active=null;this.server=http.createServer((req,res)=>this.route(req,res));
  }
  propose(args){
@@ -21,7 +21,7 @@ export class PowerShellApprovalService {
   if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{8,80}$/.test(id))throw Error('INVALID_REQUEST_ID');
   if(this.jobs.has(id))throw Error('DUPLICATE_REQUEST_ID');
   if(this.jobs.size>=32)throw Error('QUEUE_FULL');
-  const spec=validateTask(args.task),workspace=canonicalWorkspace(args.workspace,this.root),time=this.now();
+  const spec=validateTask(args.task),workspace=this.workspaceCheck(args.workspace,this.root),time=this.now();
   const payload={id,task:args.task,workspace,exe:spec.exe,argv:[...spec.args],issuedAt:time,expiresAt:time+90000};
   const job={payload,sha256:digest(payload),state:'PENDING',result:null};
   this.jobs.set(id,job);
