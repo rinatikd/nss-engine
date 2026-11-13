@@ -15,7 +15,7 @@ export class PowerShellApprovalService {
   const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
   const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
   const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
-  if(!root||!path.win32.isAbsolute(root)||port!==PORT||driveRoot||
+  if(!root||!path.win32.isAbsolute(root)||(port!==PORT&&port!==0)||driveRoot||
      normalizedRoot.startsWith('\\\\')||
      pathSegments.some(x=>['windows','system32','program files'].includes(x)))
     throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
@@ -121,7 +121,7 @@ export class PowerShellApprovalService {
    return send(res,404,{error:'NOT_FOUND'});
   }catch(e){return send(res,400,{error:/^[A-Z0-9_]+$/.test(e.message)?e.message:'INVALID_REQUEST'});}
  }
- start(){return new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(this.port,'127.0.0.1',()=>resolve(this));});}
+ start(){return new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(this.port,'127.0.0.1',()=>{this.port=this.server.address().port;resolve(this);});});}
  stop(){return new Promise(resolve=>this.server.close(resolve));}
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
