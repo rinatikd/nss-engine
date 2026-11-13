@@ -96,7 +96,7 @@ export class PowerShellApprovalService {
     const rows=[...this.jobs.values()].filter(j=>this.status(j.payload.id).state==='PENDING').map(j=>{
      const p=j.payload;return '<form method="POST" action="/decide?key='+encodeURIComponent(this.uiToken)+'"><p><b>'+clean(p.task)+'</b><br>'+clean(p.workspace)+'<br><code>'+clean(p.exe+' '+p.argv.join(' '))+'</code><br>SHA256 '+clean(j.sha256)+'</p><input type="hidden" name="id" value="'+clean(p.id)+'"><input type="hidden" name="sha256" value="'+clean(j.sha256)+'"><button name="approved" value="yes">Approve once</button> <button name="approved" value="no">Deny</button></form>';
     }).join('');
-    res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; form-action 'self'; base-uri 'none'"});
+    res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','referrer-policy':'origin','content-security-policy':"default-src 'none'; form-action 'self'; base-uri 'none'"});
     return res.end('<!doctype html><html><meta charset="utf-8"><h2>Local PowerShell approval</h2><p>Only approve commands already confirmed in ChatGPT.</p>'+(rows||'<p>No pending commands.</p>')+'</html>');
    }
    if(url.pathname==='/decide'&&req.method==='POST'){
