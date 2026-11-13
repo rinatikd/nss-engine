@@ -93,3 +93,21 @@ test('site revocation clears all matching tabs without removing unrelated ones',
   await reader.clear();
   await assert.rejects(reader.require(17, initial), /EXPLICIT_TAB_READ_GRANT_REQUIRED/);
 });
+
+test('mid-flight revoke blocks agent peek and page read results from leaving the bridge', async () => {
+  const { api, reader } = setup();
+  await reader.grant({ tabId: 17, expectedUrl: initial, localGesture: true });
+  api.scripting.executeScript = async () => {
+    await reader.revoke(17);
+    return [{ result: { count:1, text:'must not leak', generating:false, links:[] } }];
+  };
+  await assert.rejects(
+    dispatchReadOnly({ name:'agent_peek', args:{ tabId:17 } }, api),
+    /EXPLICIT_TAB_READ_GRANT_REQUIRED/
+  );
+  await reader.grant({ tabId:17, expectedUrl:initial, localGesture:true });
+  await assert.rejects(
+    dispatchReadOnly({ name:'browser_read', args:{ tabId:17 } }, api),
+    /EXPLICIT_TAB_READ_GRANT_REQUIRED/
+  );
+});
