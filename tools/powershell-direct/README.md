@@ -2,16 +2,16 @@
 
 **Status: developer preview / Draft PR #108. Not installed, not E2E-approved.**
 
-A dedicated local Windows command executor that needs **no Codex CLI**. It exposes two MCP tools, `powershell_propose` and `powershell_job`, while actual execution is controlled by a separately authenticated, local-only **Approve once / Deny** browser form. It does not accept arbitrary PowerShell text or scripts.
+A dedicated local Windows command executor that needs **no Codex CLI**. It exposes three MCP tools, `powershell_propose`, `powershell_job` and `powershell_cancel`, while actual execution is controlled by a separately authenticated, local-only **Approve once / Deny** browser form. It does not accept arbitrary PowerShell text or scripts.
 
 ## Authorization — two layers
 
 1. The assistant shows the **exact task**, target directory and effects in ChatGPT and asks the user **«Отправить команду на исполнение?»**. Before affirmative consent, do **not** call `powershell_propose`.
 2. `powershell_propose` creates a pending job in the local service and returns a SHA-256 fingerprint and expiry. It never executes the job.
 3. The user opens the private LOCAL_APPROVAL_URL printed in the service's Windows terminal, inspects the exact command, workspace and fingerprint and clicks **Approve once** or **Deny**. A yes in ChatGPT must **not** substitute for local approval.
-4. ChatGPT polls `powershell_job`; it does **not** re-submit an ambiguous or expired job.
+4. ChatGPT polls `powershell_job` or cancels an unstarted request with `powershell_cancel`; it does **not** re-submit an ambiguous or expired job.
 
-The service binds to `127.0.0.1:17486` and has separate random secrets for the remote MCP client and the local approval page. There is **no generic MCP execute or approval tool**. Mutations and arbitrary scripts are unsupported in v1.
+The service binds to `127.0.0.1:17486` and has separate random secrets for the remote MCP client and the local approval page. There is **no generic MCP execute or approval tool**; `powershell_cancel` only cancels pending work. Mutations and arbitrary scripts are unsupported in v1.
 
 ## Allowed tasks
 
