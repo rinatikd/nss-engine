@@ -58,6 +58,32 @@ The optional `mcp-stdio.mjs` adapter reads `PS_DIRECT_AGENT_TOKEN` from its own 
 
 No tunnel or plugin has been created as part of this PR. ChatGPT will NOT see `powershell_propose` or `powershell_job` until an operator sets up and connects that new plugin.
 
+## Isolating MCP from the local approval UI
+
+**Never tunnel port 17486 directly.** It contains both the MCP endpoint and
+the operator's private approval page (`/approve` and `/decide`).
+
+The additional `mcp-only-gateway.mjs` module listens on loopback **17487**.
+It forwards exclusively authenticated `POST /mcp` requests to 17486 and
+returns 404 for everything else. In particular, `/approve`, `/decide`
+and all other URLs are not exposed.
+
+It requires TWO DIFFERENT secrets, set only in the local process environment:
+
+- `PS_DIRECT_AGENT_TOKEN`: the bearer token printed by the already running
+  17486 server. Supply locally; never publish.
+- `PS_DIRECT_GATEWAY_TOKEN`: newly generated 64-hex bearer token for the
+  external MCP client, never the same as the first token.
+
+**This gateway is NOT a tunnel.** A separate, authenticated HTTPS tunnel and
+private ChatGPT plugin are still needed. The gateway explicitly requires a
+local loopback Host header and has no generic web endpoint. Tunnel settings
+must preserve/rewrite the upstream Host to `127.0.0.1:17487`; if not,
+connection deliberately fails closed.
+
+The gateway contains no remote approval API. Its existence never bypasses
+the two manual confirmations.
+
 ## Release blockers
 
 - Windows unit tests, service startup and end-to-end deny/approve/expiry/replay/missing-executable tests with an actual local operator.
