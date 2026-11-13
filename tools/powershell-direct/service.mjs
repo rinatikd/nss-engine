@@ -11,7 +11,7 @@ const clean=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(obj));};
 
 export class PowerShellApprovalService {
- constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace}={}){
+ constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false}={}){
   const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
   const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
   const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
@@ -20,6 +20,7 @@ export class PowerShellApprovalService {
      pathSegments.some(x=>['windows','system32','program files'].includes(x)))
     throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
   this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
+  this.chatReadonlyEnabled=chatReadonlyEnabled===true;
   this.jobs=new Map();this.active=null;this.server=http.createServer((req,res)=>this.route(req,res));
  }
  propose(args){
@@ -32,6 +33,17 @@ export class PowerShellApprovalService {
   const job={payload,sha256:digest(payload),state:'PENDING',result:null};
   this.jobs.set(id,job);
   return {requestId:id,sha256:job.sha256,state:job.state,command:spec.exe+' '+spec.args.join(' '),workspace,expiresAt:payload.expiresAt};
+ }
+ chatReadonly(a){
+  if(!this.chatReadonlyEnabled)throw Error('CHAT_READONLY_DISABLED');
+  // ChatGPT plugin must be explicitly configured to Always ask.
+  // This service cannot independently verify that the human approved in the host UI.
+  // Only the pinned read-only allowlist in runner.mjs may be executed.
+  if(this.active)throw Error('ANOTHER_JOB_RUNNING');
+  const proposed=this.propose(a);
+  const started=this.decide(a.requestId,proposed.sha256,true);
+  return {requestId:a.requestId,sha256:proposed.sha256,state:started.state,
+    command:proposed.command,workspace:proposed.workspace};
  }
  cancel(id){
   const job=this.jobs.get(id);
@@ -67,11 +79,12 @@ export class PowerShellApprovalService {
   if(b.method==='tools/list')return {jsonrpc:'2.0',id,result:{tools:[
    {name:'powershell_propose',description:'Create a pending fixed read-only Windows task, requiring local browser approval before execution.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}},
    {name:'powershell_cancel',description:'Cancel a pending proposed job without executing anything; cannot cancel an already-running command.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
-   {name:'powershell_job',description:'Read the status/result of a proposed PowerShell job; no dispatch.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}}
+   {name:'powershell_job',description:'Read the status/result of a proposed PowerShell job; no dispatch.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
+   ...(this.chatReadonlyEnabled?[{name:'powershell_chat_readonly',description:'Execute one pinned read-only diagnostic on the Work PC after explicit ChatGPT host approval (plugin permission MUST be Always ask). NO local approval; no arbitrary shell.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}}]:[])
   ]}};
   if(b.method==='tools/call')try{
    const n=b.params?.name,a=b.params?.arguments||{};
-   const result=n==='powershell_propose'?this.propose(a):n==='powershell_job'?this.status(a.requestId):n==='powershell_cancel'?this.cancel(a.requestId):null;
+   const result=n==='powershell_propose'?this.propose(a):n==='powershell_job'?this.status(a.requestId):n==='powershell_cancel'?this.cancel(a.requestId):n==='powershell_chat_readonly'?this.chatReadonly(a):null;
    if(!result)throw Error('TOOL_NOT_FOUND');
    return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(result)}]}};
   }catch(e){return {jsonrpc:'2.0',id,result:{isError:true,content:[{type:'text',text:e.message}]}};}
@@ -113,7 +126,7 @@ export class PowerShellApprovalService {
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const root=process.argv[2];if(!root)throw Error('USAGE: node service.mjs WINDOWS_ALLOWED_ROOT');
- const svc=new PowerShellApprovalService({root});await svc.start();
+ const svc=new PowerShellApprovalService({root,chatReadonlyEnabled:process.env.PS_DIRECT_CHAT_READONLY_ENABLED==='1'});await svc.start();
  console.error('PS_LAB_READY 127.0.0.1:'+svc.port);
  console.error('LOCAL_APPROVAL_URL http://127.0.0.1:'+svc.port+'/approve?key='+svc.uiToken);
  console.error('MCP_AGENT_TOKEN '+svc.agentToken);
