@@ -39,7 +39,8 @@
     <label>Адрес сайта<input id="origin" placeholder="https://claude.ai"></label>
     <div class="row"><button id="grant">Добавить сайт</button><button id="revoke" class="secondary">Отозвать все сайты</button></div>
     <div class="row">
-      <label>ID вкладки из browser_tabs<input id="selectedReadTabId" type="number" min="1" inputmode="numeric" placeholder="tabId"></label>
+      <label>Открытая вкладка<select id="selectedReadTabId"><option value="">Сначала нажмите «Найти вкладки»</option></select></label>
+      <button id="selectedReadRefresh" class="secondary" type="button">Найти вкладки</button>
       <button id="selectedReadGrant" class="secondary" type="button">Разрешить чтение вкладки на 60 минут</button>
       <button id="selectedReadRevoke" class="secondary" type="button">Отозвать чтение вкладки</button>
     </div>
