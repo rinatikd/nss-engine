@@ -69,6 +69,10 @@ export async function dispatchReadOnly(command, chromeApi) {
     });
     const result=results?.[0]?.result;
     if (!result || result.error) throw Error(result?.error || 'AGENT_DIAGNOSTIC_FAILED');
+    // A tab can change conversation/origin while injected diagnostics execute.
+    // Fail closed for every agent read, not only browser_read.
+    const after=await chromeApi.tabs.get(tabId);
+    if (after.url!==tab.url) throw Error('TAB_CHANGED_DURING_READ');
     const check=await chromeApi.tabs.get(tabId);
     if (check.url!==tab.url) throw Error('TAB_CHANGED_DURING_READ');
     if (command.name==='agent_probe') {
