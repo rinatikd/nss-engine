@@ -1,6 +1,6 @@
 # Chrome Bridge — Direct PowerShell Channel (P0, Issue #107)
 
-**Status: developer preview / Draft PR #108. Not installed, not E2E-approved.**
+**Status: developer preview / Draft PR #108. Original two-step local-approval E2E passed on Windows; optional ChatGPT-only approval mode remains untested and disabled by default.**
 
 A dedicated local Windows command executor that needs **no Codex CLI**. It exposes three MCP tools, `powershell_propose`, `powershell_job` and `powershell_cancel`, while actual execution is controlled by a separately authenticated, local-only **Approve once / Deny** browser form. It does not accept arbitrary PowerShell text or scripts.
 
@@ -83,6 +83,37 @@ connection deliberately fails closed.
 
 The gateway contains no remote approval API. Its existence never bypasses
 the two manual confirmations.
+
+## Experimental ChatGPT-only approval (opt-in, fixed read-only tasks)
+
+For operators who prefer confirming the tool invocation in ChatGPT instead of
+opening the local approval page, a separate `powershell_chat_readonly` MCP tool
+is available **only if** the Windows service starts with process environment
+`PS_DIRECT_CHAT_READONLY_ENABLED=1`. Default is OFF. It supports the same five
+pinned, read-only task IDs, fixed executable arguments, workspace checks and
+output/time bounds. Arbitrary PowerShell and mutating commands remain forbidden.
+
+Before opting in, set ChatGPT plugin **PowerShell Direct — Work PC** permission
+to **Always ask** (never Full access). The user reviews the exact proposed
+`task` and `workspace` in the ChatGPT approval prompt. A confirmed tool call
+starts the fixed task immediately and returns a request ID; poll `powershell_job`
+for the bounded result. There is **no additional local Approve once** in this mode.
+The existing `powershell_propose` path retains its local approval requirement.
+
+**Security distinction:** the local service cannot cryptographically distinguish
+user approval from a tool call; it relies on ChatGPT's host UI and plugin permission
+policy for this mode. A user message such as 'yes' is not proof of host approval,
+and no client should assert otherwise. Do not enable this mode if remote chat-only
+approval is insufficient for the machine's sensitivity. For writes, project changes,
+credential operations, or new executable commands, keep the independent local
+approval gate and perform a separate design/security review.
+
+Enable the opt-in setting only in the environment of the **17486 service process**,
+then restart that service and its separately authenticated stdio tunnel using fresh
+random tokens. Confirm the new tool is discovered after plugin refresh; keep
+production Chrome Bridge and the 17487 gateway unchanged. Roll back by removing
+`PS_DIRECT_CHAT_READONLY_ENABLED` and restarting the service. Never expose the
+local approval URL or bearer tokens through the tunnel or ChatGPT.
 
 ## Release blockers
 
