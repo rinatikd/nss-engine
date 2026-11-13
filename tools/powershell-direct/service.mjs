@@ -33,6 +33,13 @@ export class PowerShellApprovalService {
   this.jobs.set(id,job);
   return {requestId:id,sha256:job.sha256,state:job.state,command:spec.exe+' '+spec.args.join(' '),workspace,expiresAt:payload.expiresAt};
  }
+ cancel(id){
+  const job=this.jobs.get(id);
+  if(!job)throw Error('JOB_NOT_FOUND');
+  if(job.state!=='PENDING')throw Error('CANCEL_ONLY_BEFORE_DISPATCH');
+  job.state='CANCELLED';
+  return {requestId:id,state:job.state};
+ }
  status(id){
   const j=this.jobs.get(id);if(!j)throw Error('JOB_NOT_FOUND');
   if(j.state==='PENDING'&&this.now()>=j.payload.expiresAt)j.state='EXPIRED';
@@ -59,11 +66,12 @@ export class PowerShellApprovalService {
   if(b.method==='notifications/initialized')return null;
   if(b.method==='tools/list')return {jsonrpc:'2.0',id,result:{tools:[
    {name:'powershell_propose',description:'Create a pending fixed read-only Windows task, requiring local browser approval before execution.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}},
+   {name:'powershell_cancel',description:'Cancel a pending proposed job without executing anything; cannot cancel an already-running command.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
    {name:'powershell_job',description:'Read the status/result of a proposed PowerShell job; no dispatch.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}}
   ]}};
   if(b.method==='tools/call')try{
    const n=b.params?.name,a=b.params?.arguments||{};
-   const result=n==='powershell_propose'?this.propose(a):n==='powershell_job'?this.status(a.requestId):null;
+   const result=n==='powershell_propose'?this.propose(a):n==='powershell_job'?this.status(a.requestId):n==='powershell_cancel'?this.cancel(a.requestId):null;
    if(!result)throw Error('TOOL_NOT_FOUND');
    return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(result)}]}};
   }catch(e){return {jsonrpc:'2.0',id,result:{isError:true,content:[{type:'text',text:e.message}]}};}
