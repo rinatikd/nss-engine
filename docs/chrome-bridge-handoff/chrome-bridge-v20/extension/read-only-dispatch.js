@@ -2,6 +2,7 @@ import { pageAction } from './page.js';
 import { redact } from './secrets.js';
 import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS } from './permissions.js';
 import { mergeAdapters } from './adapters.js';
+import { SelectedReadTabs } from './selected-read-tabs.js';
 
 const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
 const LOCAL = new Set(['localhost','127.0.0.1','[::1]']);
@@ -18,6 +19,9 @@ export async function permittedTab(chromeApi, tabId) {
   if (!Object.hasOwn(sites,url.origin)) throw Error('ORIGIN_NOT_PERMITTED');
   const allowed = await chromeApi.permissions.contains({origins:[url.origin+'/*']});
   if (!allowed) throw Error('HOST_PERMISSION_MISSING');
+  if (sites[url.origin]?.selectedTabOnly === true) {
+    await new SelectedReadTabs(chromeApi).require(tabId, tab.url);
+  }
   return {tab,origin:url.origin,site:sites[url.origin]};
 }
 export async function dispatchReadOnly(command, chromeApi) {
