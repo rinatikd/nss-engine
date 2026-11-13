@@ -12,7 +12,10 @@ const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/
 
 export class PowerShellApprovalService {
  constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace}={}){
-  if(!root||!path.win32.isAbsolute(root)||port!==PORT)throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
+  if(!root||!path.win32.isAbsolute(root)||port!==PORT||
+   /^[a-z]:\\\\?$/i.test(root)||root.startsWith('\\\\\\\\')||
+   /(?:^|\\\\)(?:windows|system32|program files)(?:\\\\|$)/i.test(root))
+    throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
   this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
   this.jobs=new Map();this.active=null;this.server=http.createServer((req,res)=>this.route(req,res));
  }
@@ -52,7 +55,7 @@ export class PowerShellApprovalService {
   if(b.method==='initialize')return {jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'powershell-direct-lab',version:'0.1.0'}}};
   if(b.method==='notifications/initialized')return null;
   if(b.method==='tools/list')return {jsonrpc:'2.0',id,result:{tools:[
-   {name:'powershell_propose',description:'Create a pending fixed read-only Windows task, requiring local browser approval before execution.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}},
+   {name:'powershell_propose',description:'Create a pending fixed read-only Windows task, requiring local browser approval before execution.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}},
    {name:'powershell_job',description:'Read the status/result of a proposed PowerShell job; no dispatch.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}}
   ]}};
   if(b.method==='tools/call')try{
@@ -82,7 +85,7 @@ export class PowerShellApprovalService {
     const rows=[...this.jobs.values()].filter(j=>this.status(j.payload.id).state==='PENDING').map(j=>{
      const p=j.payload;return '<form method="POST" action="/decide?key='+encodeURIComponent(this.uiToken)+'"><p><b>'+clean(p.task)+'</b><br>'+clean(p.workspace)+'<br><code>'+clean(p.exe+' '+p.argv.join(' '))+'</code><br>SHA256 '+clean(j.sha256)+'</p><input type="hidden" name="id" value="'+clean(p.id)+'"><input type="hidden" name="sha256" value="'+clean(j.sha256)+'"><button name="approved" value="yes">Approve once</button> <button name="approved" value="no">Deny</button></form>';
     }).join('');
-    res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','content-security-policy':"default-src 'none'; form-action 'self'; base-uri 'none'"});
+    res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; form-action 'self'; base-uri 'none'"});
     return res.end('<!doctype html><html><meta charset="utf-8"><h2>Local PowerShell approval</h2><p>Only approve commands already confirmed in ChatGPT.</p>'+(rows||'<p>No pending commands.</p>')+'</html>');
    }
    if(url.pathname==='/decide'&&req.method==='POST'){
