@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // Standalone opt-in stage operation. No profile, token, or running bridge writes.
-const source=path.resolve(process.argv[2]||'');
+if (process.argv.length !== 6) throw Error('USAGE: node stage-main-chrome.mjs SOURCE_DIR NEW_OUTPUT_DIR MANIFEST_FILE UNIQUE_PORT');
+const source=path.resolve(process.argv[2]);
 const output=path.resolve(process.argv[3]||'');
 const manifest=path.resolve(process.argv[4]||'');
 const port=Number(process.argv[5]);
@@ -33,7 +34,7 @@ const files=fs.readdirSync(source,{withFileTypes:true});
 const staged=new Map();
 for (const entry of files) {
   if (!entry.isFile()||!/^[-a-z0-9_.]+\.(js|mjs|html|css|png|svg|ico|webp)$/i.test(entry.name)||
-      /token|credential|secret|private|\.key/i.test(entry.name))
+      /(?:^|[._-])(?:token|credential|private|api-key)(?:[._-]|$)/i.test(entry.name))
     throw Error('UNSAFE_SOURCE_ENTRY: '+entry.name);
   if (entry.name==='manifest.json') continue;
   let data=fs.readFileSync(path.join(source,entry.name));
