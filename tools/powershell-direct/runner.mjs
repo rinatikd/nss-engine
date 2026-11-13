@@ -10,6 +10,13 @@ export const POLICY=Object.freeze({
   'dotnet-version':{exe:'dotnet.exe',args:['--version'],timeout:10000},
   'node-version':{exe:'node.exe',args:['--version'],timeout:10000}
 });
+// Resolve trusted executables by explicit paths: NEVER allow PATH/CWD hijack.
+const EXECUTABLES=Object.freeze({
+  'git.exe':'C:\\Program Files\\Git\\cmd\\git.exe',
+  'dotnet.exe':'C:\\Program Files\\dotnet\\dotnet.exe',
+  'node.exe':'C:\\Program Files\\nodejs\\node.exe',
+  'powershell.exe':'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+});
 const MAX_OUTPUT=32768;
 
 export function canonicalWorkspace(candidate,root){
@@ -31,13 +38,17 @@ function clip(buf){return buf.toString('utf8').slice(0,MAX_OUTPUT);}
 export async function runApproved({task,workspace,allowedRoot,spawnImpl=spawn}){
   const spec=validateTask(task);
   const cwd=canonicalWorkspace(workspace,allowedRoot);
-  // No shell, PowerShell -Command, cmd /c, script evaluation, or user-supplied args.
+  // Reject relative programs: PATH search can load an attacker-controlled
+  // executable in the working tree on Windows.
+  const fixed=EXECUTABLES[spec.exe];
+  if(!fixed || !fs.existsSync(fixed))throw Error('TRUSTED_EXECUTABLE_NOT_FOUND');
+  if(!fs.statSync(fixed).isFile())throw Error('TRUSTED_EXECUTABLE_NOT_FILE');
   return await new Promise(resolve=>{
     let out=Buffer.alloc(0),err=Buffer.alloc(0),finished=false,killTimer;
     const start=Date.now();
     let child;
     try{
-      child=spawnImpl(spec.exe,spec.args,{
+      child=spawnImpl(fixed,spec.args,{
         cwd,shell:false,windowsHide:true,
         env:{...process.env,GIT_OPTIONAL_LOCKS:'0'},
         stdio:['ignore','pipe','pipe']
