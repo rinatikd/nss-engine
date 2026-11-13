@@ -145,6 +145,30 @@ $('revoke').onclick = async () => {
 };
 // Requires a visible local user gesture and a second URL-specific confirmation.
 // No read grants are created from any remote MCP request.
+// Enumerate only locally in the extension panel. Remote MCP inventory remains
+// restricted to tabs already individually enrolled by the user.
+$('selectedReadRefresh').onclick = async () => {
+  const select = $('selectedReadTabId');
+  select.textContent = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Выберите вкладку';
+  select.append(placeholder);
+  const sites = await getSites();
+  for (const tab of await chrome.tabs.query({})) {
+    if (!Number.isSafeInteger(tab.id) || !tab.url) continue;
+    let origin;
+    try { origin = new URL(tab.url).origin; } catch { continue; }
+    if (!sites[origin]?.selectedTabOnly) continue;
+    if (!(await chrome.permissions.contains({ origins: [origin + '/*'] }))) continue;
+    const option = document.createElement('option');
+    option.value = String(tab.id);
+    option.textContent = origin + ' · ' + String(tab.title || 'Без названия').slice(0, 90);
+    select.append(option);
+  }
+  $('selectedReadStatus').textContent = (select.options.length - 1) +
+    ' разрешённых для выбора вкладок. Пока чтение не предоставлено.';
+};
 const selectedTabId = () => {
   const id = Number($('selectedReadTabId').value);
   if (!Number.isSafeInteger(id) || id <= 0) throw Error('Некорректный tabId');
@@ -303,6 +327,8 @@ async function execute(cmd) {
   }
   if (name === 'browser_open') {
     if (!(await siteOf(args.url))) throw Error('Origin not permitted: add this website in Chrome Bridge');
+    if ((await getSites())[new URL(args.url).origin]?.selectedTabOnly === true)
+      throw Error('SCOPED_TAB_NAVIGATION_DISABLED');
     const targetOrigin = new URL(args.url).origin;
     grants.require(targetOrigin);
     await askApproval('Открыть вкладку', 'Разрешённый адрес: ' + targetOrigin + '\\nОткрытие внешнего сайта', cmd.expires);
