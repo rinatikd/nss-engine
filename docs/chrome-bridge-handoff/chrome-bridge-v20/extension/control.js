@@ -420,6 +420,12 @@ async function execute(cmd) {
         throw Error('AI tab changed after approval');
     }
     const result = await inject(tab.id, site.origin, name, { ...args, adapter });
+    // The classic control-panel transport must enforce the same tab identity
+    // after read diagnostics as the background transport.
+    if (name !== 'agent_send') {
+      const after = await tabAndSite(tab.id);
+      if (after.tab.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    }
     return result?.text ? { ...result, text: redact(result.text) } : result;
   }
   throw Error('Unknown command: ' + name);
