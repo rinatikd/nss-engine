@@ -12,9 +12,12 @@ const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/
 
 export class PowerShellApprovalService {
  constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace}={}){
-  if(!root||!path.win32.isAbsolute(root)||port!==PORT||
-   /^[a-z]:\\\\?$/i.test(root)||root.startsWith('\\\\\\\\')||
-   /(?:^|\\\\)(?:windows|system32|program files)(?:\\\\|$)/i.test(root))
+  const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
+  const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
+  const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
+  if(!root||!path.win32.isAbsolute(root)||port!==PORT||driveRoot||
+     normalizedRoot.startsWith('\\\\')||
+     pathSegments.some(x=>['windows','system32','program files'].includes(x)))
     throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
   this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
   this.jobs=new Map();this.active=null;this.server=http.createServer((req,res)=>this.route(req,res));
