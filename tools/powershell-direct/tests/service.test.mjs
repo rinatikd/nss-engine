@@ -88,3 +88,17 @@ test('MCP cancellation does not start a command and cannot be reversed',()=>{
  assert.equal(x.executed(),0);
  assert.throws(()=>x.service.decide(req.requestId,p.sha256,true),/NOT_PENDING/);
 });
+
+test('MCP endpoint refuses missing/incorrect token, then returns tool metadata',async()=>{
+ const x=fixture();await x.service.start();
+ try{
+  const url='http://127.0.0.1:17486/mcp', request={jsonrpc:'2.0',id:1,method:'tools/list'};
+  const denied=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(request)});
+  assert.equal(denied.status,401);
+  const allowed=await fetch(url,{method:'POST',headers:{'content-type':'application/json',Authorization:'Bearer '+x.service.agentToken},body:JSON.stringify(request)});
+  assert.equal(allowed.status,200);
+  const list=(await allowed.json()).result.tools.map(x=>x.name);
+  assert.deepEqual(list,['powershell_propose','powershell_cancel','powershell_job']);
+  assert.equal(x.executed(),0);
+ }finally{await x.service.stop();}
+});
