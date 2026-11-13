@@ -6,7 +6,7 @@ import { dispatchReadOnly } from '../extension/read-only-dispatch.js';
 const origin = 'https://grok.com';
 const initial = 'https://grok.com/c/5a7944a0-0ebd-48ba-bee5-94dc04b73a6c';
 function setup({ hostGranted = true, scoped = true } = {}) {
-  const state = { url: initial, now: 1000, session: {} };
+  const state = { url: initial, now: Date.now(), session: {} };
   const api = {
     tabs: {
       get: async (tabId) => ({ id: tabId, url: state.url }),
@@ -58,7 +58,7 @@ test('expiry and explicit revocation deny future reads', async () => {
   await reader.grant({ tabId: 17, expectedUrl: initial, localGesture: true });
   state.now += 60 * 60000;
   await assert.rejects(reader.require(17, initial), /EXPLICIT_TAB_READ_GRANT_REQUIRED/);
-  state.now = 1000;
+  state.now -= 60 * 60000;
   await reader.grant({ tabId: 17, expectedUrl: initial, localGesture: true });
   await reader.revoke(17);
   await assert.rejects(reader.require(17, initial), /EXPLICIT_TAB_READ_GRANT_REQUIRED/);
