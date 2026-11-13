@@ -353,6 +353,8 @@ async function execute(cmd) {
     const { tab, site } = await tabAndSite(args.tabId);
     if ($('confirmReads').checked) await askApproval('Чтение страницы', `${tab.url}\n${args.selector ? 'Элемент: ' + args.selector : 'Вся страница'}`, cmd.expires);
     const r = await inject(tab.id, site.origin, 'browser_read', args);
+    const after = await tabAndSite(tab.id);
+    if (after.tab.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
     return { ...r, text: redact(r.text), links: r.links.map((l) => ({ text: redact(l.text), url: redact(l.url) })) };
   }
   if (name === 'browser_click' || name === 'browser_fill') {
@@ -374,12 +376,17 @@ async function execute(cmd) {
   if (name === 'agent_probe') {
     const { tab, site, adapter, adapterName } = await agentTab(args.tabId);
     const test = await inject(tab.id, site.origin, 'agent_selftest', { adapter });
+    const after = await tabAndSite(tab.id);
+    if (after.tab.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
     return { adapter: adapterName, verified: test.composer.visible === 1 && test.send.visible === 1 };
 
   }
   if (name === 'agent_context') {
     const { tab, site, adapter } = await agentTab(args.tabId);
-    return inject(tab.id, site.origin, 'agent_context', { adapter });
+    const result = await inject(tab.id, site.origin, 'agent_context', { adapter });
+    const after = await tabAndSite(tab.id);
+    if (after.tab.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    return result;
   }
   if (name === 'agent_new_chat') {
     const { tab, site, adapter } = await agentTab(args.tabId);
