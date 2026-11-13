@@ -6,6 +6,7 @@ import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { verifyBridgeCredential } from './connection-check.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
+import { SelectedReadTabs } from './selected-read-tabs.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
 
@@ -75,7 +76,7 @@ async function renderSites() {
     left.textContent = origin;
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = s.mode === 'chat' ? 'ИИ-чат · ' + s.adapter : 'чтение';
+    tag.textContent = (s.mode === 'chat' ? 'ИИ-чат · ' + s.adapter : 'чтение') + (s.selectedTabOnly ? ' · только выбранные вкладки' : '');
     left.append(tag);
     if (!granted.has(origin)) { const w = document.createElement('span'); w.className = 'tag'; w.textContent = 'нет разрешения Chrome'; left.append(w); }
     const rm = document.createElement('button');
@@ -85,6 +86,7 @@ async function renderSites() {
       const cur = await getSites();
       delete cur[origin];
       grants.grants.delete(origin);
+      await new SelectedReadTabs(chrome).revokeOrigin(origin);
       await setSites(cur);
       try { await chrome.permissions.remove({ origins: [origin + '/*'] }); } catch { /* уже снято */ }
       await renderSites();
@@ -120,7 +122,9 @@ $('grant').onclick = async () => {
     const sites = await getSites();
     const provider = providerForOrigin(u.origin);
     const mode = provider ? $('mode').value : 'read';
-    sites[u.origin] = mode === 'chat' ? { mode, adapter: provider } : { mode };
+    // New site enrollments are strict by default; existing sites retain their
+    // previous policy until explicitly migrated.
+    sites[u.origin] = mode === 'chat' ? { mode, adapter: provider, selectedTabOnly: true } : { mode, selectedTabOnly: true };
     await setSites(sites);
     $('origin').value = '';
     await renderSites();
@@ -135,9 +139,44 @@ $('revoke').onclick = async () => {
   const p = await chrome.permissions.getAll();
   for (const o of p.origins || []) if (!o.includes('127.0.0.1')) await chrome.permissions.remove({ origins: [o] });
   await setSites({});
+  await new SelectedReadTabs(chrome).clear();
   await renderSites();
   log('Все сайты отозваны');
 };
+// Requires a visible local user gesture and a second URL-specific confirmation.
+// No read grants are created from any remote MCP request.
+const selectedTabId = () => {
+  const id = Number($('selectedReadTabId').value);
+  if (!Number.isSafeInteger(id) || id <= 0) throw Error('Некорректный tabId');
+  return id;
+};
+$('selectedReadGrant').onclick = async () => {
+  try {
+    const tabId = selectedTabId();
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.url) throw Error('Вкладка недоступна');
+    const origin = new URL(tab.url).origin;
+    const site = (await getSites())[origin];
+    if (!site?.selectedTabOnly) throw Error('Сначала добавьте сайт как разрешённый');
+    if (!confirm('Разрешить чтение ТОЛЬКО этой вкладки на 60 минут?\\n' + tab.url))
+      throw Error('Отменено пользователем');
+    const granted = await new SelectedReadTabs(chrome).grant({
+      tabId, expectedUrl: tab.url, localGesture: true
+    });
+    $('selectedReadStatus').textContent = 'Чтение tabId ' + tabId +
+      ' разрешено до ' + new Date(granted.expires).toLocaleTimeString();
+    await renderSites();
+  } catch (e) { $('selectedReadStatus').textContent = e.message; }
+};
+$('selectedReadRevoke').onclick = async () => {
+  try {
+    const tabId = selectedTabId();
+    await new SelectedReadTabs(chrome).revoke(tabId);
+    $('selectedReadStatus').textContent = 'Чтение tabId ' + tabId + ' отозвано';
+    await renderSites();
+  } catch (e) { $('selectedReadStatus').textContent = e.message; }
+};
+
 $('saveAdapters').onclick = async () => {
   try {
     const v = JSON.parse($('adapterJson').value || '{}');
@@ -211,6 +250,9 @@ async function tabAndSite(tabId) {
   if (previous && previous !== current) grants.grants.delete(previous);
   observedOrigins.set(tabId, current);
   if (!site) throw Error('Tab origin is not permitted');
+  if (site.selectedTabOnly === true) {
+    await new SelectedReadTabs(chrome).require(tabId, tab.url);
+  }
   return { tab, site };
 }
 async function agentTab(tabId) {
@@ -250,7 +292,12 @@ async function execute(cmd) {
     const out = [];
     for (const t of await chrome.tabs.query({})) {
       const site = t.url && (await siteOf(t.url));
-      if (site) out.push({ tabId: t.id, title: t.title, url: t.url, mode: site.mode, adapter: site.adapter || null, active: t.active, windowId: t.windowId });
+      if (site) {
+        try {
+          if (site.selectedTabOnly === true) await new SelectedReadTabs(chrome).require(t.id, t.url);
+          out.push({ tabId: t.id, title: t.title, url: t.url, mode: site.mode, adapter: site.adapter || null, active: t.active, windowId: t.windowId });
+        } catch { /* scoped tab has not been locally enrolled */ }
+      }
     }
     return out;
   }
