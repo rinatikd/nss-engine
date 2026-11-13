@@ -56,7 +56,7 @@ test('no arbitrary shell command or unapproved workspace',()=>{
 test('MCP tools list permits proposal and status only, never approval or execution',()=>{
  const x=fixture();
  const tools=x.service.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools;
- assert.deepEqual(tools.map(t=>t.name),['powershell_propose','powershell_job']);
+ assert.deepEqual(tools.map(t=>t.name),['powershell_propose','powershell_cancel','powershell_job']);
  const p=x.service.rpc({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'powershell_propose',arguments:req}});
  assert.equal(p.result.isError,undefined);
  assert.equal(x.executed(),0);
@@ -78,4 +78,13 @@ test('local form checks origin, token and immutable SHA',async()=>{
   assert.equal(allowed.status,200);assert.equal(x.executed(),1);
   x.finish();await flush();
  }finally{await x.service.stop();}
+});
+
+test('MCP cancellation does not start a command and cannot be reversed',()=>{
+ const x=fixture(),p=x.service.propose(req);
+ const cancelled=x.service.rpc({jsonrpc:'2.0',id:5,method:'tools/call',
+  params:{name:'powershell_cancel',arguments:{requestId:req.requestId}}});
+ assert.equal(JSON.parse(cancelled.result.content[0].text).state,'CANCELLED');
+ assert.equal(x.executed(),0);
+ assert.throws(()=>x.service.decide(req.requestId,p.sha256,true),/NOT_PENDING/);
 });
