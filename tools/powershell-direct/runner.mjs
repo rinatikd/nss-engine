@@ -8,7 +8,9 @@ export const POLICY=Object.freeze({
   'git-status':{exe:'git.exe',args:['--no-optional-locks','status','--short','--branch'],timeout:15000},
   'git-diff-check':{exe:'git.exe',args:['--no-optional-locks','diff','--check'],timeout:15000},
   'dotnet-version':{exe:'dotnet.exe',args:['--version'],timeout:10000},
-  'node-version':{exe:'node.exe',args:['--version'],timeout:10000}
+  'node-version':{exe:'node.exe',args:['--version'],timeout:10000},
+  // Fixed literal command: no user-provided script text or interpolation.
+  'powershell-version':{exe:'powershell.exe',args:['-NoProfile','-NonInteractive','-Command','$PSVersionTable.PSVersion.ToString()'],timeout:10000}
 });
 // Resolve trusted executables by explicit paths: NEVER allow PATH/CWD hijack.
 const EXECUTABLES=Object.freeze({
