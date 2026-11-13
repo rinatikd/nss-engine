@@ -1,6 +1,6 @@
 import { pageAction } from './page.js';
 import { redact } from './secrets.js';
-import { CONTROL_ORIGINS } from './permissions.js';
+import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS } from './permissions.js';
 import { mergeAdapters } from './adapters.js';
 
 const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
@@ -51,8 +51,10 @@ export async function dispatchReadOnly(command, chromeApi) {
     const tabId=command.args?.tabId;
     const {tab,origin,site}=await permittedTab(chromeApi,tabId);
     // These are diagnosis/read operations only, never a write permission.
-    if (!Object.hasOwn(CONTROL_ORIGINS,origin) ||
-        site.mode!=='chat' || site.adapter!==CONTROL_ORIGINS[origin])
+    // Discovery-only providers may be inspected on individually permitted tabs,
+    // but mutation-dispatch still exclusively checks CONTROL_ORIGINS.
+    const provider = CONTROL_ORIGINS[origin] || DISCOVERY_ONLY_ORIGINS[origin];
+    if (!provider || site.mode!=='chat' || site.adapter!==provider)
       throw Error('AGENT_SITE_NOT_APPROVED');
     const {adapters} = await chromeApi.storage.local.get('adapters');
     let overrides;
