@@ -1,5 +1,8 @@
 import { installBackgroundCoordinator, startBackgroundTransport } from './background-coordinator.js';
+import { installReadGrantRevocation } from './read-grant-tab-lifecycle.js';
 installBackgroundCoordinator(chrome);
+
+installReadGrantRevocation(chrome);
 
 async function maintainBackgroundIfEnabled() {
   try {

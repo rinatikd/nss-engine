@@ -38,6 +38,13 @@
     </div>
     <label>Адрес сайта<input id="origin" placeholder="https://claude.ai"></label>
     <div class="row"><button id="grant">Добавить сайт</button><button id="revoke" class="secondary">Отозвать все сайты</button></div>
+    <div class="row">
+      <label>Открытая вкладка<select id="selectedReadTabId"><option value="">Сначала нажмите «Найти вкладки»</option></select></label>
+      <button id="selectedReadRefresh" class="secondary" type="button">Найти вкладки</button>
+      <button id="selectedReadGrant" class="secondary" type="button">Разрешить чтение вкладки на 60 минут</button>
+      <button id="selectedReadRevoke" class="secondary" type="button">Отозвать чтение вкладки</button>
+    </div>
+    <p class="hint" id="selectedReadStatus" role="status">Разрешение выдаётся только конкретной вкладке и адресу. Смена URL, истечение срока или отзыв прекращают доступ. Установка расширения сама по себе не выдаёт доступ.</p>
     <ul id="sites"></ul>
 
   </section>

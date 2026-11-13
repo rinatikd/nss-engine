@@ -10,6 +10,8 @@ export async function pageAction(name, args, expectedOrigin) {
       'https://claude.ai': /^\/chat\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
       'https://gemini.google.com': /^\/app\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
       'https://chat.deepseek.com': /^\/a\/chat\/s\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
+      // Grok is discovery-only until explicit write integration and E2E approval.
+      'https://grok.com': /^\/c\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
     };
     return location.pathname.match(routes[location.origin] || /$a/)?.[1] || null;
   };

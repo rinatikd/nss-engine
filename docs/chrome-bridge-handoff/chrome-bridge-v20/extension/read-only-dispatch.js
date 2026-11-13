@@ -1,7 +1,8 @@
 import { pageAction } from './page.js';
 import { redact } from './secrets.js';
-import { CONTROL_ORIGINS } from './permissions.js';
+import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS } from './permissions.js';
 import { mergeAdapters } from './adapters.js';
+import { SelectedReadTabs } from './selected-read-tabs.js';
 
 const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
 const LOCAL = new Set(['localhost','127.0.0.1','[::1]']);
@@ -18,6 +19,9 @@ export async function permittedTab(chromeApi, tabId) {
   if (!Object.hasOwn(sites,url.origin)) throw Error('ORIGIN_NOT_PERMITTED');
   const allowed = await chromeApi.permissions.contains({origins:[url.origin+'/*']});
   if (!allowed) throw Error('HOST_PERMISSION_MISSING');
+  if (sites[url.origin]?.selectedTabOnly === true) {
+    await new SelectedReadTabs(chromeApi).require(tabId, tab.url);
+  }
   return {tab,origin:url.origin,site:sites[url.origin]};
 }
 export async function dispatchReadOnly(command, chromeApi) {
@@ -51,8 +55,10 @@ export async function dispatchReadOnly(command, chromeApi) {
     const tabId=command.args?.tabId;
     const {tab,origin,site}=await permittedTab(chromeApi,tabId);
     // These are diagnosis/read operations only, never a write permission.
-    if (!Object.hasOwn(CONTROL_ORIGINS,origin) ||
-        site.mode!=='chat' || site.adapter!==CONTROL_ORIGINS[origin])
+    // Discovery-only providers may be inspected on individually permitted tabs,
+    // but mutation-dispatch still exclusively checks CONTROL_ORIGINS.
+    const provider = CONTROL_ORIGINS[origin] || DISCOVERY_ONLY_ORIGINS[origin];
+    if (!provider || site.mode!=='chat' || site.adapter!==provider)
       throw Error('AGENT_SITE_NOT_APPROVED');
     const {adapters} = await chromeApi.storage.local.get('adapters');
     let overrides;
@@ -67,6 +73,13 @@ export async function dispatchReadOnly(command, chromeApi) {
     });
     const result=results?.[0]?.result;
     if (!result || result.error) throw Error(result?.error || 'AGENT_DIAGNOSTIC_FAILED');
+    // A tab can change conversation/origin while injected diagnostics execute.
+    // Fail closed for every agent read, not only browser_read.
+    const after=await chromeApi.tabs.get(tabId);
+    if (after.url!==tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    // Revocation or expiry during injection must block the outgoing payload.
+    // Recheck host permission, site enrollment and exact-tab session grant.
+    await permittedTab(chromeApi,tabId);
     const check=await chromeApi.tabs.get(tabId);
     if (check.url!==tab.url) throw Error('TAB_CHANGED_DURING_READ');
     if (command.name==='agent_probe') {
@@ -103,6 +116,8 @@ export async function dispatchReadOnly(command, chromeApi) {
     // Reject result if the tab navigated during the injected read.
     const check = await chromeApi.tabs.get(tabId);
     if (check.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    // Do not disclose text after a user revoked access during an in-flight read.
+    await permittedTab(chromeApi,tabId);
     const result=results?.[0]?.result;
     if (!result || result.error || typeof result.text !== 'string' ||
         !Array.isArray(result.links)) throw Error(result?.error || 'INVALID_READ_RESULT');

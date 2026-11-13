@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Chrome Bridge Main Profile — STAGING ONLY",
+  "version": "0.2.0.105",
+  "description": "Owner-consented scoped read-only Claude/Grok project tabs. Separate 17485 lab.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "offscreen",
+    "alarms",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:17485/*"
+  ],
+  "optional_host_permissions": [
+    "https://claude.ai/*",
+    "https://grok.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Chrome Bridge Main Profile — Read staging"
+  }
+}

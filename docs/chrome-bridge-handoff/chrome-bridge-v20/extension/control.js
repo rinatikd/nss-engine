@@ -6,6 +6,7 @@ import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { verifyBridgeCredential } from './connection-check.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
+import { SelectedReadTabs } from './selected-read-tabs.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
 
@@ -75,7 +76,7 @@ async function renderSites() {
     left.textContent = origin;
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = s.mode === 'chat' ? 'ИИ-чат · ' + s.adapter : 'чтение';
+    tag.textContent = (s.mode === 'chat' ? 'ИИ-чат · ' + s.adapter : 'чтение') + (s.selectedTabOnly ? ' · только выбранные вкладки' : '');
     left.append(tag);
     if (!granted.has(origin)) { const w = document.createElement('span'); w.className = 'tag'; w.textContent = 'нет разрешения Chrome'; left.append(w); }
     const rm = document.createElement('button');
@@ -85,6 +86,7 @@ async function renderSites() {
       const cur = await getSites();
       delete cur[origin];
       grants.grants.delete(origin);
+      await new SelectedReadTabs(chrome).revokeOrigin(origin);
       await setSites(cur);
       try { await chrome.permissions.remove({ origins: [origin + '/*'] }); } catch { /* уже снято */ }
       await renderSites();
@@ -120,7 +122,9 @@ $('grant').onclick = async () => {
     const sites = await getSites();
     const provider = providerForOrigin(u.origin);
     const mode = provider ? $('mode').value : 'read';
-    sites[u.origin] = mode === 'chat' ? { mode, adapter: provider } : { mode };
+    // New site enrollments are strict by default; existing sites retain their
+    // previous policy until explicitly migrated.
+    sites[u.origin] = mode === 'chat' ? { mode, adapter: provider, selectedTabOnly: true } : { mode, selectedTabOnly: true };
     await setSites(sites);
     $('origin').value = '';
     await renderSites();
@@ -135,9 +139,68 @@ $('revoke').onclick = async () => {
   const p = await chrome.permissions.getAll();
   for (const o of p.origins || []) if (!o.includes('127.0.0.1')) await chrome.permissions.remove({ origins: [o] });
   await setSites({});
+  await new SelectedReadTabs(chrome).clear();
   await renderSites();
   log('Все сайты отозваны');
 };
+// Requires a visible local user gesture and a second URL-specific confirmation.
+// No read grants are created from any remote MCP request.
+// Enumerate only locally in the extension panel. Remote MCP inventory remains
+// restricted to tabs already individually enrolled by the user.
+$('selectedReadRefresh').onclick = async () => {
+  const select = $('selectedReadTabId');
+  select.textContent = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Выберите вкладку';
+  select.append(placeholder);
+  const sites = await getSites();
+  for (const tab of await chrome.tabs.query({})) {
+    if (!Number.isSafeInteger(tab.id) || !tab.url) continue;
+    let origin;
+    try { origin = new URL(tab.url).origin; } catch { continue; }
+    if (!sites[origin]?.selectedTabOnly) continue;
+    if (!(await chrome.permissions.contains({ origins: [origin + '/*'] }))) continue;
+    const option = document.createElement('option');
+    option.value = String(tab.id);
+    option.textContent = origin + ' · ' + String(tab.title || 'Без названия').slice(0, 90);
+    select.append(option);
+  }
+  $('selectedReadStatus').textContent = (select.options.length - 1) +
+    ' разрешённых для выбора вкладок. Пока чтение не предоставлено.';
+};
+const selectedTabId = () => {
+  const id = Number($('selectedReadTabId').value);
+  if (!Number.isSafeInteger(id) || id <= 0) throw Error('Некорректный tabId');
+  return id;
+};
+$('selectedReadGrant').onclick = async () => {
+  try {
+    const tabId = selectedTabId();
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.url) throw Error('Вкладка недоступна');
+    const origin = new URL(tab.url).origin;
+    const site = (await getSites())[origin];
+    if (!site?.selectedTabOnly) throw Error('Сначала добавьте сайт как разрешённый');
+    if (!confirm('Разрешить чтение ТОЛЬКО этой вкладки на 60 минут?\\n' + tab.url))
+      throw Error('Отменено пользователем');
+    const granted = await new SelectedReadTabs(chrome).grant({
+      tabId, expectedUrl: tab.url, localGesture: true
+    });
+    $('selectedReadStatus').textContent = 'Чтение tabId ' + tabId +
+      ' разрешено до ' + new Date(granted.expires).toLocaleTimeString();
+    await renderSites();
+  } catch (e) { $('selectedReadStatus').textContent = e.message; }
+};
+$('selectedReadRevoke').onclick = async () => {
+  try {
+    const tabId = selectedTabId();
+    await new SelectedReadTabs(chrome).revoke(tabId);
+    $('selectedReadStatus').textContent = 'Чтение tabId ' + tabId + ' отозвано';
+    await renderSites();
+  } catch (e) { $('selectedReadStatus').textContent = e.message; }
+};
+
 $('saveAdapters').onclick = async () => {
   try {
     const v = JSON.parse($('adapterJson').value || '{}');
@@ -211,6 +274,9 @@ async function tabAndSite(tabId) {
   if (previous && previous !== current) grants.grants.delete(previous);
   observedOrigins.set(tabId, current);
   if (!site) throw Error('Tab origin is not permitted');
+  if (site.selectedTabOnly === true) {
+    await new SelectedReadTabs(chrome).require(tabId, tab.url);
+  }
   return { tab, site };
 }
 async function agentTab(tabId) {
@@ -250,12 +316,19 @@ async function execute(cmd) {
     const out = [];
     for (const t of await chrome.tabs.query({})) {
       const site = t.url && (await siteOf(t.url));
-      if (site) out.push({ tabId: t.id, title: t.title, url: t.url, mode: site.mode, adapter: site.adapter || null, active: t.active, windowId: t.windowId });
+      if (site) {
+        try {
+          if (site.selectedTabOnly === true) await new SelectedReadTabs(chrome).require(t.id, t.url);
+          out.push({ tabId: t.id, title: t.title, url: t.url, mode: site.mode, adapter: site.adapter || null, active: t.active, windowId: t.windowId });
+        } catch { /* scoped tab has not been locally enrolled */ }
+      }
     }
     return out;
   }
   if (name === 'browser_open') {
     if (!(await siteOf(args.url))) throw Error('Origin not permitted: add this website in Chrome Bridge');
+    if ((await getSites())[new URL(args.url).origin]?.selectedTabOnly === true)
+      throw Error('SCOPED_TAB_NAVIGATION_DISABLED');
     const targetOrigin = new URL(args.url).origin;
     grants.require(targetOrigin);
     await askApproval('Открыть вкладку', 'Разрешённый адрес: ' + targetOrigin + '\\nОткрытие внешнего сайта', cmd.expires);
@@ -280,6 +353,8 @@ async function execute(cmd) {
     const { tab, site } = await tabAndSite(args.tabId);
     if ($('confirmReads').checked) await askApproval('Чтение страницы', `${tab.url}\n${args.selector ? 'Элемент: ' + args.selector : 'Вся страница'}`, cmd.expires);
     const r = await inject(tab.id, site.origin, 'browser_read', args);
+    const after = await tabAndSite(tab.id);
+    if (after.tab.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
     return { ...r, text: redact(r.text), links: r.links.map((l) => ({ text: redact(l.text), url: redact(l.url) })) };
   }
   if (name === 'browser_click' || name === 'browser_fill') {
@@ -294,6 +369,11 @@ async function execute(cmd) {
     if (name === 'browser_fill') lines.push('Текст: ' + args.text.slice(0, 300) + (args.text.length > 300 ? 'вЂ¦' : ''));
     await askApproval(name === 'browser_click' ? 'Нажатие' : 'Ввод текста', lines.join('\n'), cmd.expires);
     if (!running || Date.now() > cmd.expires) throw Error('Command stopped or expired');
+    const current = await tabAndSite(tab.id);
+    if (current.tab.url !== tab.url || current.site.origin !== site.origin)
+      throw Error('TAB_CHANGED_AFTER_APPROVAL');
+    // Re-check the time-limited control grant independently from read consent.
+    grants.require(site.origin);
     return inject(tab.id, site.origin, name, { ...args, expect: { tag: d.tag, text: d.text } });
   }
 
@@ -301,12 +381,17 @@ async function execute(cmd) {
   if (name === 'agent_probe') {
     const { tab, site, adapter, adapterName } = await agentTab(args.tabId);
     const test = await inject(tab.id, site.origin, 'agent_selftest', { adapter });
+    const after = await tabAndSite(tab.id);
+    if (after.tab.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
     return { adapter: adapterName, verified: test.composer.visible === 1 && test.send.visible === 1 };
 
   }
   if (name === 'agent_context') {
     const { tab, site, adapter } = await agentTab(args.tabId);
-    return inject(tab.id, site.origin, 'agent_context', { adapter });
+    const result = await inject(tab.id, site.origin, 'agent_context', { adapter });
+    const after = await tabAndSite(tab.id);
+    if (after.tab.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    return result;
   }
   if (name === 'agent_new_chat') {
     const { tab, site, adapter } = await agentTab(args.tabId);
@@ -347,6 +432,12 @@ async function execute(cmd) {
         throw Error('AI tab changed after approval');
     }
     const result = await inject(tab.id, site.origin, name, { ...args, adapter });
+    // The classic control-panel transport must enforce the same tab identity
+    // after read diagnostics as the background transport.
+    if (name !== 'agent_send') {
+      const after = await tabAndSite(tab.id);
+      if (after.tab.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    }
     return result?.text ? { ...result, text: redact(result.text) } : result;
   }
   throw Error('Unknown command: ' + name);
