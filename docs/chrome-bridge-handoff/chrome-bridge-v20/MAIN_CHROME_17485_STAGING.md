@@ -34,6 +34,56 @@ This command stages source files only. It does **not** start Chrome, install the
 5. In its *local control window*, add Claude/Grok as chat sites and grant precise **selected-tab read** permission for 60 minutes using **Найти вкладки**. Only the user can approve this local UI action. Remote MCP cannot enumerate unapproved selected tabs.
 6. The main-profile server needs a **separate tunnel and ChatGPT plugin**, with the corresponding unique ID. Never repoint PR102 lab's active tunnel or copy its tokens.
 
+## Stage 2.6: local server startup — only after unpacked extension ID is known
+
+The independent server entrypoint is `scripts/start-main-17485.mjs`. It requires a
+new state directory whose name includes `17485` and `chrome`, an explicit
+32-character Chrome extension ID, and a free port. On the first run, it creates
+fresh random credentials **inside that directory** and pins the expected
+extension ID. The entrypoint never prints those credentials.
+
+1. Run the Node regression suite before installing anything. Only the operator
+   can install the reviewed unpacked MV3 package into their actual main Chrome
+   via `chrome://extensions`, where its newly assigned extension ID is visible.
+   Do not replace or re-use the active PR102 extension.
+2. Confirm `127.0.0.1:17485` is unoccupied in a **separate PowerShell window**:
+
+```powershell
+if (Test-NetConnection 127.0.0.1 -Port 17485 -InformationLevel Quiet -WarningAction SilentlyContinue) {
+  throw 'PORT_17485_ALREADY_IN_USE'
+}
+```
+
+3. Start *only* the new server in an isolated terminal, substituting the exact
+   newly displayed ID (never an existing production/PR102 extension ID):
+
+```powershell
+$root = 'C:\Engineering\chrome-bridge-main-readonly-source\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$state = 'C:\Engineering\ChromeBridge-Main-17485-State'
+$extensionId = '<INSERT_MAIN_PROFILE_STAGING_EXTENSION_ID>'
+node (Join-Path $root 'scripts\start-main-17485.mjs') --state $state --extension-id $extensionId
+```
+
+The process must say `MAIN_CHROME_17485_READY` and remain open. If any safety
+gate fails, it must stop rather than connect to a different server. Do **not**
+disable extension-ID/origin checks to make a connection work.
+
+4. In the locally installed staging extension, enter the new **browser token**
+   from the *new* state directory via its local control UI. The token is a
+   secret: do not paste it into ChatGPT, a GitHub comment, or screenshot. The
+   separate `agentToken` is for MCP only; never type it into the browser.
+5. To enable ChatGPT remotely, create a **separate main-profile tunnel and
+   private plugin**, not a reconfiguration of PR102's active tunnel. Do not
+   share the production tunnel key or reuse its state.
+
+No workflow step grants access to existing tabs automatically. Add each site
+locally, select the exact tab, review its full URL, grant a 60-minute *read*
+permission, and test revocation before any mutation.
+
+**Scope limitation:** This is a source-only workflow; there is no evidence that
+port 17485 has been started, the extension installed, or a tunnel created in the
+user's main Windows browser.
+
 ## Release gates
 
 - Read-only Claude/Grok inventory must show only the approved exact tabs and URLs; Grok response extraction requires live selector calibration.
