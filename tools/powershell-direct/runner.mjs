@@ -5,8 +5,8 @@ import os from 'node:os';
 import {spawn} from 'node:child_process';
 
 export const POLICY=Object.freeze({
-  'git-status':{exe:'git.exe',args:['--no-optional-locks','status','--short','--branch'],timeout:15000},
-  'git-diff-check':{exe:'git.exe',args:['--no-optional-locks','diff','--check'],timeout:15000},
+  'git-status':{exe:'git.exe',args:['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=NUL','status','--short','--branch'],timeout:15000},
+  'git-diff-check':{exe:'git.exe',args:['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=NUL','-c','diff.external=','diff','--check'],timeout:15000},
   'dotnet-version':{exe:'dotnet.exe',args:['--version'],timeout:10000},
   'node-version':{exe:'node.exe',args:['--version'],timeout:10000},
   // Fixed literal command: no user-provided script text or interpolation.
@@ -52,7 +52,7 @@ export async function runApproved({task,workspace,allowedRoot,spawnImpl=spawn}){
     try{
       child=spawnImpl(fixed,spec.args,{
         cwd,shell:false,windowsHide:true,
-        env:{...process.env,GIT_OPTIONAL_LOCKS:'0'},
+        env:{...process.env,GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'},
         stdio:['ignore','pipe','pipe']
       });
     }catch(e){resolve({state:'FAILED_TO_START',reason:e.code||'SPAWN_FAILED'});return;}
