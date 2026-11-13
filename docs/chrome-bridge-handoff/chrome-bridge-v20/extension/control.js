@@ -369,6 +369,11 @@ async function execute(cmd) {
     if (name === 'browser_fill') lines.push('Текст: ' + args.text.slice(0, 300) + (args.text.length > 300 ? 'вЂ¦' : ''));
     await askApproval(name === 'browser_click' ? 'Нажатие' : 'Ввод текста', lines.join('\n'), cmd.expires);
     if (!running || Date.now() > cmd.expires) throw Error('Command stopped or expired');
+    const current = await tabAndSite(tab.id);
+    if (current.tab.url !== tab.url || current.site.origin !== site.origin)
+      throw Error('TAB_CHANGED_AFTER_APPROVAL');
+    // Re-check the time-limited control grant independently from read consent.
+    grants.require(site.origin);
     return inject(tab.id, site.origin, name, { ...args, expect: { tag: d.tag, text: d.text } });
   }
 
