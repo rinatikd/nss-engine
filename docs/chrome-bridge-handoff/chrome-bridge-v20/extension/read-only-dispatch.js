@@ -77,6 +77,9 @@ export async function dispatchReadOnly(command, chromeApi) {
     // Fail closed for every agent read, not only browser_read.
     const after=await chromeApi.tabs.get(tabId);
     if (after.url!==tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    // Revocation or expiry during injection must block the outgoing payload.
+    // Recheck host permission, site enrollment and exact-tab session grant.
+    await permittedTab(chromeApi,tabId);
     const check=await chromeApi.tabs.get(tabId);
     if (check.url!==tab.url) throw Error('TAB_CHANGED_DURING_READ');
     if (command.name==='agent_probe') {
@@ -113,6 +116,8 @@ export async function dispatchReadOnly(command, chromeApi) {
     // Reject result if the tab navigated during the injected read.
     const check = await chromeApi.tabs.get(tabId);
     if (check.url !== tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    // Do not disclose text after a user revoked access during an in-flight read.
+    await permittedTab(chromeApi,tabId);
     const result=results?.[0]?.result;
     if (!result || result.error || typeof result.text !== 'string' ||
         !Array.isArray(result.links)) throw Error(result?.error || 'INVALID_READ_RESULT');
