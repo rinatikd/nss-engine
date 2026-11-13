@@ -50,7 +50,7 @@ test('expiry and duplicate request IDs are fail closed',()=>{
 test('no arbitrary shell command or unapproved workspace',()=>{
  const x=fixture();
  for(const task of ['pwsh','powershell','cmd','git-reset','node-eval','dotnet-build'])
-  assert.throws(()=>x.service.propose({...req,requestId:'test'+task,task}),/TASK_NOT_ALLOWED/);
+  assert.throws(()=>x.service.propose({...req,requestId:'rejectedtask01',task}),/TASK_NOT_ALLOWED/);
  assert.throws(()=>x.service.propose({...req,workspace:'C:\\Windows\\System32'}),/WORKSPACE_DENIED/);
 });
 test('MCP tools list permits proposal and status only, never approval or execution',()=>{
