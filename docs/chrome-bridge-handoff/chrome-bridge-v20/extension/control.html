@@ -38,6 +38,12 @@
     </div>
     <label>Адрес сайта<input id="origin" placeholder="https://claude.ai"></label>
     <div class="row"><button id="grant">Добавить сайт</button><button id="revoke" class="secondary">Отозвать все сайты</button></div>
+    <div class="row">
+      <label>ID вкладки из browser_tabs<input id="selectedReadTabId" type="number" min="1" inputmode="numeric" placeholder="tabId"></label>
+      <button id="selectedReadGrant" class="secondary" type="button">Разрешить чтение вкладки на 60 минут</button>
+      <button id="selectedReadRevoke" class="secondary" type="button">Отозвать чтение вкладки</button>
+    </div>
+    <p class="hint" id="selectedReadStatus" role="status">Разрешение выдаётся только конкретной вкладке и адресу. Смена URL, истечение срока или отзыв прекращают доступ. Установка расширения сама по себе не выдаёт доступ.</p>
     <ul id="sites"></ul>
 
   </section>
