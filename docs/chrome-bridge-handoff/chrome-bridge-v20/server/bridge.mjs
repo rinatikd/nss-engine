@@ -14,6 +14,9 @@ export const VERSION = '0.2.0';
 export const PORT = Number(process.env.CHROME_BRIDGE_PORT || 17381);
 const SUPPORTED = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const CHAT_ORIGINS = new Set(['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com']);
+// Staging server cannot execute remote writes, even if the browser UI is misconfigured.
+const READ_ONLY_STAGE = process.env.CHROME_BRIDGE_READ_ONLY === '1';
+const STAGE_MUTATING_TOOLS = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_ask','agent_new_chat','codex_submit','codex_cancel']);
 const EXTENSION_ID = /^[a-p]{32}$/;
 const DEFAULT_STATE = process.env.CHROME_BRIDGE_HOME || path.join(os.homedir(), '.chrome-bridge');
 
@@ -237,6 +240,8 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       try {
         const t = toolByName(params.name);
         if (!t) throw Error('Unknown tool');
+        if (READ_ONLY_STAGE && STAGE_MUTATING_TOOLS.has(t.name))
+          throw Error('READ_ONLY_STAGE_MUTATION_DENIED');
         const args = params.arguments || {};
         validateArgs(t, args);
         if (t.name === 'browser_open' && !['http:', 'https:'].includes(new URL(args.url).protocol)) throw Error('Only HTTP(S) URLs allowed');
