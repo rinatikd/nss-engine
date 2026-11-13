@@ -120,7 +120,7 @@ test('chat-only readonly mode is disabled by default and rejects direct dispatch
 
 test('opt-in chat readonly mode exposes only one additional allowlisted MCP tool',async()=>{
  let started=0;
- const service=new PowerShellApprovalService({root:'C:\\\\Engineering',chatReadonlyEnabled:true,
+ const service=new PowerShellApprovalService({root:'C:\\Engineering',chatReadonlyEnabled:true,
   workspaceCheck:()=>workspace,
   run:async()=>{started++;return {state:'FINISHED',exitCode:0,stdout:'5.1',stderr:''};}});
  const list=service.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools;
