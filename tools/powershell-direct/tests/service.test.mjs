@@ -111,3 +111,27 @@ test('MCP endpoint refuses missing/incorrect token, then returns tool metadata',
   assert.equal(x.executed(),0);
  }finally{await x.service.stop();}
 });
+
+test('chat-only readonly mode is disabled by default and rejects direct dispatch',()=>{
+ const x=fixture();
+ assert.throws(()=>x.service.chatReadonly(req),/CHAT_READONLY_DISABLED/);
+ assert.equal(x.executed(),0);
+});
+
+test('opt-in chat readonly mode exposes only one additional allowlisted MCP tool',async()=>{
+ let started=0;
+ const service=new PowerShellApprovalService({root:'C:\\\\Engineering',chatReadonlyEnabled:true,
+  workspaceCheck:()=>workspace,
+  run:async()=>{started++;return {state:'FINISHED',exitCode:0,stdout:'5.1',stderr:''};}});
+ const list=service.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools;
+ assert.deepEqual(list.map(x=>x.name),['powershell_propose','powershell_cancel','powershell_job','powershell_chat_readonly']);
+ const response=service.rpc({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'powershell_chat_readonly',arguments:req}});
+ const created=JSON.parse(response.result.content[0].text);
+ assert.equal(created.state,'RUNNING');
+ await flush();
+ assert.equal(service.status(req.requestId).state,'FINISHED');
+ assert.equal(started,1);
+ const denied=service.rpc({jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'powershell_chat_readonly',arguments:{...req,requestId:'chatunsafe01',task:'cmd'}}});
+ assert.equal(denied.result.isError,true);
+ assert.equal(started,1);
+});
