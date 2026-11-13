@@ -84,6 +84,27 @@ permission, and test revocation before any mutation.
 port 17485 has been started, the extension installed, or a tunnel created in the
 user's main Windows browser.
 
+
+## Dedicated server (staged, never auto-started)
+
+The branch now contains `scripts/Start-MainChrome-17485.ps1`, which **does not** affect other bridges. It requires a separately installed staging extension ID, enforces loopback port `17485`, a distinct `C:\\Engineering\\ChromeBridge-Main-17485-State` directory, and sets `CHROME_BRIDGE_READ_ONLY=1` in its child process.
+
+To verify prerequisites without starting or changing anything:
+
+```powershell
+powershell -NoProfile -File (Join-Path $root 'scripts\Start-MainChrome-17485.ps1') -Mode Doctor
+```
+
+After the operator intentionally installs the distinct staged extension and copies **only its visible extension ID** (not credentials), the dedicated server can be launched:
+
+```powershell
+powershell -NoProfile -File (Join-Path $root 'scripts\Start-MainChrome-17485.ps1') -Mode Run -ExtensionId '<32-character staging extension ID>'
+```
+
+The generated new server state `config.json` contains new random `browserToken` and `agentToken`. **Never paste these into GitHub or the chat**; enter the browser token only into the local staging extension's control panel. The staging server independently rejects MCP `agent_send`, `agent_ask`, `browser_click`, `browser_fill`, `browser_open`, `agent_new_chat` and Codex mutations. Run `node --test tests/read-only-stage-server.test.mjs` before attempting a real browser connection.
+
+Only after live read-only E2E passes should a separate Stage-3 PR add explicitly approved write support. The 17485 server should remain permanently read-only during this rollout.
+
 ## Release gates
 
 - Read-only Claude/Grok inventory must show only the approved exact tabs and URLs; Grok response extraction requires live selector calibration.
