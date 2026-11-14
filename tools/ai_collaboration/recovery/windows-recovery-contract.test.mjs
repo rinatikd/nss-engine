@@ -62,3 +62,14 @@ test('manifest integrity is required by both logon task and desktop shortcut',as
   assert.match(verify,/RECOVERY_FILE_HASH_MISMATCH/);
   assert.match(verify,/Get-FileHash.*SHA256/);
 });
+
+test('one-click shortcut uses user-visible checked release, not arbitrary script',async()=>{
+  const register=await read('Register-StackRecovery.ps1');
+  const panel=await read('Restore-StackWithReport.ps1');
+  const prepare=await read('Prepare-RecoveryRelease.ps1');
+  assert.match(register,/Restore-StackWithReport\.ps1/);
+  assert.match(register,/-NoProfile -Sta -File/);
+  assert.match(panel,/Invoke-VerifiedRecovery\.ps1/);
+  assert.match(panel,/MessageBox/);
+  assert.match(prepare,/Restore-StackWithReport\.ps1/);
+});
