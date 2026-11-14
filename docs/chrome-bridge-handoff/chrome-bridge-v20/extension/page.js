@@ -32,7 +32,8 @@ export async function pageAction(name, args, expectedOrigin) {
   };
   try {
     const control = () => {
-      if (!['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com'].includes(location.origin) ||
+      if ((!args.allTabsSession &&
+           !['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com'].includes(location.origin)) ||
           location.origin !== expectedOrigin || !(args.controlExpires > Date.now())) throw Error('Control denied: local re-grant required');
     };
     if (['browser_click', 'browser_fill', 'agent_send'].includes(name)) control();
