@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 
 const ROLES=new Set(['planner','developer','reviewer','tester','operator']);
 const ACTIONS=new Set(['create','assign','submit','accept','reject']);
@@ -81,7 +82,7 @@ export function apply(file,event){
  }finally{fs.closeSync(fd);fs.unlinkSync(lock);}
 }
 export function getState(file){return replay(readEvents(file));}
-if(process.argv[1]&&path.resolve(process.argv[1])===path.resolve(new URL(import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/,''))){
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const [cmd,filename,arg]=process.argv.slice(2);
  if(!['show','event'].includes(cmd)||!filename)throw Error('USAGE: node ledger.mjs show|event ledger.jsonl [event.json]');
  if(cmd==='show')process.stdout.write(JSON.stringify(getState(filename),null,2)+'\n');
