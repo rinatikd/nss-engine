@@ -70,8 +70,73 @@ try {
   foreach($rel in $files){
    Copy-Item -LiteralPath (Join-Path $repo $rel) -Destination (Join-Path $stage $rel) -ErrorAction Stop
   }
-  $rows=@(Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json)
-  if($rows.Count -lt 2){throw 'MANIFEST_INVALID'}
+  # ConvertFrom-Json can emit the JSON array as a single pipeline object
+  # in Windows PowerShell. Decode explicitly and normalize without nesting.
+  $decoded=ConvertFrom-Json -InputObject (Get-Content -LiteralPath $manifest -Raw -Encoding UTF8)
+  $rows=@()
+  if($decoded -is [array]){
+    foreach($entry in $decoded){$rows+= $entry}
+  } elseif($null -ne $decoded) {
+    $rows+= $decoded
+  }
+  if($rows.Count -lt 2){
+    throw ('MANIFEST_INVALID_ROW_COUNT_'+$rows.Count)
+  }
+  foreach($row in $rows){
+    if($null -eq $row -or
+       !($row.PSObject.Properties.Name -contains 'File') -or
+       !($row.PSObject.Properties.Name -contains 'Sha256') -or
+       [string]::IsNullOrWhiteSpace([string]$row.File) -or
+       [string]$row.Sha256 -notmatch '^[0-9A-Fa-f]{64}
+  foreach($rel in $files){
+   $native=$rel.Replace('/','\')
+   $matches=@($rows | Where-Object {$_.File.Replace('/','\') -ieq $native})
+   if($matches.Count -ne 1){throw ('MANIFEST_ENTRY_MISSING_OR_DUPLICATE_'+$rel)}
+   $matches[0].Sha256=(Get-FileHash -LiteralPath (Join-Path $stage $rel) -Algorithm SHA256).Hash
+  }
+  $tmp=Join-Path $stage 'source-hashes.next.json'
+  if(Test-Path -LiteralPath $tmp){throw 'MANIFEST_TEMP_EXISTS'}
+  # Preserve a proper JSON array regardless of pipeline auto-unrolling.
+  ConvertTo-Json -InputObject $rows -Depth 5 |
+    Set-Content -LiteralPath $tmp -Encoding UTF8
+  $verifyDecoded=ConvertFrom-Json -InputObject (Get-Content -LiteralPath $tmp -Raw -Encoding UTF8)
+  if($verifyDecoded -isnot [array] -or $verifyDecoded.Count -ne $rows.Count){
+    throw 'MANIFEST_OUTPUT_SHAPE_INVALID'
+  }
+  Move-Item -LiteralPath $tmp -Destination $manifest -Force
+  Push-Location $stage
+  try {
+   & $node --test @tests
+   if($LASTEXITCODE -ne 0){throw 'STAGE_TESTS_FAILED'}
+   & $node 'tools/powershell-direct/tests/engineering-smoke.mjs'
+   if($LASTEXITCODE -ne 0){throw 'STAGE_MCP_SMOKE_FAILED'}
+  } finally {Pop-Location}
+  foreach($rel in $checkPaths){
+   $a=(Get-FileHash -LiteralPath (Join-Path $repo $rel) -Algorithm SHA256).Hash
+   $b=(Get-FileHash -LiteralPath (Join-Path $stage $rel) -Algorithm SHA256).Hash
+   if($a -ne $b){throw ('POST_SYNC_HASH_MISMATCH_'+$rel)}
+  }
+  $success=$true
+} finally {
+ if(!$success){
+  foreach($rel in $files){
+   Copy-Item -LiteralPath (Join-Path $backup $rel) -Destination (Join-Path $stage $rel) -Force
+  }
+  Copy-Item -LiteralPath (Join-Path $backup 'source-hashes.json') -Destination $manifest -Force
+ }
+}
+[pscustomobject]@{
+ Result='ENGINEERING_LAB_SYNCED_AND_TESTED'
+ UpdatedFiles=$files
+ BackupDirectory=$backup
+ ProductionPort17486Touched=$false
+ TunnelTouched=$false
+ ReadyForReadOnlyPreflight=$true
+}|ConvertTo-Json -Depth 4
+){
+      throw 'MANIFEST_INVALID_ENTRY'
+    }
+  }
   foreach($rel in $files){
    $native=$rel.Replace('/','\')
    $matches=@($rows | Where-Object {$_.File.Replace('/','\') -ieq $native})
