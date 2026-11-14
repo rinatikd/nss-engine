@@ -35,7 +35,7 @@ if (-not $SkipNodeTests) {
   } elseif (-not (Test-Path -LiteralPath $testFile -PathType Leaf)) {
     $tests.State='BLOCKED_TEST_FILE_NOT_FOUND'
   } else {
-    & $node.Source --test $testFile *> $testsOutput
+    & $node.Source --experimental-default-type=module --test $testFile *> $testsOutput
     $tests.ExitCode = $LASTEXITCODE
     $tests.State = if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }
   }
