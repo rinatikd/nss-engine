@@ -32,7 +32,7 @@ function preflightGitPull(plan,{spawnSyncImpl=spawnSync,env}={}){
 
 const LAB_DEST='C:/Engineering/PowerShellDirect-Approval-Lab-PR115';
 const LAB_PARENT='C:/Engineering';
-function preflightLabCheckout(plan){
+export function preflightLabCheckout(plan,{fsImpl=fs}={}){
   if(plan.operation!=='lab-checkout-pr115')return;
   const requested=path.win32.normalize(LAB_DEST);
   const parent=path.win32.normalize(LAB_PARENT);
@@ -40,15 +40,15 @@ function preflightLabCheckout(plan){
     throw Error('LAB_PARENT_UNEXPECTED');
   // Refuse any existing file, directory, symlink, junction, or broken link.
   // Clone must create its own absent destination.
-  if(fs.existsSync(requested))throw Error('LAB_DESTINATION_EXISTS');
-  try{fs.lstatSync(requested);throw Error('LAB_DESTINATION_EXISTS');}
+  if(fsImpl.existsSync(requested))throw Error('LAB_DESTINATION_EXISTS');
+  try{fsImpl.lstatSync(requested);throw Error('LAB_DESTINATION_EXISTS');}
   catch(e){if(e.message==='LAB_DESTINATION_EXISTS')throw e;
     if(e.code!=='ENOENT')throw Error('LAB_DESTINATION_UNTRUSTED');}
   let real;
-  try{real=fs.realpathSync.native(parent);}catch{throw Error('LAB_PARENT_MISSING');}
+  try{real=fsImpl.realpathSync.native(parent);}catch{throw Error('LAB_PARENT_MISSING');}
   if(path.win32.normalize(real).toLowerCase()!==parent.toLowerCase())
     throw Error('LAB_PARENT_UNTRUSTED');
-  if(!fs.statSync(real).isDirectory())throw Error('LAB_PARENT_INVALID');
+  if(!fsImpl.statSync(real).isDirectory())throw Error('LAB_PARENT_INVALID');
   if(path.win32.normalize(plan.cwd).toLowerCase()!==
      path.win32.normalize('C:/Engineering/ChromeBridge-Recovery-Install-20261114').toLowerCase())
     throw Error('LAB_SOURCE_WORKSPACE_NOT_ALLOWED');
