@@ -84,3 +84,18 @@ No production restart, port change, tunnel change, credential use/rotation, brow
 ## Definition of done
 
 A new ChatGPT conversation can (with explicit approvals) inspect approved Windows state, target an approved Claude/Gemini/DeepSeek/Grok/Qwen conversation, send one traceable message, receive and attribute the answer, survive disconnect/restart without duplicate dispatch, revoke access immediately, and roll back cleanly. Each capability must have evidence from the real supported environment, not merely an API declaration.
+
+
+## Windows-first test execution (operator decision 2026-11-14)
+
+GitHub Actions is **not a release prerequisite while account billing/service limitations are unresolved**. The operator has reported that GitHub disabled some services after nonpayment. The observed job failure (run 43545904449, portable job) cannot currently be attributed to source code because job logs return BlobNotFound. Classify `CI: BLOCKED / BILLING-REPORTED / ROOT-CAUSE-UNVERIFIED`; do not falsely label it a code failure or definitively prove billing from the error alone.
+
+The local Windows PC becomes the primary testing host:
+- New standalone prototype `tools/ai_collaboration/local_test_runner.mjs` supports extensible named suites (`platform-contract`, `platform-node`, `nss-portable`) rather than the original five read-only version/status operations.
+- `tools/ai_collaboration/local_test_runner.test.mjs` covers approval binding, exact workspace, symlink rejection, command plan validation, shell-free execution and bounded output.
+- Runner is **not yet connected to the deployed PowerShell Direct MCP endpoint**. A GitHub commit or passing Node unit tests cannot alter the deployed tool schema. Integration requires a reviewed Windows service-side MCP action, local deployment, discovery/refresh and real Windows tests.
+- Approval is mandatory for each execution request. Persist one-shot requestId/command fingerprint before spawning, enforce exclusive execution, timeout and process-tree cleanup, redact output and maintain durable audit logs. A stale/UNKNOWN dispatch must not replay automatically.
+- A test suite can create caches/build outputs; running tests is not necessarily read-only. Scope write permissions to an approved isolated worktree/artifact directory. No arbitrary host-level PowerShell or remote scripts without distinct explicit approval.
+- For real Windows acceptance, record exact source SHA, suite, exit code, elapsed time, sanitized stdout/stderr, OS and environment, artifacts and SHA256. Verify by running `node --test tools/ai_collaboration/local_test_runner.test.mjs` and `python -m unittest discover -s tools/ai_collaboration -p 'test_*.py' -v` in a locally approved isolated checkout.
+
+Codex CLI availability and integration checks remain deferred through 2026-11-27.
