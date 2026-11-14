@@ -1,6 +1,7 @@
 // Execute only plans minted by engineering-plan.mjs. No shell or arbitrary EXE.
 // Caller must persist a unique request claim AND obtain trusted local approval.
 import fs from 'node:fs';
+import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {verifyEngineeringPlan} from './engineering-plan.mjs';
@@ -17,6 +18,11 @@ export async function runEngineeringPlan(plan,{
   if(platform!=='win32')throw Error('WINDOWS_ONLY_EXECUTION');
   if(!path.win32.isAbsolute(plan.executable)||!executableCheck(plan.executable))
     throw Error('TRUSTED_EXECUTABLE_MISSING');
+  if(plan.sourcePath){
+    // If the operator approved source A, never silently execute source B.
+    const current=createHash('sha256').update(fs.readFileSync(plan.sourcePath)).digest('hex');
+    if(current!==plan.sourceSha256)throw Error('SOURCE_CHANGED_SINCE_APPROVAL');
+  }
   return await new Promise((resolve,reject)=>{
     const start=Date.now();let out='',err='',truncated=false,settled=false;
     let child,timeout,watchdog;
