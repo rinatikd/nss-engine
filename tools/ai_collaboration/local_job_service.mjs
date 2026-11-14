@@ -50,7 +50,18 @@ export function createLocalJobService({
       await handle.sync();
       await handle.close();
       handle=null;
-      await rename(temporary,destination);
+      // Windows can temporarily deny replacing an audit file while parallel
+      // readers hold it open. Retry ONLY transient sharing violations and
+      // NEVER re-execute the approved job or create a new claim.
+      for(let attempt=0;;attempt++){
+        try { await rename(temporary,destination);break; }
+        catch(error){
+          if(process.platform!=='win32' ||
+             !['EPERM','EACCES','EBUSY'].includes(error.code) ||
+             attempt>=29)throw error;
+          await new Promise(resolve=>setTimeout(resolve,30));
+        }
+      }
     } finally {
       if(handle)await handle.close().catch(()=>{});
       await unlink(temporary).catch(e=>{if(e.code!=='ENOENT')throw e;});
