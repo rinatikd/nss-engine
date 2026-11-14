@@ -66,15 +66,16 @@ export class PowerShellApprovalService {
       resolvePlan:resolveEngineeringPlan,
       runner:engineeringRunner,
       operationName:'engineering-operation',
-      approveRequest:details=>new Promise(resolve=>{
+      approveRequest:async details=>{
         // Single-use exact-plan enrollment avoids the extra local page.
         // No trusted local enrollment means legacy local approval.
-        const enrolled=this.enrolledApprover?.decide(details);
+        const enrolled=await this.enrolledApprover?.decide(details);
         if(enrolled?.approved===true){resolve(enrolled);return;}
         if(enrolled?.reason&&enrolled.reason!=='NOT_ENROLLED'){
           resolve({approved:false,reason:enrolled.reason,requestId:details.requestId,
             planSha256:details.planSha256});return;
         }
+        return await new Promise(resolve=>{
         if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
           resolve({approved:false,requestId:details.requestId,
             planSha256:details.planSha256});return;
@@ -86,7 +87,8 @@ export class PowerShellApprovalService {
             requestId:details.requestId,planSha256:details.planSha256});
         },180000);
         this.namedPending.set(details.requestId,{...details,resolve,timer,expiresAt});
-      })
+      });
+      }
     });
     this.engineeringHandlers=createEngineeringHandlers(this.engineeringService);
   }
