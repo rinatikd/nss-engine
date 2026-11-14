@@ -38,13 +38,22 @@ const exactFields=(arg,fields,required)=>{
       required.some(k=>typeof arg[k]!=='string')) throw Error('INVALID_TOOL_ARGUMENTS');
 };
 
+export function validateNamedSuiteSubmit(args) {
+  exactFields(args,['requestId','suite','workspace'],['requestId','suite','workspace']);
+  if(!allowedSuites.includes(args.suite))throw Error('SUITE_NOT_ALLOWLISTED');
+  if(!/^[A-Za-z0-9_-]{8,80}$/.test(args.requestId))
+    throw Error('INVALID_REQUEST_ID');
+  if(args.workspace.length<3||args.workspace.length>512)
+    throw Error('INVALID_WORKSPACE');
+  return args;
+}
+
 export function createNamedSuiteHandlers(service) {
   if(typeof service?.submit!=='function'||typeof service?.status!=='function')
     throw Error('NAMED_SUITE_SERVICE_REQUIRED');
   return Object.freeze({
     async powershell_named_suite_submit(args) {
-      exactFields(args,['requestId','suite','workspace'],['requestId','suite','workspace']);
-      if(!allowedSuites.includes(args.suite))throw Error('SUITE_NOT_ALLOWLISTED');
+      validateNamedSuiteSubmit(args);
       return service.submit({
         requestId:args.requestId,suite:args.suite,workspace:args.workspace
       });
