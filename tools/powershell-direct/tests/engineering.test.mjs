@@ -42,12 +42,17 @@ const approve=async(svc,p,approved)=>fetch('http://127.0.0.1:'+svc.port+'/decide
     approved:approved?'yes':'no'})
 });
 async function status(svc,id){
-  for(let i=0;i<100;i++){
-    const s=await svc.engineeringService.status(id);
-    if(['DENIED','FINISHED','FAILED'].includes(s.state))return s;
-    await new Promise(r=>setTimeout(r,10));
-  }
-  throw Error('FINAL_TIMEOUT');
+  // Concurrent Windows audit-file readers can delay a final atomic rename.
+  // Use a real deadline and report the observed state instead of an opaque timeout.
+  const until=Date.now()+5000;
+  let last=null;
+  do{
+    last=await svc.engineeringService.status(id);
+    if(['DENIED','FINISHED','FAILED','UNKNOWN_OR_FAILED','TIMED_OUT'].includes(last.state))
+      return last;
+    await new Promise(r=>setTimeout(r,20));
+  }while(Date.now()<until);
+  throw Error('FINAL_TIMEOUT lastState='+String(last?.state));
 }
 test('feature is opt-in and does not replace five read-only diagnostics',()=>fixture(async({svc})=>{
   const names=svc.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools.map(x=>x.name);
