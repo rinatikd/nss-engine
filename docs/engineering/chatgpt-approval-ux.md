@@ -1,4 +1,4 @@
-# ChatGPT-first approval UX — implementation and trust boundary
+# ChatGPT-only approval UX — implementation and trust boundary
 
 ## Verified capability
 
@@ -11,14 +11,22 @@ References:
 - https://developers.openai.com/plugins/build/mcp-server
 - https://developers.openai.com/plugins/guides/security-privacy
 
-## Stage 1: immediate improvement (no change to running service)
+## Target: no separate approval page in the routine workflow
+
+The desktop shortcut is a strictly temporary fallback, **not** the target user experience. The design goal is to approve or deny work within ChatGPT itself, with no local browser tab, PowerShell command, tray icon, or per-operation Windows interaction. An unavoidable initial enrollment of trusted workstation credentials and policy can be separate, but must not be repeated for each operation.
+
+**Technical decision:** classify operations as (A) fixed read-only pinned diagnostics, (B) bounded tests/builds that can execute arbitrary project code, and (C) filesystem/Git mutations. For A, use native ChatGPT approval, already available in the pinned read-only tool. For B/C, test whether ChatGPT's tool approval gate can provide an authenticated server-side attestation bound to the exact plan. If not, use a pre-enrolled, locally signed *bounded execution policy* for narrowly scoped operations where the operator has explicitly opted into autonomous execution; keep separate local approval for anything outside this policy. Never treat the assistant's message or a model-supplied field as authorization. Local protection is not replaced by an in-chat button that merely sends text.
+
+MCP's elicitation capability can request information via client UI, but general elicitation acceptance alone is not a cryptographic host-verified authorization for executing code. Verify actual ChatGPT support and transport behavior before adopting it. See https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/client/elicitation.mdx .
+
+## Stage 1: temporary fallback (no change to running service)
 
 1. Keep `powershell_chat_readonly` for safe fixed diagnostics, with **Always ask** permission.
-2. Provide `Install-ApprovalShortcut.ps1` for a user-owned desktop shortcut labeled "Engineering MCP Approval". The shortcut points to the already-tested `Open-Approval.ps1` and never contains the protected token, approval URL or secrets.
+2. Optionally provide `Install-ApprovalShortcut.ps1` for a user-owned desktop shortcut labeled "Engineering MCP Approval" **only until in-chat authorization is solved**. The shortcut points to the already-tested `Open-Approval.ps1` and never contains the protected token, approval URL or secrets.
 3. Require explicit operator installation using `-Mode Install`; `-Mode Inspect` is read-only, `-Mode Remove` only removes an exact matching shortcut. Refuse to overwrite a conflicting existing shortcut.
 4. Continue displaying `requestId`, operation, workspace, exact executable/argv, hash, risk and expiry in the local page; never aggregate broad approvals by default.
 
-## Stage 2: ChatGPT-native approvals feasibility gate
+## Stage 2: eliminate local page for regular work
 
 Before implementing any host-only approval for operations that execute code or modify local files:
 
@@ -37,3 +45,11 @@ Before implementing any host-only approval for operations that execute code or m
 - Real Windows E2E testing validates fresh host consent, denial, replay prevention, local page, and unaffected production services.
 
 This document does not claim ChatGPT-native verification has been implemented.
+
+## Proof-of-support checklist
+
+1. Confirm ChatGPT's live connected MCP call actually requests host consent and whether any attestation is transmitted to the MCP server. The Responses API `mcp_approval_request`/`mcp_approval_response` exchange is processed by the OpenAI client; it does not imply a server-verifiable signature on each invocation. See https://developers.openai.com/api/docs/guides/tools-connectors-mcp .
+2. Inspect request metadata and connector capabilities for any authenticated, non-model-authored token scoped to the exact call. Never log credentials; synthetic test service only.
+3. If absent, prefer a **single locally enrolled allowlisted policy**: exact allowed workspace roots, operation enum, acceptable source hashes, TTL and revocation, audit/at-most-once. No arbitrary shell or rights escalation. Per-operation ChatGPT consent is an additional layer but not a substitute for enrollment.
+4. Test prompt injection, fabricated `approved`, replay, branch divergence, dirty worktree, modified test source, expiry, operator revocation, and rollback. Require no pending local approval for enrolled requests in the successful E2E case.
+5. Keep non-enrolled and high-impact operations fail-closed pending a separate operator decision until a cryptographically meaningful attestation exists.
