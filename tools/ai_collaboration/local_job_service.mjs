@@ -2,8 +2,8 @@
 // The connected MCP host must implement approveRequest using a genuine local
 // host approval channel. A model-supplied "approved:true" never authorizes work.
 // Jobs are at-most-once: a crash or lost ACK becomes UNKNOWN, never a re-run.
-import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, open, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveTestPlan, executeTestPlan, TaskPolicyError } from './local_test_runner.mjs';
 
@@ -36,10 +36,35 @@ export function createLocalJobService({
     throw new TaskPolicyError('AUDIT_DIR_NOT_ABSOLUTE');
   let activeRequestId = null;
   const auditPath = requestId => path.join(auditDirectory, requestId + '.json');
+  // Readers must see either the old complete record or the new complete
+  // record, never an empty/truncated JSON written in place.
+  // Unique sibling temp files keep concurrent writes from aliasing.
+  const publish = async (requestId, value) => {
+    const destination=auditPath(requestId);
+    const temporary=path.join(auditDirectory,
+      '.'+requestId+'.'+randomUUID()+'.tmp');
+    let handle;
+    try {
+      handle=await open(temporary, 'wx', 0o600);
+      await handle.writeFile(JSON.stringify(value));
+      await handle.sync();
+      await handle.close();
+      handle=null;
+      await rename(temporary,destination);
+    } finally {
+      if(handle)await handle.close().catch(()=>{});
+      await unlink(temporary).catch(e=>{if(e.code!=='ENOENT')throw e;});
+    }
+  };
   const read = async requestId => {
     if (!ID.test(requestId || '')) throw new TaskPolicyError('INVALID_REQUEST_ID');
-    try { return JSON.parse(await readFile(auditPath(requestId), 'utf8')); }
+    let raw;
+    try { raw=await readFile(auditPath(requestId), 'utf8'); }
     catch (error) { if (error.code === 'ENOENT') return {requestId,state:'NOT_FOUND'}; throw error; }
+    // The exclusive claim (wx) precedes initial durable JSON creation.
+    // A simultaneous status read can observe an EMPTY claim, not an error.
+    if(raw.length===0) return {requestId,state:'CLAIM_IN_PROGRESS'};
+    return JSON.parse(raw);
   };
   return {
     status: read,
@@ -78,21 +103,21 @@ export function createLocalJobService({
           const reason=approved?.reason==='APPROVAL_EXPIRED'?'APPROVAL_EXPIRED':
             approved?.reason==='OPERATOR_DENIED'?'OPERATOR_DENIED':
             'APPROVAL_INVALID_OR_DECLINED';
-          await writeFile(auditPath(requestId),JSON.stringify({
+          await publish(requestId,{
             requestId,suite,state:'DENIED',reason,planSha256:digest
-          }));
+          });
           return {requestId,state:'DENIED',reason};
         }
         if (activeRequestId !== null) {
-          await writeFile(auditPath(requestId),JSON.stringify({
+          await publish(requestId,{
             requestId,suite,state:'DENIED',reason:'ANOTHER_JOB_RUNNING',planSha256:digest
-          }));
+          });
           return {requestId,state:'DENIED',reason:'ANOTHER_JOB_RUNNING'};
         }
         activeRequestId = requestId;
-        await writeFile(auditPath(requestId),JSON.stringify({
+        await publish(requestId,{
           requestId,suite,state:'RUNNING',planSha256:digest,startedAt:new Date().toISOString()
-        }));
+        });
         const result = await runner(plan);
         const final = {requestId,suite,planSha256:digest,
           state:result.timedOut===true ? 'TIMED_OUT' :
@@ -103,14 +128,14 @@ export function createLocalJobService({
           terminationUnconfirmed:result.terminationUnconfirmed===true,
           stdout:safeOutput(result.stdout),stderr:safeOutput(result.stderr),
           truncated:result.truncated===true,endedAt:new Date().toISOString()};
-        await writeFile(auditPath(requestId),JSON.stringify(final));
+        await publish(requestId,final);
         return final;
       } catch(error) {
         if (claim) { await claim.close().catch(()=>{}); }
         // Preserve an UNKNOWN record rather than risking duplicate execution.
         const state={requestId,suite,state:'UNKNOWN_OR_FAILED',
           errorCode:error instanceof TaskPolicyError ? error.message:'JOB_FAILED'};
-        await writeFile(auditPath(requestId),JSON.stringify(state));
+        await publish(requestId,state);
         return state;
       } finally {
         if (activeRequestId === requestId) activeRequestId = null;
