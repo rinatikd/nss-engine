@@ -14,7 +14,7 @@ const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/
 
 export class PowerShellApprovalService {
  constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
-   namedWorkspaceRoots=[],namedAuditDirectory=null}={}){
+   namedWorkspaceRoots=[],namedAuditDirectory=null,namedRunner}={}){
   const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
   const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
   const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
@@ -31,6 +31,7 @@ export class PowerShellApprovalService {
     if(!namedAuditDirectory)throw Error('NAMED_AUDIT_DIR_REQUIRED');
     this.namedService=createLocalJobService({
       approvedWorkspaceRoots:namedWorkspaceRoots,auditDirectory:namedAuditDirectory,
+      runner:namedRunner,
       approveRequest:details=>new Promise(resolve=>{
         const expiresAt=Date.now()+90000;
         const timer=setTimeout(()=>{
