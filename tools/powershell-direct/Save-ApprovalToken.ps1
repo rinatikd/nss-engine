@@ -36,7 +36,7 @@ try{
  [IO.File]::WriteAllBytes($temp,$encrypted)
  $fileAcl=New-Object System.Security.AccessControl.FileSecurity
  $fileAcl.SetAccessRuleProtection($true,$false)
- foreach($allowedSid in @($sid,(New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18'))){
+ foreach($allowedSid in @($sid,([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')))){
   $fileRule=[System.Security.AccessControl.FileSystemAccessRule]::new(
    $allowedSid,[System.Security.AccessControl.FileSystemRights]::FullControl,[System.Security.AccessControl.AccessControlType]::Allow)
   $fileAcl.AddAccessRule($fileRule)
