@@ -24,7 +24,10 @@ export const SUITES = Object.freeze({
       'tools/ai_collaboration/local_job_service.test.mjs',
       'tools/ai_collaboration/local_mcp_dispatch.test.mjs',
       'tools/powershell-direct/tests/service.test.mjs',
-      'tools/powershell-direct/tests/named-suites.test.mjs'],
+      'tools/powershell-direct/tests/named-suites.test.mjs',
+      'tools/ai_collaboration/recovery/recovery-plan.test.mjs',
+      'tools/ai_collaboration/recovery/recovery-runtime.test.mjs',
+      'tools/ai_collaboration/recovery/recovery-journal.test.mjs'],
     cwd: '.',
     timeoutMs: 120000
   },
