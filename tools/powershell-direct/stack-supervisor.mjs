@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {PowerShellApprovalService} from './service.mjs';
+import {canonicalWorkspace} from './runner.mjs';
 
 const root=process.env.PS_DIRECT_ALLOWED_ROOT;
 const client=process.env.PS_DIRECT_TUNNEL_CLIENT;
@@ -14,7 +15,17 @@ if(!root||!path.win32.isAbsolute(root)||!fs.existsSync(root))
 if(!client||!fs.existsSync(client))throw Error('TUNNEL_CLIENT_MISSING');
 if(!runtimeKey)throw Error('CONTROL_PLANE_API_KEY_REQUIRED');
 
-const service=new PowerShellApprovalService({root,chatReadonlyEnabled:true});
+// Feature disabled unless the operator explicitly provisions BOTH the
+// exact approved workspaces and an audit directory in the process environment.
+const namedWorkspaceRoots=(process.env.PS_DIRECT_NAMED_SUITE_WORKSPACES||'')
+  .split(';').map(x=>x.trim()).filter(Boolean)
+  .map(workspace=>canonicalWorkspace(workspace,root));
+const namedAuditDirectory=process.env.PS_DIRECT_NAMED_SUITE_AUDIT_DIR||null;
+if(namedWorkspaceRoots.length && !namedAuditDirectory)
+  throw Error('NAMED_AUDIT_DIR_REQUIRED');
+const service=new PowerShellApprovalService({
+  root,chatReadonlyEnabled:true,namedWorkspaceRoots,namedAuditDirectory
+});
 let child,stopping=false;
 async function shutdown(signal='STOP'){
  if(stopping)return;
@@ -33,7 +44,10 @@ try{
  await service.start();
  const tools=service.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools.map(x=>x.name);
  if(!tools.includes('powershell_chat_readonly'))throw Error('CHAT_TOOL_NOT_REGISTERED');
- process.stdout.write('LOCAL_MCP_OK 127.0.0.1:17486 chat_readonly=true\n');
+ if(namedWorkspaceRoots.length && (!tools.includes('powershell_named_suite_submit')||
+   !tools.includes('powershell_named_suite_status')))
+   throw Error('NAMED_TOOLS_NOT_REGISTERED');
+ process.stdout.write('LOCAL_MCP_OK 127.0.0.1:17486 chat_readonly=true named_suites='+String(namedWorkspaceRoots.length>0)+'\n');
  const env={...process.env,PS_DIRECT_AGENT_TOKEN:service.agentToken};
  delete env.PS_DIRECT_CHAT_READONLY_ENABLED; // only the service enables the feature
  child=spawn(client,['run','--profile','powershell-direct-work','--health.listen-addr','127.0.0.1:18086'],
