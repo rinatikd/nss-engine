@@ -16,9 +16,10 @@ try {
     $status=$status -replace '[^a-zA-Z0-9_-]',''
     $name+': '+$status
   })
-  $summary="Recovery checked at "+(Get-Date -Format 'HH:mm:ss')+"\n\n"+
-    ($rows -join "\n")+
-    "\n\nRemote ChatGPT/MCP connections must be confirmed separately."
+  $nl=[Environment]::NewLine
+  $summary='Recovery checked at '+(Get-Date -Format 'HH:mm:ss')+$nl+$nl+
+    ($rows -join $nl)+$nl+$nl+
+    'Remote ChatGPT/MCP connections must be confirmed separately.'
 } catch {
   $summary='Recovery could not be confirmed. Inspect local status logs; no unknown process was forcibly terminated.'
 }
