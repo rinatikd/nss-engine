@@ -1,6 +1,7 @@
 import { dispatchReadOnly } from './read-only-dispatch.js';
 import { ApprovalSession } from './approval-session.js';
 import { dispatchMutation } from './mutation-dispatch.js';
+import { dispatchOneClickMutation } from './one-click-mutation.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
 
 const PATH = 'transport-host.html';
@@ -67,7 +68,7 @@ export async function stopBackgroundTransport(chromeApi) {
   approvals.stop();
   await new BackgroundControlGrants(chromeApi).clear();
   await chromeApi.storage.local.set({
-    bridgeConnectionDesired:false,bridgeMutationLabMode:false
+    bridgeConnectionDesired:false,bridgeMutationLabMode:false,bridgeAllTabsMode:false
   });
   try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
   updateStatus({state:'disconnected',connected:false});
@@ -92,15 +93,16 @@ export function installBackgroundCoordinator(chromeApi) {
         respond({error:'OFFSCREEN_CONTEXT_REQUIRED'}); return false;
       }
       const run = async () => {
-        const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired} =
+        const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired,bridgeAllTabsMode} =
           await chromeApi.storage.local.get([
-            'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
+            'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired','bridgeAllTabsMode'
           ]);
         if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
           throw Error('BACKGROUND_TRANSPORT_DISABLED');
         const name=msg.command?.name;
         if (['browser_click','browser_fill','agent_send'].includes(name)) {
           if (bridgeMutationLabMode!==true) throw Error('BACKGROUND_MUTATIONS_DISABLED');
+          if (bridgeAllTabsMode===true) return dispatchOneClickMutation(msg.command,chromeApi);
           const grants=new BackgroundControlGrants(chromeApi);
           return dispatchMutation(msg.command,chromeApi,{
             approvals,
