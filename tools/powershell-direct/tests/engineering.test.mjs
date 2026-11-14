@@ -108,3 +108,32 @@ test('read-only process and port diagnostics cannot receive free-form script',()
   const portPlan=await resolveEngineeringPlan({...req(root,'eng-plan-0010','port-inspect'),port:17486},[root]);
   assert.match(portPlan.args.at(-1),/17486/);
 }));
+
+test('approved PowerShell diagnostic script binds script path and digest',()=>fixture(async({root})=>{
+  const diag=path.join(root,'tests','check.ps1');
+  await writeFile(diag,"Write-Output 'OK'");
+  const plan=await resolveEngineeringPlan({
+    ...req(root,'eng-script-001','powershell-script'),
+    target:'tests/check.ps1',scriptArgs:['-Mode','Status']
+  },[root]);
+  assert.equal(plan.risk,'code-execution');
+  assert.ok(plan.args.includes('-File'));
+  assert.equal(plan.args.at(-2),'-Mode');
+  assert.equal(plan.sourceSha256.length,64);
+}));
+test('script arguments reject hidden newline and command text through MCP',()=>fixture(async({root,svc})=>{
+  const r=rpc(svc,'powershell_engineering_submit',{
+    ...req(root,'eng-script-002','powershell-script'),
+    target:'tests/check.ps1',scriptArgs:['-Mode', "Status\nRemove-Item C:"]
+  });
+  assert.equal(r.result.isError,true);
+  assert.equal(svc.namedPending.size,0);
+}));
+test('modified test path inside workspace remains a pinned file',()=>fixture(async({root})=>{
+  const plan=await resolveEngineeringPlan({
+    ...req(root,'eng-script-003','node-script'),target:'tests/safe.test.mjs',
+    scriptArgs:['--version']
+  },[root]);
+  assert.equal(plan.args[0],path.join(root,'tests','safe.test.mjs'));
+  assert.equal(plan.sourceSha256.length,64);
+}));
