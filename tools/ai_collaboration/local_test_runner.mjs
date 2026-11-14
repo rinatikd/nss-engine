@@ -21,9 +21,11 @@ export const SUITES = Object.freeze({
     command: 'node',
     args: ['--test', 'tools/ai_collaboration/local_test_runner.test.mjs',
       'tools/ai_collaboration/local_job_service.test.mjs',
-      'tools/ai_collaboration/local_mcp_dispatch.test.mjs'],
+      'tools/ai_collaboration/local_mcp_dispatch.test.mjs',
+      'tools/powershell-direct/tests/service.test.mjs',
+      'tools/powershell-direct/tests/named-suites.test.mjs'],
     cwd: '.',
-    timeoutMs: 60000
+    timeoutMs: 120000
   },
   // Execute only in a separately approved PR113 checkout. Tests may create
   // caches; neither these suites nor their outputs are "read-only".
