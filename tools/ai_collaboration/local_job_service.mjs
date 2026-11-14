@@ -14,7 +14,7 @@ const safeOutput = value => String(value ?? '')
     '$1[REDACTED]')
   .slice(0, 65536);
 const fingerprint = plan => createHash('sha256')
-  .update(JSON.stringify([plan.suite, plan.operation||null, plan.cwd, plan.command||plan.executable, plan.args, plan.timeoutMs]))
+  .update(JSON.stringify([plan.suite, plan.operation||null, plan.cwd, plan.command||plan.executable, plan.args, plan.timeoutMs,plan.sourceSha256||null]))
   .digest('hex');
 
 export function createLocalJobService({
