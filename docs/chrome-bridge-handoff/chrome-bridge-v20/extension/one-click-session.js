@@ -36,14 +36,11 @@ export function createOneClickSession(chromeApi, {
       if (inFlight) throw Error('SESSION_TRANSITION_IN_PROGRESS');
       inFlight = true;
       const myGeneration = ++generation;
-      let grantedHere = false;
       try {
         // Chrome's permission prompt can only be triggered from a real user gesture.
         // In particular, do not move this request after awaits.
         const granted = await chromeApi.permissions.request({ origins: BROWSER_ORIGINS });
-        const previous = false; // Chrome returns true without another prompt if already granted.
         if (!granted) throw Error('CHROME_HOST_PERMISSION_DENIED');
-        grantedHere = !previous;
         const credential = await loadKey(chromeApi);
         if (!credential?.value) throw Error('PAIRING_REQUIRED');
         await chromeApi.storage.local.set({
@@ -62,7 +59,10 @@ export function createOneClickSession(chromeApi, {
           bridgeConnectionDesired: false, bridgeMutationLabMode: false,
           bridgeAllTabsMode: false
         });
-        if (grantedHere) await chromeApi.permissions.remove({ origins: BROWSER_ORIGINS });
+        // Preserve previously granted Chrome permissions on failed startup.
+        // A single explicit Disconnect revokes them. We cannot know whether
+        // request() was a new grant without a prior async permission query,
+        // which can break Chrome's required transient user activation.
         throw error;
       } finally {
         inFlight = false;
@@ -71,8 +71,8 @@ export function createOneClickSession(chromeApi, {
     async disconnect() {
       // Stop dispatch before revoking host permissions, so pending commands
       // cannot run while browser permission removal is in progress.
-      ++generation;
       if (inFlight) throw Error('SESSION_TRANSITION_IN_PROGRESS');
+      ++generation;
       inFlight = true;
       try {
         await chromeApi.storage.local.set({
@@ -82,8 +82,12 @@ export function createOneClickSession(chromeApi, {
         let stopError = null;
         try { await stop(); } catch (error) { stopError = error; }
         // Host permissions must be revoked even if the transport cannot ACK.
-        const revoked = await chromeApi.permissions.remove({ origins: BROWSER_ORIGINS });
-        if (stopError) throw stopError;
+        let revoked = false;
+        let revokeError = null;
+        try { revoked = await chromeApi.permissions.remove({ origins: BROWSER_ORIGINS }); }
+        catch (error) { revokeError = error; }
+        if (revokeError) throw Error('HOST_PERMISSION_REVOKE_FAILED: ' + revokeError.message);
+        if (stopError) throw Error('BACKGROUND_STOP_UNCONFIRMED: ' + stopError.message);
         return { connected: false, state: 'disconnected', permissionsRevoked: revoked };
       } finally {
         inFlight = false;
