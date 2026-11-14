@@ -3,6 +3,7 @@
 [CmdletBinding()]
 param([switch]$CheckOnly)
 $ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Security -ErrorAction Stop
 $source=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\Approval\powershell-direct-ui.dpapi'
 if(!(Test-Path -LiteralPath $source -PathType Leaf)){throw 'APPROVAL_BOOTSTRAP_NOT_PUBLISHED'}
 $item=Get-Item -LiteralPath $source -Force
@@ -11,8 +12,8 @@ $entropy=[Text.Encoding]::UTF8.GetBytes('PowerShellDirectApproval:v1')
 $encrypted=[IO.File]::ReadAllBytes($source)
 $plain=$null
 try{
- $plain=[Security.Cryptography.ProtectedData]::Unprotect(
-  $encrypted,$entropy,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+ $plain=[System.Security.Cryptography.ProtectedData]::Unprotect(
+  $encrypted,$entropy,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
  $key=[Text.Encoding]::UTF8.GetString($plain)
  if($key -cnotmatch '^[0-9a-f]{64}$'){throw 'APPROVAL_TOKEN_INVALID'}
  # Never construct any non-loopback URL or reflect the token in output.
