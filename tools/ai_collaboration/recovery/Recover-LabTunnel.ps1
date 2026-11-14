@@ -25,7 +25,10 @@ if($Mode -eq 'Status'){
   return
 }
 if($state -ne 'stopped'){
-  [PSCustomObject]@{Service='chrome-pr102-tunnel';Outcome=('BLOCKED_'+$state)} | ConvertTo-Json
+  $outcome=if($state -eq 'process-running-unverified'){
+    'ALREADY_RUNNING_REMOTE_HEALTH_UNVERIFIED'
+  }else{'BLOCKED_'+$state.ToUpperInvariant()}
+  [PSCustomObject]@{Service='chrome-pr102-tunnel';Outcome=$outcome} | ConvertTo-Json
   return
 }
 if(!(Test-Path -LiteralPath $client -PathType Leaf) -or
