@@ -59,3 +59,11 @@ This document does not claim ChatGPT-native verification has been implemented.
 3. If absent, prefer a **single locally enrolled allowlisted policy**: exact allowed workspace roots, operation enum, acceptable source hashes, TTL and revocation, audit/at-most-once. No arbitrary shell or rights escalation. Per-operation ChatGPT consent is an additional layer but not a substitute for enrollment.
 4. Test prompt injection, fabricated `approved`, replay, branch divergence, dirty worktree, modified test source, expiry, operator revocation, and rollback. Require no pending local approval for enrolled requests in the successful E2E case.
 5. Keep non-enrolled and high-impact operations fail-closed pending a separate operator decision until a cryptographically meaningful attestation exists.
+
+## Engineering MCP controlled lab preparation (PR115)
+
+The PR introduces a first *fixed capability* `lab-checkout-pr115`, accepted by `powershell_engineering_submit` with `requestId`, `operation`, and the **exact** base checkout `C:\\Engineering\\ChromeBridge-Recovery-Install-20261114`. The plan resolves to a fixed HTTPS repository, the PR branch, and `C:\\Engineering\\PowerShellDirect-Approval-Lab-PR115`. The runner rejects existing targets (including junctions), a redirected parent folder, and any alternate workspace before invoking Git with `shell:false`. The normal durable engineering audit claim and operator approval remain mandatory.
+
+This capability is deliberately not general-purpose `git clone`, `git checkout`, or arbitrary PowerShell. Future labs should be defined as independently reviewed preset configurations with explicit root/remote/branch policy; do not accept model-supplied Git arguments. The first lab capability must pass real Windows E2E before it can become a reusable family of safe operations.
+
+Tests: `tools/ai_collaboration/engineering-lab-checkout.test.mjs` checks target collision, redirected parent, invalid source, forbidden arguments and operation enum. This code has **not been deployed** in production or tested on Windows as of this update. The GitHub draft is not a replacement for local runtime approval.
