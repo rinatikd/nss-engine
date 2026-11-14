@@ -22,6 +22,23 @@ export const SUITES = Object.freeze({
     args: ['--test', 'tools/ai_collaboration/local_test_runner.test.mjs'],
     cwd: '.',
     timeoutMs: 60000
+  },
+  // Execute only in a separately approved PR113 checkout. Tests may create
+  // caches; neither these suites nor their outputs are "read-only".
+  'chrome-pr113-node': {
+    command: 'node',
+    args: ['--test', 'docs/chrome-bridge-handoff/chrome-bridge-v20/tests/one-click-session.test.mjs'],
+    cwd: '.',
+    timeoutMs: 120000
+  },
+  'chrome-pr113-build-lab17484': {
+    command: 'powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-File',
+      'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/Build-OneClick-Lab.ps1',
+      '-LabPort', '17484', '-OutputRoot',
+      'C:\\Engineering\\ChromeBridge-PR113-E2E-Build-v4'],
+    cwd: '.',
+    timeoutMs: 120000
   }
 });
 
