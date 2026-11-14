@@ -103,6 +103,20 @@ try{
  if($deny.OriginalHealthVerified -or $deny.OriginalRestoreAttempted -or $deny.ManualRecoveryRequired -ne $true -or $script:cutoverUnexpectedRestore){
   throw 'CLEANUP_FAILURE_GATE_FAILED'
  }
+ # Exercise the exact healthy-original guard shared with production.
+ $restoredPid=[int]$script:cutoverTestRestored.Id
+ $healthyOriginal=Test-OriginalStackStillHealthy -OriginalSupervisorPid $restoredPid -OriginalTunnelPid 43210 -StartedNewSupervisorPid $null -InspectOriginal {
+   [pscustomobject]@{SupervisorPid=$restoredPid;TunnelPid=43210}
+ } -VerifyHealth {param($candidate) return ($candidate.SupervisorPid -eq $restoredPid -and (Test-Open $testPort))}
+ if(!$healthyOriginal){throw 'HEALTHY_ORIGINAL_GUARD_FAILED'}
+ $wrongPid=Test-OriginalStackStillHealthy -OriginalSupervisorPid ($restoredPid+1) -OriginalTunnelPid 43210 -StartedNewSupervisorPid $null -InspectOriginal {
+   [pscustomobject]@{SupervisorPid=$restoredPid;TunnelPid=43210}
+ } -VerifyHealth {$true}
+ if($wrongPid){throw 'WRONG_ORIGINAL_PID_ACCEPTED'}
+ $newStarted=Test-OriginalStackStillHealthy -OriginalSupervisorPid $restoredPid -OriginalTunnelPid 43210 -StartedNewSupervisorPid 98765 -InspectOriginal {
+   [pscustomobject]@{SupervisorPid=$restoredPid;TunnelPid=43210}
+ } -VerifyHealth {$true}
+ if($newStarted){throw 'PARTIAL_REPLACEMENT_WRONGLY_IGNORED'}
  $after=Get-Owners
  foreach($item in $initial){
   $now=@($after|Where-Object {$_.Port -eq $item.Port})
@@ -117,6 +131,8 @@ try{
   ReplacementCrashExitCode=73
   RestoredOriginalHealthy=$true
   VerifiedFailClosedWhenCleanupFails=$true
+  HealthyOriginalPreservedByExactPidGuard=$true
+  PartialReplacementRequiresCleanup=$true
   ProductionPortOwnershipUnchanged=$true
   ProductionCutoverExecuted=$false
   ProductionRollbackVerified=$false
