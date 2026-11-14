@@ -75,10 +75,13 @@ export function createLocalJobService({
         if (approved?.approved !== true ||
             approved?.requestId !== requestId ||
             approved?.planSha256 !== digest) {
+          const reason=approved?.reason==='APPROVAL_EXPIRED'?'APPROVAL_EXPIRED':
+            approved?.reason==='OPERATOR_DENIED'?'OPERATOR_DENIED':
+            'APPROVAL_INVALID_OR_DECLINED';
           await writeFile(auditPath(requestId),JSON.stringify({
-            requestId,suite,state:'DENIED',planSha256:digest
+            requestId,suite,state:'DENIED',reason,planSha256:digest
           }));
-          return {requestId,state:'DENIED'};
+          return {requestId,state:'DENIED',reason};
         }
         if (activeRequestId !== null) {
           await writeFile(auditPath(requestId),JSON.stringify({
