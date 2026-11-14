@@ -61,6 +61,8 @@ function Stop-Fixture($Process){
 }
 $initial=Get-Owners
 $original=$null;$failed=$null;$restored=$null
+$script:cutoverTestRestored=$null
+$script:cutoverUnexpectedRestore=$false
 $socket=[System.Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
 $socket.Start()
 $testPort=[int]$socket.LocalEndpoint.Port
@@ -98,7 +100,7 @@ try{
     !$outcome.OriginalRestoreCompleted){throw 'SHARED_ROLLBACK_NOT_VERIFIED'}
  $restoreCalls=0
  $deny=Invoke-VerifiedCutoverRollback -FailureCode 'SIMULATED_CLEANUP_FAILURE' -CleanupReplacement {throw 'INJECTED_CLEANUP_DENIAL'} -RestoreOriginal {$script:cutoverUnexpectedRestore=$true} -VerifyOriginal {$true}
- if($deny.OriginalHealthVerified -or $deny.OriginalRestoreAttempted -or $deny.ManualRecoveryRequired -ne $true){
+ if($deny.OriginalHealthVerified -or $deny.OriginalRestoreAttempted -or $deny.ManualRecoveryRequired -ne $true -or $script:cutoverUnexpectedRestore){
   throw 'CLEANUP_FAILURE_GATE_FAILED'
  }
  $after=Get-Owners
