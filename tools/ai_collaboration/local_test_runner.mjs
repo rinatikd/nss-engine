@@ -20,7 +20,8 @@ export const SUITES = Object.freeze({
   'platform-node': {
     command: 'node',
     args: ['--test', 'tools/ai_collaboration/local_test_runner.test.mjs',
-      'tools/ai_collaboration/local_job_service.test.mjs'],
+      'tools/ai_collaboration/local_job_service.test.mjs',
+      'tools/ai_collaboration/local_mcp_dispatch.test.mjs'],
     cwd: '.',
     timeoutMs: 60000
   },
