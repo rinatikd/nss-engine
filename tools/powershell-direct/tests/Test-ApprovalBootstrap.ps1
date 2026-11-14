@@ -1,5 +1,6 @@
 # Windows-only DPAPI approval bootstrap test. Never touches the live supervisor.
 $ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Security -ErrorAction Stop
 $save=Join-Path $PSScriptRoot '..\Save-ApprovalToken.ps1'
 $open=Join-Path $PSScriptRoot '..\Open-Approval.ps1'
 $testRoot=Join-Path $env:TEMP ('psdirect-approval-test-'+[Guid]::NewGuid().ToString('N'))
@@ -36,8 +37,8 @@ try{
  $encrypted=[IO.File]::ReadAllBytes($file)
  if([Text.Encoding]::UTF8.GetString($encrypted).Contains($token)){throw 'PLAINTEXT_STORED'}
  $entropy=[Text.Encoding]::UTF8.GetBytes('PowerShellDirectApproval:v1')
- $plain=[Security.Cryptography.ProtectedData]::Unprotect(
-  $encrypted,$entropy,[Security.Cryptography.DataProtectionScope]::CurrentUser)
+ $plain=[System.Security.Cryptography.ProtectedData]::Unprotect(
+  $encrypted,$entropy,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
  try{
   if([Text.Encoding]::UTF8.GetString($plain) -cne $token){throw 'DPAPI_DECRYPT_MISMATCH'}
  }finally{[Array]::Clear($plain,0,$plain.Length)}
