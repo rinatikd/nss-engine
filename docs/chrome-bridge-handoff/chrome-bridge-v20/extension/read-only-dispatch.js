@@ -2,10 +2,12 @@ import { pageAction } from './page.js';
 import { redact } from './secrets.js';
 import { providerForOrigin } from './permissions.js';
 import { eligibleWebUrl } from './one-click-session.js';
+import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 
 const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
 const LOCAL = new Set(['localhost','127.0.0.1','[::1]']);
-const ALLOWED = new Set(['browser_tabs','browser_read','control_status']);
+const ALLOWED = new Set(['browser_tabs','browser_read','control_status',
+  'agent_probe','agent_context','agent_peek','agent_selftest']);
 
 export async function permittedTab(chromeApi, tabId) {
   if (!Number.isSafeInteger(tabId) || tabId <= 0) throw Error('INVALID_TAB_ID');
@@ -57,6 +59,28 @@ export async function dispatchReadOnly(command, chromeApi) {
       } catch { /* do not disclose unapproved tabs */ }
     }
     return out;
+  }
+  if (['agent_probe','agent_context','agent_peek','agent_selftest'].includes(command.name)) {
+    const tabId=command.args?.tabId;
+    const {tab,origin,site}=await permittedTab(chromeApi,tabId);
+    if(site.mode!=='chat' || !site.adapter || site.adapter!==providerForOrigin(origin))
+      throw Error('VERIFIED_CHAT_ADAPTER_REQUIRED');
+    const {adapters}=await chromeApi.storage.local.get('adapters');
+    let overrides;
+    try {overrides=JSON.parse(adapters||'{}');} catch {throw Error('INVALID_ADAPTER_CONFIGURATION');}
+    const adapter=mergeAdapters(overrides)[site.adapter] || DEFAULT_ADAPTERS[site.adapter];
+    if(!adapter || adapter.origin!==origin) throw Error('ADAPTER_ORIGIN_MISMATCH');
+    const requested=command.name==='agent_probe'?'agent_selftest':command.name;
+    const result=await chromeApi.scripting.executeScript({
+      target:{tabId},func:pageAction,args:[requested,{...command.args,adapter},origin]
+    });
+    const check=await chromeApi.tabs.get(tabId);
+    if(check.url!==tab.url) throw Error('TAB_CHANGED_DURING_READ');
+    const v=result?.[0]?.result;
+    if(!v || v.error) throw Error(v?.error || 'INVALID_AGENT_RESULT');
+    if(command.name==='agent_probe')
+      return {adapter:site.adapter,verified:v.composer?.visible===1 && v.send?.visible===1};
+    return typeof v.text==='string' ? {...v,text:redact(v.text)} : v;
   }
   if (command.name === 'browser_read') {
     const tabId = command.args?.tabId;
