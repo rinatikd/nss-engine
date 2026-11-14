@@ -15,7 +15,9 @@ $files=@(
   'Recover-PowerShellDirect.ps1',
   'Save-RecoveryCredential.ps1',
   'Recovery-Watchdog.ps1',
-  'Register-StackRecovery.ps1'
+  'Register-StackRecovery.ps1',
+  'Get-StackInventory.ps1',
+  'Invoke-VerifiedRecovery.ps1'
 )
 if(!(Test-Path (Join-Path $RepositoryRoot '.git'))){throw 'REPOSITORY_ROOT_NOT_FOUND'}
 $dirty=@(& git -C $RepositoryRoot status --porcelain -- tools/ai_collaboration/recovery)
