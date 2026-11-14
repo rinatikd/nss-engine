@@ -97,7 +97,33 @@ try {
     }
     $results+=[PSCustomObject]@{Service=$s.Id;Port=$s.Port;Observed=$before;Outcome=$result}
   }
-  $results | ConvertTo-Json -Depth 4
+  # Recovery of the local supervisor and tunnel profiles is separated from
+  # local Node listener startup; a listener alone is not a healthy MCP channel.
+  $extra=@()
+  $powerShellRecovery=Join-Path $PSScriptRoot 'Recover-PowerShellDirect.ps1'
+  $pr102TunnelRecovery=Join-Path $PSScriptRoot 'Recover-LabTunnel.ps1'
+  if(Test-Path -LiteralPath $powerShellRecovery -PathType Leaf){
+    try {
+      $raw=& $powerShellRecovery -Mode $Mode | Out-String
+      $extra+=($raw | ConvertFrom-Json)
+    }catch {
+      $extra+=[PSCustomObject]@{Service='powershell-direct';Outcome='BLOCKED_OR_FAILED'}
+    }
+  }
+  $labState=Test-OwnedService $services[0]
+  if(Test-Path -LiteralPath $pr102TunnelRecovery -PathType Leaf){
+    if($Mode -eq 'Restore' -and $labState -ne 'owned-listener'){
+      $extra+=[PSCustomObject]@{Service='chrome-pr102-tunnel';Outcome='BLOCKED_LAB_NOT_RUNNING'}
+    } else {
+      try {
+        $raw=& $pr102TunnelRecovery -Mode $Mode | Out-String
+        $extra+=($raw | ConvertFrom-Json)
+      }catch {
+        $extra+=[PSCustomObject]@{Service='chrome-pr102-tunnel';Outcome='BLOCKED_OR_FAILED'}
+      }
+    }
+  }
+  [PSCustomObject]@{Mode=$Mode;Servers=$results;Connections=$extra} | ConvertTo-Json -Depth 5
 } finally {
   if($acquired){$mutex.ReleaseMutex()}
   $mutex.Dispose()
