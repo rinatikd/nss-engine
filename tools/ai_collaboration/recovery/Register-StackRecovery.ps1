@@ -4,8 +4,8 @@
 param([ValidateSet('Check','Register','Unregister')][string]$Mode='Check',[switch]$DesktopShortcut)
 $ErrorActionPreference='Stop'
 $taskName='ChromeBridge-Stack-Recovery-User'
-$script=Join-Path $PSScriptRoot 'Recovery-Watchdog.ps1'
-$manualScript=Join-Path $PSScriptRoot 'Restore-LocalStack.ps1'
+$script=Join-Path $PSScriptRoot 'Invoke-VerifiedRecovery.ps1'
+$manualScript=$script
 $ps='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 if(!(Test-Path -LiteralPath $script -PathType Leaf) -or !(Test-Path -LiteralPath $manualScript -PathType Leaf)) {throw 'RECOVERY_SCRIPT_NOT_FOUND'}
 $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -24,11 +24,12 @@ if($Mode -eq 'Unregister'){
   return
 }
 if($task){throw 'TASK_ALREADY_EXISTS_REVIEW_BEFORE_REPLACING'}
+& $script -Mode Verify | Out-Null
 if($PSScriptRoot -notlike 'C:\Engineering\ChromeBridge-Recovery-Release*') {
   throw 'INSTALL_ONLY_FROM_REVIEWED_RELEASE_COPY'
 }
 $action=New-ScheduledTaskAction -Execute $ps -Argument (
-  '-NoProfile -NonInteractive -File "'+$script+'" -Attempts 4 -IntervalSeconds 20'
+  '-NoProfile -NonInteractive -File "'+$script+'" -Mode Watchdog'
 )
 $userId=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $trigger=New-ScheduledTaskTrigger -AtLogOn -User $userId
