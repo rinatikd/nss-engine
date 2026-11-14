@@ -1,5 +1,7 @@
 import { pageAction } from './page.js';
 import { redact } from './secrets.js';
+import { providerForOrigin } from './permissions.js';
+import { eligibleWebUrl } from './one-click-session.js';
 
 const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
 const LOCAL = new Set(['localhost','127.0.0.1','[::1]']);
@@ -10,12 +12,18 @@ export async function permittedTab(chromeApi, tabId) {
   const tab = await chromeApi.tabs.get(tabId);
   if (!tab?.url) throw Error('TAB_HAS_NO_URL');
   const url = new URL(tab.url);
-  if (url.protocol !== 'https:' || LOCAL.has(url.hostname)) throw Error('ORIGIN_NOT_PERMITTED');
-  const { sites = {} } = await chromeApi.storage.local.get('sites');
-  if (!Object.hasOwn(sites,url.origin)) throw Error('ORIGIN_NOT_PERMITTED');
+  if (!eligibleWebUrl(tab.url) || LOCAL.has(url.hostname)) throw Error('ORIGIN_NOT_PERMITTED');
+  const { sites = {}, bridgeAllTabsMode, bridgeConnectionDesired } =
+    await chromeApi.storage.local.get(['sites','bridgeAllTabsMode','bridgeConnectionDesired']);
+  const allTabsEnabled = bridgeAllTabsMode === true && bridgeConnectionDesired === true;
+  if (!allTabsEnabled && !Object.hasOwn(sites,url.origin)) throw Error('ORIGIN_NOT_PERMITTED');
   const allowed = await chromeApi.permissions.contains({origins:[url.origin+'/*']});
   if (!allowed) throw Error('HOST_PERMISSION_MISSING');
-  return {tab,origin:url.origin,site:sites[url.origin]};
+  const provider = providerForOrigin(url.origin);
+  const site = allTabsEnabled
+    ? {mode:provider?'chat':'read',adapter:provider || null}
+    : sites[url.origin];
+  return {tab,origin:url.origin,site};
 }
 export async function dispatchReadOnly(command, chromeApi) {
   if (!command || typeof command !== 'object' || typeof command.name !== 'string')
