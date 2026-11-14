@@ -49,7 +49,8 @@ export function createOneClickSession(chromeApi, {
         await chromeApi.storage.local.set({
           bridgeBackgroundMode: true,
           bridgeConnectionDesired: true,
-          bridgeMutationLabMode: true
+          bridgeMutationLabMode: true,
+          bridgeAllTabsMode: true
         });
         const result = await start();
         if (!result?.ok) throw Error(result?.reason || 'BRIDGE_START_FAILED');
@@ -58,7 +59,8 @@ export function createOneClickSession(chromeApi, {
         return await status();
       } catch (error) {
         await chromeApi.storage.local.set({
-          bridgeConnectionDesired: false, bridgeMutationLabMode: false
+          bridgeConnectionDesired: false, bridgeMutationLabMode: false,
+          bridgeAllTabsMode: false
         });
         if (grantedHere) await chromeApi.permissions.remove({ origins: BROWSER_ORIGINS });
         throw error;
@@ -74,7 +76,8 @@ export function createOneClickSession(chromeApi, {
       inFlight = true;
       try {
         await chromeApi.storage.local.set({
-          bridgeConnectionDesired: false, bridgeMutationLabMode: false
+          bridgeConnectionDesired: false, bridgeMutationLabMode: false,
+          bridgeAllTabsMode: false
         });
         await stop();
         const revoked = await chromeApi.permissions.remove({ origins: BROWSER_ORIGINS });
