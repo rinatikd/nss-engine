@@ -4,9 +4,10 @@
 param([ValidateSet('Check','Register','Unregister')][string]$Mode='Check',[switch]$DesktopShortcut)
 $ErrorActionPreference='Stop'
 $taskName='ChromeBridge-Stack-Recovery-User'
-$script=Join-Path $PSScriptRoot 'Restore-LocalStack.ps1'
+$script=Join-Path $PSScriptRoot 'Recovery-Watchdog.ps1'
+$manualScript=Join-Path $PSScriptRoot 'Restore-LocalStack.ps1'
 $ps='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-if(!(Test-Path -LiteralPath $script -PathType Leaf)) {throw 'RECOVERY_SCRIPT_NOT_FOUND'}
+if(!(Test-Path -LiteralPath $script -PathType Leaf) -or !(Test-Path -LiteralPath $manualScript -PathType Leaf)) {throw 'RECOVERY_SCRIPT_NOT_FOUND'}
 $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if($Mode -eq 'Check'){
   [PSCustomObject]@{
@@ -27,7 +28,7 @@ if($PSScriptRoot -notlike 'C:\Engineering\ChromeBridge-Recovery-Release*') {
   throw 'INSTALL_ONLY_FROM_REVIEWED_RELEASE_COPY'
 }
 $action=New-ScheduledTaskAction -Execute $ps -Argument (
-  '-NoProfile -NonInteractive -File "'+$script+'" -Mode Restore'
+  '-NoProfile -NonInteractive -File "'+$script+'" -Attempts 4 -IntervalSeconds 20'
 )
 $userId=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $trigger=New-ScheduledTaskTrigger -AtLogOn -User $userId
@@ -41,7 +42,7 @@ if($DesktopShortcut) {
   $shell=New-Object -ComObject WScript.Shell
   $shortcut=$shell.CreateShortcut($link)
   $shortcut.TargetPath=$ps
-  $shortcut.Arguments='-NoProfile -NonInteractive -File "'+$script+'" -Mode Restore'
+  $shortcut.Arguments='-NoProfile -NonInteractive -File "'+$manualScript+'" -Mode Restore'
   $shortcut.WorkingDirectory=$PSScriptRoot
   $shortcut.Description='One-click restore of approved local Chrome Bridge stack'
   $shortcut.Save()
