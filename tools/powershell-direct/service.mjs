@@ -37,6 +37,10 @@ export class PowerShellApprovalService {
       approvedWorkspaceRoots:namedWorkspaceRoots,auditDirectory:namedAuditDirectory,
       runner:namedRunner,
       approveRequest:details=>new Promise(resolve=>{
+        if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
+          resolve({approved:false,requestId:details.requestId,
+            planSha256:details.planSha256});return;
+        }
         const expiresAt=Date.now()+90000;
         const timer=setTimeout(()=>{
           this.namedPending.delete(details.requestId);
@@ -59,6 +63,10 @@ export class PowerShellApprovalService {
       runner:engineeringRunner,
       operationName:'engineering-operation',
       approveRequest:details=>new Promise(resolve=>{
+        if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
+          resolve({approved:false,requestId:details.requestId,
+            planSha256:details.planSha256});return;
+        }
         const timer=setTimeout(()=>{
           this.namedPending.delete(details.requestId);
           resolve({approved:false,requestId:details.requestId,
