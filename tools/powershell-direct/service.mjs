@@ -18,7 +18,8 @@ const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/
 export class PowerShellApprovalService {
  constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
    namedWorkspaceRoots=[],namedAuditDirectory=null,namedRunner,
-   engineeringWorkspaceRoots=[],engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan}={}){
+   engineeringWorkspaceRoots=[],engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan,
+   enrolledApprover=null}={}){
   const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
   const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
   const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
@@ -27,6 +28,9 @@ export class PowerShellApprovalService {
      pathSegments.some(x=>['windows','system32','program files'].includes(x)))
     throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
   this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
+  // Optional policy injected by the local operator, never through MCP arguments.
+  if(enrolledApprover!==null&&typeof enrolledApprover.decide!=='function')throw Error('INVALID_ENROLLED_APPROVER');
+  this.enrolledApprover=enrolledApprover;
   this.chatReadonlyEnabled=chatReadonlyEnabled===true;
   this.namedPending=new Map();
   this.namedService=null;
@@ -63,6 +67,14 @@ export class PowerShellApprovalService {
       runner:engineeringRunner,
       operationName:'engineering-operation',
       approveRequest:details=>new Promise(resolve=>{
+        // Single-use exact-plan enrollment avoids the extra local page.
+        // No trusted local enrollment means legacy local approval.
+        const enrolled=this.enrolledApprover?.decide(details);
+        if(enrolled?.approved===true){resolve(enrolled);return;}
+        if(enrolled?.reason&&enrolled.reason!=='NOT_ENROLLED'){
+          resolve({approved:false,reason:enrolled.reason,requestId:details.requestId,
+            planSha256:details.planSha256});return;
+        }
         if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
           resolve({approved:false,requestId:details.requestId,
             planSha256:details.planSha256});return;
