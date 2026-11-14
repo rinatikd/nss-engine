@@ -57,7 +57,12 @@ async function childMain(){
   }
   assert(kind==='original'||kind==='replacement');
   const srv=net.createServer(socket=>{
-    socket.end(JSON.stringify({role:kind,pid:process.pid}));
+    // The PowerShell health probe connects and immediately disconnects.
+    // Writing a payload after the peer closes can emit an unhandled
+    // ECONNRESET/EPIPE on this fixture socket and terminate the Node child.
+    // The fixture's health contract is TCP acceptance, not payload exchange.
+    socket.on('error',()=>{});
+    socket.end();
   });
   srv.on('error',()=>process.exit(72));
   srv.listen(port,'127.0.0.1',()=>{
