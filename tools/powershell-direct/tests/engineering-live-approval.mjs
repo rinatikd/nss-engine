@@ -12,6 +12,7 @@ if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
 const workspace=process.argv[2];
 if(!workspace||!path.win32.isAbsolute(workspace))throw Error('USAGE: node engineering-live-approval.mjs C:\\Engineering\\<clean-workspace>');
 const audit=await mkdtemp(path.join(tmpdir(),'engineering-live-e2e-'));
+const keepAudit=process.argv.includes('--keep-audit');
 const service=new PowerShellApprovalService({
   root:'C:\\Engineering',port:0,
   engineeringWorkspaceRoots:[workspace],
@@ -71,5 +72,6 @@ try{
   console.log('ENGINEERING_LOCAL_OPERATOR_E2E_PASS');
 }finally{
   await service.stop();
-  await rm(audit,{recursive:true,force:true});
+  if(keepAudit) console.log('LOCAL_AUDIT_DIRECTORY: '+audit);
+  else await rm(audit,{recursive:true,force:true});
 }
