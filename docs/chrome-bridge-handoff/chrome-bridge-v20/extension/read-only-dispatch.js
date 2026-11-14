@@ -31,12 +31,18 @@ export async function dispatchReadOnly(command, chromeApi) {
   if (MUTATING.has(command.name)) throw Error('CONTROL_REQUIRES_APPROVAL_UI');
   if (!ALLOWED.has(command.name)) throw Error('BACKGROUND_COMMAND_NOT_MIGRATED');
 
-  if (command.name === 'control_status') return {
-    connected:true,
-    globalEnabled:false,
-    approvalPending:0,
-    origins:[]
-  };
+  if (command.name === 'control_status') {
+    const {bridgeConnectionDesired,bridgeAllTabsMode,bridgeMutationLabMode} =
+      await chromeApi.storage.local.get(['bridgeConnectionDesired','bridgeAllTabsMode','bridgeMutationLabMode']);
+    return {
+      connected:bridgeConnectionDesired===true,
+      globalEnabled:bridgeConnectionDesired===true &&
+        bridgeAllTabsMode===true && bridgeMutationLabMode===true,
+      approvalPending:0,
+      origins:[],
+      scope:bridgeAllTabsMode===true ? 'permitted-web-tabs' : 'legacy-sites'
+    };
+  }
   if (command.name === 'browser_tabs') {
     const tabs = await chromeApi.tabs.query({});
     const out=[];
