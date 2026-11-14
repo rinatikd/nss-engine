@@ -37,8 +37,17 @@ $cases=@(
 $results=@()
 foreach($case in $cases){
  $caseArgs=@($case.Args)
- $raw=(& powershell.exe -NoProfile -NonInteractive -File $target @caseArgs 2>&1 | Out-String)
- $exitCode=$LASTEXITCODE
+ # Windows PowerShell 5.1 converts redirected native stderr to NativeCommandError.
+ # A rejection is expected here; capture it without allowing EAP=Stop to abort
+ # the harness. The actual native exit code is still required to be nonzero.
+ $previousPreference=$ErrorActionPreference
+ try {
+  $ErrorActionPreference='Continue'
+  $raw=(& powershell.exe -NoProfile -NonInteractive -File $target @caseArgs 2>&1 | Out-String)
+  $exitCode=$LASTEXITCODE
+ } finally {
+  $ErrorActionPreference=$previousPreference
+ }
  if($exitCode -eq 0){throw ('CUTOVER_GATE_OPENED_'+$case.Name)}
  if($raw -notmatch 'PRODUCTION_CUTOVER_REQUIRES_EXPLICIT_SWITCHES'){
   throw ('CUTOVER_GATE_UNEXPECTED_ERROR_'+$case.Name)
