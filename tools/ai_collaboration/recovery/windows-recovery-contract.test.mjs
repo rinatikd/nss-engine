@@ -13,7 +13,9 @@ test('production and RC1 listeners remain observation-only',async()=>{
     const next=script.slice(start,start+420);
     assert.match(next,/Restorable=\$false/);
   }
-  const pr=script.slice(script.indexOf("Id='chrome-pr102-lab'"),420);
+  const pos=script.indexOf("Id='chrome-pr102-lab'");
+  assert.ok(pos>=0);
+  const pr=script.slice(pos,pos+420);
   assert.match(pr,/Restorable=\$true/);
 });
 
