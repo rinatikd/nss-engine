@@ -6,7 +6,7 @@ param([ValidateSet('Inspect','Doctor')][string]$Mode='Inspect')
 $ErrorActionPreference='Stop'
 $client='C:\Engineering\chrome-bridge\codex-handoff-output\direct-cli-v21\runtime\tunnel-client.exe'
 $credential=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\control-plane.dpapi'
-$profile='powershell-direct-work'
+$profileName='powershell-direct-work'
 if(!(Test-Path -LiteralPath $client -PathType Leaf)){throw 'TUNNEL_CLIENT_MISSING'}
 $present=Test-Path -LiteralPath $credential -PathType Leaf
 if($Mode -eq 'Inspect'){
@@ -14,7 +14,7 @@ if($Mode -eq 'Inspect'){
   Check='CONTROL_PLANE_DOCTOR_PREFLIGHT'
   TunnelClientPresent=$true
   RecoveryFilePresent=[bool]$present
-  Profile=$profile
+  Profile=$profileName
   TunnelStarted=$false
   ProductionTouched=$false
  }|ConvertTo-Json
@@ -38,7 +38,7 @@ try{
  [Environment]::SetEnvironmentVariable('CONTROL_PLANE_API_KEY',$plain,'Process')
  # doctor is a pre-start validation command, not "run".
  # Never print raw stdout/stderr: future versions may emit sensitive details.
- $output=@(& $client doctor --profile $profile --control-plane.api-key 'env:CONTROL_PLANE_API_KEY' --json 2>&1 | Out-String)
+ $output=@(& $client doctor --profile $profileName --control-plane.api-key 'env:CONTROL_PLANE_API_KEY' --json 2>&1 | Out-String)
  $code=$LASTEXITCODE
  $raw=$output -join [Environment]::NewLine
  $jsonOk=$false
