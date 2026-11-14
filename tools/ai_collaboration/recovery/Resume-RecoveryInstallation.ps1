@@ -113,8 +113,8 @@ $task=& $register -Mode Check | ConvertFrom-Json
 if(!$task.Installed){& $register -Mode Register -DesktopShortcut}
 # This source script existed in the separately cloned PR113 checkout before
 # the interrupted install. Do not overwrite any dirty checkout or lab backup.
-$prDirty=@(& git -C $pr113 status --porcelain -- docs/chrome-bridge-handoff/chrome-bridge-v20)
-if($LASTEXITCODE -ne 0 -or $prDirty.Count){throw 'PR113_CHECKOUT_DIRTY_NO_UPDATE'}
+$prDirty=@(& git -C $pr113 status --porcelain -- 'docs/chrome-bridge-handoff/chrome-bridge-v20/extension' 'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/Build-OneClick-Lab.ps1' 'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/Stage-OneClick-RecoveryUpdate.ps1')
+if($LASTEXITCODE -ne 0 -or $prDirty.Count){throw 'PR113_REQUIRED_SOURCE_DIRTY_NO_UPDATE'}
 & $labStage -Apply
 Write-Host 'RECOVERY_RESUME_COMPLETED_RELOAD_EXTENSION_REQUIRED'
 Write-Host 'Reload the existing PR113 LAB extension and verify ID ehmllfabjbfcinaigionjggbgonkokfg.'
