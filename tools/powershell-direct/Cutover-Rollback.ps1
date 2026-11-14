@@ -65,12 +65,13 @@ function Test-OriginalStackStillHealthy {
   [Parameter(Mandatory=$true)][scriptblock]$VerifyHealth,
   [Parameter(Mandatory=$true)][int]$OriginalSupervisorPid,
   [Parameter(Mandatory=$true)][int]$OriginalTunnelPid,
-  [AllowNull()][Nullable[int]]$StartedNewSupervisorPid
+  [AllowNull()][object]$StartedNewSupervisorPid
  )
  if($null -ne $StartedNewSupervisorPid){return $false}
  $stack=& $InspectOriginal
  if($null -eq $stack){return $false}
  if($stack.SupervisorPid -ne $OriginalSupervisorPid -or
     $stack.TunnelPid -ne $OriginalTunnelPid){return $false}
- return ((& $VerifyHealth $stack) -ceq $true)
+ $healthy=& $VerifyHealth $stack
+ return ($healthy -is [bool] -and $healthy -eq $true)
 }
