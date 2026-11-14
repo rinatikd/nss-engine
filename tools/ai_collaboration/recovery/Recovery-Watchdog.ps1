@@ -28,13 +28,17 @@ for($i=1;$i -le $Attempts;$i++){
     }
     $line=$safe|ConvertTo-Json -Depth 6 -Compress
     Add-Content -LiteralPath $log -Value $line -Encoding UTF8
-    # Only retry if there are components with a failed/blocked startup;
-    # statuses do not prove externally reachable or authenticated MCP.
+    # A blocked/unknown process, missing secret, or already-running tunnel is
+    # not a transient startup race. NEVER retry automatic dispatch in that case.
+    # Remote MCP health must be checked separately; a listening PID is not E2E.
     $allStatuses=@($safe.servers)+@($safe.connections)
-    $unconfirmed=@($allStatuses | Where-Object {
-      $_.status -match '^(BLOCKED|START_UNCONFIRMED|PROCESS_STARTED_REMOTE_HEALTH_NOT_VERIFIED|OWNED_LISTENER_STARTED_TUNNEL_UNVERIFIED)'
+    $unsafe=@($allStatuses | Where-Object {
+      [string]$_.status -match '^(BLOCKED|START_UNKNOWN|START_UNCONFIRMED)'
     })
-    if($unconfirmed.Count -eq 0){break}
+    if($unsafe.Count -gt 0){break}
+    # Exactly one startup pass is sufficient. Any later verification must be
+    # read-only, outside this runner, to avoid duplicate tunnel launches.
+    break
   } catch {
     $safe=[PSCustomObject]@{time=(Get-Date).ToUniversalTime().ToString('o');
       attempt=$i;status='RECOVERY_ATTEMPT_FAILED'}
