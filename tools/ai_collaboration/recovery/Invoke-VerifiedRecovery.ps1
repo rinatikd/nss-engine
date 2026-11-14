@@ -22,7 +22,8 @@ foreach($entry in $entries){
 foreach($required in @(
   'Restore-LocalStack.ps1','Recover-LabTunnel.ps1',
   'Recover-PowerShellDirect.ps1','Recovery-Watchdog.ps1',
-  'Register-StackRecovery.ps1'
+  'Register-StackRecovery.ps1',
+  'Restore-StackWithReport.ps1'
 )){
   if(!$seen.ContainsKey($required)){throw 'RECOVERY_REQUIRED_FILE_UNVERIFIED'}
 }
