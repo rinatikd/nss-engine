@@ -2,6 +2,7 @@
 // This is a standalone runner, NOT yet wired to PowerShell Direct MCP.
 import { spawn } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
+import fs from 'node:fs';
 import path from 'node:path';
 
 export const SUITES = Object.freeze({
@@ -45,6 +46,26 @@ export const SUITES = Object.freeze({
     timeoutMs: 120000
   }
 });
+
+// Production Windows command lookup must not traverse PATH or a repository.
+// Python suites are disabled until an operator pins an absolute trusted Python
+// executable in PS_DIRECT_TRUSTED_PYTHON.
+const WINDOWS_BINARIES = Object.freeze({
+  node:'C:\\Program Files\\nodejs\\node.exe',
+  'powershell.exe':'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+});
+export function trustedExecutable(command,{
+  platform=process.platform, pythonPath=process.env.PS_DIRECT_TRUSTED_PYTHON
+}={}) {
+  if(platform!=='win32') return command; // portable mock/unit tests only
+  const exe=command==='python'?pythonPath:WINDOWS_BINARIES[command];
+  if(typeof exe!=='string'||!path.win32.isAbsolute(exe)||
+     exe.startsWith('\\\\')||!fs.existsSync(exe)||
+     !fs.statSync(exe).isFile()||
+     fs.realpathSync.native(exe).toLowerCase()!==path.win32.normalize(exe).toLowerCase())
+    throw new TaskPolicyError('TRUSTED_EXECUTABLE_NOT_CONFIGURED');
+  return exe;
+}
 
 const MAX_OUTPUT = 64 * 1024;
 const REQUEST = /^[a-zA-Z0-9_-]{8,80}$/;
@@ -106,17 +127,22 @@ export async function executeTestPlan(plan, { spawnImpl = spawn, terminateImpl =
       JSON.stringify(plan.args) !== JSON.stringify(spec.args) ||
       plan.timeoutMs !== spec.timeoutMs)
     throw new TaskPolicyError('PLAN_MODIFIED');
+  const executable=trustedExecutable(plan.command);
   return await new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawnImpl(plan.command, plan.args, {
+      child = spawnImpl(executable, plan.args, {
         cwd: plan.cwd, shell: false, windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'], env: {
-          PATH: process.env.PATH ?? '',
+          PATH: process.platform==='win32'
+            ? 'C:\\Windows\\System32;C:\\Windows;C:\\Program Files\\nodejs;C:\\Program Files\\Git\\cmd;C:\\Program Files\\dotnet'
+            : (process.env.PATH ?? ''),
           SystemRoot: process.env.SystemRoot ?? '',
           TEMP: process.env.TEMP ?? '',
           TMP: process.env.TMP ?? '',
-          PYTHONDONTWRITEBYTECODE: '1'
+          PYTHONDONTWRITEBYTECODE: '1',
+          GIT_TERMINAL_PROMPT:'0',
+          CI:'1'
         }
       });
     } catch (error) {
