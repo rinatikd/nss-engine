@@ -11,6 +11,7 @@ export const ENGINEERING_TOOLS=Object.freeze([
     operation:{type:'string',enum:ENGINEERING_OPERATIONS},
     workspace:{type:'string',minLength:3,maxLength:512},
     target:{type:'string',minLength:1,maxLength:300},
+    scriptArgs:{type:'array',maxItems:16,items:{type:'string',maxLength:200}},
     pid:{type:'integer',minimum:1,maximum:2147483647},
     port:{type:'integer',minimum:1024,maximum:65535}
    }}},
