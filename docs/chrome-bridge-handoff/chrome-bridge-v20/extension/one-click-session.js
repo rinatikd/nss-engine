@@ -79,8 +79,11 @@ export function createOneClickSession(chromeApi, {
           bridgeConnectionDesired: false, bridgeMutationLabMode: false,
           bridgeAllTabsMode: false
         });
-        await stop();
+        let stopError = null;
+        try { await stop(); } catch (error) { stopError = error; }
+        // Host permissions must be revoked even if the transport cannot ACK.
         const revoked = await chromeApi.permissions.remove({ origins: BROWSER_ORIGINS });
+        if (stopError) throw stopError;
         return { connected: false, state: 'disconnected', permissionsRevoked: revoked };
       } finally {
         inFlight = false;
