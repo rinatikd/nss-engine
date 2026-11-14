@@ -155,3 +155,24 @@ test('approval expiry is distinct from an explicit operator Deny',()=>fixture(as
   assert.equal(final.reason,'APPROVAL_EXPIRED');
   assert.equal(starts(),0);
 }));
+
+test('status polling during audit transitions never receives truncated JSON',()=>fixture(async({svc,root})=>{
+  const id='eng-audit-race-0001';
+  rpc(svc,'powershell_engineering_submit',req(root,id,'git-status'));
+  const pendingEntry=await pending(svc,id);
+  const reads=[];
+  for(let j=0;j<120;j++){
+    reads.push(svc.engineeringService.status(id));
+  }
+  const decision=await approve(svc,pendingEntry,true);
+  assert.equal(decision.status,200);
+  for(let j=0;j<120;j++){
+    reads.push(svc.engineeringService.status(id));
+  }
+  const results=await Promise.all(reads);
+  for(const state of results){
+    assert.equal(state.requestId,id);
+    assert.ok(['CLAIM_IN_PROGRESS','PENDING_LOCAL_APPROVAL','RUNNING','FINISHED'].includes(state.state),state.state);
+  }
+  assert.equal((await status(svc,id)).state,'FINISHED');
+}));
