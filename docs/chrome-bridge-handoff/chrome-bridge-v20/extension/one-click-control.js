@@ -1,9 +1,24 @@
 import { createOneClickSession } from './one-click-session.js';
-import { loadBrowserKey } from './browser-key-store.js';
+import { loadBrowserKey, saveBrowserKey } from './browser-key-store.js';
+import { verifyBridgeCredential } from './connection-check.js';
 
 const $ = id => document.getElementById(id);
 const session = createOneClickSession(chrome, {
-  loadKey: loadBrowserKey,
+  loadKey: async () => {
+    const existing = await loadBrowserKey(chrome);
+    if (existing.value) return existing;
+    const field = $('pairing-key');
+    const candidate = field?.value?.trim() || '';
+    if (!candidate) {
+      $('pairing').hidden = false;
+      throw Error('PAIRING_REQUIRED');
+    }
+    await verifyBridgeCredential(fetch, candidate);
+    await saveBrowserKey(chrome, candidate);
+    field.value = '';
+    $('pairing').hidden = true;
+    return { value: candidate, persistent: true };
+  },
   start: () => chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
   stop: async () => {
     const r = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
@@ -38,7 +53,7 @@ $('connect').addEventListener('click', async e => {
   } catch(err) {
     $('status').textContent='Не подключено';
     $('detail').textContent=err.message==='PAIRING_REQUIRED'
-      ? 'Локальный ключ ещё не привязан. Требуется безопасная первичная настройка Bridge.'
+      ? 'Для первой привязки введите локальный browserToken и повторно нажмите «Подключить».'
       : err.message;
   } finally {
     busy=false;
