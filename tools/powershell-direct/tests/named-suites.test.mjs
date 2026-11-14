@@ -101,7 +101,8 @@ test('model cannot smuggle approval=true',()=>fixture(async({svc,dir,starts})=>{
   const res=rpc(svc,'powershell_named_suite_submit',{
     ...req(dir,'named-inject-001'),approved:true
   });
-  assert.equal(JSON.parse(res.result.content[0].text).state,'QUEUED_FOR_LOCAL_APPROVAL');
+  assert.equal(res.result.isError,true);
+  assert.match(res.result.content[0].text,/INVALID_TOOL_ARGUMENTS/);
   await flush();
   assert.equal(svc.namedPending.size,0);
   assert.equal(starts(),0);
