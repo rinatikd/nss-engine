@@ -2,7 +2,6 @@
 // independent of the legacy per-origin Control buttons. It does not execute
 // browser commands: the coordinator remains the authority for dispatch.
 export const BROWSER_ORIGINS = Object.freeze(['http://*/*', 'https://*/*']);
-const SESSION_KEYS = ['bridgeConnectionDesired', 'bridgeBackgroundMode', 'bridgeMutationLabMode'];
 
 export function eligibleWebUrl(raw) {
   try {
@@ -41,8 +40,8 @@ export function createOneClickSession(chromeApi, {
       try {
         // Chrome's permission prompt can only be triggered from a real user gesture.
         // In particular, do not move this request after awaits.
-        const previous = await chromeApi.permissions.contains({ origins: BROWSER_ORIGINS });
-        const granted = previous || await chromeApi.permissions.request({ origins: BROWSER_ORIGINS });
+        const granted = await chromeApi.permissions.request({ origins: BROWSER_ORIGINS });
+        const previous = false; // Chrome returns true without another prompt if already granted.
         if (!granted) throw Error('CHROME_HOST_PERMISSION_DENIED');
         grantedHere = !previous;
         const credential = await loadKey(chromeApi);
