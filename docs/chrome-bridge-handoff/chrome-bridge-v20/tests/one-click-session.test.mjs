@@ -84,3 +84,30 @@ test('ordinary web pages vs Chrome restricted schemes',()=>{
   assert.equal(eligibleWebUrl('chrome-extension://abc/control.html'),false);
   assert.equal(eligibleWebUrl('https://chromewebstore.google.com/detail/foo'),false);
 });
+
+test('failed Connect never revokes a pre-existing site permission', async()=>{
+  const h=harness({key:''});
+  await assert.rejects(h.session.connect({trustedGesture:true}),/PAIRING_REQUIRED/);
+  assert.equal(h.events.some(x=>x[0]==='remove'),false);
+});
+test('Disconnect revokes browser rights even when background stop fails', async()=>{
+  const h=harness();
+  await h.session.connect({trustedGesture:true});
+  const base=h.events.length;
+  // A second session fixture with broken stop, same expected cleanup semantics.
+  const state={bridgeConnectionDesired:true};
+  const events=[];
+  const api={
+    permissions:{request:async()=>true,remove:async()=>{events.push('revoke');return true;}},
+    storage:{local:{get:async()=>state,set:async v=>{Object.assign(state,v);events.push('disable');}}}
+  };
+  const broken=createOneClickSession(api,{
+    loadKey:async()=>({value:'stored-token'}),
+    start:async()=>({ok:true}),
+    stop:async()=>{events.push('stop');throw Error('OFFSCREEN_UNAVAILABLE');},
+    getStatus:async()=>({connected:true})
+  });
+  await assert.rejects(broken.disconnect(),/BACKGROUND_STOP_UNCONFIRMED/);
+  assert.deepEqual(events,['disable','stop','revoke']);
+  assert.equal(state.bridgeConnectionDesired,false);
+});
