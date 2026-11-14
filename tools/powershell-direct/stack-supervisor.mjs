@@ -23,8 +23,15 @@ const namedWorkspaceRoots=(process.env.PS_DIRECT_NAMED_SUITE_WORKSPACES||'')
 const namedAuditDirectory=process.env.PS_DIRECT_NAMED_SUITE_AUDIT_DIR||null;
 if(namedWorkspaceRoots.length && !namedAuditDirectory)
   throw Error('NAMED_AUDIT_DIR_REQUIRED');
+const engineeringWorkspaceRoots=(process.env.PS_DIRECT_ENGINEERING_WORKSPACES||'')
+  .split(';').map(x=>x.trim()).filter(Boolean)
+  .map(workspace=>canonicalWorkspace(workspace,root));
+const engineeringAuditDirectory=process.env.PS_DIRECT_ENGINEERING_AUDIT_DIR||null;
+if(engineeringWorkspaceRoots.length && !engineeringAuditDirectory)
+  throw Error('ENGINEERING_AUDIT_DIR_REQUIRED');
 const service=new PowerShellApprovalService({
-  root,chatReadonlyEnabled:true,namedWorkspaceRoots,namedAuditDirectory
+  root,chatReadonlyEnabled:true,namedWorkspaceRoots,namedAuditDirectory,
+  engineeringWorkspaceRoots,engineeringAuditDirectory
 });
 let child,stopping=false;
 async function shutdown(signal='STOP'){
@@ -44,10 +51,13 @@ try{
  await service.start();
  const tools=service.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools.map(x=>x.name);
  if(!tools.includes('powershell_chat_readonly'))throw Error('CHAT_TOOL_NOT_REGISTERED');
+ if(engineeringWorkspaceRoots.length && (!tools.includes('powershell_engineering_submit')||
+   !tools.includes('powershell_engineering_status')))
+   throw Error('ENGINEERING_TOOLS_NOT_REGISTERED');
  if(namedWorkspaceRoots.length && (!tools.includes('powershell_named_suite_submit')||
    !tools.includes('powershell_named_suite_status')))
    throw Error('NAMED_TOOLS_NOT_REGISTERED');
- process.stdout.write('LOCAL_MCP_OK 127.0.0.1:17486 chat_readonly=true named_suites='+String(namedWorkspaceRoots.length>0)+'\n');
+ process.stdout.write('LOCAL_MCP_OK 127.0.0.1:17486 chat_readonly=true named_suites='+String(namedWorkspaceRoots.length>0)+' engineering='+String(engineeringWorkspaceRoots.length>0)+'\n');
  const env={...process.env,PS_DIRECT_AGENT_TOKEN:service.agentToken};
  delete env.PS_DIRECT_CHAT_READONLY_ENABLED; // only the service enables the feature
  child=spawn(client,['run','--profile','powershell-direct-work','--health.listen-addr','127.0.0.1:18086'],
