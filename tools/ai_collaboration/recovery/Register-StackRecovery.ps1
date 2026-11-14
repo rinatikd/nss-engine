@@ -1,7 +1,7 @@
 # Opt-in CURRENT-USER (non-admin) Windows Scheduled Task.
 # Default Check does not register anything.
 [CmdletBinding()]
-param([ValidateSet('Check','Register','Unregister')][string]$Mode='Check')
+param([ValidateSet('Check','Register','Unregister')][string]$Mode='Check',[switch]$DesktopShortcut)
 $ErrorActionPreference='Stop'
 $taskName='ChromeBridge-Stack-Recovery-User'
 $script=Join-Path $PSScriptRoot 'Restore-LocalStack.ps1'
@@ -23,6 +23,9 @@ if($Mode -eq 'Unregister'){
   return
 }
 if($task){throw 'TASK_ALREADY_EXISTS_REVIEW_BEFORE_REPLACING'}
+if($PSScriptRoot -notlike 'C:\Engineering\ChromeBridge-Recovery-Release*') {
+  throw 'INSTALL_ONLY_FROM_REVIEWED_RELEASE_COPY'
+}
 $action=New-ScheduledTaskAction -Execute $ps -Argument (
   '-NoProfile -NonInteractive -File "'+$script+'" -Mode Restore'
 )
@@ -32,3 +35,15 @@ $principal=New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -Ru
 $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Restore approved Chrome Bridge lab services at user logon; production untouched' | Out-Null
 Write-Host 'RECOVERY_TASK_REGISTERED'
+if($DesktopShortcut) {
+  $desktop=[Environment]::GetFolderPath('Desktop')
+  $link=Join-Path $desktop 'Восстановить Chrome Bridge.lnk'
+  $shell=New-Object -ComObject WScript.Shell
+  $shortcut=$shell.CreateShortcut($link)
+  $shortcut.TargetPath=$ps
+  $shortcut.Arguments='-NoProfile -NonInteractive -File "'+$script+'" -Mode Restore'
+  $shortcut.WorkingDirectory=$PSScriptRoot
+  $shortcut.Description='One-click restore of approved local Chrome Bridge stack'
+  $shortcut.Save()
+  Write-Host 'RECOVERY_DESKTOP_SHORTCUT_CREATED'
+}
