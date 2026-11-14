@@ -42,9 +42,21 @@ try{
    $allowedSid,[System.Security.AccessControl.FileSystemRights]::FullControl,[System.Security.AccessControl.AccessControlType]::Allow)
   $fileAcl.AddAccessRule($fileRule)
  }
+ # Apply the restricted DACL to the temporary file before publication.
+ # NTFS rename inside the same directory preserves that DACL; applying Set-Acl
+ # again after Move-Item can request SeSecurityPrivilege in PowerShell 5.1.
  Set-Acl -LiteralPath $temp -AclObject $fileAcl
  Move-Item -LiteralPath $temp -Destination $file -Force
- Set-Acl -LiteralPath $file -AclObject $fileAcl
+ # Fail closed if replacing an existing file did not preserve protection.
+ $publishedAcl=Get-Acl -LiteralPath $file
+ if(!$publishedAcl.AreAccessRulesProtected){throw 'APPROVAL_FILE_ACL_NOT_PROTECTED'}
+ foreach($entry in @($publishedAcl.Access)){
+  $entrySid=$entry.IdentityReference.Translate(
+   [System.Security.Principal.SecurityIdentifier]).Value
+  if($entrySid -ne $sid.Value -and $entrySid -ne 'S-1-5-18'){
+   throw 'APPROVAL_FILE_ACL_UNEXPECTED_PRINCIPAL'
+  }
+ }
 }finally{
  [Array]::Clear($plain,0,$plain.Length)
  $token=$null
