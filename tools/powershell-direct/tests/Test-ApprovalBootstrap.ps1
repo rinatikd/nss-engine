@@ -48,8 +48,12 @@ try{
   }
  }
  # False/stale URL must not open the browser or reveal token. -CheckOnly errors.
- $staleOutput=(& powershell.exe -NoProfile -NonInteractive -File $open -CheckOnly 2>&1 | Out-String)
- $staleExit=$LASTEXITCODE
+ $previousErrorAction=$ErrorActionPreference
+ try{
+  $ErrorActionPreference='Continue'
+  $staleOutput=(& powershell.exe -NoProfile -NonInteractive -File $open -CheckOnly 2>&1 | Out-String)
+  $staleExit=$LASTEXITCODE
+ }finally{$ErrorActionPreference=$previousErrorAction}
  if($staleExit -eq 0){throw 'STALE_APPROVAL_TOKEN_ACCEPTED'}
  if($staleOutput.Contains($token)){throw 'TOKEN_EXPOSED_ON_FAILURE'}
  [pscustomobject]@{
