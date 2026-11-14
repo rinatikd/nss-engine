@@ -36,7 +36,8 @@ $cases=@(
 )
 $results=@()
 foreach($case in $cases){
- $raw=(& powershell.exe -NoProfile -NonInteractive -File $target @($case.Args) 2>&1 | Out-String)
+ $caseArgs=@($case.Args)
+ $raw=(& powershell.exe -NoProfile -NonInteractive -File $target @caseArgs 2>&1 | Out-String)
  $exitCode=$LASTEXITCODE
  if($exitCode -eq 0){throw ('CUTOVER_GATE_OPENED_'+$case.Name)}
  if($raw -notmatch 'PRODUCTION_CUTOVER_REQUIRES_EXPLICIT_SWITCHES'){
