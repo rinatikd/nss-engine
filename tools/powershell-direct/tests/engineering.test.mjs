@@ -176,3 +176,27 @@ test('status polling during audit transitions never receives truncated JSON',()=
   }
   assert.equal((await status(svc,id)).state,'FINISHED');
 }));
+
+test('new fixed Git operations appear in MCP schema without arbitrary refspecs',()=>fixture(async({svc,root,starts})=>{
+ const item=svc.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools
+  .find(x=>x.name==='powershell_engineering_submit');
+ for(const op of ['git-branch','git-diff-check','git-pull-ff-only']){
+  assert.ok(item.inputSchema.properties.operation.enum.includes(op));
+ }
+ for(const injected of [
+  {...req(root,'git-pull-bad-01','git-pull-ff-only'),target:'origin/main'},
+  {...req(root,'git-pull-bad-02','git-pull-ff-only'),scriptArgs:['--force']},
+  {...req(root,'git-pull-bad-03','git-pull-ff-only'),approved:true},
+  {...req(root,'git-pull-bad-04','git-pull-ff-only'),port:17486},
+  {...req(root,'git-pull-bad-05','git-pull-ff-only'),operation:'git-reset'}
+ ]){
+  const response=rpc(svc,'powershell_engineering_submit',injected);
+  assert.equal(response.result.isError,true);
+ }
+ assert.equal(starts(),0);
+ assert.equal(svc.namedPending.size,0);
+ const plan=await resolveEngineeringPlan(req(root,'git-pull-plan-01','git-pull-ff-only'),[root]);
+ assert.equal(plan.risk,'workspace-write');
+ assert.ok(plan.args.includes('--ff-only'));
+ assert.ok(!plan.args.includes('--force'));
+}));
