@@ -35,9 +35,18 @@ if (-not $SkipNodeTests) {
   } elseif (-not (Test-Path -LiteralPath $testFile -PathType Leaf)) {
     $tests.State='BLOCKED_TEST_FILE_NOT_FOUND'
   } else {
-    & $node.Source --experimental-default-type=module --test $testFile *> $testsOutput
-    $tests.ExitCode = $LASTEXITCODE
-    $tests.State = if ($LASTEXITCODE -eq 0) { 'PASS' } else { 'FAIL' }
+    # Node 24 recognizes ESM from extension/package.json (type=module).
+    # Temporarily allow a nonzero native exit code; capture it as a test failure
+    # rather than terminating before the JSON evidence is written.
+    $previousPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      & $node.Source --test $testFile > $testsOutput 2>&1
+      $tests.ExitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $previousPreference
+    }
+    $tests.State = if ($tests.ExitCode -eq 0) { 'PASS' } else { 'FAIL' }
   }
 }
 $manifest = Join-Path $SourceRoot 'extension\manifest.json'
