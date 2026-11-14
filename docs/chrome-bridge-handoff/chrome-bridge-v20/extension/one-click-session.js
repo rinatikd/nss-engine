@@ -87,8 +87,16 @@ export function createOneClickSession(chromeApi, {
         try { revoked = await chromeApi.permissions.remove({ origins: BROWSER_ORIGINS }); }
         catch (error) { revokeError = error; }
         if (revokeError) throw Error('HOST_PERMISSION_REVOKE_FAILED: ' + revokeError.message);
+        // Verify every requested host scope independently; contains() with
+        // both scopes would miss a partially retained permission.
+        if (typeof chromeApi.permissions.contains !== 'function')
+          throw Error('HOST_PERMISSION_VERIFICATION_UNAVAILABLE');
+        for (const origin of BROWSER_ORIGINS) {
+          const stillGranted = await chromeApi.permissions.contains({ origins: [origin] });
+          if (stillGranted) throw Error('HOST_PERMISSION_REMAINED_GRANTED');
+        }
         if (stopError) throw Error('BACKGROUND_STOP_UNCONFIRMED: ' + stopError.message);
-        return { connected: false, state: 'disconnected', permissionsRevoked: revoked };
+        return { connected: false, state: 'disconnected', permissionsRevoked: true };
       } finally {
         inFlight = false;
       }
