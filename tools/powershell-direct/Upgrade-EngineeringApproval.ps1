@@ -186,7 +186,7 @@ $phrase=Read-Host 'Type EXACTLY UPGRADE ENGINEERING APPROVAL 17486'
 if($phrase -cne 'UPGRADE ENGINEERING APPROVAL 17486'){throw 'OPERATOR_DECLINED'}
 $backup=Join-Path $env:TEMP ('psdirect-approval-upgrade-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $backup -Force | Out-Null
-$newPid=0;$oldStopped=$false
+$newPid=0;$transactionStarted=$false
 try{
  foreach($item in $relative){
   $original=Join-Path $stage $item
@@ -195,8 +195,8 @@ try{
   New-Item -ItemType Directory -Path $copyDir -Force | Out-Null
   if(Test-Path -LiteralPath $original -PathType Leaf){Copy-Item -LiteralPath $original -Destination $copy -Force}
  }
+ $transactionStarted=$true
  Stop-Verified $ready
- $oldStopped=$true
  Copy-UpgradeFiles
  $newPid=Start-Stack
  $newStack=Wait-Stack $newPid
@@ -213,9 +213,28 @@ try{
  }|ConvertTo-Json
 }catch{
  $reason=$_.Exception.Message
- if(!$oldStopped){throw}
+ if(!$transactionStarted){throw}
+ # Stop-Verified may have failed BEFORE any shutdown. Never disturb an
+ # exactly identical healthy original stack, and never redeploy over it.
+ $stillOriginal=Get-Stack
+ if($stillOriginal -and $stillOriginal.SupervisorPid -eq $ready.SupervisorPid -and
+    $stillOriginal.TunnelPid -eq $ready.TunnelPid -and (Test-Health $ready.TunnelPid)){
+  throw 'UPGRADE_ABORTED_ORIGINAL_UNCHANGED'
+ }
  try{
   if($newPid -gt 0){Stop-PartialNew $newPid}
+  # An original child could survive a partially failed Stop-Verified.
+  # Stop only the PID / executable / parent that were captured pre-upgrade.
+  $oldChild=Get-CimInstance Win32_Process -Filter "ProcessId=$($ready.TunnelPid)" -ErrorAction SilentlyContinue
+  if($oldChild -and $oldChild.Name -ieq 'tunnel-client.exe' -and
+     $oldChild.ExecutablePath -ieq $client -and
+     $oldChild.ParentProcessId -eq $ready.SupervisorPid){
+   $healthOwner=Get-Listener 18086
+   if($null -ne $healthOwner -and $healthOwner -ne $ready.TunnelPid){
+    throw 'OLD_TUNNEL_PORT_OWNED_BY_OTHER_PROCESS'
+   }
+   Stop-Process -Id $ready.TunnelPid -Force -ErrorAction Stop
+  }
   if($null -ne (Get-Listener 17486) -or $null -ne (Get-Listener 18086)){
    throw 'ROLLBACK_PORTS_OCCUPIED'
   }
@@ -247,5 +266,5 @@ try{
  throw 'ENGINEERING_APPROVAL_UPGRADE_NOT_COMPLETED'
 }finally{
  # Keep backups for manual recovery whenever upgrade was interrupted.
- if(!$oldStopped){Remove-Item -LiteralPath $backup -Force -Recurse -ErrorAction SilentlyContinue}
+ if(!$transactionStarted){Remove-Item -LiteralPath $backup -Force -Recurse -ErrorAction SilentlyContinue}
 }
