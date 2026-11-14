@@ -1,10 +1,12 @@
-// Supervised PowerShell Direct stack. No token is printed or written to disk.
+// Supervised PowerShell Direct stack. Tokens are never printed or stored in plaintext.
+// UI token is DPAPI CurrentUser-encrypted for an operator-only local launcher.
 // The server stays on 127.0.0.1:17486; the stdio tunnel uses an in-memory token.
 import {spawn} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {PowerShellApprovalService} from './service.mjs';
 import {canonicalWorkspace} from './runner.mjs';
+import {publishApprovalToken} from './approval-bootstrap.mjs';
 
 const root=process.env.PS_DIRECT_ALLOWED_ROOT;
 const client=process.env.PS_DIRECT_TUNNEL_CLIENT;
@@ -49,6 +51,10 @@ process.on('SIGTERM',()=>{void shutdown('SIGTERM');});
 
 try{
  await service.start();
+ // Fail startup if local operator cannot retrieve a protected approval link.
+ // Existing MCP approval checks remain mandatory; this cannot approve jobs.
+ await publishApprovalToken(service.uiToken);
+ process.stdout.write('LOCAL_APPROVAL_BOOTSTRAP_READY (use Open-Approval.ps1)\n');
  const tools=service.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools.map(x=>x.name);
  if(!tools.includes('powershell_chat_readonly'))throw Error('CHAT_TOOL_NOT_REGISTERED');
  if(engineeringWorkspaceRoots.length && (!tools.includes('powershell_engineering_submit')||
@@ -69,7 +75,7 @@ try{
  child.on('exit',(code,signal)=>{process.stderr.write('TUNNEL_EXIT '+String(code??signal)+'\n');void shutdown('TUNNEL_EXIT');});
  process.stdout.write('STACK_STARTED tunnel_profile=powershell-direct-work health=http://127.0.0.1:18086/ui\n');
  process.stdout.write('ChatGPT permission MUST remain Always ask; local approval still required by powershell_propose.\n');
- process.stdout.write('Ctrl+C stops this supervised stack. No token is printed.\n');
+ process.stdout.write('Ctrl+C stops this supervised stack. No plaintext token is printed.\n');
 }catch(e){
  process.stderr.write('STACK_FAILED '+(e.code||e.message||'UNKNOWN')+'\n');
  await shutdown('START_FAILURE');
