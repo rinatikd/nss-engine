@@ -1,0 +1,98 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { EventEmitter } from 'node:events';
+import { resolveTestPlan, executeTestPlan, TaskPolicyError } from './local_test_runner.mjs';
+
+async function withWorkspace(fn) {
+  const root = await mkdtemp(path.join(tmpdir(), 'platform-runner-test-'));
+  try { return await fn(root); } finally { await rm(root, { recursive:true, force:true }); }
+}
+const requestId = 'local-test-run-001';
+const params = (workspace, extras={}) =>
+  ({ requestId, suite:'platform-contract', workspace, approved:true, approvedRequestId:requestId, ...extras });
+
+test('approved suite gets a structured immutable command', () => withWorkspace(async root => {
+  const plan = await resolveTestPlan(params(root), [root]);
+  assert.equal(plan.command,'python');
+  assert.equal(plan.cwd,root);
+  assert.equal(plan.args[0],'-m');
+  assert.equal(plan.timeoutMs,60000);
+  assert.throws(() => plan.args.push('malicious'), TypeError);
+}));
+
+test('unapproved task rejected before plan creation', () => withWorkspace(async root => {
+  await assert.rejects(resolveTestPlan(params(root,{approved:false}),[root]), /EXPLICIT_APPROVAL_REQUIRED/);
+}));
+
+test('approval for another request cannot be reused', () => withWorkspace(async root => {
+  await assert.rejects(resolveTestPlan(params(root,{approvedRequestId:'other-request'}),[root]), /EXPLICIT_APPROVAL_REQUIRED/);
+}));
+
+test('arbitrary shell command cannot be supplied as suite', () => withWorkspace(async root => {
+  await assert.rejects(resolveTestPlan(params(root,{suite:'powershell -enc payload'}),[root]), /UNKNOWN_TEST_SUITE/);
+}));
+
+test('workspace outside allowlist is blocked', () => withWorkspace(async root => {
+  const other = await mkdtemp(path.join(tmpdir(),'platform-runner-other-'));
+  try {
+    await assert.rejects(resolveTestPlan(params(root),[other]), /WORKSPACE_NOT_ALLOWLISTED/);
+  } finally { await rm(other,{recursive:true,force:true}); }
+}));
+
+test('symlink cannot spoof allowlisted directory', () => withWorkspace(async root => {
+  const external = await mkdtemp(path.join(tmpdir(),'platform-runner-external-'));
+  try {
+    const link=path.join(root,'link');
+    await symlink(external,link,'dir');
+    await assert.rejects(resolveTestPlan(params(link),[root]), /WORKSPACE_NOT_ALLOWLISTED/);
+  } finally { await rm(external,{recursive:true,force:true}); }
+}));
+
+test('non-absolute workspace is refused', async () => {
+  await assert.rejects(resolveTestPlan(params('relative/path'),[]), /INVALID_WORKSPACE/);
+});
+
+test('invalid request ID is refused', () => withWorkspace(async root => {
+  await assert.rejects(resolveTestPlan(params(root,{requestId:'x'}),[root]), /INVALID_REQUEST_ID/);
+}));
+
+test('mutated command plan is rejected before execution', () => withWorkspace(async root => {
+  const plan=await resolveTestPlan(params(root),[root]);
+  await assert.rejects(executeTestPlan({...plan,command:'powershell'}), /PLAN_MODIFIED/);
+}));
+
+test('no shell execution, spawn receives fixed args and bounded result', () => withWorkspace(async root => {
+  const plan=await resolveTestPlan(params(root),[root]);
+  let options;
+  const mockSpawn=(cmd,args,opts) => {
+    options={cmd,args,opts};
+    const child=new EventEmitter();
+    child.stdout=new EventEmitter();child.stderr=new EventEmitter();
+    child.kill=()=>{};
+    queueMicrotask(() => {child.stdout.emit('data',Buffer.from('PASS'));child.emit('close',0,null);});
+    return child;
+  };
+  const result=await executeTestPlan(plan,{spawnImpl:mockSpawn});
+  assert.equal(options.opts.shell,false);
+  assert.equal(options.opts.cwd,root);
+  assert.equal(options.cmd,'python');
+  assert.equal(result.stdout,'PASS');
+  assert.equal(result.exitCode,0);
+}));
+
+test('output is size-bounded', () => withWorkspace(async root => {
+  const plan=await resolveTestPlan(params(root),[root]);
+  const mockSpawn=() => {
+    const child=new EventEmitter();
+    child.stdout=new EventEmitter();child.stderr=new EventEmitter();
+    child.kill=()=>{};
+    queueMicrotask(() => {child.stdout.emit('data',Buffer.alloc(100000,65));child.emit('close',0,null);});
+    return child;
+  };
+  const result=await executeTestPlan(plan,{spawnImpl:mockSpawn});
+  assert.equal(result.truncated,true);
+  assert.ok(Buffer.byteLength(result.stdout)<=65536);
+}));
