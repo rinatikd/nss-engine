@@ -54,8 +54,13 @@ $tests=@(
   'tools/ai_collaboration/recovery/windows-recovery-contract.test.mjs',
   'tools/ai_collaboration/recovery/native-host-contract.test.mjs'
 )
-& $node --test @tests
-if($LASTEXITCODE -ne 0){throw 'RECOVERY_TESTS_NOT_PASSING'}
+Push-Location -LiteralPath $repo
+try {
+  & $node --test @tests
+  if($LASTEXITCODE -ne 0){throw 'RECOVERY_TESTS_NOT_PASSING'}
+} finally {
+  Pop-Location
+}
 $prepare=Join-Path $PSScriptRoot 'Prepare-RecoveryRelease.ps1'
 & $prepare -RepositoryRoot $repo -Destination $release | Out-Null
 if(!(Test-Path -LiteralPath $verify -PathType Leaf)){throw 'STAGED_ENTRYPOINT_MISSING'}
