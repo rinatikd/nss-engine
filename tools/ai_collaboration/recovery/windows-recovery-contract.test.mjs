@@ -73,3 +73,17 @@ test('one-click shortcut uses user-visible checked release, not arbitrary script
   assert.match(panel,/MessageBox/);
   assert.match(prepare,/Restore-StackWithReport\.ps1/);
 });
+
+test('resumed installer verifies every staged file before updating the verifier',async()=>{
+  const resume=await read('Resume-RecoveryInstallation.ps1');
+  const verify=await read('Invoke-VerifiedRecovery.ps1');
+  assert.match(resume,/STAGED_FILE_NOT_VERIFIED_/);
+  assert.match(resume,/STAGE_DIFFERS_FROM_REVIEWED_SOURCE_/);
+  assert.match(resume,/PARTIAL_INSTALLATION_SAFE_TO_RESUME/);
+  assert.match(resume,/Invoke-VerifiedRecovery\.ps1\.before-fix-/);
+  assert.match(resume,/& \$entry -Mode Verify/);
+  assert.match(resume,/& \$entry -Mode Status/);
+  assert.doesNotMatch(resume,/\bRemove-Item\b|\bgit\s+reset\b/);
+  assert.match(verify,/\$expectedFiles -cnotcontains \$name/);
+  assert.match(verify,/INVALID_MANIFEST_ENTRY:/);
+});
