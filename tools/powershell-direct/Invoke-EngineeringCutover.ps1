@@ -218,12 +218,28 @@ try{
   $candidate=Get-Stack $new
   if($null -ne $candidate){Stop-ExactStack $candidate}
   elseif($newPid -and $null -ne (Get-Identity $newPid $new)){
-   # Start had returned a PID but tunnel never reached ready.
-   Stop-Process -Id $newPid -Force -ErrorAction Stop
-   for($i=0;$i -lt 30;$i++){
-    if($null -eq (Get-Listener 17486) -and $null -eq (Get-Listener 18086)){break}
-    Start-Sleep -Milliseconds 400
+   # New supervisor started but tunnel did not reach ready.
+   # Identify its direct child BEFORE terminating the parent.
+   $partialChild=Get-ChildTunnel $newPid
+   if($null -ne $partialChild){
+    Stop-Process -Id ([int]$partialChild.ProcessId) -Force -ErrorAction Stop
    }
+   $parentStill=Get-Identity $newPid $new
+   if($null -ne $parentStill){
+    Stop-Process -Id $newPid -Force -ErrorAction Stop
+   }
+  }
+  # If the old parent exited but its previously verified child lingered,
+  # clean that EXACT PID only, with unchanged binary path and parent PID.
+  $oldChild=Get-CimInstance Win32_Process -Filter "ProcessId=$($oldStack.TunnelPid)" -ErrorAction SilentlyContinue
+  if($null -ne $oldChild -and $oldChild.Name -ieq 'tunnel-client.exe' -and
+     $oldChild.ExecutablePath -ieq $client -and
+     $oldChild.ParentProcessId -eq $oldStack.SupervisorPid){
+    Stop-Process -Id $oldStack.TunnelPid -Force -ErrorAction Stop
+  }
+  for($i=0;$i -lt 30;$i++){
+   if($null -eq (Get-Listener 17486) -and $null -eq (Get-Listener 18086)){break}
+   Start-Sleep -Milliseconds 400
   }
   $restored=Restore-Original
   $rollbackVerified=$true
