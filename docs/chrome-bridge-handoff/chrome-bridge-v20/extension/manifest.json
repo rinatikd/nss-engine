@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Chrome Bridge - Agent Hub",
+  "version": "0.3.0",
+  "description": "Connect/disconnect local browser bridge with explicit browser permissions",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "offscreen",
+    "alarms"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:17381/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Chrome Bridge"
+  }
+}
