@@ -67,12 +67,13 @@ export class PowerShellApprovalService {
           resolve({approved:false,requestId:details.requestId,
             planSha256:details.planSha256});return;
         }
+        const expiresAt=Date.now()+180000;
         const timer=setTimeout(()=>{
           this.namedPending.delete(details.requestId);
-          resolve({approved:false,requestId:details.requestId,
-            planSha256:details.planSha256});
-        },90000);
-        this.namedPending.set(details.requestId,{...details,resolve,timer,expiresAt:Date.now()+90000});
+          resolve({approved:false,reason:'APPROVAL_EXPIRED',
+            requestId:details.requestId,planSha256:details.planSha256});
+        },180000);
+        this.namedPending.set(details.requestId,{...details,resolve,timer,expiresAt});
       })
     });
     this.engineeringHandlers=createEngineeringHandlers(this.engineeringService);
@@ -221,9 +222,11 @@ export class PowerShellApprovalService {
       if(!p||!match(f.get('sha256'),p.planSha256))throw Error('NAMED_APPROVAL_MISMATCH');
       this.namedPending.delete(p.requestId);
       clearTimeout(p.timer);
-      p.resolve({approved:f.get('approved')==='yes',requestId:p.requestId,
-        planSha256:p.planSha256});
-      return send(res,200,{requestId:p.requestId,state:'DECISION_RECORDED'});
+      const wasApproved=f.get('approved')==='yes';
+      p.resolve({approved:wasApproved,reason:wasApproved?'OPERATOR_APPROVED':'OPERATOR_DENIED',
+        requestId:p.requestId,planSha256:p.planSha256});
+      return send(res,200,{requestId:p.requestId,
+        state:wasApproved?'APPROVED_RECORDED':'DENIED_RECORDED'});
     }
     return send(res,200,this.decide(f.get('id'),f.get('sha256'),f.get('approved')==='yes'));
    }
