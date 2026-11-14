@@ -53,3 +53,24 @@ function Invoke-VerifiedCutoverRollback {
   ManualRecoveryRequired=(-not $verified)
  }
 }
+
+# Called before attempting any cleanup after a failed cutover. If the exact
+# original supervisor AND its original child tunnel are still healthy, abort
+# recovery without stopping or restarting them. A new process already launched
+# must never be ignored.
+function Test-OriginalStackStillHealthy {
+ [CmdletBinding()]
+ param(
+  [Parameter(Mandatory=$true)][scriptblock]$InspectOriginal,
+  [Parameter(Mandatory=$true)][scriptblock]$VerifyHealth,
+  [Parameter(Mandatory=$true)][int]$OriginalSupervisorPid,
+  [Parameter(Mandatory=$true)][int]$OriginalTunnelPid,
+  [AllowNull()][Nullable[int]]$StartedNewSupervisorPid
+ )
+ if($null -ne $StartedNewSupervisorPid){return $false}
+ $stack=& $InspectOriginal
+ if($null -eq $stack){return $false}
+ if($stack.SupervisorPid -ne $OriginalSupervisorPid -or
+    $stack.TunnelPid -ne $OriginalTunnelPid){return $false}
+ return ((& $VerifyHealth $stack) -ceq $true)
+}
