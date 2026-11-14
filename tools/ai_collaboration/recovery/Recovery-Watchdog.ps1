@@ -30,7 +30,8 @@ for($i=1;$i -le $Attempts;$i++){
     Add-Content -LiteralPath $log -Value $line -Encoding UTF8
     # Only retry if there are components with a failed/blocked startup;
     # statuses do not prove externally reachable or authenticated MCP.
-    $unconfirmed=@($safe.servers+$safe.connections|Where-Object {
+    $allStatuses=@($safe.servers)+@($safe.connections)
+    $unconfirmed=@($allStatuses | Where-Object {
       $_.status -match '^(BLOCKED|START_UNCONFIRMED|PROCESS_STARTED_REMOTE_HEALTH_NOT_VERIFIED|OWNED_LISTENER_STARTED_TUNNEL_UNVERIFIED)'
     })
     if($unconfirmed.Count -eq 0){break}
