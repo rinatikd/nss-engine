@@ -22,6 +22,11 @@ main{max-width:520px;margin:34px auto;padding:18px}
     <button id="disconnect" type="button" class="secondary">Отключить</button>
   </div>
   <p id="detail" class="hint" role="status"></p>
+  <section aria-label="Восстановление локальной инфраструктуры">
+    <button id="recover" type="button" class="secondary">Восстановить службы Windows</button>
+    <p id="recover-status" class="hint" role="status" aria-live="polite"></p>
+    <p class="hint">Если после перезагрузки сервер или туннель не запустился, эта кнопка вызывает локальный проверенный механизм восстановления. Она не меняет сохранённый ключ браузера и не предоставляет доступ к произвольным командам.</p>
+  </section>
   <div id="pairing" hidden>
     <label for="pairing-key">Первичная привязка: локальный browserToken</label>
     <input id="pairing-key" type="password" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;padding:10px;margin:8px 0" aria-describedby="pairing-help">
