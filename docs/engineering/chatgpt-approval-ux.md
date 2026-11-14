@@ -19,7 +19,13 @@ The desktop shortcut is a strictly temporary fallback, **not** the target user e
 
 MCP's elicitation capability can request information via client UI, but general elicitation acceptance alone is not a cryptographic host-verified authorization for executing code. Verify actual ChatGPT support and transport behavior before adopting it. See https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/client/elicitation.mdx .
 
-## Stage 1: temporary fallback (no change to running service)
+## Stage 1: implemented ChatGPT-native read-only Git path (not deployed)
+
+The existing host-consented `powershell_chat_readonly` tool is extended with fixed `git-branch` and `git-log` operations. A single call uses an exact operation enum, absolute workspace validation, a fixed executable/argv and bounded runtime; no separate `/approve` page is queued. The new source tests `tools/powershell-direct/tests/chat-approval-ux.test.mjs` verify the enum, fixed commands, no arbitrary shell/pull, once-only request ID, and absence of a local approval queue. **These code changes still require Windows test and controlled deployment.** The already-running pinned `git-status` diagnostic was directly exercised from ChatGPT with exit code 0 and no local page.
+
+For native ChatGPT consent to remain meaningful, plugin permissions must stay `Always ask`. Do not claim the MCP server can cryptographically verify host consent.
+
+## Stage 1b: temporary fallback (no change to running service)
 
 1. Keep `powershell_chat_readonly` for safe fixed diagnostics, with **Always ask** permission.
 2. Optionally provide `Install-ApprovalShortcut.ps1` for a user-owned desktop shortcut labeled "Engineering MCP Approval" **only until in-chat authorization is solved**. The shortcut points to the already-tested `Open-Approval.ps1` and never contains the protected token, approval URL or secrets.
