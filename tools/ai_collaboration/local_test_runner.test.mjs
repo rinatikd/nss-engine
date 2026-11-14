@@ -4,7 +4,7 @@ import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { resolveTestPlan, executeTestPlan, terminateProcessTree, TaskPolicyError } from './local_test_runner.mjs';
+import { resolveTestPlan, executeTestPlan, terminateProcessTree, trustedExecutable, TaskPolicyError } from './local_test_runner.mjs';
 
 async function withWorkspace(fn) {
   const root = await mkdtemp(path.join(tmpdir(), 'platform-runner-test-'));
@@ -144,4 +144,16 @@ test('No PID does not issue taskkill against an ambiguous process',()=>{
   });
   assert.equal(result,'direct');
   assert.equal(killed,1);
+});
+
+test('Windows Python suite cannot use PATH as an executable source',()=>{
+  assert.throws(()=>trustedExecutable('python',{
+    platform:'win32',pythonPath:null
+  }),/TRUSTED_EXECUTABLE_NOT_CONFIGURED/);
+});
+
+test('unsupported Windows program cannot be invoked by PATH lookup',()=>{
+  assert.throws(()=>trustedExecutable('cmd.exe',{
+    platform:'win32'
+  }),/TRUSTED_EXECUTABLE_NOT_CONFIGURED/);
 });
