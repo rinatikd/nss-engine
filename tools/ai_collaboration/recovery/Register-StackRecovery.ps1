@@ -5,7 +5,7 @@ param([ValidateSet('Check','Register','Unregister')][string]$Mode='Check',[switc
 $ErrorActionPreference='Stop'
 $taskName='ChromeBridge-Stack-Recovery-User'
 $script=Join-Path $PSScriptRoot 'Invoke-VerifiedRecovery.ps1'
-$manualScript=$script
+$manualScript=Join-Path $PSScriptRoot 'Restore-StackWithReport.ps1'
 $ps='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 if(!(Test-Path -LiteralPath $script -PathType Leaf) -or !(Test-Path -LiteralPath $manualScript -PathType Leaf)) {throw 'RECOVERY_SCRIPT_NOT_FOUND'}
 $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -43,7 +43,7 @@ if($DesktopShortcut) {
   $shell=New-Object -ComObject WScript.Shell
   $shortcut=$shell.CreateShortcut($link)
   $shortcut.TargetPath=$ps
-  $shortcut.Arguments='-NoProfile -NonInteractive -File "'+$manualScript+'" -Mode Restore'
+  $shortcut.Arguments='-NoProfile -Sta -File "'+$manualScript+'"'
   $shortcut.WorkingDirectory=$PSScriptRoot
   $shortcut.Description='One-click restore of approved local Chrome Bridge stack'
   $shortcut.Save()
