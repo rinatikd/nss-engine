@@ -62,3 +62,18 @@
 - Ярлык `Восстановить Chrome Bridge` вызывает `Restore-StackWithReport.ps1` (через проверенный `Invoke-VerifiedRecovery.ps1`) и показывает локальное окно с итогом. Scheduled Task не использует интерактивный интерфейс.
 - Добавлены `windows-recovery-contract.test.mjs` как статические проверки Windows скриптов. Они не заменяют исполнения PowerShell/DPAPI/Task Scheduler на Windows.
 - Установка Recovery и Chrome Native Messaging пока **не выполнялись**. Автозапуск привязан ко входу пользователя в Windows, а не к раннему старту ОС до входа; это соответствует выбранному хранению DPAPI текущего пользователя.
+
+## Новая интеграция с панелью Chrome Bridge PR113
+
+- В ветке PR113 добавлена отдельная кнопка **«Восстановить службы Windows»**; в manifest разрешено `nativeMessaging`.
+- Расширение отправляет только `{"action":"restore"}` локальному Chrome Native Messaging Host `com.chrome_bridge.recovery`; не передаёт команду PowerShell, путь, токен, внешний URL или текст запроса.
+- Самостоятельный .NET 8 helper `tools/ai_collaboration/recovery/native-host/Program.cs` запускает проверенный entrypoint из фиксированного каталога и возвращает ограниченные статусы. Запускается самим Chrome и не зависит от `127.0.0.1:17484`.
+- Первоначальная установка требует локальной регистрации Native Messaging Host в HKCU, а также привязки **конкретного extension ID** `ehmllfabjbfcinaigionjggbgonkokfg`. Если при новом пути unpacked-расширения изменится ID, потребуется отдельно проверить новый ID и обновить регистрационный манифест. Старое расширение нельзя бездумно удалять.
+- `Install-RecoveryNativeHost.ps1` выполняет `Check/Install/Uninstall`, создаёт self-contained Windows `.exe`, UTF-8 без BOM манифест для Chrome, не перезаписывает существующую запись.
+- `Setup-Recovery.ps1` выполняет `Check/Install/Uninstall` для всего комплекта. В режиме Install сначала запускает Node tests, затем создаёт отдельный release, проверяет его, запускает STATUS, по необходимости предлагает скрыто зашифровать ключ через DPAPI, регистрирует Native Messaging Host и user-logon Scheduled Task/ярлык.
+- Все действия Install изменяют локальную Windows-конфигурацию и поэтому требуют отдельного локального запуска/подтверждения после проверки. Наличие исходников в GitHub не означает, что эти действия уже произошли.
+- Дополнительные тесты PR113: `docs/chrome-bridge-handoff/chrome-bridge-v20/tests/recovery-native.test.mjs`. Дополнительные тесты платформы: `native-host-contract.test.mjs`.
+
+**Порядок E2E:** сборка + установка на изолированной копии Windows, Chrome reload под проверенным ID, кнопка на уже работающем стеке (ноль новых PID), DENY/отсутствие host, контролируемо остановленная PR102 Lab (полное восстановление сервера и туннеля), реальная проверка через ChatGPT, затем тест входа в Windows и удаления Scheduled Task. Рабочий ПК не перезагружать до разрешённого теста.
+
+**Остаточный блокер на 14.11.2026:** действующий инструмент PowerShell Direct допускает лишь фиксированные read-only диагностики, а не запуск `Setup-Recovery.ps1` или `dotnet publish`. Автономно развернуть бинарный native host и запись HKCU через текущий чат невозможно; требуется сначала однократное локальное внедрение доверенного исполнителя или запуск установщика на Windows. Не обходить эту границу с помощью браузерного JavaScript.
