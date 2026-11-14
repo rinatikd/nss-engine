@@ -19,7 +19,11 @@ $relative=@(
  'tools\powershell-direct\stack-supervisor.mjs',
  'tools\powershell-direct\approval-bootstrap.mjs',
  'tools\powershell-direct\Save-ApprovalToken.ps1',
- 'tools\powershell-direct\Open-Approval.ps1'
+ 'tools\powershell-direct\Open-Approval.ps1',
+ 'tools\ai_collaboration\engineering-plan.mjs',
+ 'tools\ai_collaboration\engineering-runner.mjs',
+ 'tools\ai_collaboration\engineering-mcp.mjs',
+ 'tools\ai_collaboration\local_job_service.mjs'
 )
 function Get-Listener([int]$port){
  $s=@(Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
