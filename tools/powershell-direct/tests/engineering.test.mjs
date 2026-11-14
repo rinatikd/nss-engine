@@ -64,14 +64,18 @@ test('engineering DENY never executes',()=>fixture(async({svc,root,starts})=>{
   const page=await fetch('http://127.0.0.1:'+svc.port+'/approve?key='+svc.uiToken);
   assert.match(await page.text(),/git-status/);
   assert.equal((await approve(svc,p,false)).status,200);
-  assert.equal((await status(svc,id)).state,'DENIED');
+  const denied=await status(svc,id);
+  assert.equal(denied.state,'DENIED');
+  assert.equal(denied.reason,'OPERATOR_DENIED');
   assert.equal(starts(),0);
 }));
 test('engineering ALLOW runs once, no replay',()=>fixture(async({svc,root,starts})=>{
   const id='eng-allow-0002';
   rpc(svc,'powershell_engineering_submit',req(root,id,'git-diff'));
   const p=await pending(svc,id);
-  assert.equal((await approve(svc,p,true)).status,200);
+  const decision=await approve(svc,p,true);
+  assert.equal(decision.status,200);
+  assert.equal((await decision.json()).state,'APPROVED_RECORDED');
   assert.equal((await status(svc,id)).state,'FINISHED');
   assert.equal(starts(),1);
   rpc(svc,'powershell_engineering_submit',req(root,id,'git-diff'));
@@ -136,4 +140,18 @@ test('modified test path inside workspace remains a pinned file',()=>fixture(asy
   },[root]);
   assert.equal(plan.args[0],path.join(root,'tests','safe.test.mjs'));
   assert.equal(plan.sourceSha256.length,64);
+}));
+
+test('approval expiry is distinct from an explicit operator Deny',()=>fixture(async({svc,root,starts})=>{
+  const id='eng-expired-0001';
+  rpc(svc,'powershell_engineering_submit',req(root,id));
+  const p=await pending(svc,id);
+  clearTimeout(p.timer);
+  svc.namedPending.delete(id);
+  p.resolve({approved:false,reason:'APPROVAL_EXPIRED',requestId:id,
+    planSha256:p.planSha256});
+  const final=await status(svc,id);
+  assert.equal(final.state,'DENIED');
+  assert.equal(final.reason,'APPROVAL_EXPIRED');
+  assert.equal(starts(),0);
 }));
