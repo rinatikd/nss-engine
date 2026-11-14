@@ -13,7 +13,10 @@ async function one(action){
     const child=spawn(exe,[],{
       stdio:['pipe','pipe','pipe'],
       shell:false,windowsHide:true,
-      env:{PATH:process.env.PATH||'',SystemRoot:process.env.SystemRoot||''}
+      env:Object.fromEntries(
+        ['PATH','SystemRoot','APPDATA','LOCALAPPDATA','USERPROFILE','TEMP','TMP']
+          .map(k=>[k,process.env[k]||''])
+      )
     });
     let out=Buffer.alloc(0);
     let errs=Buffer.alloc(0);
