@@ -71,10 +71,32 @@ export async function resolveTestPlan({ requestId, suite, workspace, approved, a
   });
 }
 
+// Windows child processes can spawn grandchildren (Node -> PowerShell -> tests).
+// A direct child.kill() does not guarantee cleanup of the tree. Use a fixed,
+// non-shell taskkill invocation for a specific known child PID.
+export function terminateProcessTree(child, {
+  platform = process.platform, spawnImpl = spawn
+} = {}) {
+  const fallback=()=>{ try { child?.kill('SIGKILL'); } catch {} };
+  if (platform !== 'win32' || !Number.isSafeInteger(child?.pid) || child.pid <= 0) {
+    fallback(); return 'direct';
+  }
+  try {
+    const killer=spawnImpl('taskkill.exe',
+      ['/PID',String(child.pid),'/T','/F'],
+      {shell:false,windowsHide:true,stdio:'ignore'});
+    killer.on('error',fallback);
+    killer.on('close',code=>{ if(code!==0) fallback(); });
+    return 'tree';
+  } catch {
+    fallback(); return 'fallback';
+  }
+}
+
 // IMPORTANT: the MCP server must persist a one-shot durable claim *before*
 // calling executeTestPlan. This standalone function does not implement replay
 // protection, user authorization, or an OS sandbox.
-export async function executeTestPlan(plan, { spawnImpl = spawn } = {}) {
+export async function executeTestPlan(plan, { spawnImpl = spawn, terminateImpl = terminateProcessTree } = {}) {
   if (!plan || !Object.hasOwn(SUITES, plan.suite))
     throw new TaskPolicyError('UNRECOGNIZED_PLAN');
   const spec = SUITES[plan.suite];
@@ -99,7 +121,8 @@ export async function executeTestPlan(plan, { spawnImpl = spawn } = {}) {
       reject(error);
       return;
     }
-    let stdout = '', stderr = '', truncated = false, settled = false;
+    let stdout = '', stderr = '', truncated = false, settled = false, timedOut = false;
+    let killWatchdog = null;
     const append = (current, chunk) => {
       const room = MAX_OUTPUT - Buffer.byteLength(current, 'utf8');
       if (room <= 0) { truncated = true; return current; }
@@ -108,13 +131,26 @@ export async function executeTestPlan(plan, { spawnImpl = spawn } = {}) {
     };
     child.stdout.on('data', chunk => { stdout = append(stdout, chunk); });
     child.stderr.on('data', chunk => { stderr = append(stderr, chunk); });
-    const timeout = setTimeout(() => { child.kill('SIGKILL'); }, plan.timeoutMs);
-    child.on('error', error => { if (!settled) { settled = true; clearTimeout(timeout); reject(error); } });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      try { terminateImpl(child); } catch { try { child.kill('SIGKILL'); } catch {} }
+      // If the process tree does not report closure, do not hang forever or
+      // falsely report successful termination. A retry is still forbidden.
+      killWatchdog = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve({requestId:plan.requestId,suite:plan.suite,exitCode:null,
+          signal:null,stdout,stderr,truncated,timedOut:true,
+          terminationUnconfirmed:true});
+      },5000);
+    }, plan.timeoutMs);
+    child.on('error', error => { if (!settled) { settled = true; clearTimeout(timeout); clearTimeout(killWatchdog); reject(error); } });
     child.on('close', (exitCode, signal) => {
       if (settled) return;
-      settled = true; clearTimeout(timeout);
+      settled = true; clearTimeout(timeout); clearTimeout(killWatchdog);
       resolve({ requestId: plan.requestId, suite: plan.suite,
-                exitCode, signal, stdout, stderr, truncated });
+                exitCode, signal, stdout, stderr, truncated, timedOut,
+                terminationUnconfirmed:false });
     });
   });
 }
