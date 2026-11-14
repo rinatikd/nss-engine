@@ -4,7 +4,7 @@ import { mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { resolveTestPlan, executeTestPlan, TaskPolicyError } from './local_test_runner.mjs';
+import { resolveTestPlan, executeTestPlan, terminateProcessTree, TaskPolicyError } from './local_test_runner.mjs';
 
 async function withWorkspace(fn) {
   const root = await mkdtemp(path.join(tmpdir(), 'platform-runner-test-'));
@@ -119,3 +119,29 @@ test('PR113 lab build has a fixed output folder and cannot accept caller argumen
 test('unknown script path injected as suite is refused', () => withWorkspace(async root => {
   await assert.rejects(resolveTestPlan(params(root,{suite:'chrome-pr113-build-lab17484;rm'}),[root]),/UNKNOWN_TEST_SUITE/);
 }));
+
+test('Windows timeout terminates the target process tree without shell',()=>{
+  let issued;
+  const child={pid:4242,kill(){throw Error('unexpected direct kill')}};
+  const fakeSpawn=(command,args,options)=>{
+    issued={command,args,options};
+    const killer=new EventEmitter();
+    queueMicrotask(()=>killer.emit('close',0));
+    return killer;
+  };
+  const result=terminateProcessTree(child,{platform:'win32',spawnImpl:fakeSpawn});
+  assert.equal(result,'tree');
+  assert.equal(issued.command,'taskkill.exe');
+  assert.deepEqual(issued.args,['/PID','4242','/T','/F']);
+  assert.equal(issued.options.shell,false);
+});
+
+test('No PID does not issue taskkill against an ambiguous process',()=>{
+  let killed=0;
+  const child={kill(){killed++;}};
+  const result=terminateProcessTree(child,{
+    platform:'win32',spawnImpl(){throw Error('should not spawn');}
+  });
+  assert.equal(result,'direct');
+  assert.equal(killed,1);
+});
