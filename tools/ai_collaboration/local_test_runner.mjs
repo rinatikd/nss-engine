@@ -26,6 +26,7 @@ export const SUITES = Object.freeze({
       'tools/powershell-direct/tests/service.test.mjs',
       'tools/powershell-direct/tests/named-suites.test.mjs',
       'tools/powershell-direct/tests/engineering.test.mjs',
+      'tools/ai_collaboration/engineering-runner.test.mjs',
       'tools/ai_collaboration/recovery/recovery-plan.test.mjs',
       'tools/ai_collaboration/recovery/recovery-runtime.test.mjs',
       'tools/ai_collaboration/recovery/recovery-journal.test.mjs',
