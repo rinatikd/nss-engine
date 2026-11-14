@@ -72,6 +72,8 @@ try{
   }
   & $node --test @tests
   if($LASTEXITCODE -ne 0){throw 'STAGED_TESTS_FAILED'}
+  & $node 'tools/powershell-direct/tests/engineering-smoke.mjs'
+  if($LASTEXITCODE -ne 0){throw 'STAGED_MCP_SMOKE_FAILED'}
 } finally {Pop-Location}
 [PSCustomObject]@{
   Result='ENGINEERING_LAB_STAGED_AND_TESTED'
