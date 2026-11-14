@@ -174,21 +174,20 @@ foreach($file in @('tools\powershell-direct\approval-bootstrap.mjs',
  & $node --check (Join-Path $repo $file)
  if($LASTEXITCODE -ne 0){throw ('NODE_SYNTAX_FAILED_'+$file)}
 }
+# Every executable mode must independently pass 27 engineering tests.
+$cases=@(
+ 'tools/powershell-direct/tests/engineering.test.mjs',
+ 'tools/ai_collaboration/engineering-runner.test.mjs',
+ 'tools/powershell-direct/tests/named-suites.test.mjs',
+ 'tools/ai_collaboration/local_job_service.test.mjs',
+ 'tools/ai_collaboration/local_mcp_dispatch.test.mjs'
+)
+Push-Location $repo
+try{
+ & $node --test @cases
+ if($LASTEXITCODE -ne 0){throw 'ENGINEERING_NODE_TESTS_FAILED'}
+}finally{Pop-Location}
 if($Mode -eq 'Rehearse'){
- # Run the established staged engineering suite against the updated repository,
- # not the currently running older stage. No service restart.
- $cases=@(
-  'tools/powershell-direct/tests/engineering.test.mjs',
-  'tools/ai_collaboration/engineering-runner.test.mjs',
-  'tools/powershell-direct/tests/named-suites.test.mjs',
-  'tools/ai_collaboration/local_job_service.test.mjs',
-  'tools/ai_collaboration/local_mcp_dispatch.test.mjs'
- )
- Push-Location $repo
- try{
-  & $node --test @cases
-  if($LASTEXITCODE -ne 0){throw 'ENGINEERING_NODE_TESTS_FAILED'}
- }finally{Pop-Location}
  $unchanged=Get-Stack
  if(!$unchanged -or $unchanged.SupervisorPid -ne $ready.SupervisorPid -or
     $unchanged.TunnelPid -ne $ready.TunnelPid){throw 'PRODUCTION_CHANGED_DURING_REHEARSAL'}
