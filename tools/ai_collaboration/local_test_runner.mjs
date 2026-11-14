@@ -28,7 +28,8 @@ export const SUITES = Object.freeze({
       'tools/ai_collaboration/recovery/recovery-plan.test.mjs',
       'tools/ai_collaboration/recovery/recovery-runtime.test.mjs',
       'tools/ai_collaboration/recovery/recovery-journal.test.mjs',
-      'tools/ai_collaboration/recovery/windows-recovery-contract.test.mjs'],
+      'tools/ai_collaboration/recovery/windows-recovery-contract.test.mjs',
+      'tools/ai_collaboration/recovery/native-host-contract.test.mjs'],
     cwd: '.',
     timeoutMs: 120000
   },
