@@ -1,7 +1,6 @@
 # Windows-owned, bounded, idempotent recovery for verified local Node servers.
-# Only explicitly enumerated lab servers may start in this prototype.
-# Production and tunnels: STATUS ONLY until independently reviewed.
-# Does not stop/kill processes, modify tokens, start Chrome, or contact Internet.
+# Starts only enumerated PR102 lab, PowerShell Direct and their trusted tunnel profiles.
+# Production is observation-only. Never kills processes or modifies tokens.
 [CmdletBinding()]
 param([ValidateSet('Status','Restore')][string]$Mode='Status')
 $ErrorActionPreference='Stop'
