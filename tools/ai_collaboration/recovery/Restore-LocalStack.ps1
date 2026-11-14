@@ -77,11 +77,15 @@ try {
         $startInfo.CreateNoWindow=$true
         $startInfo.EnvironmentVariables['CHROME_BRIDGE_HOME']=$s.StateDir
         $startInfo.EnvironmentVariables['CHROME_BRIDGE_PORT']=[string]$s.Port
-        $startInfo.EnvironmentVariables.Remove('CHROME_BRIDGE_EXTENSION_ID')
+        [void]$startInfo.EnvironmentVariables.Remove('CHROME_BRIDGE_EXTENSION_ID')
+        [void]$startInfo.EnvironmentVariables.Remove('CONTROL_PLANE_API_KEY')
+        [void]$startInfo.EnvironmentVariables.Remove('PS_DIRECT_AGENT_TOKEN')
+        [void]$startInfo.EnvironmentVariables.Remove('PS_DIRECT_GATEWAY_TOKEN')
         # Revalidate immediately before the spawn. Port ownership can change.
         if((Test-OwnedService $s) -ne 'stopped') { $result='BLOCKED_RACE' }
         else {
           $child=[System.Diagnostics.Process]::Start($startInfo)
+          if($null -eq $child){throw 'NODE_START_FAILED'}
           Start-Sleep -Seconds 2
           if((Test-OwnedService $s) -eq 'owned-listener') {
             $result='STARTED_OWNED_LISTENER'
