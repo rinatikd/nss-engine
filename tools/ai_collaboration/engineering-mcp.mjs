@@ -3,7 +3,7 @@
 import {ENGINEERING_OPERATIONS,validateEngineeringRequest} from './engineering-plan.mjs';
 export const ENGINEERING_TOOLS=Object.freeze([
  {name:'powershell_engineering_submit',
-  description:'Submit Git diagnostics, one Node test, .NET build/test, or read-only PID/port inspection in an allowed workspace. Local approval always required; never runs arbitrary shell.',
+  description:'Submit bounded Git diagnostics plus clean-worktree git-pull-ff-only, Node tests, .NET build/test or PID/port inspection in an allowed workspace. Local approval always required; never runs arbitrary shell.',
   inputSchema:{type:'object',additionalProperties:false,
    required:['requestId','operation','workspace'],
    properties:{
