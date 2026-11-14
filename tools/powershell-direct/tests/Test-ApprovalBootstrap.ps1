@@ -22,9 +22,14 @@ try{
   $p.StandardInput.WriteLine($token)
   $p.StandardInput.Close()
   if(!$p.WaitForExit(12000)){try{$p.Kill()}catch{};throw 'WRITER_TIMEOUT'}
-  if($p.ExitCode -ne 0){throw 'WRITER_FAILED'}
   $output=$p.StandardOutput.ReadToEnd()+$p.StandardError.ReadToEnd()
+  # Preserve child PowerShell's actual error, but never show the token.
+  $safeOutput=$output.Replace($token,'[REDACTED]')
   if($output.Contains($token)){throw 'PLAINTEXT_EMITTED'}
+  if($p.ExitCode -ne 0){
+   $safeOutput=$safeOutput.Substring(0,[Math]::Min(1800,$safeOutput.Length))
+   throw ('WRITER_FAILED_EXIT_'+$p.ExitCode+': '+$safeOutput)
+  }
  }finally{$p.Dispose()}
  $file=Join-Path $testRoot 'ChromeBridge-Recovery\Approval\powershell-direct-ui.dpapi'
  if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw 'DPAPI_FILE_MISSING'}
