@@ -5,10 +5,12 @@ import { createOneClickSession, eligibleWebUrl, BROWSER_ORIGINS } from '../exten
 function harness({ key = 'stored-token', permission = true, startResult = {ok:true}, connected=true } = {}) {
   const data = {};
   const events = [];
+  const grants = new Set();
   const api = {
     permissions: {
-      async request({origins}) { events.push(['request',origins]); return permission; },
-      async remove({origins}) { events.push(['remove',origins]); return true; }
+      async request({origins}) { events.push(['request',origins]); if (permission) origins.forEach(o=>grants.add(o)); return permission; },
+      async remove({origins}) { events.push(['remove',origins]); origins.forEach(o=>grants.delete(o)); return true; },
+      async contains({origins}) {events.push(['contains',origins]);return origins.every(o=>grants.has(o));}
     },
     storage: {local: {
       async get(keys) { const k=typeof keys === 'string' ? [keys] : keys;return Object.fromEntries(k.map(x=>[x,data[x]])); },
@@ -98,7 +100,7 @@ test('Disconnect revokes browser rights even when background stop fails', async(
   const state={bridgeConnectionDesired:true};
   const events=[];
   const api={
-    permissions:{request:async()=>true,remove:async()=>{events.push('revoke');return true;}},
+    permissions:{request:async()=>true,remove:async()=>{events.push('revoke');return true;},contains:async()=>false},
     storage:{local:{get:async()=>state,set:async v=>{Object.assign(state,v);events.push('disable');}}}
   };
   const broken=createOneClickSession(api,{
@@ -110,4 +112,24 @@ test('Disconnect revokes browser rights even when background stop fails', async(
   await assert.rejects(broken.disconnect(),/BACKGROUND_STOP_UNCONFIRMED/);
   assert.deepEqual(events,['disable','stop','revoke']);
   assert.equal(state.bridgeConnectionDesired,false);
+});
+
+test('Disconnect detects a partially retained Chrome permission', async()=>{
+  const data={bridgeConnectionDesired:true};
+  const attempted=[];
+  const api={
+    permissions:{
+      async remove(){attempted.push('remove');return true;},
+      async contains({origins}){attempted.push(origins[0]);return origins[0]===BROWSER_ORIGINS[1];}
+    },
+    storage:{local:{async set(value){Object.assign(data,value);}}}
+  };
+  const session=createOneClickSession(api,{
+    loadKey:async()=>({value:'test'}),start:async()=>({ok:true}),
+    stop:async()=>{attempted.push('stop');},
+    getStatus:async()=>({connected:true})
+  });
+  await assert.rejects(session.disconnect(),/HOST_PERMISSION_REMAINED_GRANTED/);
+  assert.equal(data.bridgeConnectionDesired,false);
+  assert.deepEqual(attempted,['stop','remove',...BROWSER_ORIGINS]);
 });
