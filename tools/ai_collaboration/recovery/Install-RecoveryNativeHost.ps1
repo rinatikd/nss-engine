@@ -48,7 +48,10 @@ try {
     type='stdio'
     allowed_origins=@('chrome-extension://'+$labExtensionId+'/')
   }
-  $hostManifest | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $manifest -Encoding UTF8
+  $json=$hostManifest | ConvertTo-Json -Depth 3
+  # Windows PowerShell 5.1 Set-Content -Encoding UTF8 writes a BOM; Chrome
+  # requires a clean UTF-8 native messaging JSON manifest.
+  [IO.File]::WriteAllText($manifest,$json,(New-Object Text.UTF8Encoding($false)))
   New-Item -Path $regPath -Force | Out-Null
   Set-Item -Path $regPath -Value $manifest
   $hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
