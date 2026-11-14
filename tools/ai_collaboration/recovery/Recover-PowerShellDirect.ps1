@@ -33,7 +33,10 @@ if($Mode -eq 'Status'){
   return
 }
 if($before -ne 'stopped'){
-  [PSCustomObject]@{Service='powershell-direct';Outcome=('BLOCKED_'+$before)}|ConvertTo-Json
+  $outcome=if($before -eq 'owned-listener'){
+    'ALREADY_LISTENING_REMOTE_HEALTH_UNVERIFIED'
+  }else{'BLOCKED_'+$before.ToUpperInvariant()}
+  [PSCustomObject]@{Service='powershell-direct';Outcome=$outcome}|ConvertTo-Json
   return
 }
 foreach($file in @($node,$script,$client,$credential)){
