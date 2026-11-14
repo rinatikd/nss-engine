@@ -46,6 +46,8 @@ function Start-Fixture([string]$Kind,[int]$Port){
  $psi.WorkingDirectory=Split-Path $fixture -Parent
  $psi.UseShellExecute=$false
  $psi.CreateNoWindow=$true
+ # Dedicated test fixture only: collect child stderr for diagnosis after exit.
+ $psi.RedirectStandardError=$true
  $p=[Diagnostics.Process]::Start($psi)
  if(!$p){throw ('FIXTURE_PROCESS_START_FAILED_'+$Kind)}
  return $p
@@ -100,6 +102,7 @@ try{
     !$outcome.OriginalRestoreCompleted){throw 'SHARED_ROLLBACK_NOT_VERIFIED'}
  $restoredAliveAfterRollback=(!$script:cutoverTestRestored.HasExited)
  $portOpenAfterRollback=Test-Open $testPort
+ $restoredExitAtRollback=if($script:cutoverTestRestored.HasExited){$script:cutoverTestRestored.ExitCode}else{$null}
  $restoreCalls=0
  $deny=Invoke-VerifiedCutoverRollback -FailureCode 'SIMULATED_CLEANUP_FAILURE' -CleanupReplacement {throw 'INJECTED_CLEANUP_DENIAL'} -RestoreOriginal {$script:cutoverUnexpectedRestore=$true} -VerifyOriginal {$true}
  if($deny.OriginalHealthVerified -or $deny.OriginalRestoreAttempted -or $deny.ManualRecoveryRequired -ne $true -or $script:cutoverUnexpectedRestore){
@@ -118,7 +121,18 @@ try{
   $processPresent=(!$script:cutoverTestRestored.HasExited)
   $portIsOpen=Test-Open $script:guardTestPort
   $exitCode=if($script:cutoverTestRestored.HasExited){$script:cutoverTestRestored.ExitCode}else{$null}
-  throw ('HEALTHY_ORIGINAL_GUARD_FAILED processPresent='+$processPresent+' portOpen='+$portIsOpen+' childExit='+$exitCode+' aliveAfterRollback='+$restoredAliveAfterRollback+' portAfterRollback='+$portOpenAfterRollback+' aliveAfterDeny='+$restoredAliveAfterDeniedCase+' portAfterDeny='+$portOpenAfterDeniedCase)
+  $fixtureStderrCategory='NO_CHILD_STDERR'
+  if($script:cutoverTestRestored.HasExited){
+   $fixtureErrorText=$script:cutoverTestRestored.StandardError.ReadToEnd()
+   if($fixtureErrorText -match 'EADDRINUSE'){$fixtureStderrCategory='EADDRINUSE'}
+   elseif($fixtureErrorText -match 'ERR_INVALID_ARG'){$fixtureStderrCategory='INVALID_ARGUMENT'}
+   elseif($fixtureErrorText -match 'AssertionError'){$fixtureStderrCategory='ASSERTION_ERROR'}
+   elseif($fixtureErrorText -match 'MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND'){$fixtureStderrCategory='MODULE_NOT_FOUND'}
+   elseif($fixtureErrorText -match 'TypeError'){$fixtureStderrCategory='TYPE_ERROR'}
+   elseif($fixtureErrorText -match 'SyntaxError'){$fixtureStderrCategory='SYNTAX_ERROR'}
+   elseif(![string]::IsNullOrWhiteSpace($fixtureErrorText)){$fixtureStderrCategory='OTHER_NODE_ERROR'}
+  }
+  throw ('HEALTHY_ORIGINAL_GUARD_FAILED processPresent='+$processPresent+' portOpen='+$portIsOpen+' childExit='+$exitCode+' fixtureStderrCategory='+$fixtureStderrCategory+' exitAfterRollback='+$restoredExitAtRollback+' aliveAfterRollback='+$restoredAliveAfterRollback+' portAfterRollback='+$portOpenAfterRollback+' aliveAfterDeny='+$restoredAliveAfterDeniedCase+' portAfterDeny='+$portOpenAfterDeniedCase)
  }
  $wrongPid=Test-OriginalStackStillHealthy -OriginalSupervisorPid ($restoredPid+1) -OriginalTunnelPid 43210 -StartedNewSupervisorPid $null -InspectOriginal {
    [pscustomobject]@{SupervisorPid=$restoredPid;TunnelPid=43210}
