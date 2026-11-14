@@ -12,9 +12,11 @@ if($null -eq $sid){throw 'WINDOWS_IDENTITY_REQUIRED'}
 # Folder is private to the same Windows SID (plus SYSTEM).
 $dirAcl=New-Object System.Security.AccessControl.DirectorySecurity
 $dirAcl.SetAccessRuleProtection($true,$false)
-foreach($allowedSid in @($sid,(New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18'))){
- $rule=New-Object System.Security.AccessControl.FileSystemAccessRule(
-  $allowedSid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
+foreach($allowedSid in @($sid,([System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')))){
+ $rule=[System.Security.AccessControl.FileSystemAccessRule]::new(
+  $allowedSid,[System.Security.AccessControl.FileSystemRights]::FullControl,
+  ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+  [System.Security.AccessControl.PropagationFlags]::None,[System.Security.AccessControl.AccessControlType]::Allow)
  $dirAcl.AddAccessRule($rule)
 }
 if(Test-Path -LiteralPath $directory){
@@ -35,7 +37,8 @@ try{
  $fileAcl=New-Object System.Security.AccessControl.FileSecurity
  $fileAcl.SetAccessRuleProtection($true,$false)
  foreach($allowedSid in @($sid,(New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-18'))){
-  $fileRule=New-Object System.Security.AccessControl.FileSystemAccessRule($allowedSid,'FullControl','Allow')
+  $fileRule=[System.Security.AccessControl.FileSystemAccessRule]::new(
+   $allowedSid,[System.Security.AccessControl.FileSystemRights]::FullControl,[System.Security.AccessControl.AccessControlType]::Allow)
   $fileAcl.AddAccessRule($fileRule)
  }
  Set-Acl -LiteralPath $temp -AclObject $fileAcl
