@@ -1,0 +1,22 @@
+name: AI collaboration protocol checks
+on:
+  push:
+    paths:
+      - 'tools/ai_collaboration/**'
+      - '.github/workflows/ai-collaboration-protocol.yml'
+  pull_request:
+    paths:
+      - 'tools/ai_collaboration/**'
+      - '.github/workflows/ai-collaboration-protocol.yml'
+permissions:
+  contents: read
+jobs:
+  task-envelope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run isolated state-machine contract tests
+        run: python -m unittest -v discover -s tools/ai_collaboration -p 'test_*.py'
