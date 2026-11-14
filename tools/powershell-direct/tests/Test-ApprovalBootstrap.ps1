@@ -43,17 +43,15 @@ try{
  $rules=@($acl.Access)
  foreach($rule in $rules){
   $sid=try{([System.Security.Principal.NTAccount]$rule.IdentityReference).Translate([System.Security.Principal.SecurityIdentifier]).Value}catch{$rule.IdentityReference.Value}
-  if($sid -ne [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value -and $sid -ne 'S-1-5-18'){
+  if($sid -ne ([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value) -and $sid -ne 'S-1-5-18'){
    throw 'FILE_ACL_UNEXPECTED_PRINCIPAL'
   }
  }
  # False/stale URL must not open the browser or reveal token. -CheckOnly errors.
- $errorText=''
- try{
-  & powershell.exe -NoProfile -NonInteractive -File $open -CheckOnly 2>&1 | Out-Null
-  if($LASTEXITCODE -eq 0){throw 'STALE_APPROVAL_TOKEN_ACCEPTED'}
- }catch{ $errorText=$_.Exception.Message }
- if($errorText.Contains($token)){throw 'TOKEN_EXPOSED_ON_FAILURE'}
+ $staleOutput=(& powershell.exe -NoProfile -NonInteractive -File $open -CheckOnly 2>&1 | Out-String)
+ $staleExit=$LASTEXITCODE
+ if($staleExit -eq 0){throw 'STALE_APPROVAL_TOKEN_ACCEPTED'}
+ if($staleOutput.Contains($token)){throw 'TOKEN_EXPOSED_ON_FAILURE'}
  [pscustomobject]@{
   Result='APPROVAL_BOOTSTRAP_ISOLATED_PASS'
   CurrentUserDpapiRoundTrip=$true
