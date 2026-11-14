@@ -70,10 +70,10 @@ export class PowerShellApprovalService {
         // Single-use exact-plan enrollment avoids the extra local page.
         // No trusted local enrollment means legacy local approval.
         const enrolled=await this.enrolledApprover?.decide(details);
-        if(enrolled?.approved===true){resolve(enrolled);return;}
+        if(enrolled?.approved===true)return enrolled;
         if(enrolled?.reason&&enrolled.reason!=='NOT_ENROLLED'){
-          resolve({approved:false,reason:enrolled.reason,requestId:details.requestId,
-            planSha256:details.planSha256});return;
+          return {approved:false,reason:enrolled.reason,requestId:details.requestId,
+            planSha256:details.planSha256};
         }
         return await new Promise(resolve=>{
         if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
