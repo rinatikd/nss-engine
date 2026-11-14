@@ -174,7 +174,11 @@ if(!(Test-Path -LiteralPath $test -PathType Leaf)){throw 'APPROVAL_BOOTSTRAP_TES
 & powershell.exe -NoProfile -File $test
 if($LASTEXITCODE -ne 0){throw 'APPROVAL_BOOTSTRAP_TEST_FAILED'}
 foreach($file in @('tools\powershell-direct\approval-bootstrap.mjs',
-                    'tools\powershell-direct\stack-supervisor.mjs')){
+                    'tools\powershell-direct\stack-supervisor.mjs',
+                    'tools\ai_collaboration\engineering-plan.mjs',
+                    'tools\ai_collaboration\engineering-runner.mjs',
+                    'tools\ai_collaboration\engineering-mcp.mjs',
+                    'tools\ai_collaboration\local_job_service.mjs')){
  & $node --check (Join-Path $repo $file)
  if($LASTEXITCODE -ne 0){throw ('NODE_SYNTAX_FAILED_'+$file)}
 }
