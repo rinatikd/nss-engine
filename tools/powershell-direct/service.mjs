@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {runApproved,validateTask,canonicalWorkspace} from './runner.mjs';
+import {createLocalJobService} from '../ai_collaboration/local_job_service.mjs';
+import {NAMED_SUITE_TOOLS,createNamedSuiteHandlers} from '../ai_collaboration/local_mcp_dispatch.mjs';
 
 const PORT=17486, secret=()=>crypto.randomBytes(32).toString('hex');
 const match=(a,b)=>{const x=Buffer.from(typeof a==='string'?a:''),y=Buffer.from(typeof b==='string'?b:'');return x.length===y.length&&crypto.timingSafeEqual(x,y);};
@@ -11,7 +13,8 @@ const clean=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(obj));};
 
 export class PowerShellApprovalService {
- constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false}={}){
+ constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
+   namedWorkspaceRoots=[],namedAuditDirectory=null}={}){
   const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
   const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
   const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
@@ -21,6 +24,25 @@ export class PowerShellApprovalService {
     throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
   this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
   this.chatReadonlyEnabled=chatReadonlyEnabled===true;
+  this.namedPending=new Map();
+  this.namedService=null;
+  this.namedHandlers=null;
+  if(namedWorkspaceRoots.length){
+    if(!namedAuditDirectory)throw Error('NAMED_AUDIT_DIR_REQUIRED');
+    this.namedService=createLocalJobService({
+      approvedWorkspaceRoots:namedWorkspaceRoots,auditDirectory:namedAuditDirectory,
+      approveRequest:details=>new Promise(resolve=>{
+        const expiresAt=Date.now()+90000;
+        const timer=setTimeout(()=>{
+          this.namedPending.delete(details.requestId);
+          resolve({approved:false,requestId:details.requestId,
+            planSha256:details.planSha256});
+        },90000);
+        this.namedPending.set(details.requestId,{...details,resolve,timer,expiresAt});
+      })
+    });
+    this.namedHandlers=createNamedSuiteHandlers(this.namedService);
+  }
   this.jobs=new Map();this.active=null;this.server=http.createServer((req,res)=>this.route(req,res));
  }
  propose(args){
@@ -80,10 +102,27 @@ export class PowerShellApprovalService {
    {name:'powershell_propose',description:'Create a pending fixed read-only Windows task, requiring local browser approval before execution.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}},
    {name:'powershell_cancel',description:'Cancel a pending proposed job without executing anything; cannot cancel an already-running command.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
    {name:'powershell_job',description:'Read the status/result of a proposed PowerShell job; no dispatch.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
+   ...(this.namedHandlers ? NAMED_SUITE_TOOLS : []),
    ...(this.chatReadonlyEnabled?[{name:'powershell_chat_readonly',description:'Execute one pinned read-only diagnostic on the Work PC after explicit ChatGPT host approval (plugin permission MUST be Always ask). NO local approval; no arbitrary shell.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}}]:[])
   ]}};
   if(b.method==='tools/call')try{
    const n=b.params?.name,a=b.params?.arguments||{};
+   if(this.namedHandlers && n==='powershell_named_suite_submit'){
+     // Never hold a remote MCP request open while waiting for local approval.
+     // The separate status tool reads durable progress; same ID is not replayed.
+     const jobPromise=this.namedHandlers.powershell_named_suite_submit(a);
+     void jobPromise.catch(()=>{});
+     return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify({
+       requestId:a.requestId,state:'QUEUED_FOR_LOCAL_APPROVAL'
+     })}]}};
+   }
+   if(this.namedHandlers && n==='powershell_named_suite_status'){
+     return this.namedHandlers.powershell_named_suite_status(a).then(result=>({
+       jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(result)}]}
+     })).catch(e=>({
+       jsonrpc:'2.0',id,result:{isError:true,content:[{type:'text',text:String(e.message||'STATUS_FAILED')}]}
+     }));
+   }
    const result=n==='powershell_propose'?this.propose(a):n==='powershell_job'?this.status(a.requestId):n==='powershell_cancel'?this.cancel(a.requestId):n==='powershell_chat_readonly'?this.chatReadonly(a):null;
    if(!result)throw Error('TOOL_NOT_FOUND');
    return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(result)}]}};
@@ -101,7 +140,7 @@ export class PowerShellApprovalService {
    const url=new URL(req.url,'http://127.0.0.1:'+this.port);
    if(url.pathname==='/mcp'&&req.method==='POST'){
     if(!match(req.headers.authorization,'Bearer '+this.agentToken))return send(res,401,{error:'AUTH_REQUIRED'});
-    const r=this.rpc(JSON.parse(await this.read(req)||'{}'));
+    const r=await this.rpc(JSON.parse(await this.read(req)||'{}'));
     return r===null?send(res,202,{}):send(res,200,r);
    }
    if(url.pathname==='/approve'&&req.method==='GET'){
@@ -109,13 +148,32 @@ export class PowerShellApprovalService {
     const rows=[...this.jobs.values()].filter(j=>this.status(j.payload.id).state==='PENDING').map(j=>{
      const p=j.payload;return '<form method="POST" action="/decide?key='+encodeURIComponent(this.uiToken)+'"><p><b>'+clean(p.task)+'</b><br>'+clean(p.workspace)+'<br><code>'+clean(p.exe+' '+p.argv.join(' '))+'</code><br>SHA256 '+clean(j.sha256)+'</p><input type="hidden" name="id" value="'+clean(p.id)+'"><input type="hidden" name="sha256" value="'+clean(j.sha256)+'"><button name="approved" value="yes">Approve once</button> <button name="approved" value="no">Deny</button></form>';
     }).join('');
+    const namedRows=[...this.namedPending.values()].map(p=>{
+      const action='/decide?key='+encodeURIComponent(this.uiToken);
+      return '<form method="POST" action="'+action+'"><p><b>Named suite: '+
+        clean(p.suite)+'</b><br>'+clean(p.workspace)+'<br>SHA256 '+clean(p.planSha256)+
+        '</p><input type="hidden" name="kind" value="named">'+
+        '<input type="hidden" name="id" value="'+clean(p.requestId)+'">'+
+        '<input type="hidden" name="sha256" value="'+clean(p.planSha256)+'">'+
+        '<button name="approved" value="yes">Approve once</button> '+
+        '<button name="approved" value="no">Deny</button></form>';
+    }).join('');
     res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','referrer-policy':'origin','content-security-policy':"default-src 'none'; form-action 'self'; base-uri 'none'"});
-    return res.end('<!doctype html><html><meta charset="utf-8"><h2>Local PowerShell approval</h2><p>Only approve commands already confirmed in ChatGPT.</p>'+(rows||'<p>No pending commands.</p>')+'</html>');
+    return res.end('<!doctype html><html><meta charset="utf-8"><h2>Local PowerShell approval</h2><p>Only approve commands already confirmed in ChatGPT.</p>'+((rows+namedRows)||'<p>No pending commands.</p>')+'</html>');
    }
    if(url.pathname==='/decide'&&req.method==='POST'){
     if(!match(url.searchParams.get('key'),this.uiToken))return send(res,403,{error:'UI_AUTH_REQUIRED'});
     if(req.headers.origin!=='http://127.0.0.1:'+this.port)return send(res,403,{error:'ORIGIN_DENIED'});
     const f=new URLSearchParams(await this.read(req,2048));
+    if(f.get('kind')==='named'){
+      const p=this.namedPending.get(f.get('id'));
+      if(!p||!match(f.get('sha256'),p.planSha256))throw Error('NAMED_APPROVAL_MISMATCH');
+      this.namedPending.delete(p.requestId);
+      clearTimeout(p.timer);
+      p.resolve({approved:f.get('approved')==='yes',requestId:p.requestId,
+        planSha256:p.planSha256});
+      return send(res,200,{requestId:p.requestId,state:'DECISION_RECORDED'});
+    }
     return send(res,200,this.decide(f.get('id'),f.get('sha256'),f.get('approved')==='yes'));
    }
    return send(res,404,{error:'NOT_FOUND'});
