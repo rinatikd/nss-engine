@@ -24,7 +24,7 @@ export async function runEngineeringPlan(plan,{
     if(current!==plan.sourceSha256)throw Error('SOURCE_CHANGED_SINCE_APPROVAL');
   }
   return await new Promise((resolve,reject)=>{
-    const start=Date.now();let out='',err='',truncated=false,settled=false;
+    const start=Date.now();let out='',err='',truncated=false,settled=false,timedOut=false;
     let child,timeout,watchdog;
     const append=(previous,buf)=>{
       const available=MAX-Buffer.byteLength(previous,'utf8');
@@ -60,8 +60,10 @@ export async function runEngineeringPlan(plan,{
     child.stderr?.on('data',b=>err=append(err,b));
     child.on('error',()=>finish({exitCode:null,state:'START_FAILED'}));
     child.on('close',(code,signal)=>finish({exitCode:code??null,signal:signal||null,
-      state:code===0?'FINISHED':'FAILED'}));
+      state:timedOut?'TIMED_OUT':(code===0?'FINISHED':'FAILED'),timedOut,
+      terminationUnconfirmed:false}));
     timeout=setTimeout(()=>{
+      timedOut=true;
       // No automatic replay after timeout. PID-specific stop only.
       if(Number.isSafeInteger(child.pid)&&child.pid>0){
         const killer=spawn('C:/Windows/System32/taskkill.exe',
