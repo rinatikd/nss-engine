@@ -220,6 +220,27 @@ try{
  }|ConvertTo-Json
 }catch{
  $reason=$_.Exception.Message
+ # If Stop-ExactStack refused before shutdown and the exact original pair
+ # is STILL healthy, never kill/restart it. No replacement may have started.
+ $untouchedOriginal=Test-OriginalStackStillHealthy `
+   -OriginalSupervisorPid $oldStack.SupervisorPid `
+   -OriginalTunnelPid $oldStack.TunnelPid `
+   -StartedNewSupervisorPid $newPid `
+   -InspectOriginal { Get-Stack $old } `
+   -VerifyHealth { param($candidate) Test-Health $candidate.TunnelPid }
+ if($untouchedOriginal){
+  [pscustomobject]@{
+   Result='ENGINEERING_CUTOVER_ABORTED_ORIGINAL_STILL_HEALTHY'
+   FailureReason=$reason
+   OriginalSupervisorPid=$oldStack.SupervisorPid
+   OriginalTunnelPid=$oldStack.TunnelPid
+   NoCleanupAttempted=$true
+   NoRestoreAttempted=$true
+   OriginalHealthVerified=$true
+   ProductionChanged=$false
+  }|ConvertTo-Json
+  throw 'ENGINEERING_CUTOVER_ABORTED_ORIGINAL_UNCHANGED'
+ }
  $script:rollbackRestoredStack=$null
  $script:rollbackNewSupervisorPid=$newPid
  $script:rollbackOldStack=$oldStack
@@ -229,9 +250,20 @@ try{
       Stop-ExactStack $candidate
     }elseif($script:rollbackNewSupervisorPid -and
       $null -ne (Get-Identity $script:rollbackNewSupervisorPid $new)){
-      $partialChild=Get-ChildTunnel $script:rollbackNewSupervisorPid
-      if($null -ne $partialChild){
-        Stop-Process -Id ([int]$partialChild.ProcessId) -Force -ErrorAction Stop
+      # A half-started new supervisor may have zero, one or several children.
+      # Never guess which process is ours when parent/child relation ambiguous.
+      $allChildren=@(Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" -ErrorAction Stop |
+        Where-Object {$_.ParentProcessId -eq $script:rollbackNewSupervisorPid -and
+          $_.ExecutablePath -ieq $client})
+      if($allChildren.Count -gt 1){throw 'PARTIAL_NEW_CHILD_AMBIGUOUS'}
+      if($allChildren.Count -eq 1){
+        $partialChild=$allChildren[0]
+        $partialPid=[int]$partialChild.ProcessId
+        $healthOwner=Get-Listener 18086
+        if($null -ne $healthOwner -and $healthOwner -ne $partialPid){
+          throw 'PARTIAL_NEW_HEALTH_PORT_OWNED_BY_OTHER_PROCESS'
+        }
+        Stop-Process -Id $partialPid -Force -ErrorAction Stop
       }
       $parentStill=Get-Identity $script:rollbackNewSupervisorPid $new
       if($null -ne $parentStill){
