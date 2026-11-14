@@ -46,7 +46,8 @@ export function validateEngineeringRequest(a){
   if(a.scriptArgs!==undefined){
     if(!['node-script','powershell-script'].includes(a.operation)||
        !Array.isArray(a.scriptArgs)||a.scriptArgs.length>16||
-       a.scriptArgs.some(x=>typeof x!=='string'||x.length>200||/[\x00-\x1f]/.test(x)))
+       a.scriptArgs.some(x=>typeof x!=='string'||x.length>200||/[\x00-\x1f]/.test(x)||
+         /(?:bearer\s+|(?:token|password|secret|api[_-]?key)\s*[:=])/i.test(x)))
       fail('UNSAFE_SCRIPT_ARGUMENTS');
   }
   if(a.pid!==undefined&&(!Number.isSafeInteger(a.pid)||a.pid<1||a.pid>2147483647))fail('INVALID_PID');
