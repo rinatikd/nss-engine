@@ -96,3 +96,26 @@ test('output is size-bounded', () => withWorkspace(async root => {
   assert.equal(result.truncated,true);
   assert.ok(Buffer.byteLength(result.stdout)<=65536);
 }));
+
+test('PR113 unit suite uses only fixed node --test arguments', () => withWorkspace(async root => {
+  const plan=await resolveTestPlan(params(root,{suite:'chrome-pr113-node'}),[root]);
+  assert.equal(plan.command,'node');
+  assert.deepEqual(plan.args,['--test',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/tests/one-click-session.test.mjs']);
+  assert.equal(plan.timeoutMs,120000);
+}));
+
+test('PR113 lab build has a fixed output folder and cannot accept caller arguments', () => withWorkspace(async root => {
+  const plan=await resolveTestPlan(params(root,{suite:'chrome-pr113-build-lab17484'}),[root]);
+  assert.equal(plan.command,'powershell.exe');
+  assert.equal(plan.args.includes('17484'),true);
+  assert.equal(plan.args.at(-1),'C:\\Engineering\\ChromeBridge-PR113-E2E-Build-v4');
+  await assert.rejects(
+    executeTestPlan({...plan,args:[...plan.args,'-Command','Invoke-Expression bad']}),
+    /PLAN_MODIFIED/
+  );
+}));
+
+test('unknown script path injected as suite is refused', () => withWorkspace(async root => {
+  await assert.rejects(resolveTestPlan(params(root,{suite:'chrome-pr113-build-lab17484;rm'}),[root]),/UNKNOWN_TEST_SUITE/);
+}));
