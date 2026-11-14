@@ -1,6 +1,7 @@
 import { createOneClickSession } from './one-click-session.js';
 import { loadBrowserKey, saveBrowserKey } from './browser-key-store.js';
 import { verifyBridgeCredential } from './connection-check.js';
+import { requestLocalRecovery, formatRecoverySummary } from './recovery-native.js';
 
 const $ = id => document.getElementById(id);
 const session = createOneClickSession(chrome, {
@@ -77,6 +78,25 @@ $('disconnect').addEventListener('click',async e=>{
     busy=false;
     $('connect').disabled=false;
     $('disconnect').disabled=false;
+  }
+});
+$('recover').addEventListener('click',async e=>{
+  if(!e.isTrusted || busy) return;
+  busy=true;
+  $('recover').disabled=true;
+  $('recover-status').textContent='Проверка и восстановление локальных служб…';
+  try {
+    const result=await requestLocalRecovery(chrome,'restore');
+    $('recover-status').textContent=formatRecoverySummary(result);
+    await refresh();
+  } catch(err) {
+    $('recover-status').textContent=
+      err.message==='NATIVE_HOST_NOT_INSTALLED_OR_UNAVAILABLE'
+        ? 'Локальный Recovery Host ещё не установлен или недоступен. Требуется первоначальная установка на Windows.'
+        : 'Восстановление не подтверждено: '+err.message;
+  } finally {
+    busy=false;
+    $('recover').disabled=false;
   }
 });
 void refresh();
