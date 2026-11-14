@@ -93,6 +93,10 @@ export async function resolveEngineeringPlan(request,allowedRoots){
     catch{return false;}
   }))fail('WORKSPACE_NOT_ALLOWLISTED');
   const operation=a.operation;
+  if(operation==='lab-checkout-pr115' &&
+     path.win32.normalize(cwd).toLowerCase()!==
+       path.win32.normalize('C:/Engineering/ChromeBridge-Recovery-Install-20261114').toLowerCase())
+    fail('LAB_SOURCE_WORKSPACE_NOT_ALLOWED');
   let executable,argv;
   switch(operation){
     case 'git-status':
