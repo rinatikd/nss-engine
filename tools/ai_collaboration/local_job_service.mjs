@@ -14,14 +14,19 @@ const safeOutput = value => String(value ?? '')
     '$1[REDACTED]')
   .slice(0, 65536);
 const fingerprint = plan => createHash('sha256')
-  .update(JSON.stringify([plan.suite, plan.cwd, plan.command, plan.args, plan.timeoutMs]))
+  .update(JSON.stringify([plan.suite, plan.operation||null, plan.cwd, plan.command||plan.executable, plan.args, plan.timeoutMs]))
   .digest('hex');
 
 export function createLocalJobService({
   approvedWorkspaceRoots,
   auditDirectory,
   approveRequest,
-  runner = executeTestPlan
+  runner = executeTestPlan,
+  resolvePlan = (request,roots) => resolveTestPlan({
+    requestId:request.requestId,suite:request.suite,workspace:request.workspace,
+    approved:true,approvedRequestId:request.requestId
+  },roots),
+  operationName='execute-named-suite'
 }) {
   if (!Array.isArray(approvedWorkspaceRoots) || !approvedWorkspaceRoots.length)
     throw new TaskPolicyError('WORKSPACE_POLICY_MISSING');
@@ -38,7 +43,9 @@ export function createLocalJobService({
   };
   return {
     status: read,
-    async submit({requestId,suite,workspace}) {
+    async submit(request) {
+      const {requestId,workspace}=request;
+      const suite=request.suite||request.operation;
       if (!ID.test(requestId || '')) throw new TaskPolicyError('INVALID_REQUEST_ID');
       // Claim the request before asking for approval or executing.
       await mkdir(auditDirectory, {recursive:true,mode:0o700});
@@ -53,9 +60,7 @@ export function createLocalJobService({
       try {
         // The "approved" fields below are solely internal compatibility values;
         // the genuine decision MUST come from the host-owned approveRequest hook.
-        plan = await resolveTestPlan({
-          requestId,suite,workspace,approved:true,approvedRequestId:requestId
-        }, approvedWorkspaceRoots);
+        plan = await resolvePlan(request, approvedWorkspaceRoots);
         const digest = fingerprint(plan);
         await claim.writeFile(JSON.stringify({requestId,suite,state:'PENDING_LOCAL_APPROVAL',
           planSha256:digest,createdAt:new Date().toISOString()}));
@@ -64,7 +69,9 @@ export function createLocalJobService({
         claim=null;
         // A local approval must bind the exact requestId AND hashed immutable plan.
         const approved = await approveRequest({requestId,suite,workspace:plan.cwd,
-          planSha256:digest,operation:'execute-named-suite'});
+          planSha256:digest,operation:operationName,
+          command:plan.command||plan.executable,args:plan.args,
+          risk:plan.risk||'code-execution'});
         if (approved?.approved !== true ||
             approved?.requestId !== requestId ||
             approved?.planSha256 !== digest) {
@@ -85,7 +92,9 @@ export function createLocalJobService({
         }));
         const result = await runner(plan);
         const final = {requestId,suite,planSha256:digest,
-          state:result.timedOut===true ? 'TIMED_OUT' : 'FINISHED',
+          state:result.timedOut===true ? 'TIMED_OUT' :
+            (result.state==='START_FAILED'?'FAILED':
+              (result.exitCode===0?'FINISHED':'FAILED')),
           exitCode:result.exitCode,signal:result.signal || null,
           timedOut:result.timedOut===true,
           terminationUnconfirmed:result.terminationUnconfirmed===true,
