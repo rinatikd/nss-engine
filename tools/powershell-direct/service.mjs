@@ -5,6 +5,9 @@ import {fileURLToPath} from 'node:url';
 import {runApproved,validateTask,canonicalWorkspace} from './runner.mjs';
 import {createLocalJobService} from '../ai_collaboration/local_job_service.mjs';
 import {NAMED_SUITE_TOOLS,createNamedSuiteHandlers,validateNamedSuiteSubmit} from '../ai_collaboration/local_mcp_dispatch.mjs';
+import {ENGINEERING_TOOLS,createEngineeringHandlers} from '../ai_collaboration/engineering-mcp.mjs';
+import {resolveEngineeringPlan} from '../ai_collaboration/engineering-plan.mjs';
+import {runEngineeringPlan} from '../ai_collaboration/engineering-runner.mjs';
 
 const PORT=17486, secret=()=>crypto.randomBytes(32).toString('hex');
 const match=(a,b)=>{const x=Buffer.from(typeof a==='string'?a:''),y=Buffer.from(typeof b==='string'?b:'');return x.length===y.length&&crypto.timingSafeEqual(x,y);};
@@ -14,7 +17,8 @@ const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/
 
 export class PowerShellApprovalService {
  constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
-   namedWorkspaceRoots=[],namedAuditDirectory=null,namedRunner}={}){
+   namedWorkspaceRoots=[],namedAuditDirectory=null,namedRunner,
+   engineeringWorkspaceRoots=[],engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan}={}){
   const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
   const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
   const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
@@ -43,6 +47,27 @@ export class PowerShellApprovalService {
       })
     });
     this.namedHandlers=createNamedSuiteHandlers(this.namedService);
+  }
+  this.engineeringService=null;
+  this.engineeringHandlers=null;
+  if(engineeringWorkspaceRoots.length){
+    if(!engineeringAuditDirectory)throw Error('ENGINEERING_AUDIT_DIR_REQUIRED');
+    this.engineeringService=createLocalJobService({
+      approvedWorkspaceRoots:engineeringWorkspaceRoots,
+      auditDirectory:engineeringAuditDirectory,
+      resolvePlan:resolveEngineeringPlan,
+      runner:engineeringRunner,
+      operationName:'engineering-operation',
+      approveRequest:details=>new Promise(resolve=>{
+        const timer=setTimeout(()=>{
+          this.namedPending.delete(details.requestId);
+          resolve({approved:false,requestId:details.requestId,
+            planSha256:details.planSha256});
+        },90000);
+        this.namedPending.set(details.requestId,{...details,resolve,timer,expiresAt:Date.now()+90000});
+      })
+    });
+    this.engineeringHandlers=createEngineeringHandlers(this.engineeringService);
   }
   this.jobs=new Map();this.active=null;this.server=http.createServer((req,res)=>this.route(req,res));
  }
@@ -104,10 +129,26 @@ export class PowerShellApprovalService {
    {name:'powershell_cancel',description:'Cancel a pending proposed job without executing anything; cannot cancel an already-running command.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
    {name:'powershell_job',description:'Read the status/result of a proposed PowerShell job; no dispatch.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
    ...(this.namedHandlers ? NAMED_SUITE_TOOLS : []),
+   ...(this.engineeringHandlers ? ENGINEERING_TOOLS : []),
    ...(this.chatReadonlyEnabled?[{name:'powershell_chat_readonly',description:'Execute one pinned read-only diagnostic on the Work PC after explicit ChatGPT host approval (plugin permission MUST be Always ask). NO local approval; no arbitrary shell.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}}]:[])
   ]}};
   if(b.method==='tools/call')try{
    const n=b.params?.name,a=b.params?.arguments||{};
+   if(this.engineeringHandlers && n==='powershell_engineering_submit'){
+     // Validation must happen synchronously before reporting a queued job.
+     const promise=this.engineeringHandlers.powershell_engineering_submit(a);
+     void promise.catch(()=>{});
+     return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify({
+       requestId:a.requestId,state:'QUEUED_FOR_LOCAL_APPROVAL'
+     })}]}};
+   }
+   if(this.engineeringHandlers && n==='powershell_engineering_status'){
+     return this.engineeringHandlers.powershell_engineering_status(a).then(result=>({
+       jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(result)}]}
+     })).catch(e=>({
+       jsonrpc:'2.0',id,result:{isError:true,content:[{type:'text',text:String(e.message||'STATUS_FAILED')}]}
+     }));
+   }
    if(this.namedHandlers && n==='powershell_named_suite_submit'){
      validateNamedSuiteSubmit(a);
      // Never hold a remote MCP request open while waiting for local approval.
@@ -153,7 +194,7 @@ export class PowerShellApprovalService {
     const namedRows=[...this.namedPending.values()].map(p=>{
       const action='/decide?key='+encodeURIComponent(this.uiToken);
       return '<form method="POST" action="'+action+'"><p><b>Named suite: '+
-        clean(p.suite)+'</b><br>'+clean(p.workspace)+'<br>SHA256 '+clean(p.planSha256)+
+        clean(p.suite)+'</b><br>'+clean(p.workspace)+'<br>'+clean(p.risk||'')+' '+clean(p.command||'')+' '+clean((p.args||[]).join(' '))+'<br>SHA256 '+clean(p.planSha256)+
         '</p><input type="hidden" name="kind" value="named">'+
         '<input type="hidden" name="id" value="'+clean(p.requestId)+'">'+
         '<input type="hidden" name="sha256" value="'+clean(p.planSha256)+'">'+
