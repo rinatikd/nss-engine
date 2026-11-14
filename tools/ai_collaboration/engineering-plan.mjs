@@ -1,6 +1,7 @@
 // Bounded engineering diagnostics/build/test plans. No arbitrary shell command.
 // Node tests and MSBuild may run project code: always require local approval.
 import fs from 'node:fs';
+import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {TaskPolicyError} from './local_test_runner.mjs';
 const EXE=Object.freeze({
@@ -11,7 +12,8 @@ const EXE=Object.freeze({
 });
 const timeout=Object.freeze({
   'git-status':20000,'git-diff':30000,'git-log':30000,
-  'node-test':180000,'dotnet-build':240000,'dotnet-test':240000,
+  'node-test':180000,'node-script':180000,'powershell-script':180000,
+  'dotnet-build':240000,'dotnet-test':240000,
   'process-inspect':20000,'port-inspect':20000
 });
 const approvedPlans=new WeakSet();
@@ -21,7 +23,7 @@ const SAFE_REL=/^[a-zA-Z0-9_./\\\- ()]+$/;
 export const ENGINEERING_OPERATIONS=Object.freeze(Object.keys(timeout));
 export function validateEngineeringRequest(a){
   if(!a||typeof a!=='object'||Array.isArray(a))fail('INVALID_REQUEST');
-  if(Object.keys(a).some(k=>!['requestId','operation','workspace','target','pid','port'].includes(k)))
+  if(Object.keys(a).some(k=>!['requestId','operation','workspace','target','pid','port','scriptArgs'].includes(k)))
     fail('INVALID_REQUEST_FIELDS');
   if(typeof a.requestId!=='string'||!ID.test(a.requestId))fail('INVALID_REQUEST_ID');
   if(!Object.hasOwn(timeout,a.operation))fail('UNKNOWN_OPERATION');
@@ -33,11 +35,19 @@ export function validateEngineeringRequest(a){
        path.posix.isAbsolute(a.target)||a.target.includes(':')||
        a.target.split(/[\\/]/).some(part=>!part||part==='.'||part==='..'))
       fail('UNSAFE_TARGET');
-    if(a.operation==='node-test'&&!/\.test\.[cm]?js$/i.test(a.target))
+    if(['node-test','node-script'].includes(a.operation)&&
+       !(a.operation==='node-test'?/\.test\.[cm]?js$/i:/\.[cm]?js$/i).test(a.target))
       fail('NODE_TEST_EXTENSION_REQUIRED');
+    if(a.operation==='powershell-script'&&!/\.ps1$/i.test(a.target))fail('POWERSHELL_SCRIPT_REQUIRED');
     if(['dotnet-build','dotnet-test'].includes(a.operation)&&
        !/\.(?:csproj|fsproj|vbproj|sln)$/i.test(a.target))
       fail('DOTNET_PROJECT_REQUIRED');
+  }
+  if(a.scriptArgs!==undefined){
+    if(!['node-script','powershell-script'].includes(a.operation)||
+       !Array.isArray(a.scriptArgs)||a.scriptArgs.length>16||
+       a.scriptArgs.some(x=>typeof x!=='string'||x.length>200||/[\x00-\x1f]/.test(x)))
+      fail('UNSAFE_SCRIPT_ARGUMENTS');
   }
   if(a.pid!==undefined&&(!Number.isSafeInteger(a.pid)||a.pid<1||a.pid>2147483647))fail('INVALID_PID');
   if(a.port!==undefined&&(!Number.isSafeInteger(a.port)||a.port<1024||a.port>65535))fail('INVALID_PORT');
@@ -46,7 +56,7 @@ export function validateEngineeringRequest(a){
   }else if(a.operation==='port-inspect'){
     if(a.port===undefined||a.pid!==undefined||a.target!==undefined)fail('INVALID_OPERATION_ARGUMENTS');
   }else if(a.port!==undefined||a.pid!==undefined)fail('INVALID_OPERATION_ARGUMENTS');
-  if(['node-test','dotnet-build','dotnet-test'].includes(a.operation)&&!a.target)
+  if(['node-test','node-script','powershell-script','dotnet-build','dotnet-test'].includes(a.operation)&&!a.target)
     fail('TARGET_REQUIRED');
   if(['git-status','git-diff','git-log'].includes(a.operation)&&a.target)
     fail('TARGET_NOT_ALLOWED');
@@ -57,6 +67,7 @@ function checkedTarget(root,target,type){
      path.posix.isAbsolute(target)||target.includes(':')||
      target.split(/[\\/]/).some(s=>!s||s==='..'||s==='.'))fail('UNSAFE_TARGET');
   if(type==='node-test'&&!/\.test\.[cm]?js$/i.test(target))fail('NODE_TEST_EXTENSION_REQUIRED');
+  if(type==='powershell-script'&&!/\.ps1$/i.test(target))fail('POWERSHELL_SCRIPT_REQUIRED');
   if(type.startsWith('dotnet-')&&!/\.(?:csproj|fsproj|vbproj|sln)$/i.test(target))
     fail('DOTNET_PROJECT_REQUIRED');
   let absolute;try{absolute=fs.realpathSync.native(path.resolve(root,target));}
@@ -91,6 +102,11 @@ export async function resolveEngineeringPlan(request,allowedRoots){
       executable=EXE.git;argv=['--no-pager','log','-n','20','--format=%h %ad %s','--date=short'];break;
     case 'node-test':
       executable=EXE.node;argv=['--test',checkedTarget(cwd,a.target,operation)];break;
+    case 'node-script':
+      executable=EXE.node;argv=[checkedTarget(cwd,a.target,operation),...(a.scriptArgs||[])];break;
+    case 'powershell-script':
+      executable=EXE.powershell;argv=['-NoProfile','-NonInteractive','-File',
+        checkedTarget(cwd,a.target,operation),...(a.scriptArgs||[])];break;
     case 'dotnet-build':
     case 'dotnet-test':
       executable=EXE.dotnet;argv=[operation==='dotnet-build'?'build':'test',
@@ -107,9 +123,12 @@ export async function resolveEngineeringPlan(request,allowedRoots){
         'Select-Object LocalAddress,LocalPort,State,OwningProcess)|ConvertTo-Json -Compress'];break;
     default:fail('UNKNOWN_OPERATION');
   }
-  const plan=Object.freeze({requestId:a.requestId,suite:'engineering',operation,
+  const sourcePath=['node-test','node-script','powershell-script','dotnet-build','dotnet-test'].includes(operation) ?
+    (operation==='powershell-script'?argv[3]:operation==='node-test'?argv[1]:operation==='node-script'?argv[0]:argv[1]) : null;
+  const sourceSha256=sourcePath?createHash('sha256').update(fs.readFileSync(sourcePath)).digest('hex'):null;
+  const plan=Object.freeze({requestId:a.requestId,suite:'engineering',operation,sourcePath,sourceSha256,
     cwd,executable,args:Object.freeze(argv),timeoutMs:timeout[operation],
-    risk:['node-test','dotnet-build','dotnet-test'].includes(operation)?'code-execution':'read'});
+    risk:['node-test','node-script','powershell-script','dotnet-build','dotnet-test'].includes(operation)?'code-execution':'read'});
   approvedPlans.add(plan);
   return plan;
 }
