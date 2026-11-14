@@ -30,6 +30,30 @@ function preflightGitPull(plan,{spawnSyncImpl=spawnSync,env}={}){
   if(!/^[0-9a-f]{40,64}$/i.test(state))throw Error('GIT_PULL_HEAD_INVALID');
 }
 
+const LAB_DEST='C:/Engineering/PowerShellDirect-Approval-Lab-PR115';
+const LAB_PARENT='C:/Engineering';
+export function preflightLabCheckout(plan,{fsImpl=fs}={}){
+  if(plan.operation!=='lab-checkout-pr115')return;
+  const requested=path.win32.normalize(LAB_DEST);
+  const parent=path.win32.normalize(LAB_PARENT);
+  if(path.win32.normalize(path.win32.dirname(requested)).toLowerCase()!==parent.toLowerCase())
+    throw Error('LAB_PARENT_UNEXPECTED');
+  // Refuse any existing file, directory, symlink, junction, or broken link.
+  // Clone must create its own absent destination.
+  if(fsImpl.existsSync(requested))throw Error('LAB_DESTINATION_EXISTS');
+  try{fsImpl.lstatSync(requested);throw Error('LAB_DESTINATION_EXISTS');}
+  catch(e){if(e.message==='LAB_DESTINATION_EXISTS')throw e;
+    if(e.code!=='ENOENT')throw Error('LAB_DESTINATION_UNTRUSTED');}
+  let real;
+  try{real=fsImpl.realpathSync.native(parent);}catch{throw Error('LAB_PARENT_MISSING');}
+  if(path.win32.normalize(real).toLowerCase()!==parent.toLowerCase())
+    throw Error('LAB_PARENT_UNTRUSTED');
+  if(!fsImpl.statSync(real).isDirectory())throw Error('LAB_PARENT_INVALID');
+  if(path.win32.normalize(plan.cwd).toLowerCase()!==
+     path.win32.normalize('C:/Engineering/ChromeBridge-Recovery-Install-20261114').toLowerCase())
+    throw Error('LAB_SOURCE_WORKSPACE_NOT_ALLOWED');
+}
+
 const SENSITIVE=/(Bearer\s+)[A-Za-z0-9._-]+|((?:token|password|api[_-]?key|secret)\s*[:=]\s*)[^\s;,]+/gi;
 const redact=s=>String(s).replace(SENSITIVE,(value,bearer,assignment)=>
   bearer?bearer+'[REDACTED]':assignment+'[REDACTED]');
@@ -62,6 +86,7 @@ export async function runEngineeringPlan(plan,{
     CI:'1',DOTNET_CLI_TELEMETRY_OPTOUT:'1'
   };
   if(plan.operation==='git-pull-ff-only')preflightGitPull(plan,{spawnSyncImpl,env:restrictedEnv});
+  if(plan.operation==='lab-checkout-pr115')preflightLabCheckout(plan);
   return await new Promise((resolve,reject)=>{
     const start=Date.now();let out='',err='',truncated=false,settled=false,timedOut=false;
     let child,timeout,watchdog;

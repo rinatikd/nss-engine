@@ -18,7 +18,8 @@ const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/
 export class PowerShellApprovalService {
  constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
    namedWorkspaceRoots=[],namedAuditDirectory=null,namedRunner,
-   engineeringWorkspaceRoots=[],engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan}={}){
+   engineeringWorkspaceRoots=[],engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan,
+   enrolledApprover=null}={}){
   const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
   const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
   const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
@@ -27,6 +28,9 @@ export class PowerShellApprovalService {
      pathSegments.some(x=>['windows','system32','program files'].includes(x)))
     throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
   this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
+  // Optional policy injected by the local operator, never through MCP arguments.
+  if(enrolledApprover!==null&&typeof enrolledApprover.decide!=='function')throw Error('INVALID_ENROLLED_APPROVER');
+  this.enrolledApprover=enrolledApprover;
   this.chatReadonlyEnabled=chatReadonlyEnabled===true;
   this.namedPending=new Map();
   this.namedService=null;
@@ -62,7 +66,16 @@ export class PowerShellApprovalService {
       resolvePlan:resolveEngineeringPlan,
       runner:engineeringRunner,
       operationName:'engineering-operation',
-      approveRequest:details=>new Promise(resolve=>{
+      approveRequest:async details=>{
+        // Single-use exact-plan enrollment avoids the extra local page.
+        // No trusted local enrollment means legacy local approval.
+        const enrolled=await this.enrolledApprover?.decide(details);
+        if(enrolled?.approved===true)return enrolled;
+        if(enrolled?.reason&&enrolled.reason!=='NOT_ENROLLED'){
+          return {approved:false,reason:enrolled.reason,requestId:details.requestId,
+            planSha256:details.planSha256};
+        }
+        return await new Promise(resolve=>{
         if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
           resolve({approved:false,requestId:details.requestId,
             planSha256:details.planSha256});return;
@@ -74,7 +87,8 @@ export class PowerShellApprovalService {
             requestId:details.requestId,planSha256:details.planSha256});
         },180000);
         this.namedPending.set(details.requestId,{...details,resolve,timer,expiresAt});
-      })
+      });
+      }
     });
     this.engineeringHandlers=createEngineeringHandlers(this.engineeringService);
   }
@@ -134,12 +148,12 @@ export class PowerShellApprovalService {
   if(b.method==='initialize')return {jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'powershell-direct-lab',version:'0.1.0'}}};
   if(b.method==='notifications/initialized')return null;
   if(b.method==='tools/list')return {jsonrpc:'2.0',id,result:{tools:[
-   {name:'powershell_propose',description:'Create a pending fixed read-only Windows task, requiring local browser approval before execution.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}},
+   {name:'powershell_propose',description:'Create a pending fixed read-only Windows task, requiring local browser approval before execution.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','git-branch','git-log','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}},
    {name:'powershell_cancel',description:'Cancel a pending proposed job without executing anything; cannot cancel an already-running command.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
    {name:'powershell_job',description:'Read the status/result of a proposed PowerShell job; no dispatch.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
    ...(this.namedHandlers ? NAMED_SUITE_TOOLS : []),
    ...(this.engineeringHandlers ? ENGINEERING_TOOLS : []),
-   ...(this.chatReadonlyEnabled?[{name:'powershell_chat_readonly',description:'Execute one pinned read-only diagnostic on the Work PC after explicit ChatGPT host approval (plugin permission MUST be Always ask). NO local approval; no arbitrary shell.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}}]:[])
+   ...(this.chatReadonlyEnabled?[{name:'powershell_chat_readonly',description:'Execute one pinned read-only diagnostic on the Work PC after explicit ChatGPT host approval (plugin permission MUST be Always ask). NO local approval; no arbitrary shell.',inputSchema:{type:'object',additionalProperties:false,properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','git-branch','git-log','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}}]:[])
   ]}};
   if(b.method==='tools/call')try{
    const n=b.params?.name,a=b.params?.arguments||{};

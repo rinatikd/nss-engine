@@ -7,6 +7,8 @@ import {spawn} from 'node:child_process';
 export const POLICY=Object.freeze({
   'git-status':{exe:'git.exe',args:['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=NUL','status','--short','--branch'],timeout:15000},
   'git-diff-check':{exe:'git.exe',args:['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=NUL','-c','diff.external=','diff','--check'],timeout:15000},
+  'git-branch':{exe:'git.exe',args:['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=NUL','--no-pager','branch','--show-current'],timeout:15000},
+  'git-log':{exe:'git.exe',args:['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=NUL','--no-pager','log','-n','10','--format=%h %ad %s','--date=short'],timeout:15000},
   'dotnet-version':{exe:'dotnet.exe',args:['--version'],timeout:10000},
   'node-version':{exe:'node.exe',args:['--version'],timeout:10000},
   // Fixed literal command: no user-provided script text or interpolation.

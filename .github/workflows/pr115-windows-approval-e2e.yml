@@ -1,0 +1,58 @@
+name: PR115 Windows Approval Lab Tests
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/chatgpt-approval-ux-20261115
+    paths:
+      - 'tools/powershell-direct/**'
+      - 'tools/ai_collaboration/**'
+      - '.github/workflows/pr115-windows-approval-e2e.yml'
+  pull_request:
+    paths:
+      - 'tools/powershell-direct/**'
+      - 'tools/ai_collaboration/**'
+
+permissions:
+  contents: read
+
+jobs:
+  pr115-windows-isolated:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Node.js version
+        shell: pwsh
+        run: node --version
+      - name: Validate approval and lab test suites
+        shell: pwsh
+        run: |
+          node --test tools/powershell-direct/tests/chat-approval-ux.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'CHAT_APPROVAL_TEST_FAILED' }
+          node --test tools/powershell-direct/tests/enrolled-approver.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'ENROLLMENT_TEST_FAILED' }
+          node --test tools/powershell-direct/tests/durable-enrolled-approver.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DURABLE_ENROLLMENT_TEST_FAILED' }
+          node --test tools/ai_collaboration/engineering-lab-checkout.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'LAB_CHECKOUT_TEST_FAILED' }
+          node --test tools/ai_collaboration/engineering-runner.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'RUNNER_REGRESSION_FAILED' }
+      - name: Real isolated lab checkout and test on Windows
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'C:\\Engineering' -Force | Out-Null
+          & ./tools/powershell-direct/Prepare-PR115-Lab.ps1 -Mode Inspect
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'LAB_INSPECT_FAILED' }
+          & ./tools/powershell-direct/Prepare-PR115-Lab.ps1 -Mode Prepare
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'LAB_PREPARE_FAILED' }
+          & ./tools/powershell-direct/Prepare-PR115-Lab.ps1 -Mode Test
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'LAB_E2E_FAILED' }
+      - name: Verify no production services are used
+        shell: pwsh
+        run: |
+          Write-Host 'All tests execute on ephemeral GitHub-hosted Windows runner.'
+          Write-Host 'No production tunnels, tokens or local Chrome Bridge ports are configured.'
