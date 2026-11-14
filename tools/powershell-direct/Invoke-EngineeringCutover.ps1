@@ -8,6 +8,9 @@ param(
  [switch]$EnableProductionCutover
 )
 $ErrorActionPreference='Stop'
+$rollbackModule=Join-Path $PSScriptRoot 'Cutover-Rollback.ps1'
+if(!(Test-Path -LiteralPath $rollbackModule -PathType Leaf)){throw 'ROLLBACK_MODULE_MISSING'}
+. $rollbackModule
 $repo='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R1'
 $old='C:\Engineering\ChromeBridge-PowerShell-Direct-Validation\tools\powershell-direct\stack-supervisor.mjs'
@@ -217,50 +220,55 @@ try{
  }|ConvertTo-Json
 }catch{
  $reason=$_.Exception.Message
- try{
-  $candidate=Get-Stack $new
-  if($null -ne $candidate){Stop-ExactStack $candidate}
-  elseif($newPid -and $null -ne (Get-Identity $newPid $new)){
-   # New supervisor started but tunnel did not reach ready.
-   # Identify its direct child BEFORE terminating the parent.
-   $partialChild=Get-ChildTunnel $newPid
-   if($null -ne $partialChild){
-    Stop-Process -Id ([int]$partialChild.ProcessId) -Force -ErrorAction Stop
-   }
-   $parentStill=Get-Identity $newPid $new
-   if($null -ne $parentStill){
-    Stop-Process -Id $newPid -Force -ErrorAction Stop
-   }
-  }
-  # If the old parent exited but its previously verified child lingered,
-  # clean that EXACT PID only, with unchanged binary path and parent PID.
-  $oldChild=Get-CimInstance Win32_Process -Filter "ProcessId=$($oldStack.TunnelPid)" -ErrorAction SilentlyContinue
-  if($null -ne $oldChild -and $oldChild.Name -ieq 'tunnel-client.exe' -and
-     $oldChild.ExecutablePath -ieq $client -and
-     $oldChild.ParentProcessId -eq $oldStack.SupervisorPid){
-    Stop-Process -Id $oldStack.TunnelPid -Force -ErrorAction Stop
-  }
-  for($i=0;$i -lt 30;$i++){
-   if($null -eq (Get-Listener 17486) -and $null -eq (Get-Listener 18086)){break}
-   Start-Sleep -Milliseconds 400
-  }
-  $restored=Restore-Original
-  $rollbackVerified=$true
-  [pscustomobject]@{
-   Result='ENGINEERING_CUTOVER_FAILED_ROLLBACK_VERIFIED'
-   FailureReason=$reason
-   OriginalSupervisorPid=$restored.SupervisorPid
-   OriginalTunnelPid=$restored.TunnelPid
-   OriginalRestoredAndHealthy=$true
-  }|ConvertTo-Json
- }catch{
-  [pscustomobject]@{
-   Result='ENGINEERING_CUTOVER_FAILED_ROLLBACK_UNCONFIRMED'
-   OriginalFailure=$reason
-   RollbackFailureCode=$_.Exception.Message
-   ManualLocalRecoveryRequired=$true
-   DoNotStopOtherTunnels=$true
-  }|ConvertTo-Json
+ $script:rollbackRestoredStack=$null
+ $script:rollbackNewSupervisorPid=$newPid
+ $script:rollbackOldStack=$oldStack
+ $cleanup={
+    $candidate=Get-Stack $new
+    if($null -ne $candidate){
+      Stop-ExactStack $candidate
+    }elseif($script:rollbackNewSupervisorPid -and
+      $null -ne (Get-Identity $script:rollbackNewSupervisorPid $new)){
+      $partialChild=Get-ChildTunnel $script:rollbackNewSupervisorPid
+      if($null -ne $partialChild){
+        Stop-Process -Id ([int]$partialChild.ProcessId) -Force -ErrorAction Stop
+      }
+      $parentStill=Get-Identity $script:rollbackNewSupervisorPid $new
+      if($null -ne $parentStill){
+        Stop-Process -Id $script:rollbackNewSupervisorPid -Force -ErrorAction Stop
+      }
+    }
+    $oldChild=Get-CimInstance Win32_Process -Filter "ProcessId=$($script:rollbackOldStack.TunnelPid)" -ErrorAction SilentlyContinue
+    if($null -ne $oldChild -and $oldChild.Name -ieq 'tunnel-client.exe' -and
+       $oldChild.ExecutablePath -ieq $client -and
+       $oldChild.ParentProcessId -eq $script:rollbackOldStack.SupervisorPid){
+      Stop-Process -Id $script:rollbackOldStack.TunnelPid -Force -ErrorAction Stop
+    }
+    for($i=0;$i -lt 30;$i++){
+      if($null -eq (Get-Listener 17486) -and
+         $null -eq (Get-Listener 18086)){return}
+      Start-Sleep -Milliseconds 400
+    }
+    throw 'ROLLBACK_PORTS_STILL_OCCUPIED'
  }
+ $restore={ $script:rollbackRestoredStack=Restore-Original }
+ $verify={
+    $stackNow=Get-Stack $old
+    return ($null -ne $stackNow -and
+      $null -ne $script:rollbackRestoredStack -and
+      $stackNow.SupervisorPid -eq $script:rollbackRestoredStack.SupervisorPid -and
+      $stackNow.TunnelPid -eq $script:rollbackRestoredStack.TunnelPid -and
+      (Test-Health $stackNow.TunnelPid))
+ }
+ $outcome=Invoke-VerifiedCutoverRollback -FailureCode $reason -CleanupReplacement $cleanup -RestoreOriginal $restore -VerifyOriginal $verify
+ [pscustomobject]@{
+   Result=if($outcome.OriginalHealthVerified){
+     'ENGINEERING_CUTOVER_FAILED_ROLLBACK_VERIFIED'
+   }else{'ENGINEERING_CUTOVER_FAILED_ROLLBACK_UNCONFIRMED'}
+   FailureReason=$reason
+   Rollback=$outcome
+   ManualLocalRecoveryRequired=(-not $outcome.OriginalHealthVerified)
+   DoNotStopOtherTunnels=$true
+ }|ConvertTo-Json -Depth 5
  throw 'ENGINEERING_CUTOVER_NOT_COMPLETED'
 }
