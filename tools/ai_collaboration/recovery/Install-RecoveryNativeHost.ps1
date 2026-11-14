@@ -39,6 +39,14 @@ try {
   if($LASTEXITCODE -ne 0){throw 'NATIVE_HOST_BUILD_FAILED'}
   $built=Join-Path $tempOut 'ChromeBridge.RecoveryHost.exe'
   if(!(Test-Path -LiteralPath $built -PathType Leaf)){throw 'NATIVE_HOST_NOT_BUILT'}
+  $node='C:\\Program Files\\nodejs\\node.exe'
+  $smoke=Join-Path $source 'smoke.mjs'
+  if(!(Test-Path -LiteralPath $node -PathType Leaf) -or
+     !(Test-Path -LiteralPath $smoke -PathType Leaf)){
+    throw 'NATIVE_HOST_SMOKE_PREREQUISITES_MISSING'
+  }
+  & $node $smoke $built
+  if($LASTEXITCODE -ne 0){throw 'NATIVE_HOST_PROTOCOL_SMOKE_FAILED'}
   New-Item -ItemType Directory -Path $hostDir -Force | Out-Null
   Copy-Item -LiteralPath $built -Destination $exe -ErrorAction Stop
   $hostManifest=[ordered]@{
