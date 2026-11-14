@@ -2,6 +2,7 @@ import { dispatchReadOnly } from './read-only-dispatch.js';
 import { ApprovalSession } from './approval-session.js';
 import { dispatchMutation } from './mutation-dispatch.js';
 import { dispatchOneClickMutation } from './one-click-mutation.js';
+import { dispatchOneClickNavigation } from './one-click-navigation.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
 
 const PATH = 'transport-host.html';
@@ -100,6 +101,9 @@ export function installBackgroundCoordinator(chromeApi) {
         if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
           throw Error('BACKGROUND_TRANSPORT_DISABLED');
         const name=msg.command?.name;
+        if (bridgeAllTabsMode===true && ['browser_open','agent_new_chat'].includes(name)) {
+          return dispatchOneClickNavigation(msg.command,chromeApi);
+        }
         if (['browser_click','browser_fill','agent_send'].includes(name)) {
           if (bridgeMutationLabMode!==true) throw Error('BACKGROUND_MUTATIONS_DISABLED');
           if (bridgeAllTabsMode===true) return dispatchOneClickMutation(msg.command,chromeApi);
