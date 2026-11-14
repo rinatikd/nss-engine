@@ -44,7 +44,7 @@ try {
   $bstr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
   $plain=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
   if([string]::IsNullOrWhiteSpace($plain)) {throw 'DECRYPTED_KEY_EMPTY'}
-  $startInfo=New-Object Diagnostics.ProcessStartInfo
+  $startInfo=New-Object System.Diagnostics.ProcessStartInfo
   $startInfo.FileName=$client
   $startInfo.Arguments='run --config "'+$profile+'"'
   $startInfo.UseShellExecute=$false
@@ -53,7 +53,7 @@ try {
   $startInfo.EnvironmentVariables['CONTROL_PLANE_API_KEY']=$plain
   $startInfo.EnvironmentVariables['CHROME_BRIDGE_LAB_HOME']=$labHome
   if((Get-TunnelState) -ne 'stopped') {throw 'TUNNEL_START_RACE'}
-  $child=[Diagnostics.Process]::Start($startInfo)
+  $child=[System.Diagnostics.Process]::Start($startInfo)
   if($null -eq $child){throw 'TUNNEL_START_FAILED'}
   Start-Sleep -Seconds 2
   [PSCustomObject]@{
