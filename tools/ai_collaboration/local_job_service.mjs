@@ -3,7 +3,7 @@
 // host approval channel. A model-supplied "approved:true" never authorizes work.
 // Jobs are at-most-once: a crash or lost ACK becomes UNKNOWN, never a re-run.
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, writeFile, rename, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveTestPlan, executeTestPlan, TaskPolicyError } from './local_test_runner.mjs';
 
@@ -58,13 +58,23 @@ export function createLocalJobService({
   };
   const read = async requestId => {
     if (!ID.test(requestId || '')) throw new TaskPolicyError('INVALID_REQUEST_ID');
-    let raw;
-    try { raw=await readFile(auditPath(requestId), 'utf8'); }
-    catch (error) { if (error.code === 'ENOENT') return {requestId,state:'NOT_FOUND'}; throw error; }
-    // The exclusive claim (wx) precedes initial durable JSON creation.
-    // A simultaneous status read can observe an EMPTY claim, not an error.
-    if(raw.length===0) return {requestId,state:'CLAIM_IN_PROGRESS'};
-    return JSON.parse(raw);
+    // The exclusive claim (wx) precedes its first JSON write.
+    // Retry a transient partial initial claim, but never mask persistent
+    // corruption as a successfully completed or approved job.
+    for(let attempt=0;attempt<4;attempt++){
+      let raw;
+      try { raw=await readFile(auditPath(requestId),'utf8'); }
+      catch(error){
+        if(error.code==='ENOENT')return {requestId,state:'NOT_FOUND'};
+        throw error;
+      }
+      if(raw.length===0)return {requestId,state:'CLAIM_IN_PROGRESS'};
+      try { return JSON.parse(raw); }
+      catch(error){
+        if(!(error instanceof SyntaxError)||attempt===3)throw error;
+        await new Promise(resolve=>setTimeout(resolve,5));
+      }
+    }
   };
   return {
     status: read,
