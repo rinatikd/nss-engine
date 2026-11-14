@@ -5,14 +5,9 @@ import { BridgeTransport } from './transport-engine.js';
 const pending = new Map();
 let seq = 0;
 let transport = null;
-// Only read-only commands and explicitly gated approved mutations are migrated.
-// browser_open and agent_new_chat remain unsupported in background mode.
-const unsupported = new Set(['browser_open','agent_new_chat']);
 const send = (data) => self.postMessage(data);
 function delegate(command) {
-  // Unsupported mutating commands always fail closed; click/fill/send are
-  // delegated to the coordinator, which checks lab opt-in and human approval.
-  if (unsupported.has(command.name)) throw Error('COMMAND_NOT_MIGRATED');
+  // All operations go through the coordinator's session and action gates.
   const id = ++seq;
   return new Promise((resolve,reject) => {
     const expires=Number.isFinite(command.expires)?command.expires:Date.now()+12000;
