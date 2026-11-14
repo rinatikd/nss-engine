@@ -28,7 +28,10 @@ $testPaths=@(
 )
 function Get-Listener([int]$Port){
  $connections=@(Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
- if($connections.Count -ne 1){return $null}
+ # A missing listener may be expected during transition. Two or more
+ # listeners are NEVER a free port: abort before starting any replacement.
+ if($connections.Count -gt 1){throw ('AMBIGUOUS_LISTENER_'+$Port)}
+ if($connections.Count -eq 0){return $null}
  return [int]$connections[0].OwningProcess
 }
 function Get-Identity([int]$Id,[string]$Script){
