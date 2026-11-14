@@ -4,7 +4,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {runApproved,validateTask,canonicalWorkspace} from './runner.mjs';
 import {createLocalJobService} from '../ai_collaboration/local_job_service.mjs';
-import {NAMED_SUITE_TOOLS,createNamedSuiteHandlers} from '../ai_collaboration/local_mcp_dispatch.mjs';
+import {NAMED_SUITE_TOOLS,createNamedSuiteHandlers,validateNamedSuiteSubmit} from '../ai_collaboration/local_mcp_dispatch.mjs';
 
 const PORT=17486, secret=()=>crypto.randomBytes(32).toString('hex');
 const match=(a,b)=>{const x=Buffer.from(typeof a==='string'?a:''),y=Buffer.from(typeof b==='string'?b:'');return x.length===y.length&&crypto.timingSafeEqual(x,y);};
@@ -109,6 +109,7 @@ export class PowerShellApprovalService {
   if(b.method==='tools/call')try{
    const n=b.params?.name,a=b.params?.arguments||{};
    if(this.namedHandlers && n==='powershell_named_suite_submit'){
+     validateNamedSuiteSubmit(a);
      // Never hold a remote MCP request open while waiting for local approval.
      // The separate status tool reads durable progress; same ID is not replayed.
      const jobPromise=this.namedHandlers.powershell_named_suite_submit(a);
