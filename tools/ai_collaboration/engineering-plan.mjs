@@ -26,7 +26,19 @@ export function validateEngineeringRequest(a){
   if(typeof a.requestId!=='string'||!ID.test(a.requestId))fail('INVALID_REQUEST_ID');
   if(!Object.hasOwn(timeout,a.operation))fail('UNKNOWN_OPERATION');
   if(typeof a.workspace!=='string'||!path.isAbsolute(a.workspace))fail('INVALID_WORKSPACE');
-  if(a.target!==undefined&&(typeof a.target!=='string'||a.target.length>300))fail('INVALID_TARGET');
+  if(a.target!==undefined){
+    if(typeof a.target!=='string'||a.target.length<1||a.target.length>300)
+      fail('INVALID_TARGET');
+    if(!SAFE_REL.test(a.target)||path.win32.isAbsolute(a.target)||
+       path.posix.isAbsolute(a.target)||a.target.includes(':')||
+       a.target.split(/[\\/]/).some(part=>!part||part==='.'||part==='..'))
+      fail('UNSAFE_TARGET');
+    if(a.operation==='node-test'&&!/\.test\.[cm]?js$/i.test(a.target))
+      fail('NODE_TEST_EXTENSION_REQUIRED');
+    if(['dotnet-build','dotnet-test'].includes(a.operation)&&
+       !/\.(?:csproj|fsproj|vbproj|sln)$/i.test(a.target))
+      fail('DOTNET_PROJECT_REQUIRED');
+  }
   if(a.pid!==undefined&&(!Number.isSafeInteger(a.pid)||a.pid<1||a.pid>2147483647))fail('INVALID_PID');
   if(a.port!==undefined&&(!Number.isSafeInteger(a.port)||a.port<1024||a.port>65535))fail('INVALID_PORT');
   if(a.operation==='process-inspect'){
