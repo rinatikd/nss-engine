@@ -12,6 +12,7 @@ const EXE=Object.freeze({
 });
 const timeout=Object.freeze({
   'git-status':20000,'git-diff':30000,'git-log':30000,
+  'git-branch':20000,'git-diff-check':30000,'git-pull-ff-only':180000,
   'node-test':180000,'node-script':180000,'powershell-script':180000,
   'dotnet-build':240000,'dotnet-test':240000,
   'process-inspect':20000,'port-inspect':20000
@@ -59,7 +60,7 @@ export function validateEngineeringRequest(a){
   }else if(a.port!==undefined||a.pid!==undefined)fail('INVALID_OPERATION_ARGUMENTS');
   if(['node-test','node-script','powershell-script','dotnet-build','dotnet-test'].includes(a.operation)&&!a.target)
     fail('TARGET_REQUIRED');
-  if(['git-status','git-diff','git-log'].includes(a.operation)&&a.target)
+  if(['git-status','git-diff','git-log','git-branch','git-diff-check','git-pull-ff-only'].includes(a.operation)&&a.target)
     fail('TARGET_NOT_ALLOWED');
   return a;
 }
@@ -101,6 +102,17 @@ export async function resolveEngineeringPlan(request,allowedRoots){
         '-c','diff.external=','--no-pager','diff','--no-ext-diff','--no-textconv','--'];break;
     case 'git-log':
       executable=EXE.git;argv=['--no-pager','log','-n','20','--format=%h %ad %s','--date=short'];break;
+    case 'git-branch':
+      executable=EXE.git;argv=['--no-pager','branch','--show-current'];break;
+    case 'git-diff-check':
+      executable=EXE.git;argv=['--no-optional-locks','-c','core.fsmonitor=false',
+        '-c','core.hooksPath=NUL','--no-pager','diff','--check','--'];break;
+    case 'git-pull-ff-only':
+      // Never accept remote, branch, revision, refspec or Git options from the model.
+      // A runtime preflight rejects dirty/detached/untracked worktrees and missing upstream.
+      executable=EXE.git;argv=['-c','core.hooksPath=NUL',
+        '-c','protocol.ext.allow=never','-c','protocol.file.allow=never',
+        'pull','--ff-only','--no-rebase','--no-tags','--no-autostash'];break;
     case 'node-test':
       executable=EXE.node;argv=['--test',checkedTarget(cwd,a.target,operation)];break;
     case 'node-script':
@@ -129,7 +141,8 @@ export async function resolveEngineeringPlan(request,allowedRoots){
   const sourceSha256=sourcePath?createHash('sha256').update(fs.readFileSync(sourcePath)).digest('hex'):null;
   const plan=Object.freeze({requestId:a.requestId,suite:'engineering',operation,sourcePath,sourceSha256,
     cwd,executable,args:Object.freeze(argv),timeoutMs:timeout[operation],
-    risk:['node-test','node-script','powershell-script','dotnet-build','dotnet-test'].includes(operation)?'code-execution':'read'});
+    risk:operation==='git-pull-ff-only'?'workspace-write':
+      (['node-test','node-script','powershell-script','dotnet-build','dotnet-test'].includes(operation)?'code-execution':'read')});
   approvedPlans.add(plan);
   return plan;
 }
