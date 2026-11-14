@@ -105,10 +105,16 @@ try{
  }
  # Exercise the exact healthy-original guard shared with production.
  $restoredPid=[int]$script:cutoverTestRestored.Id
+ $script:guardExpectedPid=$restoredPid
+ $script:guardTestPort=$testPort
  $healthyOriginal=Test-OriginalStackStillHealthy -OriginalSupervisorPid $restoredPid -OriginalTunnelPid 43210 -StartedNewSupervisorPid $null -InspectOriginal {
-   [pscustomobject]@{SupervisorPid=$restoredPid;TunnelPid=43210}
- } -VerifyHealth {param($candidate) return ($candidate.SupervisorPid -eq $restoredPid -and (Test-Open $testPort))}
- if(!$healthyOriginal){throw 'HEALTHY_ORIGINAL_GUARD_FAILED'}
+   [pscustomobject]@{SupervisorPid=$script:guardExpectedPid;TunnelPid=43210}
+ } -VerifyHealth {param($candidate) return ($candidate.SupervisorPid -eq $script:guardExpectedPid -and (Test-Open $script:guardTestPort))}
+ if(!$healthyOriginal){
+  $processPresent=(!$script:cutoverTestRestored.HasExited)
+  $portIsOpen=Test-Open $script:guardTestPort
+  throw ('HEALTHY_ORIGINAL_GUARD_FAILED processPresent='+$processPresent+' portOpen='+$portIsOpen)
+ }
  $wrongPid=Test-OriginalStackStillHealthy -OriginalSupervisorPid ($restoredPid+1) -OriginalTunnelPid 43210 -StartedNewSupervisorPid $null -InspectOriginal {
    [pscustomobject]@{SupervisorPid=$restoredPid;TunnelPid=43210}
  } -VerifyHealth {$true}
