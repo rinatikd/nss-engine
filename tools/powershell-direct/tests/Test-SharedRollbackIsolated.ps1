@@ -98,11 +98,15 @@ try{
  $restored=$script:cutoverTestRestored
  if(!$outcome.OriginalHealthVerified -or !$outcome.ReplacementCleanupCompleted -or
     !$outcome.OriginalRestoreCompleted){throw 'SHARED_ROLLBACK_NOT_VERIFIED'}
+ $restoredAliveAfterRollback=(!$script:cutoverTestRestored.HasExited)
+ $portOpenAfterRollback=Test-Open $testPort
  $restoreCalls=0
  $deny=Invoke-VerifiedCutoverRollback -FailureCode 'SIMULATED_CLEANUP_FAILURE' -CleanupReplacement {throw 'INJECTED_CLEANUP_DENIAL'} -RestoreOriginal {$script:cutoverUnexpectedRestore=$true} -VerifyOriginal {$true}
  if($deny.OriginalHealthVerified -or $deny.OriginalRestoreAttempted -or $deny.ManualRecoveryRequired -ne $true -or $script:cutoverUnexpectedRestore){
   throw 'CLEANUP_FAILURE_GATE_FAILED'
  }
+ $restoredAliveAfterDeniedCase=(!$script:cutoverTestRestored.HasExited)
+ $portOpenAfterDeniedCase=Test-Open $testPort
  # Exercise the exact healthy-original guard shared with production.
  $restoredPid=[int]$script:cutoverTestRestored.Id
  $script:guardExpectedPid=$restoredPid
@@ -113,7 +117,8 @@ try{
  if(!$healthyOriginal){
   $processPresent=(!$script:cutoverTestRestored.HasExited)
   $portIsOpen=Test-Open $script:guardTestPort
-  throw ('HEALTHY_ORIGINAL_GUARD_FAILED processPresent='+$processPresent+' portOpen='+$portIsOpen)
+  $exitCode=if($script:cutoverTestRestored.HasExited){$script:cutoverTestRestored.ExitCode}else{$null}
+  throw ('HEALTHY_ORIGINAL_GUARD_FAILED processPresent='+$processPresent+' portOpen='+$portIsOpen+' childExit='+$exitCode+' aliveAfterRollback='+$restoredAliveAfterRollback+' portAfterRollback='+$portOpenAfterRollback+' aliveAfterDeny='+$restoredAliveAfterDeniedCase+' portAfterDeny='+$portOpenAfterDeniedCase)
  }
  $wrongPid=Test-OriginalStackStillHealthy -OriginalSupervisorPid ($restoredPid+1) -OriginalTunnelPid 43210 -StartedNewSupervisorPid $null -InspectOriginal {
    [pscustomobject]@{SupervisorPid=$restoredPid;TunnelPid=43210}
