@@ -27,7 +27,8 @@ export const SUITES = Object.freeze({
       'tools/powershell-direct/tests/named-suites.test.mjs',
       'tools/ai_collaboration/recovery/recovery-plan.test.mjs',
       'tools/ai_collaboration/recovery/recovery-runtime.test.mjs',
-      'tools/ai_collaboration/recovery/recovery-journal.test.mjs'],
+      'tools/ai_collaboration/recovery/recovery-journal.test.mjs',
+      'tools/ai_collaboration/recovery/windows-recovery-contract.test.mjs'],
     cwd: '.',
     timeoutMs: 120000
   },
