@@ -76,8 +76,11 @@ export function createLocalJobService({
           requestId,suite,state:'RUNNING',planSha256:digest,startedAt:new Date().toISOString()
         }));
         const result = await runner(plan);
-        const final = {requestId,suite,planSha256:digest,state:'FINISHED',
+        const final = {requestId,suite,planSha256:digest,
+          state:result.timedOut===true ? 'TIMED_OUT' : 'FINISHED',
           exitCode:result.exitCode,signal:result.signal || null,
+          timedOut:result.timedOut===true,
+          terminationUnconfirmed:result.terminationUnconfirmed===true,
           stdout:safeOutput(result.stdout),stderr:safeOutput(result.stderr),
           truncated:result.truncated===true,endedAt:new Date().toISOString()};
         await writeFile(auditPath(requestId),JSON.stringify(final));
