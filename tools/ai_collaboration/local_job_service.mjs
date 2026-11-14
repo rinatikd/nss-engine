@@ -29,6 +29,7 @@ export function createLocalJobService({
     throw new TaskPolicyError('LOCAL_APPROVAL_HANDLER_MISSING');
   if (!path.isAbsolute(auditDirectory))
     throw new TaskPolicyError('AUDIT_DIR_NOT_ABSOLUTE');
+  let activeRequestId = null;
   const auditPath = requestId => path.join(auditDirectory, requestId + '.json');
   const read = async requestId => {
     if (!ID.test(requestId || '')) throw new TaskPolicyError('INVALID_REQUEST_ID');
@@ -72,6 +73,13 @@ export function createLocalJobService({
           }));
           return {requestId,state:'DENIED'};
         }
+        if (activeRequestId !== null) {
+          await writeFile(auditPath(requestId),JSON.stringify({
+            requestId,suite,state:'DENIED',reason:'ANOTHER_JOB_RUNNING',planSha256:digest
+          }));
+          return {requestId,state:'DENIED',reason:'ANOTHER_JOB_RUNNING'};
+        }
+        activeRequestId = requestId;
         await writeFile(auditPath(requestId),JSON.stringify({
           requestId,suite,state:'RUNNING',planSha256:digest,startedAt:new Date().toISOString()
         }));
@@ -92,6 +100,8 @@ export function createLocalJobService({
           errorCode:error instanceof TaskPolicyError ? error.message:'JOB_FAILED'};
         await writeFile(auditPath(requestId),JSON.stringify(state));
         return state;
+      } finally {
+        if (activeRequestId === requestId) activeRequestId = null;
       }
     }
   };
