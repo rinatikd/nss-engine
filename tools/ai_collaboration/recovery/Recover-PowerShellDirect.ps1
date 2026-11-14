@@ -46,7 +46,7 @@ try {
   $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
   $plain=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
   if([string]::IsNullOrWhiteSpace($plain)){throw 'KEY_EMPTY'}
-  $psi=New-Object Diagnostics.ProcessStartInfo
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName=$node
   $psi.Arguments='"'+$script+'"'
   $psi.WorkingDirectory=Split-Path $script -Parent
@@ -56,7 +56,7 @@ try {
   $psi.EnvironmentVariables['PS_DIRECT_TUNNEL_CLIENT']=$client
   $psi.EnvironmentVariables['CONTROL_PLANE_API_KEY']=$plain
   if((Check-Stack) -ne 'stopped'){throw 'POWERSHELL_DIRECT_START_RACE'}
-  $child=[Diagnostics.Process]::Start($psi)
+  $child=[System.Diagnostics.Process]::Start($psi)
   if(!$child){throw 'POWERSHELL_DIRECT_START_FAILED'}
   Start-Sleep -Seconds 3
   [PSCustomObject]@{Service='powershell-direct';Outcome=if((Check-Stack) -eq 'owned-listener'){
