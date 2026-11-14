@@ -29,13 +29,17 @@ async function rpc(name,args){
   return await response.json();
 }
 async function waitFor(id,terminal){
-  for(let i=0;i<180;i++){
+  let last=null;
+  for(let i=0;i<400;i++){
     const response=await rpc('powershell_engineering_status',{requestId:id});
     const state=JSON.parse(response.result.content[0].text);
+    last=state;
     if(terminal.includes(state.state))return state;
     await new Promise(resolve=>setTimeout(resolve,500));
   }
-  throw Error('APPROVAL_OR_EXECUTION_TIMEOUT');
+  throw Error('APPROVAL_OR_EXECUTION_TIMEOUT lastState='+JSON.stringify({
+    state:last?.state,reason:last?.reason,errorCode:last?.errorCode
+  }));
 }
 try{
   await service.start();
@@ -50,11 +54,12 @@ try{
       'Submission unexpectedly rejected');
     console.log('LOCAL_APPROVAL_REQUIRED ('+item.expect+')');
     console.log('Open this URL only on the current Windows PC: '+url);
+    console.log('Approval expires after 180 seconds. Do not paste the URL or token into chat.');
     console.log('Choose '+(item.expect==='DENIED'?'Deny':'Approve once')+
       ' for the displayed git-status request.');
-    const result=await waitFor(item.id,[item.expect,'UNKNOWN_OR_FAILED','FAILED','TIMED_OUT']);
+    const result=await waitFor(item.id,['DENIED','FINISHED','UNKNOWN_OR_FAILED','FAILED','TIMED_OUT']);
     assert.equal(result.state,item.expect,
-      'Unexpected result: '+JSON.stringify({state:result.state,errorCode:result.errorCode}));
+      'Unexpected result: '+JSON.stringify({state:result.state,reason:result.reason,errorCode:result.errorCode}));
     if(item.expect==='FINISHED'){
       assert.equal(result.exitCode,0);
       assert.match(result.stdout,/^## /m);
