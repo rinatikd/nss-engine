@@ -22,6 +22,11 @@ main{max-width:520px;margin:34px auto;padding:18px}
     <button id="disconnect" type="button" class="secondary">Отключить</button>
   </div>
   <p id="detail" class="hint" role="status"></p>
+  <div id="pairing" hidden>
+    <label for="pairing-key">Первичная привязка: локальный browserToken</label>
+    <input id="pairing-key" type="password" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;padding:10px;margin:8px 0" aria-describedby="pairing-help">
+    <p id="pairing-help" class="hint">Введите ключ только здесь, внутри расширения; затем ещё раз нажмите «Подключить». После подтверждения сервером ключ сохраняется локально. Не отправляйте его в чат.</p>
+  </div>
   <p class="hint">Подключение предоставляет доступ к обычным открытым и новым веб-вкладкам.
   Chrome может один раз запросить разрешение на сайты. Служебные страницы Chrome недоступны.
   Локально сохранённый ключ не отображается и не передаётся веб-страницам.</p>
