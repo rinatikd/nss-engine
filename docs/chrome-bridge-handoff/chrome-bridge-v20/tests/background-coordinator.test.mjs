@@ -120,3 +120,27 @@ test('failed grant cleanup still disables dispatch and attempts offscreen stop',
   assert.equal(state.bridgeMutationLabMode,false);
   assert.ok(chrome.calls.some(x=>x[0]==='message' && x[1]==='stop'));
 });
+
+test('disconnect during offscreen creation cannot start stale background transport',async()=>{
+  const flags={bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'fixture-only'};
+  const chrome=fakeChrome(flags);
+  let releaseHost;
+  let hostCreationStarted;
+  const started=new Promise(resolve=>{hostCreationStarted=resolve;});
+  const barrier=new Promise(resolve=>{releaseHost=resolve;});
+  chrome.offscreen.createDocument=async()=>{
+    chrome.calls.push(['create','WORKERS']);
+    hostCreationStarted();
+    await barrier;
+  };
+  const attempt=startBackgroundTransport(chrome);
+  await started;
+  // Simulate the persisted user-disconnect intent while Chrome is creating
+  // an offscreen host, without injecting secrets or exercising a real browser.
+  flags.bridgeConnectionDesired=false;
+  releaseHost();
+  const result=await attempt;
+  assert.equal(result.ok,false);
+  assert.equal(result.reason,'MANUAL_DISCONNECT_DURING_START');
+  assert.equal(chrome.calls.some(x=>x[0]==='message' && x[1]==='start'),false);
+});
