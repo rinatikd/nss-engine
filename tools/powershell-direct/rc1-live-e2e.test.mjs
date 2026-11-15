@@ -75,7 +75,7 @@ test('RC1 loopback HTTP and real Windows git-status: approval, denial, replay, r
   });
   assert.equal(finished.state,'FINISHED',JSON.stringify(finished));
   assert.equal(finished.exitCode,0);
-  assert.match(finished.stdout,/release\\/engineering-mcp-rc1-20261115/);
+  assert.ok(finished.stdout.includes('release/engineering-mcp-rc1-20261115'),finished.stdout);
   const again=await call(svc,'powershell_engineering_submit',{
    requestId:id,operation:'git-status',workspace:lab
   });
