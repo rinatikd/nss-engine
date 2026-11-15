@@ -42,7 +42,8 @@ $testFiles=@(
  'tests\bootstrap-context.test.mjs',
  'tests\one-click-session.test.mjs',
  'tests\one-click-control-gate.test.mjs',
- 'tests\paired-stage-paths.test.mjs'
+ 'tests\paired-stage-paths.test.mjs',
+ 'tests\background-recovery-permissions.test.mjs'
 )
 foreach($rel in $testFiles){
  if(!(Test-Path -LiteralPath (Join-Path $source $rel) -PathType Leaf)){
