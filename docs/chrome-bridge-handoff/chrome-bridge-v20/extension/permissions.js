@@ -7,6 +7,8 @@ export const CONTROL_ORIGINS = Object.freeze({
 // navigate or modify a page until separately reviewed and explicitly enabled.
 export const DISCOVERY_ONLY_ORIGINS = Object.freeze({
   'https://grok.com': 'grok',
+  'https://www.kimi.ai': 'kimi',
+  'https://kimi.ai': 'kimi',
   'https://chat.qwen.ai': 'qwen',
   'https://cursor.com': 'cursor',
 });
