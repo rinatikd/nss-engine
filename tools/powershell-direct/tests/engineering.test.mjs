@@ -39,7 +39,7 @@ async function pending(svc,id){
 const approve=async(svc,p,approved)=>fetch('http://127.0.0.1:'+svc.port+'/decide?key='+svc.uiToken,{
   method:'POST',headers:{Origin:'http://127.0.0.1:'+svc.port},
   body:new URLSearchParams({kind:'named',id:p.requestId,sha256:p.planSha256,
-    approved:approved?'yes':'no'})
+    approved:approved?'yes':'no'}),redirect:'manual'
 });
 async function status(svc,id){
   // Concurrent Windows audit-file readers can delay a final atomic rename.
@@ -68,7 +68,7 @@ test('engineering DENY never executes',()=>fixture(async({svc,root,starts})=>{
   const p=await pending(svc,id);
   const page=await fetch('http://127.0.0.1:'+svc.port+'/approve?key='+svc.uiToken);
   assert.match(await page.text(),/git-status/);
-  assert.equal((await approve(svc,p,false)).status,200);
+  assert.equal((await approve(svc,p,false)).status,303);
   const denied=await status(svc,id);
   assert.equal(denied.state,'DENIED');
   assert.equal(denied.reason,'OPERATOR_DENIED');
@@ -79,8 +79,7 @@ test('engineering ALLOW runs once, no replay',()=>fixture(async({svc,root,starts
   rpc(svc,'powershell_engineering_submit',req(root,id,'git-diff'));
   const p=await pending(svc,id);
   const decision=await approve(svc,p,true);
-  assert.equal(decision.status,200);
-  assert.equal((await decision.json()).state,'APPROVED_RECORDED');
+  assert.equal(decision.status,303);
   assert.equal((await status(svc,id)).state,'FINISHED');
   assert.equal(starts(),1);
   rpc(svc,'powershell_engineering_submit',req(root,id,'git-diff'));
@@ -170,7 +169,7 @@ test('status polling during audit transitions never receives truncated JSON',()=
     reads.push(svc.engineeringService.status(id));
   }
   const decision=await approve(svc,pendingEntry,true);
-  assert.equal(decision.status,200);
+  assert.equal(decision.status,303);
   for(let j=0;j<120;j++){
     reads.push(svc.engineeringService.status(id));
   }
