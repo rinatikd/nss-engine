@@ -146,11 +146,14 @@ export class PowerShellApprovalService {
   if(b.method==='tools/call')try{
    const n=b.params?.name,a=b.params?.arguments||{};
    if(this.engineeringHandlers && n==='powershell_engineering_submit'){
-     // Validation must happen synchronously before reporting a queued job.
+     // Validation occurs synchronously, but the async durable-claim and local
+     // approval may not yet have happened. Never claim a new queue entry:
+     // duplicates are intentionally rejected by the exclusive audit claim.
      const promise=this.engineeringHandlers.powershell_engineering_submit(a);
      void promise.catch(()=>{});
      return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify({
-       requestId:a.requestId,state:'QUEUED_FOR_LOCAL_APPROVAL'
+       requestId:a.requestId,state:'SUBMISSION_RECEIVED_STATUS_UNCONFIRMED',
+       guidance:'Use powershell_engineering_status to verify durable queue state'
      })}]}};
    }
    if(this.engineeringHandlers && n==='powershell_engineering_recent'){
