@@ -183,7 +183,7 @@ test('named approval rejects stale plan and redirects after single valid decisio
   assert.equal(decisions,0);
   const good=await attempt(sha);
   assert.equal(good.status,303);
-  assert.match(good.headers.get('location'),/^\\/approve\\?key=/);
+  assert.ok(good.headers.get('location')?.startsWith('/approve?key='));
   assert.equal(decisions,1);
   assert.equal(decision.approved,true);
   assert.equal(decision.planSha256,sha);
