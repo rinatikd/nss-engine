@@ -7,6 +7,17 @@ import {spawn,spawnSync} from 'node:child_process';
 import {verifyEngineeringPlan} from './engineering-plan.mjs';
 const MAX=65536;
 const GIT_PULL_PROBE_TIMEOUT=8000;
+const GCM_EXE='C:/Program Files/Git/mingw64/bin/git-credential-manager.exe';
+// Git for Windows bundles GCM in this trusted location. Do not search PATH
+// or load caller-supplied credential helpers from the repository.
+export function requireTrustedGitCredentialManager({exists=fs.existsSync,stat=fs.statSync}={}){
+  if(!exists(GCM_EXE))throw Error('TRUSTED_GCM_NOT_INSTALLED');
+  try{if(!stat(GCM_EXE).isFile())throw Error('TRUSTED_GCM_NOT_FILE');}
+  catch(e){if(e.message==='TRUSTED_GCM_NOT_FILE')throw e;
+    throw Error('TRUSTED_GCM_UNREADABLE');}
+  return GCM_EXE;
+}
+
 // Git changes are allowed only on a clean, attached branch with a configured upstream.
 // Every probe uses a literal argument list, never shell interpolation.
 function preflightGitPull(plan,{spawnSyncImpl=spawnSync,env}={}){
@@ -58,10 +69,14 @@ export async function runEngineeringPlan(plan,{
     LOCALAPPDATA:process.env.LOCALAPPDATA||'',
     PATH:'C:/Windows/System32;C:/Windows;C:/Program Files/nodejs;C:/Program Files/dotnet;C:/Program Files/Git/cmd',
     GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',
+    GCM_INTERACTIVE:'0',GCM_GUI_PROMPT:'0',
     GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL',
     CI:'1',DOTNET_CLI_TELEMETRY_OPTOUT:'1'
   };
-  if(plan.operation==='git-pull-ff-only')preflightGitPull(plan,{spawnSyncImpl,env:restrictedEnv});
+  if(plan.operation==='git-pull-ff-only'){
+    requireTrustedGitCredentialManager();
+    preflightGitPull(plan,{spawnSyncImpl,env:restrictedEnv});
+  }
   return await new Promise((resolve,reject)=>{
     const start=Date.now();let out='',err='',truncated=false,settled=false,timedOut=false;
     let child,timeout,watchdog;
