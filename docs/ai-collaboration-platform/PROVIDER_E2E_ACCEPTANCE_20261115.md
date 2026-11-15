@@ -50,3 +50,20 @@ Date: 2026-11-15. Evidence: live connector calls from ChatGPT and PR inspection.
 - PR #110 remains DRAFT: review submissions empty; combined commit status entries empty (not proof that all CI succeeded). Review code + check required CI, preserve separation of production and PR102 lab.
 - Existing PR description and some runbooks describe an older 2026-11-14 baseline. Update status claims to distinguish new verified PowerShell Direct cutover from unverified provider integration.
 - Codex CLI remains explicitly out of scope through 2026-11-27 under RELEASE_GATE_RU.md; do not probe it.
+
+
+## Live autonomous checkpoint — 2026-11-15
+
+All items here are direct read-only connector observations or repository inspection. No operator approval was solicited, no AI message submitted, and no Windows process restarted.
+
+- **PR102 Lab**: `browser_status.connected=true`, `queued=0`; Claude and Gemini tab bindings are alive, with stable URLs `claude.ai/new` and `gemini.google.com/app`. `control_status` reports `globalEnabled=true`, `scope=permitted-web-tabs`, `origins=[]` (do not mistake the legacy origin list for a missing One-Click grant).
+- **Claude**: authenticated session indicated by `/new` and visible ProseMirror composer; send selector matches one visible control, disabled on empty composer. No correlated sent/reply evidence. Deployed extension still lacks unverified PR113 first-chat bootstrap, so `SEND_CONTEXT_UNAVAILABLE` remains the previously proven send blocker.
+- **Gemini**: composer visible, send selector matches zero on *empty* composer (expected conditional-button behavior). No draft-prefill or send test was attempted. No selector failure claim.
+- **DeepSeek, Grok, Kimi**: observed in another browser tab set (main Chrome context) but **not bound to connected PR102 Lab**. Main Chrome tabs cannot be treated as lab authorization or live agent channel. Lab browser adapter/origin support is still absent for Grok and Kimi.
+- **Workbench**: `execEnabled=false`, `providersConnected=[]`; only local task board available.
+- **Assistant coordination via GitHub**: fetched comments on issues #83–86; each currently contains only comments attributed to repository owner, without distinguishable assistant ACK/review. Do not call those comments proof of actual assistant delivery or independent review.
+- **PR113**: head `e3282f6`, draft and mergeable. Bootstrap source committed but no installed Windows test evidence, no paired extension/server staging, and no provider E2E.
+- **PR110**: head includes fixed `git-branch`, `git-log`, `chrome-lab-ports` tasks; only source changes, not deployed. The existing five direct read-only tasks still form the installed allowlist until operator-approved service deployment.
+- No Codex execution until the previously agreed exclusion date.
+
+**Gate remains NO-GO for five-provider authenticated send/ACK/reply**, regardless of successful lab session and DOM probes.
