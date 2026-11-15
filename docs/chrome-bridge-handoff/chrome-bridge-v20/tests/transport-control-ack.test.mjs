@@ -151,3 +151,42 @@ test('Worker rejects missing token and ignores uncorrelated legacy control messa
   assert.equal(ack?.reason,'KEY_EMPTY');
   assert.equal(f.transports.length,0);
 });
+
+test('Worker does not acknowledge a stale start after later stop',async()=>{
+  const posted=[];
+  let handler;
+  let releaseStart;
+  const startBarrier=new Promise(resolve=>{releaseStart=resolve;});
+  class DeferredBridgeTransport {
+    async start() { await startBarrier; }
+    stop() {}
+  }
+  const self={
+    postMessage:msg=>posted.push(msg),
+    set onmessage(fn){handler=fn;}
+  };
+  const code=source('transport-worker.js').replace(
+    /^import\s+\{ BridgeTransport \}\s+from\s+'\.\/transport-engine\.js';\s*/,'');
+  runInNewContext(code,{
+    self,BridgeTransport:DeferredBridgeTransport,
+    setTimeout:()=>1,clearTimeout:()=>{},Date,Map,Number,Error
+  });
+  handler({data:{type:'start',requestId:11,token:'fixture'}});
+  handler({data:{type:'stop',requestId:12}});
+  releaseStart();
+  await Promise.resolve();
+  await Promise.resolve();
+  const started=posted.find(x=>x.type==='control-ack'&&x.requestId===11);
+  const stopped=posted.find(x=>x.type==='control-ack'&&x.requestId===12);
+  assert.equal(started?.ok,false);
+  assert.equal(started?.reason,'START_SUPERSEDED_BY_STOP');
+  assert.equal(stopped?.ok,true);
+});
+test('offscreen reports failed worker.postMessage rather than false success',async()=>{
+  const f=hostFixture();
+  f.worker.postMessage=()=>{throw Error('WORKER_TERMINATED');};
+  const response=f.send({target:'bridge-offscreen',type:'stop'});
+  await Promise.resolve();
+  assert.equal(response.response().ok,false);
+  assert.equal(response.response().reason,'WORKER_CONTROL_POST_FAILED');
+});
