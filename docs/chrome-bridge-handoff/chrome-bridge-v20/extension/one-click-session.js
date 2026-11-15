@@ -56,6 +56,7 @@ export function createOneClickSession(chromeApi, {
       if (inFlight) throw Error('SESSION_TRANSITION_IN_PROGRESS');
       inFlight = true;
       const myGeneration = ++generation;
+      let startAttempted = false;
       try {
         // Chrome's permission prompt can only be triggered from a real user gesture.
         // In particular, do not move this request after awaits.
@@ -69,6 +70,9 @@ export function createOneClickSession(chromeApi, {
           bridgeMutationLabMode: true,
           bridgeAllTabsMode: true
         });
+        // An unsuccessful or timed-out start can still leave a Worker polling.
+        // Any attempted start must be explicitly unwound on failure.
+        startAttempted = true;
         const result = await start();
         if (!result?.ok) throw Error(result?.reason || 'BRIDGE_START_FAILED');
         if (generation !== myGeneration) throw Error('SESSION_SUPERSEDED');
@@ -79,6 +83,13 @@ export function createOneClickSession(chromeApi, {
           bridgeConnectionDesired: false, bridgeMutationLabMode: false,
           bridgeAllTabsMode: false
         });
+        // A failed start may have created a live polling Worker before its
+        // acknowledgement was lost. Stop it even if start() returned an error.
+        // Do not invoke stop for permission or pairing failures (no start).
+        if (startAttempted) {
+          try { await stop(); }
+          catch { throw Error('CONNECT_ROLLBACK_UNCONFIRMED'); }
+        }
         // Preserve previously granted Chrome permissions on failed startup.
         // A single explicit Disconnect revokes them. We cannot know whether
         // request() was a new grant without a prior async permission query,
