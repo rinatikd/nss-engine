@@ -281,3 +281,45 @@ test('Disconnect fences a pending positive status read even if storage returns s
     result=>visible=result);
   assert.equal(visible.connected,false);
 });
+
+test('a delayed successful Worker start ACK cannot override a completed Disconnect',async()=>{
+  const flags={bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'fixture'};
+  const c=fakeChrome(flags);
+  let resolveAck,enteredSend;
+  const started=new Promise(resolve=>{enteredSend=resolve;});
+  const ack=new Promise(resolve=>{resolveAck=resolve;});
+  c.runtime.sendMessage=async msg=>{
+    c.calls.push(['message',msg.type]);
+    if(msg.type==='start'){enteredSend();return ack;}
+    return {ok:true};
+  };
+  const first=startBackgroundTransport(c);
+  await started;
+  await stopBackgroundTransport(c);
+  resolveAck({ok:true});
+  const result=await first;
+  assert.equal(result.ok,false);
+  assert.equal(result.reason,'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT');
+  assert.equal(flags.bridgeConnectionDesired,false);
+});
+
+test('a stale positive Worker ACK must respect the final persisted disconnect flag',async()=>{
+  const flags={bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'fixture'};
+  const c=fakeChrome(flags);
+  let releaseAck,enteredSend;
+  const reached=new Promise(resolve=>{enteredSend=resolve;});
+  const hold=new Promise(resolve=>{releaseAck=resolve;});
+  c.runtime.sendMessage=async msg=>{
+    if(msg.type==='start'){enteredSend();return hold;}
+    return {ok:true};
+  };
+  const pending=startBackgroundTransport(c);
+  await reached;
+  // Simulate persisted disconnect by another extension window without a
+  // service-worker stop invocation.
+  flags.bridgeConnectionDesired=false;
+  releaseAck({ok:true});
+  const result=await pending;
+  assert.equal(result.ok,false);
+  assert.equal(result.reason,'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT');
+});
