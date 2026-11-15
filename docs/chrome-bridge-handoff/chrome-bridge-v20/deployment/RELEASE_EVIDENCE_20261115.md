@@ -53,3 +53,10 @@ Workflow run `43732207788` (Chrome Bridge PR113 release source tests, triggered 
 - Commit `d757a87067e676345a1a8439016779d363097687`: negative-path regression checks for active credential mismatch (including ensuring ACK never echoes tokens) and obsolete rejected start after stop.
 - **Executed:** 10/10 V8 isolate evaluations of all current `tests/transport-control-ack.test.mjs` test bodies against fetched current `transport-host.js` and `transport-worker.js`; all PASS, zero failures. These are original JS test bodies using synthetic Node VM/assertion interfaces. They are not actual Node `node --test` and not Chrome E2E.
 - No operator downloads, approvals or Windows commands. PR113 remains Draft / NO-GO until actual release-source Node CI and real isolated Chrome provider E2E.
+
+### Status-check read/Disconnect race — 2026-11-15
+
+- Commit `433e54d9af9b4c3432ec4b3d74b878f04ab1a473`: add a synchronous `disconnectEpoch` fence before any asynchronous stop cleanup. Any in-flight positive `transport-status` validation initiated before Disconnect is rejected even if an asynchronous storage read later returns a stale enabled snapshot. Existing session-flag checks remain mandatory.
+- Commit `e7266022dd1e092cefd539160f393738d5d0763a`: regression test specifically holds an async positive-status storage read, performs Disconnect, then releases an obsolete all-true snapshot and asserts no connected status.
+- Current fetched source blob `01b52ba735a16d1227293f11fb854a219b4bac12` and regression test blob `6bbf7fa146c3e85162027050fde6e59c2724c62b`: **16/16 original test bodies PASS** in isolated V8 with substitute imported dependencies, zero FAIL. Not a Node.js run or Chrome E2E.
+- Container Node.js is present (v22.16.0) but network access to GitHub is unavailable; current GitHub private source not materialized into this runtime. Do not describe these isolate results as authentic Node.js CI. Production and PR102 untouched; no Windows operations, downloads or confirmations requested.
