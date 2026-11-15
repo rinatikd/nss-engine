@@ -7,6 +7,28 @@ import {spawn,spawnSync} from 'node:child_process';
 import {verifyEngineeringPlan} from './engineering-plan.mjs';
 const MAX=65536;
 const GIT_PULL_PROBE_TIMEOUT=8000;
+// Trusted standard Git for Windows GCM locations; no PATH/CWD search.
+const GCM_EXES=Object.freeze([
+ 'C:/Program Files/Git/ucrt64/bin/git-credential-manager.exe',
+ 'C:/Program Files/Git/mingw64/bin/git-credential-manager.exe',
+ 'C:/Program Files/Git/clangarm64/bin/git-credential-manager.exe',
+ 'C:/Program Files/Git/cmd/git-credential-manager.exe',
+ 'C:/Program Files/Git Credential Manager/git-credential-manager.exe',
+ 'C:/Program Files (x86)/Git Credential Manager/git-credential-manager.exe'
+]);
+export function requireTrustedGitCredentialManager({exists=fs.existsSync,stat=fs.statSync}={}){
+ for(const candidate of GCM_EXES){
+  if(!exists(candidate))continue;
+  try{if(!stat(candidate).isFile())throw Error('TRUSTED_GCM_NOT_FILE');}
+  catch(e){
+    if(e.message==='TRUSTED_GCM_NOT_FILE')throw e;
+    throw Error('TRUSTED_GCM_UNREADABLE');
+  }
+  return candidate;
+ }
+ throw Error('TRUSTED_GCM_NOT_INSTALLED');
+}
+
 // Git changes are allowed only on a clean, attached branch with a configured upstream.
 // Every probe uses a literal argument list, never shell interpolation.
 function preflightGitPull(plan,{spawnSyncImpl=spawnSync,env}={}){
@@ -23,7 +45,11 @@ function preflightGitPull(plan,{spawnSyncImpl=spawnSync,env}={}){
   const branch=probe(['symbolic-ref','--quiet','--short','HEAD'],'DETACHED_OR_INVALID');
   if(!branch||branch.startsWith('-'))throw Error('GIT_PULL_BRANCH_UNSAFE');
   const upstream=probe(['rev-parse','--abbrev-ref','--symbolic-full-name','@{upstream}'],'UPSTREAM_REQUIRED');
-  if(!upstream||upstream==='HEAD'||upstream.startsWith('-'))throw Error('GIT_PULL_UPSTREAM_UNSAFE');
+  if(upstream!=='origin/'+branch)throw Error('GIT_PULL_UPSTREAM_UNTRUSTED');
+  const origin=probe(['remote','get-url','origin'],'ORIGIN_REQUIRED');
+  if(!['https://github.com/rinatikd/nss-engine.git',
+        'https://github.com/rinatikd/nss-engine'].includes(origin))
+    throw Error('GIT_PULL_ORIGIN_NOT_ALLOWLISTED');
   const dirty=probe(['status','--porcelain=v1','--untracked-files=all'],'STATUS_FAILED');
   if(dirty!=='')throw Error('GIT_PULL_WORKTREE_NOT_CLEAN');
   const state=probe(['rev-parse','--verify','HEAD'],'HEAD_INVALID');
@@ -37,6 +63,7 @@ export async function runEngineeringPlan(plan,{
   spawnImpl=spawn,
   spawnSyncImpl=spawnSync,
   executableCheck=p=>fs.statSync(p).isFile(),
+  credentialManagerCheck=requireTrustedGitCredentialManager,
   platform=process.platform
 }={}){
   verifyEngineeringPlan(plan);
@@ -58,10 +85,14 @@ export async function runEngineeringPlan(plan,{
     LOCALAPPDATA:process.env.LOCALAPPDATA||'',
     PATH:'C:/Windows/System32;C:/Windows;C:/Program Files/nodejs;C:/Program Files/dotnet;C:/Program Files/Git/cmd',
     GIT_OPTIONAL_LOCKS:'0',GIT_TERMINAL_PROMPT:'0',
+    GCM_INTERACTIVE:'0',GCM_GUI_PROMPT:'0',
     GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL',
     CI:'1',DOTNET_CLI_TELEMETRY_OPTOUT:'1'
   };
-  if(plan.operation==='git-pull-ff-only')preflightGitPull(plan,{spawnSyncImpl,env:restrictedEnv});
+  if(plan.operation==='git-pull-ff-only'){
+    credentialManagerCheck();
+    preflightGitPull(plan,{spawnSyncImpl,env:restrictedEnv});
+  }
   return await new Promise((resolve,reject)=>{
     const start=Date.now();let out='',err='',truncated=false,settled=false,timedOut=false;
     let child,timeout,watchdog;

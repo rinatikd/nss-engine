@@ -10,7 +10,8 @@ $ErrorActionPreference='Stop'
 $repo='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R1'
 $node='C:\Program Files\nodejs\node.exe'
-$client='C:\Engineering\chrome-bridge\codex-handoff-output\direct-cli-v21\runtime\tunnel-client.exe'
+# Resolved from the verified running tunnel process, never from PATH or user arguments.
+$script:client=$null
 $credential=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\control-plane.dpapi'
 $script=Join-Path $stage 'tools\powershell-direct\stack-supervisor.mjs'
 $audit='C:\Engineering\PowerShellDirect-Engineering-Audit-R1'
@@ -38,11 +39,18 @@ function Get-Stack {
  if(!$p -or $p.Name -ine 'node.exe' -or $p.ExecutablePath -ine $node -or
     !$p.CommandLine -or !$p.CommandLine.Contains($script)){return $null}
  $children=@(Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" -ErrorAction Stop |
-  Where-Object {$_.ParentProcessId -eq $id -and $_.ExecutablePath -ieq $client})
+  Where-Object {$_.ParentProcessId -eq $id -and $_.ExecutablePath -and
+    [IO.Path]::GetFileName($_.ExecutablePath) -ieq 'tunnel-client.exe'})
  if($children.Count -ne 1){return $null}
  $childId=[int]$children[0].ProcessId
  if((Get-Listener 18086) -ne $childId){return $null}
- return [pscustomobject]@{SupervisorPid=$id;TunnelPid=$childId}
+ $resolved=[IO.Path]::GetFullPath($children[0].ExecutablePath)
+ $allowedRoot=[IO.Path]::GetFullPath('C:\Engineering')+[IO.Path]::DirectorySeparatorChar
+ if(!$resolved.StartsWith($allowedRoot,[StringComparison]::OrdinalIgnoreCase) -or
+    !(Test-Path -LiteralPath $resolved -PathType Leaf)){return $null}
+ if($script:client -and $script:client -ine $resolved){throw 'TUNNEL_CLIENT_IDENTITY_CHANGED'}
+ $script:client=$resolved
+ return [pscustomobject]@{SupervisorPid=$id;TunnelPid=$childId;TunnelClientPath=$resolved}
 }
 function Test-Health([int]$pidValue){
  $json=(& $client health --port 18086 --pid $pidValue --require-control-plane-poll --json 2>&1 | Out-String)
@@ -54,7 +62,7 @@ function Test-Health([int]$pidValue){
  }catch{return $false}
 }
 function Verify-Requirements {
- foreach($file in @($node,$client,$credential,$script)){
+ foreach($file in @($node,$credential,$script)){
   if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw 'PREREQUISITE_MISSING'}
  }
  foreach($item in $relative){
@@ -64,6 +72,9 @@ function Verify-Requirements {
  }
  $live=Get-Stack
  if($null -eq $live){throw 'ACTIVE_ENGINEERING_STACK_NOT_VERIFIED'}
+ if(!$script:client -or !(Test-Path -LiteralPath $script:client -PathType Leaf)){
+  throw 'ACTIVE_TUNNEL_CLIENT_NOT_FOUND'
+ }
  if(!(Test-Health $live.TunnelPid)){throw 'CURRENT_TUNNEL_NOT_HEALTHY'}
  return $live
 }

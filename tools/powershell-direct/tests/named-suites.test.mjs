@@ -94,7 +94,14 @@ test('named job STATUS does not start a pending job',()=>fixture(async({svc,dir,
   assert.equal(status.state,'PENDING_LOCAL_APPROVAL');
   assert.equal(starts(),0);
   const entry=svc.namedPending.get(id);
-  await approval(svc,entry,false);
+  assert.equal((await approval(svc,entry,false)).status,200);
+  // Approval HTTP response precedes the async durable DENIED audit write.
+  // Do not remove the fixture directory until the background job completes.
+  await waitFor(async()=>{
+    const job=await svc.namedService.status(id);
+    return job.state==='DENIED'?job:null;
+  });
+  assert.equal(starts(),0);
 }));
 
 test('model cannot smuggle approval=true',()=>fixture(async({svc,dir,starts})=>{

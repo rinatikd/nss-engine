@@ -70,15 +70,21 @@ test('git pull only uses fixed fast-forward arguments after clean branch preflig
   assert.ok(plan.args.includes('--ff-only'));
   assert.ok(plan.args.includes('--no-rebase'));
   assert.ok(plan.args.includes('--no-autostash'));
+  assert.ok(plan.args.includes('credential.helper=manager'));
+  assert.ok(plan.args.includes('credential.interactive=false'));
+  assert.ok(plan.args.includes('credential.helper='));
   let calls=0, launched=0;
   const responses=['platform/ai-windows-control-release-20261114',
-   'origin/platform/ai-windows-control-release-20261114','',
+   'origin/platform/ai-windows-control-release-20261114',
+   'https://github.com/rinatikd/nss-engine.git','',
    '1234567890abcdef1234567890abcdef12345678'];
   const result=await runEngineeringPlan(plan,{
-   platform:'win32',executableCheck:()=>true,
+   platform:'win32',executableCheck:()=>true,credentialManagerCheck:()=>true,
    spawnSyncImpl:(exe,args,options)=>{
     assert.equal(options.shell,false);
     assert.equal(options.env.GIT_TERMINAL_PROMPT,'0');
+    assert.equal(options.env.GCM_INTERACTIVE,'0');
+    assert.equal(options.env.GCM_GUI_PROMPT,'0');
     assert.ok(!args.includes('reset')&&!args.includes('checkout'));
     return {status:0,stdout:responses[calls++],stderr:''};
    },
@@ -94,7 +100,7 @@ test('git pull only uses fixed fast-forward arguments after clean branch preflig
     return child;
    }
   });
-  assert.equal(calls,4);
+  assert.equal(calls,5);
   assert.equal(launched,1);
   assert.equal(result.state,'FINISHED');
  }finally{await rm(root,{recursive:true,force:true});}
@@ -109,11 +115,13 @@ test('git pull refuses dirty, detached or missing-upstream worktrees without dis
   for(const responses of [
    [null],
    ['main',null],
-   ['main','origin/main',' M modified.txt']
+   ['main','origin/other'],
+   ['main','origin/main','https://github.com/attacker/other.git'],
+   ['main','origin/main','https://github.com/rinatikd/nss-engine.git',' M modified.txt']
   ]){
    let probe=0,executed=0;
    await assert.rejects(runEngineeringPlan(plan,{
-    platform:'win32',executableCheck:()=>true,
+    platform:'win32',executableCheck:()=>true,credentialManagerCheck:()=>true,
     spawnSyncImpl:()=>responses[probe++]===null?
       {status:1,stdout:'',stderr:'error'}:
       {status:0,stdout:responses[probe-1],stderr:''},
