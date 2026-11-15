@@ -25,7 +25,8 @@ $required=@(
  'tests\one-click-control-gate.test.mjs',
  'tests\paired-stage-paths.test.mjs',
  'tests\background-recovery-permissions.test.mjs',
- 'tests\background-coordinator.test.mjs'
+ 'tests\background-coordinator.test.mjs',
+ 'tests\transport-control-ack.test.mjs'
 )
 foreach ($file in $required) {
   if (-not (Test-Path -LiteralPath (Join-Path $source $file) -PathType Leaf)) {
