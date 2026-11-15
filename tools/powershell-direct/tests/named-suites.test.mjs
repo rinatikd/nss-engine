@@ -107,3 +107,25 @@ test('model cannot smuggle approval=true',()=>fixture(async({svc,dir,starts})=>{
   assert.equal(svc.namedPending.size,0);
   assert.equal(starts(),0);
 }));
+
+test('pinned provider and Claude bootstrap suites are offered but still locally gated',()=>fixture(async({svc,dir,starts})=>{
+ const schema=svc.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools
+  .find(t=>t.name==='powershell_named_suite_submit').inputSchema;
+ assert.ok(schema.properties.suite.enum.includes('platform-provider-preflight'));
+ assert.ok(schema.properties.suite.enum.includes('chrome-pr113-bootstrap'));
+ assert.ok(!schema.properties.suite.enum.includes('shell'));
+ const id='provider-preflight-001';
+ const r=rpc(svc,'powershell_named_suite_submit',{
+  requestId:id,suite:'platform-provider-preflight',workspace:dir
+ });
+ assert.equal(JSON.parse(r.result.content[0].text).state,'QUEUED_FOR_LOCAL_APPROVAL');
+ const p=await waitFor(()=>svc.namedPending.get(id));
+ assert.equal(starts(),0);
+ assert.equal((await approval(svc,p,false)).status,303);
+ await waitFor(async()=>(await svc.namedService.status(id)).state==='DENIED');
+ assert.equal(starts(),0);
+ const denied=rpc(svc,'powershell_named_suite_submit',{
+  requestId:'provider-unsafe-001',suite:'node --eval',workspace:dir
+ });
+ assert.equal(denied.result.isError,true);
+}));
