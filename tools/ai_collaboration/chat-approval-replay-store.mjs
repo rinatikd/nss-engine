@@ -1,7 +1,7 @@
 // Durable one-use grant nonce claims. Never reuse an expired/consumed nonce.
 // Intended only for a separately trusted user-attestation verifier.
 import {createHash} from 'node:crypto';
-import {mkdir,open,stat} from 'node:fs/promises';
+import {mkdir,open,lstat} from 'node:fs/promises';
 import path from 'node:path';
 const ID=/^[a-zA-Z0-9_:\-]{12,512}$/;
 export function createDurableApprovalReplayStore({directory,now=Date.now}={}){
@@ -13,7 +13,7 @@ export function createDurableApprovalReplayStore({directory,now=Date.now}={}){
       !Number.isSafeInteger(expiresAt)||expiresAt<=now())
     throw Error('REPLAY_INVALID_INPUT');
    await mkdir(directory,{recursive:true,mode:0o700});
-   const root=await stat(directory);
+   const root=await lstat(directory);
    if(!root.isDirectory()||root.isSymbolicLink())
     throw Error('REPLAY_STORAGE_NOT_DIRECTORY');
    const filename=createHash('sha256').update(key).digest('hex')+'.claim';
