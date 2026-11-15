@@ -29,6 +29,7 @@ $testFiles=@(
  'tests\claude-bootstrap.test.mjs',
  'tests\gemini-bootstrap.test.mjs',
  'tests\discovery-only-agents.test.mjs',
+ 'tests\bootstrap-context.test.mjs',
  'tests\one-click-session.test.mjs'
 )
 foreach($rel in $testFiles){
