@@ -43,9 +43,14 @@ export function createOneClickSession(chromeApi, {
       return { connected: false, state: 'permission-revoked',
         error: 'HOST_PERMISSION_VERIFICATION_FAILED' };
     }
+    // Preserve an observed transport failure/recovery state. Reporting
+    // "connecting" on a terminal 401/403 or worker error is misleading.
+    const observed = s?.connected === true ? 'connected' :
+      ['auth-failed','error','recovering','disconnected'].includes(s?.state)
+        ? s.state : 'connecting';
     return {
       connected: s?.connected === true,
-      state: s?.connected === true ? 'connected' : 'connecting',
+      state: observed,
       error: s?.error || null
     };
   };
