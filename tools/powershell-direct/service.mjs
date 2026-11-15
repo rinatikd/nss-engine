@@ -11,7 +11,7 @@ import {runEngineeringPlan} from '../ai_collaboration/engineering-runner.mjs';
 
 const PORT=17486, secret=()=>crypto.randomBytes(32).toString('hex');
 // Engineering jobs require local approval; allow a reasonable operator window.
-const ENGINEERING_APPROVAL_MS=10*60*1000;
+const ENGINEERING_APPROVAL_MS=3*60*1000;
 const match=(a,b)=>{const x=Buffer.from(typeof a==='string'?a:''),y=Buffer.from(typeof b==='string'?b:'');return x.length===y.length&&crypto.timingSafeEqual(x,y);};
 const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const clean=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
