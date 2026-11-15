@@ -46,7 +46,30 @@ try{
  # NTFS rename inside the same directory preserves that DACL; applying Set-Acl
  # again after Move-Item can request SeSecurityPrivilege in PowerShell 5.1.
  Set-Acl -LiteralPath $temp -AclObject $fileAcl
- Move-Item -LiteralPath $temp -Destination $file -Force
+ # Windows PowerShell Move-Item -Force may fail when destination already exists
+ # with a protected DACL. Use NTFS atomic replacement for token rotation.
+ # File.Replace does not delete the old token unless replacement succeeds.
+ if(Test-Path -LiteralPath $file -PathType Leaf){
+  $oldItem=Get-Item -LiteralPath $file -Force
+  if(($oldItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+   throw 'APPROVAL_EXISTING_TOKEN_REPARSE_DENIED'
+  }
+  $oldAcl=Get-Acl -LiteralPath $file
+  if(!$oldAcl.AreAccessRulesProtected){throw 'APPROVAL_EXISTING_TOKEN_ACL_NOT_PROTECTED'}
+  foreach($entry in @($oldAcl.Access)){
+   $oldSid=$entry.IdentityReference.Translate(
+    [System.Security.Principal.SecurityIdentifier]).Value
+   if($oldSid -ne $sid.Value -and $oldSid -ne 'S-1-5-18'){
+    throw 'APPROVAL_EXISTING_TOKEN_UNEXPECTED_PRINCIPAL'
+   }
+  }
+  try{[IO.File]::Replace($temp,$file,$null)}
+  catch{throw 'APPROVAL_EXISTING_TOKEN_ATOMIC_REPLACE_FAILED'}
+ }elseif(Test-Path -LiteralPath $file){
+  throw 'APPROVAL_TOKEN_DESTINATION_NOT_FILE'
+ }else{
+  Move-Item -LiteralPath $temp -Destination $file
+ }
  # Fail closed if replacing an existing file did not preserve protection.
  $publishedAcl=Get-Acl -LiteralPath $file
  if(!$publishedAcl.AreAccessRulesProtected){throw 'APPROVAL_FILE_ACL_NOT_PROTECTED'}
@@ -58,6 +81,10 @@ try{
   }
  }
 }finally{
+ # A failed replace must not leave ciphertext temporary files in the profile.
+ if($temp -and (Test-Path -LiteralPath $temp -PathType Leaf)){
+  Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+ }
  [Array]::Clear($plain,0,$plain.Length)
  $token=$null
 }
