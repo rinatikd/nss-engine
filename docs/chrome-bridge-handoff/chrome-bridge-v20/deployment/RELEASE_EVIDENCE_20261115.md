@@ -46,3 +46,10 @@
 ### Latest CI availability verification
 
 Workflow run `43732207788` (Chrome Bridge PR113 release source tests, triggered by commit `429d099e19ff88a1651a2fee82dedab3005a13f2`) finished with `conclusion=failure`, but the sole Node test job `132866918923` has **zero returned execution steps**. This is a CI infrastructure/runner-availability blocker, not evidence the Node tests failed. Do not re-run or treat this as a test result until GitHub runner/account restrictions are resolved. The release suite remains unexecuted on this new head in an actual Node runtime.
+
+### Active credential mismatch / stale failure hardening
+
+- Commit `c1f4f1ba8bb5f556bf6be84e49f7253febf24c78`: Worker refuses an attempt to change an already-active transport's browser token without a disconnect; previously, `BridgeTransport.start()` would return `false` and the Worker ACK would still be `{ok:true}`, leaving the old token silently active. A superseded start rejection no longer overwrites the later stop/reconnect transport state.
+- Commit `d757a87067e676345a1a8439016779d363097687`: negative-path regression checks for active credential mismatch (including ensuring ACK never echoes tokens) and obsolete rejected start after stop.
+- **Executed:** 10/10 V8 isolate evaluations of all current `tests/transport-control-ack.test.mjs` test bodies against fetched current `transport-host.js` and `transport-worker.js`; all PASS, zero failures. These are original JS test bodies using synthetic Node VM/assertion interfaces. They are not actual Node `node --test` and not Chrome E2E.
+- No operator downloads, approvals or Windows commands. PR113 remains Draft / NO-GO until actual release-source Node CI and real isolated Chrome provider E2E.
