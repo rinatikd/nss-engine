@@ -89,7 +89,7 @@ try{
   if($newProcess.ExitCode -ne 0){
    # Never echo child output: report only the fixed, sanitized diagnostic marker.
    $marker=[regex]::Match($newOutput,
-    'APPROVAL_BOOTSTRAP_FAILURE_STAGE_[A-Z_]+_TYPE_[A-Za-z0-9]+_HR_0x[0-9A-F]{8}')
+    'APPROVAL_BOOTSTRAP_FAILURE_STAGE_[A-Z_]+_TYPE_[A-Za-z0-9]+(?:_HR_0x[0-9A-F]{8})?')
    $safe=if($marker.Success){$marker.Value}else{'CHILD_FAILURE_UNCLASSIFIED'}
    throw ('OVERWRITE_WRITER_FAILED_EXIT_'+$newProcess.ExitCode+'_'+$safe)
   }
