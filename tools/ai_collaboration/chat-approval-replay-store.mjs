@@ -3,7 +3,8 @@
 import {createHash} from 'node:crypto';
 import {mkdir,open,lstat} from 'node:fs/promises';
 import path from 'node:path';
-const ID=/^[a-zA-Z0-9_:\-]{12,512}$/;
+// Hash the key before using it as a filename. No path separators or controls.
+const ID=/^[a-zA-Z0-9_.:@-]{12,512}$/;
 export function createDurableApprovalReplayStore({directory,now=Date.now}={}){
  if(typeof directory!=='string'||!path.isAbsolute(directory)||
     typeof now!=='function')throw Error('REPLAY_DIR_REQUIRED');
