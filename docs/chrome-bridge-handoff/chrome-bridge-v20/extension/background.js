@@ -6,6 +6,24 @@ async function maintainBackgroundIfEnabled() {
     const {bridgeBackgroundMode, bridgeConnectionDesired} =
       await chrome.storage.local.get(['bridgeBackgroundMode','bridgeConnectionDesired']);
     if (bridgeBackgroundMode === true && bridgeConnectionDesired === true) {
+      // A Chrome extension restart does not imply that the browser user still
+      // permits a session-wide grant. Refuse automatic transport recovery when
+      // either wildcard host scope was externally revoked.
+      const {bridgeAllTabsMode}=await chrome.storage.local.get('bridgeAllTabsMode');
+      if (bridgeAllTabsMode === true) {
+        const scopes=['http://*/*','https://*/*'];
+        for (const scope of scopes) {
+          if (typeof chrome.permissions?.contains !== 'function' ||
+              !(await chrome.permissions.contains({origins:[scope]}))) {
+            await chrome.storage.local.set({
+              bridgeConnectionDesired:false,
+              bridgeAllTabsMode:false,
+              bridgeMutationLabMode:false
+            });
+            return;
+          }
+        }
+      }
       await startBackgroundTransport(chrome);
     }
   } catch (error) {
