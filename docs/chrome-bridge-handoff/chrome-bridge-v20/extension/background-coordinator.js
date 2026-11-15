@@ -69,7 +69,11 @@ async function startBackgroundTransportOnce(chromeApi) {
   ]);
   if (latest.bridgeBackgroundMode !== true || latest.bridgeConnectionDesired !== true)
     return {ok:false,reason:'MANUAL_DISCONNECT_DURING_START'};
-  await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'start',token:browserToken});
+  const acknowledged = await chromeApi.runtime.sendMessage({
+    target:'bridge-offscreen',type:'start',token:browserToken
+  });
+  if (acknowledged?.ok !== true)
+    return {ok:false,reason:'BACKGROUND_START_UNCONFIRMED'};
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
@@ -83,11 +87,29 @@ export async function stopBackgroundTransport(chromeApi) {
   try { await new BackgroundControlGrants(chromeApi).clear(); }
   catch (error) { cleanupError = error; }
   // Attempt the offscreen stop even when stale-grant cleanup failed.
-  // Never retry message dispatch after a failed stop.
-  try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); }
-  catch { /* A missing/offline offscreen host is already stopped. */ }
-  updateStatus({state:'disconnected',connected:false});
+  // A failed message is only harmless when Chrome proves the offscreen host
+  // does not exist. Otherwise NEVER falsely acknowledge a stopped transport.
+  let stopUnconfirmed = false;
+  try {
+    const ack = await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'});
+    if (ack?.ok !== true) stopUnconfirmed = true;
+  } catch {
+    try {
+      if (typeof chromeApi.runtime?.getContexts !== 'function') {
+        stopUnconfirmed = true;
+      } else {
+        const contexts = await chromeApi.runtime.getContexts({
+          contextTypes:['OFFSCREEN_DOCUMENT'],
+          documentUrls:[chromeApi.runtime.getURL(PATH)]
+        });
+        if (!Array.isArray(contexts) || contexts.length > 0) stopUnconfirmed = true;
+      }
+    } catch { stopUnconfirmed = true; }
+  }
+  updateStatus({state:'disconnected',connected:false,
+    error:stopUnconfirmed ? 'BACKGROUND_STOP_UNCONFIRMED' : null});
   if (cleanupError) throw Error('BACKGROUND_GRANT_CLEANUP_FAILED');
+  if (stopUnconfirmed) throw Error('BACKGROUND_STOP_UNCONFIRMED');
 }
 export function installBackgroundCoordinator(chromeApi) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
