@@ -96,3 +96,15 @@ Independent real Node/Chrome testing on latest commit and full security review r
 - `ff7843c2b03b8184dbf0b4a52d62758d3cc891f4`: five tests covering unchanged destination, changed href, changed form action, legacy compatibility and changed text. Exact `extension/page.js` GitHub source blob `f5b76f30fdbd2421545b665570c2391078e03673` and test blob `4ebf0eb0148e8fa75eb589dfabce0819922e6038` executed as V8 JS source and test bodies: **5/5 PASS**, no failures. This is NOT native Node's `node --test`, Chrome DOM E2E or an audit of all cross-document races.
 - This protects preflight-to-execution destination changes, but an independently authoritative host permission check immediately before injection remains important; the browser's permissions / navigation / user grant must be validated during installed E2E.
 - No production or PR102 changes, local browser installation, token operations or request for operator downloads/confirmation.
+
+### Read-only live adapter diagnostic (existing PR102 lab, not PR113)
+
+2026-11-15 connected PR102 `browser_status`: `connected=true`, `queued=0`. `control_status`: `connected=true`, `globalEnabled=true`. These describe the existing PR102 environment ONLY; they cannot serve as deployment or E2E evidence for PR113.
+
+- Claude, `https://claude.ai/new`: live `agent_selftest` found 1 visible composer, 1 visible send selector, zero replies, and live element metadata `data-testid=chat-input-send` (disabled in an empty composer, as expected). Extend PR113 selector with this observed test id while preserving legacy aria labels: `878de79e0c4db38d1cfd1de79a8a3c15e0480bf5`. Regression `1e2fa697ed87596ac65312a5993167dadceadf88`.
+- Gemini, `https://gemini.google.com/app`: 1 visible composer, **zero matched send buttons** in the empty composer state. This observation alone does not prove its send selector is broken, because a button can mount after text entry. **No blind selector change** until positive test after typing in an approved isolated PR113 session.
+- DeepSeek, `https://chat.deepseek.com/sign_in`: no composer, no replies, one matched send-like selector; actual login needed to validate chat. **No sending or account login attempted.**
+- No changes to PR102 state or production, no provider sends, grants, cookie use or login actions.
+- Workbench `workbench_status` still reports `execEnabled=false`, `providersConnected=[]`. Autonomous deploy of the new PR113 build to the Work PC is not available.
+- Local model execution container Node.js v22.16.0 installed, but `git ls-remote https://github.com/rinatikd/nss-engine.git` fails DNS resolution (`Could not resolve host: github.com`). Existing `PR113-isolated-offline-bootstrap.zip` contains only a PowerShell preparer and README, not the full current source tree; it cannot support truthful full Node unit tests of the latest GitHub SHA.
+- Release remains Draft / NO-GO pending real tests and operator-supported approved installation stage.
