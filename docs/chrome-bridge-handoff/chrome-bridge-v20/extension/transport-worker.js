@@ -29,14 +29,45 @@ const start = async (token) => {
   }
   await transport.start(token);
 };
+// Control ACKs are emitted by the Worker only after the requested operation
+// has been processed. Host-side postMessage merely queues a command.
+let controlGeneration = 0;
+const acknowledge = (requestId, type, ok, reason = null) => {
+  send({type:'control-ack',requestId,operation:type,ok,reason});
+};
 self.onmessage = (event) => {
   const msg = event.data;
   if (!msg || typeof msg !== 'object') return;
-  if (msg.type === 'start') {
-    void start(msg.token).catch(e => send({type:'transport-status',status:{state:'error',connected:false,error:e.message}}));
-  } else if (msg.type === 'stop') {
-    transport?.stop();
-    for (const [id,p] of pending) { clearTimeout(p.timer); p.reject(Error('Stopped')); pending.delete(id); }
+  if (msg.type === 'start' && Number.isSafeInteger(msg.requestId)) {
+    const myGeneration = ++controlGeneration;
+    if (typeof msg.token !== 'string' || !msg.token.trim()) {
+      acknowledge(msg.requestId,'start',false,'KEY_EMPTY');
+      return;
+    }
+    void start(msg.token).then(() => {
+      // A later stop invalidates the earlier start acknowledgement.
+      if (myGeneration !== controlGeneration)
+        acknowledge(msg.requestId,'start',false,'START_SUPERSEDED_BY_STOP');
+      else acknowledge(msg.requestId,'start',true);
+    }, e => {
+      acknowledge(msg.requestId,'start',false,'WORKER_START_FAILED');
+      send({type:'transport-status',status:{
+        state:'error',connected:false,error:'WORKER_START_FAILED'
+      }});
+    });
+  } else if (msg.type === 'stop' && Number.isSafeInteger(msg.requestId)) {
+    ++controlGeneration;
+    try {
+      transport?.stop();
+      for (const [id,p] of pending) {
+        clearTimeout(p.timer);
+        p.reject(Error('Stopped'));
+        pending.delete(id);
+      }
+      acknowledge(msg.requestId,'stop',true);
+    } catch {
+      acknowledge(msg.requestId,'stop',false,'WORKER_STOP_FAILED');
+    }
   } else if (msg.type === 'dispatch-result') {
     const p = pending.get(msg.id);
     if (!p) return;
