@@ -34,7 +34,11 @@ function preflightGitPull(plan,{spawnSyncImpl=spawnSync,env}={}){
   const branch=probe(['symbolic-ref','--quiet','--short','HEAD'],'DETACHED_OR_INVALID');
   if(!branch||branch.startsWith('-'))throw Error('GIT_PULL_BRANCH_UNSAFE');
   const upstream=probe(['rev-parse','--abbrev-ref','--symbolic-full-name','@{upstream}'],'UPSTREAM_REQUIRED');
-  if(!upstream||upstream==='HEAD'||upstream.startsWith('-'))throw Error('GIT_PULL_UPSTREAM_UNSAFE');
+  if(upstream!=='origin/'+branch)throw Error('GIT_PULL_UPSTREAM_UNTRUSTED');
+  const origin=probe(['remote','get-url','origin'],'ORIGIN_REQUIRED');
+  if(!['https://github.com/rinatikd/nss-engine.git',
+        'https://github.com/rinatikd/nss-engine'].includes(origin))
+    throw Error('GIT_PULL_ORIGIN_NOT_ALLOWLISTED');
   const dirty=probe(['status','--porcelain=v1','--untracked-files=all'],'STATUS_FAILED');
   if(dirty!=='')throw Error('GIT_PULL_WORKTREE_NOT_CLEAN');
   const state=probe(['rev-parse','--verify','HEAD'],'HEAD_INVALID');
