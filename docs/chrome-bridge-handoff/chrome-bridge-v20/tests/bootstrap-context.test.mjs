@@ -22,3 +22,10 @@ test('existing real conversation IDs retain normal send policy',()=>{
  assert.equal(check({conversationId:'12345678-1234-1234-1234-123456789abc',bootstrap:false,origin:'https://claude.ai'},'claude').bootstrap,false);
  assert.equal(check({conversationId:'12345678-1234-1234-1234-123456789abc',origin:'https://gemini.google.com'},'gemini').bootstrap,false);
 });
+
+test('prototype names cannot masquerade as bootstrap markers',()=>{
+ for(const id of ['constructor','toString','__proto__','hasOwnProperty']) {
+  assert.equal(check({conversationId:id,bootstrap:false,origin:'https://claude.ai'},'claude').bootstrap,false);
+  assert.throws(()=>check({conversationId:id,bootstrap:true,origin:'https://claude.ai'},'claude'),/SEND_BOOTSTRAP_CONTEXT_INVALID/);
+ }
+});
