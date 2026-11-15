@@ -44,11 +44,18 @@ foreach($rel in $checkPaths){
   if((Get-FileHash -LiteralPath $a -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $b -Algorithm SHA256).Hash){$drift+= $rel}
 }
 $unexpected=@($drift | Where-Object {$_ -notin $files})
-if($unexpected.Count){throw ('UNEXPECTED_DRIFT_'+($unexpected -join ','))}
 if($Mode -eq 'Inspect'){
- [pscustomobject]@{Result='ENGINEERING_STAGE_DRIFT_INSPECTED';FilesToUpdate=$drift;OtherFilesMatch=$true;ProductionTouched=$false}|ConvertTo-Json
+ [pscustomobject]@{
+  Result='ENGINEERING_STAGE_DRIFT_INSPECTED'
+  AllChangedModules=$drift
+  ExpectedUpdateFiles=$files
+  UnexpectedDrift=$unexpected
+  SafeToRunExistingTwoFileSync=($unexpected.Count -eq 0 -and $drift.Count -eq 2)
+  ProductionTouched=$false
+ }|ConvertTo-Json -Depth 4
  return
 }
+if($unexpected.Count){throw ('UNEXPECTED_DRIFT_'+($unexpected -join ','))}
 if($drift.Count -ne 2){throw 'EXPECTED_TWO_FILE_DRIFT_REQUIRED'}
 # Test latest checkout before staging the two files.
 Push-Location $repo
