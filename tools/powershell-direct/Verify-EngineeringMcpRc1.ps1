@@ -43,6 +43,18 @@ if($Mode -eq 'Inspect'){
  }|ConvertTo-Json -Compress
  return
 }
+# Parse both PowerShell release scripts without evaluating them.
+$releaseScripts=@(
+ 'tools/powershell-direct/Upgrade-EngineeringApproval.ps1',
+ 'tools/powershell-direct/Verify-EngineeringMcpRc1.ps1'
+)
+foreach($psFile in $releaseScripts){
+ $tokens=$null;$errors=$null
+ $full=Join-Path $root $psFile
+ $null=[System.Management.Automation.Language.Parser]::ParseFile(
+  $full,[ref]$tokens,[ref]$errors)
+ if($errors.Count -gt 0){throw ('RC1_POWERSHELL_PARSE_FAILED: '+$psFile)}
+}
 foreach($item in $syntax){
  & $node --check (Join-Path $root $item)
  if($LASTEXITCODE -ne 0){throw ('RC1_SYNTAX_FAILED: '+$item)}
