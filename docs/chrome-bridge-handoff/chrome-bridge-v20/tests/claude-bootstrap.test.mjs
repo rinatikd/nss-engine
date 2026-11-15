@@ -51,3 +51,12 @@ test('mismatch in expected first-chat context blocks before any DOM click',async
     assert.match(r.error,/Conversation changed/);
   });
 });
+
+test('Claude send adapter preserves legacy labels and live-observed test id',async()=>{
+  const {DEFAULT_ADAPTERS}=await import('../extension/adapters.js');
+  const selector=DEFAULT_ADAPTERS.claude.send;
+  assert.match(selector,/chat-input-send/);
+  assert.match(selector,/Send message/);
+  assert.match(selector,/Send Message/);
+  assert.equal(selector.split(',').length,3);
+});
