@@ -37,11 +37,17 @@ try{
   engineeringAuditDirectory:'C:\\Engineering\\PowerShellDirect-Engineering-Audit-R1'
  });
  out.importsOk=true;out.workspaceRootsValid=checked.length===2;
- out.engineeringToolsRegistered=instance.rpc({jsonrpc:'2.0',id:1,method:'tools/list'})
-  .result.tools.some(x=>x.name==='powershell_engineering_recent');
+ const registered=instance.rpc({jsonrpc:'2.0',id:1,method:'tools/list'})
+  .result.tools.map(x=>x.name);
+ out.engineeringSubmitRegistered=registered.includes('powershell_engineering_submit');
+ out.engineeringStatusRegistered=registered.includes('powershell_engineering_status');
+ out.engineeringRecentRegistered=registered.includes('powershell_engineering_recent');
+ out.engineeringToolsRegistered=out.engineeringSubmitRegistered&&out.engineeringStatusRegistered;
+ out.stagedFeatureLevel=out.engineeringRecentRegistered?'CURRENT_AUDIT_INBOX':
+   'LEGACY_NO_AUDIT_INBOX';
  // Instance is neither started nor listening; no keys are exported.
  out.serverListening=instance.server.listening;
- out.result=out.engineeringToolsRegistered?'PASS':'MCP_RECENT_NOT_REGISTERED';
+ out.result=out.engineeringToolsRegistered&&!out.serverListening?'PASS':'ENGINEERING_TOOLS_NOT_REGISTERED';
 }catch(e){
  out.importsOk=false;out.result='BLOCKED';
  const code=String(e?.code||e?.message||'UNKNOWN');
