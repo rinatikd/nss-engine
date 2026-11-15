@@ -40,6 +40,21 @@ export const SUITES = Object.freeze({
     cwd: '.',
     timeoutMs: 120000
   },
+  // Portable pure classifier checks. Named suite is still code execution and
+  // requires the same local approval as all node-test tasks.
+  'platform-provider-preflight': {
+    command: 'node',
+    args: ['--test', 'tools/ai_collaboration/provider-preflight.test.mjs'],
+    cwd: '.',
+    timeoutMs: 30000
+  },
+  // Run ONLY in an approved detached PR113 checkout at an exact pinned SHA.
+  'chrome-pr113-bootstrap': {
+    command: 'node',
+    args: ['--test', 'docs/chrome-bridge-handoff/chrome-bridge-v20/tests/claude-bootstrap.test.mjs'],
+    cwd: '.',
+    timeoutMs: 60000
+  },
   // Execute only in a separately approved PR113 checkout. Tests may create
   // caches; neither these suites nor their outputs are "read-only".
   'chrome-pr113-node': {
