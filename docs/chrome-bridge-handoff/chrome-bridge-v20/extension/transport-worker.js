@@ -27,6 +27,11 @@ const start = async (token) => {
       onStatus: (status) => send({type:'transport-status',status})
     });
   }
+  // A running transport cannot silently adopt a different browser token:
+  // BridgeTransport.start() otherwise returns false and the caller would
+  // receive a misleading success while polling with the old credential.
+  if (transport.active === true && transport.token !== token.trim())
+    throw Error('ACTIVE_SESSION_CREDENTIAL_MISMATCH');
   await transport.start(token);
 };
 // Control ACKs are emitted by the Worker only after the requested operation
@@ -50,8 +55,14 @@ self.onmessage = (event) => {
         acknowledge(msg.requestId,'start',false,'START_SUPERSEDED_BY_STOP');
       else acknowledge(msg.requestId,'start',true);
     }, e => {
-      acknowledge(msg.requestId,'start',false,'WORKER_START_FAILED');
-      send({type:'transport-status',status:{
+      const superseded = myGeneration !== controlGeneration;
+      acknowledge(msg.requestId,'start',false,
+        superseded ? 'START_SUPERSEDED_BY_STOP' :
+        e?.message === 'ACTIVE_SESSION_CREDENTIAL_MISMATCH'
+          ? 'ACTIVE_SESSION_CREDENTIAL_MISMATCH' : 'WORKER_START_FAILED');
+      // Do not overwrite a later successful stop/reconnect status with
+      // a delayed failure from an obsolete start request.
+      if (!superseded) send({type:'transport-status',status:{
         state:'error',connected:false,error:'WORKER_START_FAILED'
       }});
     });
