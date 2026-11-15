@@ -31,15 +31,37 @@ foreach($allowedSid in @($sid,([System.Security.Principal.SecurityIdentifier]::n
   [System.Security.AccessControl.PropagationFlags]::None,[System.Security.AccessControl.AccessControlType]::Allow)
  $dirAcl.AddAccessRule($rule)
 }
+$script:bootstrapStep='DIRECTORY_ACL'
 if(Test-Path -LiteralPath $directory){
+ # On restart the directory already has a protected DACL. Reapplying it can
+ # demand SeSecurityPrivilege; verify it instead of changing security metadata.
  $item=Get-Item -LiteralPath $directory -Force
  if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'APPROVAL_DIRECTORY_REPARSE_DENIED'}
  if(!$item.PSIsContainer){throw 'APPROVAL_DIRECTORY_NOT_DIRECTORY'}
 }else{
  New-Item -ItemType Directory -Path $directory -Force | Out-Null
+ $item=Get-Item -LiteralPath $directory -Force
+ if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'APPROVAL_DIRECTORY_REPARSE_DENIED'}
+ Set-Acl -LiteralPath $directory -AclObject $dirAcl
 }
-$script:bootstrapStep='DIRECTORY_ACL'
-Set-Acl -LiteralPath $directory -AclObject $dirAcl
+$script:bootstrapStep='DIRECTORY_ACL_VERIFY'
+$existingDirAcl=Get-Acl -LiteralPath $directory
+if(!$existingDirAcl.AreAccessRulesProtected){throw 'APPROVAL_DIRECTORY_ACL_NOT_PROTECTED'}
+$hasCurrentUserFullControl=$false
+foreach($entry in @($existingDirAcl.Access)){
+ $entrySid=$entry.IdentityReference.Translate(
+  [System.Security.Principal.SecurityIdentifier]).Value
+ if($entrySid -ne $sid.Value -and $entrySid -ne 'S-1-5-18'){
+  throw 'APPROVAL_DIRECTORY_ACL_UNEXPECTED_PRINCIPAL'
+ }
+ if($entrySid -eq $sid.Value -and
+    $entry.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+    (($entry.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq
+     [System.Security.AccessControl.FileSystemRights]::FullControl)){
+  $hasCurrentUserFullControl=$true
+ }
+}
+if(!$hasCurrentUserFullControl){throw 'APPROVAL_DIRECTORY_USER_ACCESS_MISSING'}
 $entropy=[Text.Encoding]::UTF8.GetBytes('PowerShellDirectApproval:v1')
 $plain=[Text.Encoding]::UTF8.GetBytes($token)
 try{
