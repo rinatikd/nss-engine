@@ -15,8 +15,10 @@ if ($LASTEXITCODE -ne 0 -or $actualBranch -cne $branch) { throw 'ACTIVE_BRANCH_U
 $state=@(& git status --porcelain)
 if ($LASTEXITCODE -ne 0 -or $state.Count -ne 0) { throw 'ACTIVE_WORKTREE_NOT_CLEAN' }
 if (Test-Path -LiteralPath $worktree) { throw 'TEST_WORKTREE_ALREADY_EXISTS' }
-# The earlier fetch wrote the commit to FETCH_HEAD, but did not create
-# refs/remotes/origin/feature/... . We pin the exact reviewed commit instead.
+# Download the exact branch into FETCH_HEAD without switching or resetting
+# the current branch; then require the reviewed immutable SHA.
+& git -c core.hooksPath=NUL -c protocol.ext.allow=never -c protocol.file.allow=never fetch --no-tags origin refs/heads/feature/chrome-bridge-one-click-all-tabs-20261114
+if ($LASTEXITCODE -ne 0) { throw 'PR113_FETCH_FAILED' }
 & git cat-file -e ($commit + '^{commit}')
 if ($LASTEXITCODE -ne 0) { throw 'EXPECTED_PR113_COMMIT_NOT_FETCHED' }
 & git -c core.hooksPath=NUL worktree add --detach $worktree $commit
