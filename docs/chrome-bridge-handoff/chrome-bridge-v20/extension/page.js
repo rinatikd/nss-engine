@@ -43,8 +43,8 @@ export async function pageAction(name, args, expectedOrigin) {
     // The target's destination is as important as its visible label.
     // Reject href/form-action swaps between preflight and actual click.
     if (d.tag !== expect.tag || d.text !== expect.text ||
-        d.href !== (expect.href || '') ||
-        d.formAction !== (expect.formAction || ''))
+        (Object.hasOwn(expect,'href') && d.href !== expect.href) ||
+        (Object.hasOwn(expect,'formAction') && d.formAction !== expect.formAction))
       throw Error('Element changed after approval');
   };
   try {
