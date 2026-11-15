@@ -1,4 +1,5 @@
 import { installBackgroundCoordinator, startBackgroundTransport } from './background-coordinator.js';
+import { canRecoverAllTabsSession } from './background-recovery-permissions.js';
 installBackgroundCoordinator(chrome);
 
 async function maintainBackgroundIfEnabled() {
@@ -6,23 +7,18 @@ async function maintainBackgroundIfEnabled() {
     const {bridgeBackgroundMode, bridgeConnectionDesired} =
       await chrome.storage.local.get(['bridgeBackgroundMode','bridgeConnectionDesired']);
     if (bridgeBackgroundMode === true && bridgeConnectionDesired === true) {
-      // A Chrome extension restart does not imply that the browser user still
-      // permits a session-wide grant. Refuse automatic transport recovery when
-      // either wildcard host scope was externally revoked.
       const {bridgeAllTabsMode}=await chrome.storage.local.get('bridgeAllTabsMode');
-      if (bridgeAllTabsMode === true) {
-        const scopes=['http://*/*','https://*/*'];
-        for (const scope of scopes) {
-          if (typeof chrome.permissions?.contains !== 'function' ||
-              !(await chrome.permissions.contains({origins:[scope]}))) {
-            await chrome.storage.local.set({
-              bridgeConnectionDesired:false,
-              bridgeAllTabsMode:false,
-              bridgeMutationLabMode:false
-            });
-            return;
-          }
+      if (!(await canRecoverAllTabsSession(chrome))) {
+        // An externally revoked permission ends this session instead of
+        // reconnecting every minute with an apparently active status.
+        if (bridgeAllTabsMode === true) {
+          await chrome.storage.local.set({
+            bridgeConnectionDesired:false,
+            bridgeAllTabsMode:false,
+            bridgeMutationLabMode:false
+          });
         }
+        return;
       }
       await startBackgroundTransport(chrome);
     }
