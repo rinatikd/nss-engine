@@ -85,3 +85,42 @@ test('crash after claiming does not permit replay',()=>fixture(async(root,audits
   assert.equal((await service.submit(request(root))).state,'UNKNOWN_PREVIOUS_REQUEST');
   assert.equal(invoked,1);
 }));
+
+test('durable audit inbox survives service recreation without replay rights',()=>fixture(async(root,audits)=>{
+  let executions=0;
+  const settings={
+    approvedWorkspaceRoots:[root],auditDirectory:audits,
+    approveRequest:async()=>({approved:false,reason:'APPROVAL_EXPIRED'}),
+    runner:async()=>{executions++;return {exitCode:0};}
+  };
+  const first=createLocalJobService(settings);
+  const result=await first.submit(request(root));
+  assert.equal(result.state,'DENIED');
+  const second=createLocalJobService(settings);
+  const rows=await second.recent();
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].requestId,request(root).requestId);
+  assert.equal(rows[0].state,'DENIED');
+  assert.equal(rows[0].reason,'APPROVAL_EXPIRED');
+  assert.equal('stdout' in rows[0],false);
+  assert.equal('command' in rows[0],false);
+  assert.equal('workspace' in rows[0],false);
+  assert.equal((await second.submit(request(root))).state,'UNKNOWN_PREVIOUS_REQUEST');
+  assert.equal(executions,0);
+}));
+
+test('interrupted audit entries display manual review, never active approval',()=>fixture(async(root,audits)=>{
+  const {mkdir,writeFile}=await import('node:fs/promises');
+  await mkdir(audits,{recursive:true});
+  await writeFile(path.join(audits,'stalejob123.json'),JSON.stringify({
+    requestId:'stalejob123',suite:'node-test',state:'PENDING_LOCAL_APPROVAL',
+    createdAt:'2026-11-15T05:00:00.000Z',planSha256:'f'.repeat(64)
+  }));
+  const service=createLocalJobService({approvedWorkspaceRoots:[root],
+    auditDirectory:audits,approveRequest:async()=>{throw Error('SHOULD_NOT_APPROVE');}});
+  const rows=await service.recent();
+  assert.equal(rows[0].state,'REQUIRES_MANUAL_REVIEW');
+  assert.equal((await service.submit({requestId:'stalejob123',suite:'chrome-pr113-node',workspace:root})).state,
+    'UNKNOWN_PREVIOUS_REQUEST');
+  await assert.rejects(()=>service.recent(999),/INVALID_RECENT_LIMIT/);
+}));
