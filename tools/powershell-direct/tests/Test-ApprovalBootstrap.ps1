@@ -3,6 +3,15 @@ $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Security -ErrorAction Stop
 $save=Join-Path $PSScriptRoot '..\Save-ApprovalToken.ps1'
 $open=Join-Path $PSScriptRoot '..\Open-Approval.ps1'
+# Parse the script without running it, BEFORE any DPAPI test setup.
+$parseTokens=$null
+$parseErrors=$null
+$null=[System.Management.Automation.Language.Parser]::ParseFile(
+ (Resolve-Path -LiteralPath $save).Path,[ref]$parseTokens,[ref]$parseErrors)
+if(@($parseErrors).Count -gt 0){
+ throw ('APPROVAL_TOKEN_WRITER_PARSE_FAILED_'+@($parseErrors).Count)
+}
+
 $testRoot=Join-Path $env:TEMP ('psdirect-approval-test-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 $priorLocalAppData=$env:LOCALAPPDATA
