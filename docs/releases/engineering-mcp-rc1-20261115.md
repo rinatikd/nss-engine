@@ -63,3 +63,11 @@ The operator has previously completed an explicit supervised cutover to the base
 The new `Verify-EngineeringMcpRc1.ps1` has `Inspect` (presence checks) and `Verify` (Node tests; optional isolated DPAPI tests). It never starts, stops or upgrades the supervisor, edits the production configuration, or invokes Codex.
 
 **Release decision:** presently **RC1 PREPARED / NO-GO FOR PRODUCTION PROMOTION** pending Windows qualification evidence for the exact candidate.
+
+## GitHub authentication blocker and RC1 remediation (2026-11-15)
+
+An operator-approved Engineering MCP `git-pull-ff-only` request `rc1-base-ff-sync-20261115-r1` failed with `fatal: could not read Username for 'https://github.com': terminal prompts disabled`. Subsequent Git status confirmed the base checkout remained clean. Git's intentionally restricted `GIT_CONFIG_GLOBAL=NUL` configuration had no explicit credential helper. **Do not enable arbitrary prompts or pass credentials through MCP.**
+
+The RC1 runner now pins `credential.helper=manager` on the fixed `git-pull-ff-only` operation, rejects non-allowlisted GitHub remotes and upstream mismatches, requires the trusted Git for Windows Credential Manager binary, and sets `GCM_INTERACTIVE=0`, `GCM_GUI_PROMPT=0`, `GIT_TERMINAL_PROMPT=0`. The operator performs initial GitHub sign-in once on the local Windows computer using `tools/powershell-direct/Repair-EngineeringGitAuth.ps1 -Mode AuthorizeAndStage` from the **base branch**. That explicit local action is outside the ChatGPT MCP automation channel and may open the official GCM GitHub authorization UI; no password or token is supplied to ChatGPT or checked in. The script first checks exact repository, branch, origin, clean worktree and trusted GCM installation, then performs a bounded FF-only synchronization and invokes fixed RC1 lab preparation.
+
+After the first local sign-in, the Engineering MCP should reuse cached credentials without interaction. This behavior **requires real Windows validation**: GCM presence, GitHub permission, version, effective environment and permissions are not yet verified. Never claim the authorization issue resolved until the isolated RC1 checkout and regression tests actually succeed. GitHub auth for Git itself is independent of Codex CLI and no paid API tokens are needed.
