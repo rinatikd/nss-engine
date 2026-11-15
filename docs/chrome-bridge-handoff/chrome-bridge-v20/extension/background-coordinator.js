@@ -53,6 +53,7 @@ export async function startBackgroundTransport(chromeApi) {
   return starting;
 }
 async function startBackgroundTransportOnce(chromeApi) {
+  const expectedEpoch = disconnectEpoch;
   // Restrict access before reading secrets, not after obtaining the key.
   await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   const {bridgeConnectionDesired, browserToken} = await chromeApi.storage.local.get(
@@ -76,6 +77,17 @@ async function startBackgroundTransportOnce(chromeApi) {
   });
   if (acknowledged?.ok !== true)
     return {ok:false,reason:'BACKGROUND_START_UNCONFIRMED'};
+  // A Disconnect can overtake the worker acknowledgement. Do not report
+  // success from an obsolete start even if the Worker briefly accepted it.
+  if (disconnectEpoch !== expectedEpoch)
+    return {ok:false,reason:'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT'};
+  const finalIntent = await chromeApi.storage.local.get([
+    'bridgeBackgroundMode','bridgeConnectionDesired'
+  ]);
+  if (disconnectEpoch !== expectedEpoch ||
+      finalIntent.bridgeBackgroundMode !== true ||
+      finalIntent.bridgeConnectionDesired !== true)
+    return {ok:false,reason:'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT'};
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
