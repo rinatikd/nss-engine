@@ -46,13 +46,36 @@ function Get-Stack {
  return [pscustomobject]@{SupervisorPid=$id;TunnelPid=$childId}
 }
 function Test-Health([int]$pidValue){
- $json=(& $client health --port 18086 --pid $pidValue --require-control-plane-poll --json 2>&1 | Out-String)
- if($LASTEXITCODE -ne 0){return $false}
+ # Avoid invoking a native binary *inside* the PowerShell output pipeline.
+ # The earlier Windows Inspect failed with CantActivateDocumentInPipeline;
+ # this explicit ProcessStartInfo separates executable launch from PS pipes.
+ # Always discard raw diagnostics: health output may evolve to contain secrets.
+ $psi=New-Object Diagnostics.ProcessStartInfo
+ $psi.FileName=$client
+ $psi.Arguments='health --port 18086 --pid '+$pidValue+' --require-control-plane-poll --json'
+ $psi.UseShellExecute=$false
+ $psi.CreateNoWindow=$true
+ $psi.RedirectStandardOutput=$true
+ $psi.RedirectStandardError=$true
+ $child=$null
  try{
-  $obj=ConvertFrom-Json $json
+  $child=[Diagnostics.Process]::Start($psi)
+  if(!$child){return $false}
+  if(!$child.WaitForExit(8000)){
+   try{$child.Kill()}catch{}
+   return $false
+  }
+  if($child.ExitCode -ne 0){return $false}
+  $raw=$child.StandardOutput.ReadToEnd()
+  if($raw.Length -gt 16384){return $false}
+  $obj=ConvertFrom-Json -InputObject $raw -ErrorAction Stop
   return ($obj.result -eq 'ok' -and $obj.healthz.ok -eq $true -and
           $obj.readyz.ok -eq $true -and $obj.control_plane_poll.ok -eq $true)
- }catch{return $false}
+ }catch{
+  return $false
+ }finally{
+  if($child){$child.Dispose()}
+ }
 }
 function Verify-Requirements {
  foreach($file in @($node,$client,$credential,$script)){
