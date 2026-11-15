@@ -153,6 +153,14 @@ export class PowerShellApprovalService {
        requestId:a.requestId,state:'QUEUED_FOR_LOCAL_APPROVAL'
      })}]}};
    }
+   if(this.engineeringHandlers && n==='powershell_engineering_recent'){
+     return Promise.resolve().then(()=>this.engineeringHandlers.powershell_engineering_recent(a))
+       .then(result=>({
+         jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(result)}]}
+       })).catch(e=>({
+         jsonrpc:'2.0',id,result:{isError:true,content:[{type:'text',text:String(e.message||'RECENT_FAILED')}]}
+       }));
+   }
    if(this.engineeringHandlers && n==='powershell_engineering_status'){
      return this.engineeringHandlers.powershell_engineering_status(a).then(result=>({
        jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify(result)}]}
