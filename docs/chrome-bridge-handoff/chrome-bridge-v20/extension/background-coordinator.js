@@ -62,6 +62,13 @@ async function startBackgroundTransportOnce(chromeApi) {
   if (typeof browserToken !== 'string' || !browserToken)
     return {ok:false,reason:'NO_STORED_CREDENTIAL'};
   await ensureHost(chromeApi);
+  // ensureHost is asynchronous: a user can disconnect while Chrome creates
+  // the offscreen document. Re-read persistent intent immediately before start.
+  const latest = await chromeApi.storage.local.get([
+    'bridgeBackgroundMode','bridgeConnectionDesired'
+  ]);
+  if (latest.bridgeBackgroundMode !== true || latest.bridgeConnectionDesired !== true)
+    return {ok:false,reason:'MANUAL_DISCONNECT_DURING_START'};
   await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'start',token:browserToken});
   return {ok:true};
 }
