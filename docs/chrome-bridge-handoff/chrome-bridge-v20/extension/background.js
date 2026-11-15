@@ -1,4 +1,4 @@
-import { installBackgroundCoordinator, startBackgroundTransport } from './background-coordinator.js';
+import { installBackgroundCoordinator, startBackgroundTransport, stopBackgroundTransport } from './background-coordinator.js';
 import { canRecoverAllTabsSession } from './background-recovery-permissions.js';
 installBackgroundCoordinator(chrome);
 
@@ -12,11 +12,9 @@ async function maintainBackgroundIfEnabled() {
         // An externally revoked permission ends this session instead of
         // reconnecting every minute with an apparently active status.
         if (bridgeAllTabsMode === true) {
-          await chrome.storage.local.set({
-            bridgeConnectionDesired:false,
-            bridgeAllTabsMode:false,
-            bridgeMutationLabMode:false
-          });
+          // Also stop a transport that may have survived a permission change.
+          // stopBackgroundTransport disables dispatch before closing offscreen.
+          await stopBackgroundTransport(chrome);
         }
         return;
       }
