@@ -16,10 +16,10 @@ Date: 2026-11-15. Evidence: live connector calls from ChatGPT and PR inspection.
 
 | Provider | Current evidence | Blocker | Required next step |
 |---|---|---|---|
-| Claude | Lab tab bound, but URL is claude.ai/login; composer matched 0, send matched 0 | Logged out / captcha present. Auth is operator-only | Operator signs in to isolated test Chrome. Recheck selector health + per-origin grant, then approval-based unique-request send and correlated reply |
+| Claude | Lab tab bound at `https://claude.ai/new` (2026-11-15 18:48 +05); previous `/login` observation is superseded | First-chat bootstrap and real send/ACK/reply unverified; `/new` alone does not prove authorization | Read-only composer preflight, then separately approved unique-request E2E after paired staging |
 | Gemini | Lab tab bound on gemini.google.com/app; composer matched 1 visible; send matched 0 **while the composer was empty**; no replies present | No per-origin grant; send-button visibility after text entry has not been tested, so do not classify missing send button in an empty composer as an adapter defect | After local approval, enter harmless test text WITHOUT sending; inspect whether the send control appears/enables. Only treat it as an adapter issue if that state is not recognized; then perform separately approved send/reply E2E |
-| DeepSeek | Remembered binding on disconnected Main Bridge; not present in Lab agent list | Production bridge disconnected, no lab bound tab | Restore Main browser separately or explicitly open/bind clean lab chat, verify adapter/auth and local grant |
-| Grok | No tab binding in connected PR102 Lab; current installed browser-control allowlist is limited to claude.ai/gemini.google.com/chat.deepseek.com | Provider not enabled in current adapter + origin policy | Add explicit x.com/grok or grok.com verified origin as separate reviewed provider adapter and test in isolated lab, never bypass allowlist |
+| DeepSeek | PR102 Lab bound tab at `https://chat.deepseek.com/sign_in` (2026-11-15 18:48 +05) | Authentication required; binding does not imply authenticated chat | Operator-only official sign-in, then read-only adapter preflight and per-origin grant |
+| Grok | PR102 Lab bound tab at `https://grok.com/` (2026-11-15 18:48 +05) | Live send capability, provider-specific DOM adapter and authorization remain unverified; binding is not E2E | Review exact-origin policy and isolated preflight before any operator-approved send |
 | Kimi | No tab binding in connected PR102 Lab; current installed browser-control allowlist does not include kimi.ai | Provider not enabled in adapter + origin policy | Implement/review explicit kimi.ai adapter and policy; isolated lab auth, selectors, send/reply proof |
 
 ## Authentication policy: Google account first
@@ -67,3 +67,12 @@ All items here are direct read-only connector observations or repository inspect
 - No Codex execution until the previously agreed exclusion date.
 
 **Gate remains NO-GO for five-provider authenticated send/ACK/reply**, regardless of successful lab session and DOM probes.
+
+## Read-only reconciliation — 2026-11-15 18:48 Asia/Almaty
+
+- Main Chrome Bridge: `connected=false`, `queued=0`; remembered bindings are not live transport evidence.
+- PR102 Lab: `connected=true`, `queued=0`, `globalEnabled=true`, `approvalPending=0`, `origins=[]`. Do **not** infer site-specific authorization from globalEnabled.
+- Bound lab tabs: Claude `/new`, Gemini `/app`, DeepSeek `/sign_in`, Grok `/`. Kimi not bound. These are tab/binding observations, **not** five-provider E2E results.
+- Source-only audit of `tools/ai_collaboration/provider-preflight.mjs` at blob `a84f5f6013675eb30147b5f03c0f81554325037b`: five exact-origin entries, explicit rejection of unsupported origins, zero-text composer classified `NEEDS_APPROVED_UNSENT_PREFILL`, and even READY returns `canSend:false`. Test file includes cases for conditional Send, spoofed origins, grants and auth; tests were **read**, not executed in this run.
+- Prior snapshot lines claiming Claude `/login` and DeepSeek/Grok absent from Lab are historical and superseded by the current table. No OAuth, CAPTCHA, MFA, text prefill, send, process restart, credential handling or Codex CLI execution.
+- Release verdict unchanged: **NO-GO** pending real per-provider approved send→ACK→reply evidence and independent review.
