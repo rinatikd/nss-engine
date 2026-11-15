@@ -27,19 +27,34 @@ export async function permittedTab(chromeApi, tabId) {
     : sites[url.origin];
   return {tab,origin:url.origin,site};
 }
-export async function dispatchReadOnly(command, chromeApi) {
+export async function dispatchReadOnly(command, chromeApi, {transportStatus=null} = {}) {
   if (!command || typeof command !== 'object' || typeof command.name !== 'string')
     throw Error('INVALID_COMMAND');
   if (MUTATING.has(command.name)) throw Error('CONTROL_REQUIRES_APPROVAL_UI');
   if (!ALLOWED.has(command.name)) throw Error('BACKGROUND_COMMAND_NOT_MIGRATED');
 
   if (command.name === 'control_status') {
-    const {bridgeConnectionDesired,bridgeAllTabsMode,bridgeMutationLabMode} =
-      await chromeApi.storage.local.get(['bridgeConnectionDesired','bridgeAllTabsMode','bridgeMutationLabMode']);
+    const {bridgeBackgroundMode,bridgeConnectionDesired,bridgeAllTabsMode,bridgeMutationLabMode} =
+      await chromeApi.storage.local.get([
+        'bridgeBackgroundMode','bridgeConnectionDesired','bridgeAllTabsMode','bridgeMutationLabMode'
+      ]);
+    const desired = bridgeBackgroundMode===true && bridgeConnectionDesired===true;
+    // Desired connection is not evidence of a live transport. Only a recent
+    // coordinator-observed handshake may report connected.
+    const connected = desired && transportStatus?.connected === true;
+    let permissionsOk=false;
+    if (connected && bridgeAllTabsMode===true && bridgeMutationLabMode===true &&
+        typeof chromeApi.permissions?.contains==='function') {
+      try {
+        permissionsOk = (await chromeApi.permissions.contains({origins:['http://*/*']})) === true &&
+          (await chromeApi.permissions.contains({origins:['https://*/*']})) === true;
+      } catch { permissionsOk=false; }
+    }
     return {
-      connected:bridgeConnectionDesired===true,
-      globalEnabled:bridgeConnectionDesired===true &&
-        bridgeAllTabsMode===true && bridgeMutationLabMode===true,
+      connected,
+      connectionDesired:desired,
+      globalEnabled:connected && bridgeAllTabsMode===true &&
+        bridgeMutationLabMode===true && permissionsOk,
       approvalPending:0,
       origins:[],
       scope:bridgeAllTabsMode===true ? 'permitted-web-tabs' : 'legacy-sites'
