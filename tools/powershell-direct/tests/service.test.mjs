@@ -196,3 +196,34 @@ test('named approval rejects stale plan and redirects after single valid decisio
   await x.service.stop();
  }
 });
+
+test('engineering approval expiry is enforced at submit decision even before timer fires',async()=>{
+ const x=fixture();await x.service.start();
+ try{
+  const base='http://127.0.0.1:'+x.service.port;
+  const id='lateengineer01',sha='d'.repeat(64);
+  let count=0,resolution;
+  const timer=setTimeout(()=>{},30000);
+  x.service.namedPending.set(id,{
+   requestId:id,planSha256:sha,suite:'powershell-script',
+   workspace,command:'powershell.exe',args:['-NoProfile'],
+   expiresAt:Date.now()-1,timer,
+   resolve:result=>{count++;resolution=result;}
+  });
+  const response=await fetch(base+'/decide?key='+x.service.uiToken,{
+   method:'POST',headers:{Origin:base},
+   body:new URLSearchParams({kind:'named',id,sha256:sha,approved:'yes'}),
+   redirect:'manual'
+  });
+  assert.equal(response.status,410);
+  assert.equal((await response.json()).error,'APPROVAL_EXPIRED');
+  assert.equal(count,1);
+  assert.equal(resolution.approved,false);
+  assert.equal(resolution.reason,'APPROVAL_EXPIRED');
+  assert.equal(x.service.namedPending.has(id),false);
+  assert.equal(x.executed(),0);
+ }finally{
+  for(const p of x.service.namedPending.values())clearTimeout(p.timer);
+  await x.service.stop();
+ }
+});
