@@ -29,3 +29,11 @@ test('Windows path containment distinguishes a checkout child from a sibling',()
   assert.equal(inside('C:\\Engineering\\nss-engine-other\\output'),false);
   assert.equal(inside('C:\\Engineering\\PR113-Paired-Lab17484'),false);
 });
+
+test('release staging discovers all Node suites rather than a stale hardcoded list',()=>{
+  assert.match(source,/Get-ChildItem -LiteralPath \(Join-Path \$source 'tests'\) -Filter '\*\.test\.mjs'/);
+  assert.match(source,/\& \$node --test @testPaths/);
+  const zip=readFileSync(path.join(here,'../deployment/Test-PR113-ZipSource.ps1'),'utf8');
+  assert.match(zip,/Get-ChildItem -LiteralPath \(Join-Path \$source 'tests'\) -Filter '\*\.test\.mjs'/);
+  assert.match(zip,/\& \$Node --test @tests/);
+});
