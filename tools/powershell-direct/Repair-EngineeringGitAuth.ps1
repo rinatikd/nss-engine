@@ -26,7 +26,7 @@ if($gcm.Count -eq 0){
 }
 $gcm=$gcm[0]
 
-if($env:OS -ne 'Windows_NT'){throw 'WINDOWS_REQUIRED'}
+if(-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)){throw 'WINDOWS_REQUIRED'}
 foreach($p in @($git)){
  if(!(Test-Path -LiteralPath $p -PathType Leaf)){throw ('TRUSTED_EXE_MISSING: '+[IO.Path]::GetFileName($p))}
 }
