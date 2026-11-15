@@ -239,3 +239,45 @@ test('positive status fails closed if persistent session storage cannot be read'
   assert.equal(visible.connected,false);
   assert.equal(visible.error,'SESSION_STATE_UNAVAILABLE');
 });
+
+test('Disconnect fences a pending positive status read even if storage returns stale true flags',async()=>{
+  const flags={
+    bridgeBackgroundMode:true,bridgeConnectionDesired:true,
+    bridgeAllTabsMode:true,bridgeMutationLabMode:true
+  };
+  const c=fakeChrome(flags);
+  installBackgroundCoordinator(c);
+  const originalGet=c.storage.local.get;
+  let releaseRead,readStarted;
+  const started=new Promise(resolve=>{readStarted=resolve;});
+  const barrier=new Promise(resolve=>{releaseRead=resolve;});
+  c.storage.local.get=async keys=>{
+    if(Array.isArray(keys)&&keys.includes('bridgeMutationLabMode')) {
+      readStarted();
+      await barrier;
+      // Reproduce a previously captured, obsolete snapshot.
+      return {
+        bridgeBackgroundMode:true,bridgeConnectionDesired:true,
+        bridgeAllTabsMode:true,bridgeMutationLabMode:true
+      };
+    }
+    return originalGet(keys);
+  };
+  let reply;
+  const handled=c.listeners[0]({
+    target:'bridge-coordinator',type:'transport-status',
+    status:{state:'connected',connected:true}
+  },{id:c.runtime.id,url:c.runtime.getURL('transport-host.html')},
+  result=>reply=result);
+  assert.equal(handled,true);
+  await started;
+  await stopBackgroundTransport(c);
+  releaseRead();
+  for(let i=0;i<5;i++) await Promise.resolve();
+  assert.deepEqual(reply,{ok:false,reason:'SESSION_NOT_ACTIVE'});
+  let visible;
+  c.listeners[0]({target:'bridge-coordinator',type:'status'},
+    {id:c.runtime.id,url:c.runtime.getURL('control.html')},
+    result=>visible=result);
+  assert.equal(visible.connected,false);
+});
