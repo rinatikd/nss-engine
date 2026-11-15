@@ -7,15 +7,22 @@ import {spawn,spawnSync} from 'node:child_process';
 import {verifyEngineeringPlan} from './engineering-plan.mjs';
 const MAX=65536;
 const GIT_PULL_PROBE_TIMEOUT=8000;
-const GCM_EXE='C:/Program Files/Git/mingw64/bin/git-credential-manager.exe';
-// Git for Windows bundles GCM in this trusted location. Do not search PATH
-// or load caller-supplied credential helpers from the repository.
+// Trusted standard Git for Windows GCM locations; no PATH/CWD search.
+const GCM_EXES=Object.freeze([
+ 'C:/Program Files/Git/ucrt64/bin/git-credential-manager.exe',
+ 'C:/Program Files/Git/mingw64/bin/git-credential-manager.exe',
+ 'C:/Program Files/Git/clangarm64/bin/git-credential-manager.exe',
+ 'C:/Program Files/Git/cmd/git-credential-manager.exe',
+ 'C:/Program Files/Git Credential Manager/git-credential-manager.exe',
+ 'C:/Program Files (x86)/Git Credential Manager/git-credential-manager.exe'
+]);
 export function requireTrustedGitCredentialManager({exists=fs.existsSync,stat=fs.statSync}={}){
-  if(!exists(GCM_EXE))throw Error('TRUSTED_GCM_NOT_INSTALLED');
-  try{if(!stat(GCM_EXE).isFile())throw Error('TRUSTED_GCM_NOT_FILE');}
-  catch(e){if(e.message==='TRUSTED_GCM_NOT_FILE')throw e;
-    throw Error('TRUSTED_GCM_UNREADABLE');}
-  return GCM_EXE;
+ for(const candidate of GCM_EXES){
+  if(!exists(candidate))continue;
+  try{if(stat(candidate).isFile())return candidate;}
+  catch{throw Error('TRUSTED_GCM_UNREADABLE');}
+ }
+ throw Error('TRUSTED_GCM_NOT_INSTALLED');
 }
 
 // Git changes are allowed only on a clean, attached branch with a configured upstream.
