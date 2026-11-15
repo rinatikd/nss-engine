@@ -48,6 +48,7 @@ export async function runEngineeringPlan(plan,{
   spawnImpl=spawn,
   spawnSyncImpl=spawnSync,
   executableCheck=p=>fs.statSync(p).isFile(),
+  credentialManagerCheck=requireTrustedGitCredentialManager,
   platform=process.platform
 }={}){
   verifyEngineeringPlan(plan);
@@ -74,7 +75,7 @@ export async function runEngineeringPlan(plan,{
     CI:'1',DOTNET_CLI_TELEMETRY_OPTOUT:'1'
   };
   if(plan.operation==='git-pull-ff-only'){
-    requireTrustedGitCredentialManager();
+    credentialManagerCheck();
     preflightGitPull(plan,{spawnSyncImpl,env:restrictedEnv});
   }
   return await new Promise((resolve,reject)=>{
