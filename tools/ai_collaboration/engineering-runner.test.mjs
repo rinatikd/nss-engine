@@ -75,7 +75,8 @@ test('git pull only uses fixed fast-forward arguments after clean branch preflig
   assert.ok(plan.args.includes('credential.helper='));
   let calls=0, launched=0;
   const responses=['platform/ai-windows-control-release-20261114',
-   'origin/platform/ai-windows-control-release-20261114','',
+   'origin/platform/ai-windows-control-release-20261114',
+   'https://github.com/rinatikd/nss-engine.git','',
    '1234567890abcdef1234567890abcdef12345678'];
   const result=await runEngineeringPlan(plan,{
    platform:'win32',executableCheck:()=>true,credentialManagerCheck:()=>true,
@@ -99,7 +100,7 @@ test('git pull only uses fixed fast-forward arguments after clean branch preflig
     return child;
    }
   });
-  assert.equal(calls,4);
+  assert.equal(calls,5);
   assert.equal(launched,1);
   assert.equal(result.state,'FINISHED');
  }finally{await rm(root,{recursive:true,force:true});}
@@ -114,7 +115,9 @@ test('git pull refuses dirty, detached or missing-upstream worktrees without dis
   for(const responses of [
    [null],
    ['main',null],
-   ['main','origin/main',' M modified.txt']
+   ['main','origin/other'],
+   ['main','origin/main','https://github.com/attacker/other.git'],
+   ['main','origin/main','https://github.com/rinatikd/nss-engine.git',' M modified.txt']
   ]){
    let probe=0,executed=0;
    await assert.rejects(runEngineeringPlan(plan,{
