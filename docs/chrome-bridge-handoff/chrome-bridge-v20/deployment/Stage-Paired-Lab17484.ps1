@@ -40,7 +40,8 @@ $testFiles=@(
  'tests\gemini-bootstrap.test.mjs',
  'tests\discovery-only-agents.test.mjs',
  'tests\bootstrap-context.test.mjs',
- 'tests\one-click-session.test.mjs'
+ 'tests\one-click-session.test.mjs',
+ 'tests\one-click-control-gate.test.mjs'
 )
 foreach($rel in $testFiles){
  if(!(Test-Path -LiteralPath (Join-Path $source $rel) -PathType Leaf)){
