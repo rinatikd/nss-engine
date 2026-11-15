@@ -112,6 +112,11 @@ export async function resolveEngineeringPlan(request,allowedRoots){
       // A runtime preflight rejects dirty/detached/untracked worktrees and missing upstream.
       executable=EXE.git;argv=['-c','core.hooksPath=NUL',
         '-c','protocol.ext.allow=never','-c','protocol.file.allow=never',
+        // Use already stored Windows GCM credentials even when system/global
+        // Git configuration is intentionally disabled by the MCP runner.
+        // Noninteractive: no credential material or prompts enter MCP.
+        '-c','credential.helper=','-c','credential.helper=manager',
+        '-c','credential.interactive=false',
         'pull','--ff-only','--no-rebase','--no-tags','--no-autostash'];break;
     case 'node-test':
       executable=EXE.node;argv=['--test',checkedTarget(cwd,a.target,operation)];break;
