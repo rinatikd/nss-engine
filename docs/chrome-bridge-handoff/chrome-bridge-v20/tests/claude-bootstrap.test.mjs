@@ -28,7 +28,7 @@ test('Claude real /chat/:id is not bootstrap',async()=>{
 });
 test('other providers and Claude login route never bootstrap',async()=>{
   for(const [origin,path] of [
-    ['https://gemini.google.com','/app'],
+    ['https://gemini.google.com','/login'],
     ['https://chat.deepseek.com','/'],
     ['https://claude.ai','/login'],
     ['https://claude.ai','/new/extra']
