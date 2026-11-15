@@ -77,8 +77,10 @@ export async function dispatchOneClickMutation(cmd, api) {
     if(current.tag!==preflight.tag||current.text!==preflight.text||
        current.href!==preflight.href||current.formAction!==preflight.formAction)
       throw Error('TARGET_CHANGED');
-    args={...cmd.args,expect:{tag:current.tag,text:current.text},
-      controlExpires:cmd.expires,allTabsSession:true};
+    args={...cmd.args,expect:{
+      tag:current.tag,text:current.text,
+      href:current.href || '',formAction:current.formAction || ''
+    },controlExpires:cmd.expires,allTabsSession:true};
   }
   // Last pre-dispatch check. Dispatch is at-most-once; UNKNOWN is never retried here.
   await requireOneClickControl(api);
