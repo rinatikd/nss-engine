@@ -239,14 +239,22 @@ export class PowerShellApprovalService {
     const f=new URLSearchParams(await this.read(req,2048));
     if(f.get('kind')==='named'){
       const p=this.namedPending.get(f.get('id'));
-      if(!p||!match(f.get('sha256'),p.planSha256))throw Error('NAMED_APPROVAL_MISMATCH');
+      // A stale browser card (expired, already decided, or from a prior
+      // supervisor instance) is not an operator error. Never treat it as a grant.
+      if(!p)return send(res,409,{error:'APPROVAL_NO_LONGER_PENDING',
+        guidance:'Reload the local approval page. Do not resubmit an expired request.'});
+      if(!match(f.get('sha256'),p.planSha256))
+        return send(res,409,{error:'APPROVAL_PLAN_CHANGED',
+          guidance:'Reload and inspect the current plan before deciding.'});
       this.namedPending.delete(p.requestId);
       clearTimeout(p.timer);
       const wasApproved=f.get('approved')==='yes';
       p.resolve({approved:wasApproved,reason:wasApproved?'OPERATOR_APPROVED':'OPERATOR_DENIED',
         requestId:p.requestId,planSha256:p.planSha256});
-      return send(res,200,{requestId:p.requestId,
-        state:wasApproved?'APPROVED_RECORDED':'DENIED_RECORDED'});
+      // Post/Redirect/Get: pressing Refresh must not re-submit the decision.
+      res.writeHead(303,{location:'/approve?key='+encodeURIComponent(this.uiToken),
+        'cache-control':'no-store','referrer-policy':'origin'});
+      return res.end();
     }
     return send(res,200,this.decide(f.get('id'),f.get('sha256'),f.get('approved')==='yes'));
    }
