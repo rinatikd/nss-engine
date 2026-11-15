@@ -3,7 +3,7 @@
 # Never touches Chrome Bridge 17381/17382 or production credentials.
 [CmdletBinding()]
 param(
- [ValidateSet('Inspect','Restart')][string]$Mode='Inspect',
+ [ValidateSet('Inspect','Rehearse','Restart')][string]$Mode='Inspect',
  [int]$ExpectedSupervisorPid=0,
  [int]$ExpectedTunnelPid=0,
  [switch]$AuthorizeRestart
@@ -82,6 +82,21 @@ function StopVerified([int]$sid,[int]$tid){
  }
  throw 'ACK_RESTART_PORTS_NOT_RELEASED'
 }
+function WaitHealthy([int]$sid,[int]$tid) {
+ # Allow bounded control-plane poll stabilization before deciding failure.
+ for($i=0;$i -lt 30;$i++){
+  Pair $sid $tid
+  if(Healthy $tid){return $true}
+  Start-Sleep -Milliseconds 1000
+ }
+ return $false
+}
+function CurrentStack {
+ $sid=Owner 17486;$tid=Owner 18086
+ if($sid -le 0 -or $tid -le 0){return $null}
+ try{Pair $sid $tid}catch{return $null}
+ return [pscustomobject]@{SupervisorPid=$sid;TunnelPid=$tid}
+}
 function StartAndVerify {
  if((Owner 17486) -ne 0 -or (Owner 18086) -ne 0){
   throw 'ACK_RESTART_START_PORTS_OCCUPIED'
@@ -94,12 +109,7 @@ function StartAndVerify {
  }
  $sid=[int]$result.SupervisorPid;$tid=[int]$result.TunnelPid
  Pair $sid $tid
- $ok=$false
- for($i=0;$i -lt 8;$i++){
-  if(Healthy $tid){$ok=$true;break}
-  Start-Sleep -Milliseconds 900
- }
- if(!$ok){throw 'ACK_RESTART_REMOTE_HEALTH_NOT_CONFIRMED'}
+ if(!(WaitHealthy $sid $tid)){throw 'ACK_RESTART_REMOTE_HEALTH_NOT_CONFIRMED_AFTER_30S'}
  return [pscustomobject]@{SupervisorPid=$sid;TunnelPid=$tid}
 }
 function Result([string]$state,[int]$sid=0,[int]$tid=0,[string]$detail=''){
@@ -126,8 +136,13 @@ if((Sha $source) -ne $expectedCurrentHash -or
 }
 Pair $ExpectedSupervisorPid $ExpectedTunnelPid
 if(!(Healthy $ExpectedTunnelPid)){throw 'ACK_RESTART_OLD_TUNNEL_UNHEALTHY'}
-if($Mode -eq 'Inspect'){
- Result 'ACK_RESTART_INSPECT_PASS' $ExpectedSupervisorPid $ExpectedTunnelPid
+if($Mode -eq 'Inspect' -or $Mode -eq 'Rehearse'){
+ # Rehearse is deliberately non-mutating; it also exercises the status
+ # classification helpers without stopping or starting any process.
+ $stack=CurrentStack
+ if(!$stack -or $stack.SupervisorPid -ne $ExpectedSupervisorPid -or
+    $stack.TunnelPid -ne $ExpectedTunnelPid){throw 'ACK_REHEARSE_IDENTITY_CHANGED'}
+ Result $(if($Mode -eq 'Rehearse'){'ACK_RESTART_REHEARSAL_PASS'}else{'ACK_RESTART_INSPECT_PASS'}) $ExpectedSupervisorPid $ExpectedTunnelPid
  return
 }
 if(!$AuthorizeRestart){throw 'ACK_RESTART_EXPLICIT_LOCAL_APPROVAL_REQUIRED'}
@@ -141,24 +156,50 @@ try{
  $started=StartAndVerify
  Result 'ACK_RESTART_HEALTH_VERIFIED_PENDING_CHATGPT_MCP' $started.SupervisorPid $started.TunnelPid
 }catch{
- $failure='NEW_STACK_NOT_VERIFIED'
- # Refuse unsafe rollback if the new listener identity cannot be verified.
+ $failure=$_.Exception.Message
+ $rollbackFailure=''
+ $rollbackStep='INSPECT_NEW_STACK'
+ $rollbackComplete=$false
  try{
   $sid=Owner 17486;$tid=Owner 18086
   if($sid -ne 0 -and $tid -ne 0){
+   $rollbackStep='VERIFY_NEW_STACK'
    Pair $sid $tid
+   $rollbackStep='STOP_NEW_STACK'
    StopVerified $sid $tid
   }elseif($sid -ne 0 -or $tid -ne 0){
    throw 'PARTIAL_STACK_REQUIRES_MANUAL_RECOVERY'
   }
+  $rollbackStep='CHECK_FREE_PORTS'
   if((Owner 17486) -ne 0 -or (Owner 18086) -ne 0){
    throw 'ROLLBACK_PORT_CONFLICT'
   }
+  $rollbackStep='RESTORE_PREVIOUS_MODULE'
   Copy-Item -LiteralPath $backup -Destination $installed -Force -ErrorAction Stop
   if((Sha $installed) -ne $expectedPreviousHash){throw 'ROLLBACK_HASH_MISMATCH'}
+  $rollbackStep='START_PREVIOUS_STACK'
   $restored=StartAndVerify
+  $rollbackComplete=$true
   Result 'ACK_RESTART_NEW_FAILED_OLD_RESTORED' $restored.SupervisorPid $restored.TunnelPid $failure
  }catch{
-  Result 'ACK_RESTART_FAILED_MANUAL_RECOVERY_REQUIRED' 0 0 'ROLLBACK_NOT_CONFIRMED'
+  $rollbackFailure=$_.Exception.Message
+  # A delayed health poll can be responsible for a false failure. If the
+  # old module is now on disk and a verified stack is currently healthy,
+  # classify the rollback as recovered; never terminate it again.
+  $rollbackStep='POST_FAILURE_HEALTH_RECHECK'
+  $observed=CurrentStack
+  if((Sha $installed) -eq $expectedPreviousHash -and $null -ne $observed -and
+     (WaitHealthy $observed.SupervisorPid $observed.TunnelPid)){
+   Result 'ACK_RESTART_OLD_STACK_RECOVERED_AFTER_DELAY' $observed.SupervisorPid $observed.TunnelPid $failure
+  }else{
+   # Only fixed/safe diagnostic codes are emitted; avoid raw exception
+   # details that might contain paths, process arguments or secrets.
+   $codes=@('ACK_RESTART_START_PORTS_OCCUPIED','ACK_RESTART_PORT_PID_MISMATCH',
+     'ACK_RESTART_SUPERVISOR_IDENTITY_MISMATCH','ACK_RESTART_TUNNEL_IDENTITY_MISMATCH',
+     'ACK_RESTART_REMOTE_HEALTH_NOT_CONFIRMED_AFTER_30S','PARTIAL_STACK_REQUIRES_MANUAL_RECOVERY',
+     'ROLLBACK_PORT_CONFLICT','ROLLBACK_HASH_MISMATCH','ACK_RESTART_PORTS_NOT_RELEASED')
+   $category=if($codes -contains $rollbackFailure){$rollbackFailure}else{'UNCLASSIFIED_ROLLBACK_ERROR'}
+   Result 'ACK_RESTART_FAILED_MANUAL_RECOVERY_REQUIRED' 0 0 ('Stage='+$rollbackStep+';Failure='+$category)
+  }
  }
 }
