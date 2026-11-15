@@ -232,3 +232,37 @@ test('permission rejection and pairing failure never attempt to stop another ses
   await assert.rejects(missing.session.connect({trustedGesture:true}),/PAIRING_REQUIRED/);
   assert.equal(missing.events.filter(e=>e[0]==='stop').length,0);
 });
+
+test('status preserves authentication failure instead of claiming it is still connecting',async()=>{
+  const data={bridgeConnectionDesired:true,bridgeAllTabsMode:true,bridgeMutationLabMode:true};
+  const api={
+    storage:{local:{get:async()=>data}},
+    permissions:{contains:async()=>true}
+  };
+  const s=createOneClickSession(api,{
+    loadKey:async()=>({value:'fixture'}),
+    start:async()=>({ok:true}),stop:async()=>{},
+    getStatus:async()=>({connected:false,state:'auth-failed',error:'BROWSER_KEY_REJECTED_401'})
+  });
+  const state=await s.status();
+  assert.equal(state.connected,false);
+  assert.equal(state.state,'auth-failed');
+  assert.equal(state.error,'BROWSER_KEY_REJECTED_401');
+});
+
+test('status preserves recovering transport state on transient network errors',async()=>{
+  const data={bridgeConnectionDesired:true,bridgeAllTabsMode:true,bridgeMutationLabMode:true};
+  const api={
+    storage:{local:{get:async()=>data}},
+    permissions:{contains:async()=>true}
+  };
+  const s=createOneClickSession(api,{
+    loadKey:async()=>({value:'fixture'}),
+    start:async()=>({ok:true}),stop:async()=>{},
+    getStatus:async()=>({connected:false,state:'recovering',error:'BRIDGE_NETWORK_UNREACHABLE'})
+  });
+  const state=await s.status();
+  assert.equal(state.connected,false);
+  assert.equal(state.state,'recovering');
+  assert.equal(state.error,'BRIDGE_NETWORK_UNREACHABLE');
+});
