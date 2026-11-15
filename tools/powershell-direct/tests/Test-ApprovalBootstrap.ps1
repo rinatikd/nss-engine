@@ -78,7 +78,11 @@ try{
    throw 'OVERWRITE_SECRET_EMITTED'
   }
   if($newProcess.ExitCode -ne 0){
-   throw ('OVERWRITE_WRITER_FAILED_EXIT_'+$newProcess.ExitCode)
+   # Never echo child output: report only the fixed, sanitized diagnostic marker.
+   $marker=[regex]::Match($newOutput,
+    'APPROVAL_BOOTSTRAP_FAILURE_STAGE_[A-Z_]+_TYPE_[A-Za-z0-9]+')
+   $safe=if($marker.Success){$marker.Value}else{'CHILD_FAILURE_UNCLASSIFIED'}
+   throw ('OVERWRITE_WRITER_FAILED_EXIT_'+$newProcess.ExitCode+'_'+$safe)
   }
  }finally{$newProcess.Dispose()}
  $replacementCipher=[IO.File]::ReadAllBytes($file)
