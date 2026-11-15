@@ -17,8 +17,17 @@ if($resolved -ine $parent){throw 'PARENT_REDIRECTED'}
 $env:GIT_TERMINAL_PROMPT='0'
 $env:GCM_INTERACTIVE='0'
 $env:GCM_GUI_PROMPT='0'
-$gcm='C:\Program Files\Git\mingw64\bin\git-credential-manager.exe'
-if(!(Test-Path -LiteralPath $gcm -PathType Leaf)){throw 'TRUSTED_GCM_NOT_FOUND'}
+$gcmCandidates=@(
+ 'C:\Program Files\Git\ucrt64\bin\git-credential-manager.exe',
+ 'C:\Program Files\Git\mingw64\bin\git-credential-manager.exe',
+ 'C:\Program Files\Git\clangarm64\bin\git-credential-manager.exe',
+ 'C:\Program Files\Git\cmd\git-credential-manager.exe',
+ 'C:\Program Files\Git Credential Manager\git-credential-manager.exe',
+ 'C:\Program Files (x86)\Git Credential Manager\git-credential-manager.exe'
+)
+if(!@($gcmCandidates | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf}).Count){
+ throw 'TRUSTED_GCM_NOT_FOUND_IN_KNOWN_LOCATIONS'
+}
 $env:GIT_CONFIG_GLOBAL='NUL'
 $env:GIT_CONFIG_NOSYSTEM='1'
 $env:GIT_OPTIONAL_LOCKS='0'
