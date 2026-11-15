@@ -26,11 +26,11 @@ if(!$normalized.StartsWith(($base+'\'),[StringComparison]::OrdinalIgnoreCase) -o
 }
 # Refuse an output nested under the checkout (including the selected source tree):
 # otherwise a recursive stage can ingest its own artifacts or dirty the source.
-$sourcePath=[System.IO.Path]::GetFullPath($source).TrimEnd('\\')
-$repoPath=[System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\\')
-if($normalized.StartsWith(($repoPath+'\\'),[StringComparison]::OrdinalIgnoreCase) -or
+$sourcePath=[System.IO.Path]::GetFullPath($source).TrimEnd([char]92)
+$repoPath=[System.IO.Path]::GetFullPath($repoRoot).TrimEnd([char]92)
+if($normalized.StartsWith(($repoPath+[System.IO.Path]::DirectorySeparatorChar),[StringComparison]::OrdinalIgnoreCase) -or
    $normalized -ieq $repoPath -or
-   $normalized.StartsWith(($sourcePath+'\\'),[StringComparison]::OrdinalIgnoreCase) -or
+   $normalized.StartsWith(($sourcePath+[System.IO.Path]::DirectorySeparatorChar),[StringComparison]::OrdinalIgnoreCase) -or
    $normalized -ieq $sourcePath) {
   throw 'OUTPUT_INSIDE_SOURCE_CHECKOUT_DENIED'
 }
