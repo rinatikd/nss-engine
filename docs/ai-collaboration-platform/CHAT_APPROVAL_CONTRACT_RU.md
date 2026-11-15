@@ -29,3 +29,18 @@ Allow the operator to authorize a **specific** pending Windows engineering plan 
 
 ## Existing expired job
 `pr113_sync_20261115_01` ended `DENIED / APPROVAL_EXPIRED`. Do **not** attempt to approve that job. A new task requires a new requestId and genuine authorization.
+
+## Findings from official OpenAI MCP documentation (2026-11-15)
+
+- OpenAI's MCP plugin guidance documents **host-mediated confirmation of write tools**, with write actions requiring confirmation by default, and `readOnlyHint` used for read-only classification: https://developers.openai.com/api/docs/guides/custom-mcp-server
+- This confirmation is controlled by **the ChatGPT host and app permissions**, not by the Windows server and not by assistant-written UI. Permissions can sometimes be remembered in a conversation. Therefore a plain MCP call carrying `approved:true` does not constitute a cryptographic user attestation and cannot unlock our current local approval by itself.
+- The product's app configuration may need refresh/publication for changed tool schemas; adding a tool to `service.mjs` does not automatically make it appear in the currently connected app: https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt
+- Practical implementation path: expose a **separately classified write action** to the ChatGPT host only after security review, configure its app permissions to **Always ask** and use a narrowly scoped, server-verified authorization protocol. For the strongest guarantee independent of client settings, obtain signed, user-identity-bound attestation from a trusted host or a separate operator-controlled authentication flow. **The current tool set has no such verified attestor.**
+
+## Additional source-only prototype
+
+- `tools/ai_collaboration/chat-approval-redemption.mjs`: post-attestation redemption contract. It rechecks pending `requestId + planSha256`, accepts only a verified grant and requires an atomic compare-and-swap before any runner is authorized. It is **disabled**, has no live MCP registration, and contains no shell execution.
+- `tools/ai_collaboration/chat-approval-redemption.test.mjs`: cases for valid one-shot claim, denial, spoofed grants, mismatched plan and atomic-claim failure. These are unit tests, **not** evidence of host-mediated ChatGPT confirmation or Windows execution.
+- The `verifyAttestation` and `authorizePending` dependencies must be independently secure and durable before integration. Do not silently substitute a local in-memory Map/Set for production replay protection.
+
+**Gate: NO-GO** for direct chat approvals until supported host confirmation is tested end-to-end and the chosen trust model is audited. The prior job `pr113_sync_20261115_01` is `DENIED / APPROVAL_EXPIRED`; do not revive it.
