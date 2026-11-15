@@ -9,6 +9,8 @@ const PATH = 'transport-host.html';
 let creating = null;
 let status = {state:'disconnected',connected:false,error:null,updatedAt:0};
 let starting = null;
+// Invalidates a positive status check that was queued before Disconnect.
+let disconnectEpoch = 0;
 const approvals = new ApprovalSession();
 // Extension control.html opened via chrome.windows.create is still a tab.
 // Reject web content scripts by requiring the exact extension page URL, not
@@ -77,6 +79,9 @@ async function startBackgroundTransportOnce(chromeApi) {
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
+  // Fence pending positive status notifications before the first await.
+  ++disconnectEpoch;
+  updateStatus({state:'disconnected',connected:false});
   // Disable dispatch *before* any potentially failing asynchronous cleanup.
   // Persist the stop intent first so a concurrent keepalive cannot reconnect.
   await chromeApi.storage.local.set({
@@ -122,11 +127,13 @@ export function installBackgroundCoordinator(chromeApi) {
       // Authorize positive connection state against persistent session intent;
       // the offscreen sender identity alone does not imply an active grant.
       if (msg.status?.connected === true) {
+        const expectedEpoch = disconnectEpoch;
         void chromeApi.storage.local.get([
           'bridgeBackgroundMode','bridgeConnectionDesired','bridgeAllTabsMode',
           'bridgeMutationLabMode'
         ]).then(flags => {
-          if (flags.bridgeBackgroundMode !== true ||
+          if (disconnectEpoch !== expectedEpoch ||
+              flags.bridgeBackgroundMode !== true ||
               flags.bridgeConnectionDesired !== true ||
               flags.bridgeAllTabsMode !== true ||
               flags.bridgeMutationLabMode !== true) {
