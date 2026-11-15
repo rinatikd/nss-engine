@@ -44,3 +44,22 @@ Allow the operator to authorize a **specific** pending Windows engineering plan 
 - The `verifyAttestation` and `authorizePending` dependencies must be independently secure and durable before integration. Do not silently substitute a local in-memory Map/Set for production replay protection.
 
 **Gate: NO-GO** for direct chat approvals until supported host confirmation is tested end-to-end and the chosen trust model is audited. The prior job `pr113_sync_20261115_01` is `DENIED / APPROVAL_EXPIRED`; do not revive it.
+
+## Реализация в PR #110: серверный путь (2026-11-15)
+
+- `tools/powershell-direct/service.mjs`: метод `redeemSignedEngineeringApproval` проверяет существующий ожидающий инженерный план, внешнее заверенное согласие, план SHA256, срок и состояние ещё раз после асинхронной проверки. После успешного результата освобождает только этот ожидающий `approveRequest`, передавая его в прежний ограниченный runner. Никакой произвольной PowerShell-команды не добавлено.
+- `tools/ai_collaboration/chat-approval-replay-store.mjs`: одноразовые атомарные файловые claims с `open('wx')`, `fsync` и сохранением между перезапусками; нет автоматического удаления использованных разрешений. Каталог symlink отвергается (проверка `lstat`).
+- `tools/powershell-direct/chat-approval-config.mjs`: доверенная публичная Ed25519-ключевая конфигурация, зафиксированные issuer и subject, отдельный каталог replay и `PS_DIRECT_CHAT_APPROVAL_ENABLE=1`. **По умолчанию OFF**; при недостатке конфигурации startup fail-closed.
+- `tools/powershell-direct/stack-supervisor.mjs`: передаёт проверенную функцию в сервис только при явной конфигурации, проверяет регистрацию соответствующего MCP-инструмента.
+- `tools/ai_collaboration/chat-approval-service.test.mjs`, `chat-approval-replay-store.test.mjs`, `tools/powershell-direct/tests/chat-approval-config.test.mjs`: проверки signature/mismatch/replay/expiry/disabled, включены в pinned `platform-node` suite.
+- На изолированном Node.js (не Windows) выполнен аналог криптографического ядра и replay-store: **9 PASS / 0 FAIL**; полный сервисный тест с Windows окружением **не выполнялся**. Новые файлы в ветке GitHub не развёрнуты на рабочем компьютере.
+
+### Настройка ChatGPT
+
+Для уже подключённого `PowerShell Direct — Work PC` установлено разрешение приложения `Always ask`; повторная проверка разрешений подтвердила новый режим. Реальная закреплённая диагностика `node-version` исполнена через MCP: `FINISHED, exitCode=0, stdout=v24.21.0`. Это подтверждает транспорт и read-only код, но НЕ факт отображения клиентской карточки и НЕ работоспособность нового подписанного approval.
+
+### Недостающая граница доверия
+
+У текущего ChatGPT MCP-интерфейса нет обнаруженного способа получить от самой платформы Ed25519-подпись, завязанную на подлинный пользовательский жест, конкретный requestId и план SHA. Настройка `Always ask` сама по себе не предоставляет криптографический attestation Windows; простой вызов MCP нельзя считать доказательством, что карточку подтвердил пользователь. Нельзя создавать ключ подписи в коде модели или автоподписывать согласие.
+
+**Следовательно, подписанное разрешение нельзя сейчас включить в Windows production.** Следующий обязательный шаг — поддерживаемый платформой/отдельным доверенным сервисом signer, независимый review, Windows unit/E2E и опциональный cutover. До него сохраняем локальное подтверждение инженерных действий. Существующее `powershell_chat_readonly` может выполнять только фиксированные диагностические задачи через штатные механизмы разрешений.
