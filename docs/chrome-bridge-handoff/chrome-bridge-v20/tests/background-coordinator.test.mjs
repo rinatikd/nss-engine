@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {startBackgroundTransport, installBackgroundCoordinator} from '../extension/background-coordinator.js';
+import {startBackgroundTransport, stopBackgroundTransport, installBackgroundCoordinator} from '../extension/background-coordinator.js';
 
 function fakeChrome(data={}) {
   const listeners=[];
@@ -89,4 +89,34 @@ test('extension ID match alone does not authorize web content scripts or other e
     assert.equal(handled,false);
     assert.equal(response,undefined);
   }
+});
+
+test('disconnect disables dispatch before grant cleanup and offscreen stop',async()=>{
+  const state={bridgeConnectionDesired:true,bridgeMutationLabMode:true,bridgeAllTabsMode:true};
+  const chrome=fakeChrome(state);
+  chrome.storage.session={
+    setAccessLevel:async()=>chrome.calls.push(['session-access']),
+    remove:async()=>chrome.calls.push(['clear-grants'])
+  };
+  await stopBackgroundTransport(chrome);
+  assert.equal(state.bridgeConnectionDesired,false);
+  assert.equal(state.bridgeMutationLabMode,false);
+  assert.equal(state.bridgeAllTabsMode,false);
+  const calls=chrome.calls.map(x=>x[0]==='message'?x[1]:x[0]);
+  assert.ok(calls.indexOf('set')<calls.indexOf('clear-grants'));
+  assert.ok(calls.indexOf('clear-grants')<calls.indexOf('stop'));
+});
+
+test('failed grant cleanup still disables dispatch and attempts offscreen stop',async()=>{
+  const state={bridgeConnectionDesired:true,bridgeMutationLabMode:true,bridgeAllTabsMode:true};
+  const chrome=fakeChrome(state);
+  chrome.storage.session={
+    setAccessLevel:async()=>{throw Error('SESSION_STORAGE_FAILED');},
+    remove:async()=>{throw Error('unexpected-clear');}
+  };
+  await assert.rejects(stopBackgroundTransport(chrome),/BACKGROUND_GRANT_CLEANUP_FAILED/);
+  assert.equal(state.bridgeConnectionDesired,false);
+  assert.equal(state.bridgeAllTabsMode,false);
+  assert.equal(state.bridgeMutationLabMode,false);
+  assert.ok(chrome.calls.some(x=>x[0]==='message' && x[1]==='stop'));
 });
