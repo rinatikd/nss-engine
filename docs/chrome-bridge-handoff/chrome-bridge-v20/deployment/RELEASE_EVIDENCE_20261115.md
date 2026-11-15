@@ -30,3 +30,15 @@
 ## Current decision
 
 **Draft / NO-GO.** Do not tag or publish production release or mark E2E passed until gates above have real evidence. Continue source review and local isolation work with already connected tools; no new request to the operator to download, run a script or approve a task.
+
+## Worker ACK protocol hardening — source commits after the initial report
+
+- `496bc729320bdeab9b8b96684948ff972b9470fb`: transport Worker correlates `requestId` and sends `control-ack` only after processing start/stop. A stale start ACK after a later stop becomes a negative `START_SUPERSEDED_BY_STOP`.
+- `77ae0fa9d0d40fa5c0ceb4c42c5d098fd45cb3cb`: offscreen host waits for an actual Worker ACK; never treats `worker.postMessage` alone as proof of completed control. Correlates command type/request ID, fails closed on post error or bounded timeout (5000 ms).
+- `dd50e40c1eca2a2df303281cbd6bc249c48d2891`, `2916b9fb35009446817ae80d0fdfc601851897fe`, `93381294261a3ce0ac7c9cc10291d443fc67fbdb`: test cases and asynchronous test synchronization for the above control protocol, including stop overtaking a delayed start.
+- `f922245bd26488532493ee91fb0e57c12a6daa8b`, `9b1c97d040a6f53e04d1335396809f2709da3002`: require the new transport ACK suite in existing release staging and ZIP source test scripts.
+- `b7f23757082d84f66db880cc2c93c640a6f7c3e6`: add GitHub Actions Node 24 unit-test workflow over the full Chrome Bridge `tests/*.test.mjs` suite (not Chrome E2E).
+
+**Evidence:** exact GitHub host/Worker source modules and eight test bodies executed in an isolated V8 harness with synthetic `vm.runInNewContext`, Worker, Chrome and assertion interface: **8/8 PASS**, zero failed. A separate in-memory message-exchange smoke check of exact host and Worker source confirmed positive start/stop ACK and no token in ACK. These remain **non-Node, non-browser tests**. A GitHub Actions workflow was queued on latest head during inspection; pending/failed CI must never be reported as successful testing.
+
+**No user handoff:** no new local operator approval, download or manual command requested. No production, PR102 installation, runtime credentials or tunneling altered. Release remains **Draft / NO-GO** pending actual installed lab E2E and full validation.
