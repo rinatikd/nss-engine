@@ -64,7 +64,7 @@ test('feature is opt-in and does not replace five read-only diagnostics',()=>fix
 test('engineering DENY never executes',()=>fixture(async({svc,root,starts})=>{
   const id='eng-deny-0001';
   const queued=rpc(svc,'powershell_engineering_submit',req(root,id));
-  assert.equal(JSON.parse(queued.result.content[0].text).state,'QUEUED_FOR_LOCAL_APPROVAL');
+  assert.equal(JSON.parse(queued.result.content[0].text).state,'SUBMISSION_RECEIVED_STATUS_UNCONFIRMED');
   const p=await pending(svc,id);
   const page=await fetch('http://127.0.0.1:'+svc.port+'/approve?key='+svc.uiToken);
   assert.match(await page.text(),/git-status/);
@@ -82,9 +82,12 @@ test('engineering ALLOW runs once, no replay',()=>fixture(async({svc,root,starts
   assert.equal(decision.status,303);
   assert.equal((await status(svc,id)).state,'FINISHED');
   assert.equal(starts(),1);
-  rpc(svc,'powershell_engineering_submit',req(root,id,'git-diff'));
+  const replay=rpc(svc,'powershell_engineering_submit',req(root,id,'git-diff'));
+  assert.equal(JSON.parse(replay.result.content[0].text).state,
+    'SUBMISSION_RECEIVED_STATUS_UNCONFIRMED');
   await new Promise(r=>setTimeout(r,30));
   assert.equal(starts(),1);
+  assert.equal((await status(svc,id)).state,'FINISHED');
 }));
 test('arbitrary PowerShell and approval injection rejected before queue',()=>fixture(async({svc,root})=>{
   for(const args of [
