@@ -70,15 +70,20 @@ test('git pull only uses fixed fast-forward arguments after clean branch preflig
   assert.ok(plan.args.includes('--ff-only'));
   assert.ok(plan.args.includes('--no-rebase'));
   assert.ok(plan.args.includes('--no-autostash'));
+  assert.ok(plan.args.includes('credential.helper=manager'));
+  assert.ok(plan.args.includes('credential.interactive=false'));
+  assert.ok(plan.args.includes('credential.helper='));
   let calls=0, launched=0;
   const responses=['platform/ai-windows-control-release-20261114',
    'origin/platform/ai-windows-control-release-20261114','',
    '1234567890abcdef1234567890abcdef12345678'];
   const result=await runEngineeringPlan(plan,{
-   platform:'win32',executableCheck:()=>true,credentialManagerCheck:()=>true,credentialManagerCheck:()=>true,
+   platform:'win32',executableCheck:()=>true,credentialManagerCheck:()=>true,
    spawnSyncImpl:(exe,args,options)=>{
     assert.equal(options.shell,false);
     assert.equal(options.env.GIT_TERMINAL_PROMPT,'0');
+    assert.equal(options.env.GCM_INTERACTIVE,'0');
+    assert.equal(options.env.GCM_GUI_PROMPT,'0');
     assert.ok(!args.includes('reset')&&!args.includes('checkout'));
     return {status:0,stdout:responses[calls++],stderr:''};
    },
