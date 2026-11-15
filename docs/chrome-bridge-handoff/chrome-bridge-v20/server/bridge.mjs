@@ -143,12 +143,17 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     const context = await enqueue('agent_context', { tabId: a.tabId });
     if (!context?.verified || !CHAT_ORIGINS.has(context.origin) || typeof context.conversationId !== 'string')
       throw Error('SEND_CONTEXT_UNAVAILABLE: bind a provider conversation with a stable origin and conversation identifier.');
-    // First Claude message at /new: explicitly scoped bootstrap marker.
-    // This remains a durable, one-shot requestId journal entry, not a
-    // fabricated provider-issued conversation identifier.
-    const bootstrapMarker = context.conversationId === 'CLAUDE_NEW_CHAT';
-    if (bootstrapMarker !== (context.bootstrap === true) ||
-        (bootstrapMarker && (context.origin !== 'https://claude.ai' || name !== 'claude')))
+    // Only explicitly recognized empty new-chat routes may use a bootstrap
+    // marker; never fabricate a real provider conversation ID. A one-shot
+    // durable send-journal claim is still required before browser mutation.
+    const markers = new Map([
+      ['CLAUDE_NEW_CHAT', ['claude', 'https://claude.ai']],
+      ['GEMINI_NEW_CHAT', ['gemini', 'https://gemini.google.com']]
+    ]);
+    const expectedBootstrap = markers.get(context.conversationId);
+    if (Boolean(expectedBootstrap) !== (context.bootstrap === true) ||
+        (expectedBootstrap && (expectedBootstrap[0] !== name ||
+                               expectedBootstrap[1] !== context.origin)))
       throw Error('SEND_BOOTSTRAP_CONTEXT_INVALID');
     const conversationFp = conversationFingerprint(context.origin, context.conversationId, journalKey);
     const fingerprint = requestFingerprint(name, a.tabId, text, journalKey, context);
