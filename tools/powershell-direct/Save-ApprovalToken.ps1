@@ -10,8 +10,9 @@ trap {
  # message or target path, to keep diagnostics useful without leaking secrets.
  for($n=0;$n -lt 6 -and $e.InnerException;$n++){$e=$e.InnerException}
  $type=$e.GetType().Name
- $hresult=[uint32]($e.HResult -band 0xFFFFFFFF)
- $hex=('0x{0:X8}' -f $hresult)
+ # PowerShell 5.1 cannot reliably cast a negative HRESULT to UInt32.
+ # Int32.ToString('X8') preserves the original 32-bit pattern.
+ $hex='0x'+([int]$e.HResult).ToString('X8')
  if($type -cnotmatch '^[A-Za-z][A-Za-z0-9]{0,60}$'){$type='UnknownException'}
  [Console]::Error.WriteLine('APPROVAL_BOOTSTRAP_FAILURE_STAGE_'+$script:bootstrapStep+'_TYPE_'+$type+'_HR_'+$hex)
  exit 1
