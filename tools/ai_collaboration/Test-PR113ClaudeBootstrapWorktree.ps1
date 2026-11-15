@@ -6,7 +6,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $repo = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $worktree = 'C:\Engineering\ChromeBridge-PR113-Bootstrap-Test'
-$commit = '3d35cc23cc91a847c8d6ffa06850da6d08017259'
+$commit = '33bb43e9f9b4b67d91ba43de19b74ab1723adc47'
 $relative = 'docs\chrome-bridge-handoff\chrome-bridge-v20'
 $branch = 'platform/ai-windows-control-release-20261114'
 if ((Get-Location).Path -ne $repo) { Set-Location -LiteralPath $repo }
@@ -26,7 +26,7 @@ $head=(& git -C $worktree rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -cne $commit) { throw 'UNEXPECTED_TEST_COMMIT' }
 $tests=Join-Path $root 'tests'
 $targets=@('claude-bootstrap.test.mjs','gemini-bootstrap.test.mjs',
-  'discovery-only-agents.test.mjs','one-click-session.test.mjs') |
+  'discovery-only-agents.test.mjs','bootstrap-context.test.mjs','one-click-session.test.mjs') |
   ForEach-Object {Join-Path $tests $_}
 foreach($target in $targets){
  if (!(Test-Path -LiteralPath $target -PathType Leaf)) { throw 'BOOTSTRAP_TEST_NOT_FOUND' }
