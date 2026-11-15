@@ -8,6 +8,7 @@ import { validateArgs } from './schema.mjs';
 import { findSecret } from './secrets.mjs';
 import { SendJournal, conversationFingerprint, legacyRequestFingerprint, requestFingerprint } from './send-journal.mjs';
 import { classifySend, SendState } from './send-outcome.mjs';
+import { requireValidBootstrapContext } from './bootstrap-context.mjs';
 
 export { tools };
 export const VERSION = '0.2.0';
@@ -143,18 +144,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     const context = await enqueue('agent_context', { tabId: a.tabId });
     if (!context?.verified || !CHAT_ORIGINS.has(context.origin) || typeof context.conversationId !== 'string')
       throw Error('SEND_CONTEXT_UNAVAILABLE: bind a provider conversation with a stable origin and conversation identifier.');
-    // Only explicitly recognized empty new-chat routes may use a bootstrap
-    // marker; never fabricate a real provider conversation ID. A one-shot
-    // durable send-journal claim is still required before browser mutation.
-    const markers = new Map([
-      ['CLAUDE_NEW_CHAT', ['claude', 'https://claude.ai']],
-      ['GEMINI_NEW_CHAT', ['gemini', 'https://gemini.google.com']]
-    ]);
-    const expectedBootstrap = markers.get(context.conversationId);
-    if (Boolean(expectedBootstrap) !== (context.bootstrap === true) ||
-        (expectedBootstrap && (expectedBootstrap[0] !== name ||
-                               expectedBootstrap[1] !== context.origin)))
-      throw Error('SEND_BOOTSTRAP_CONTEXT_INVALID');
+    requireValidBootstrapContext(context,name);
     const conversationFp = conversationFingerprint(context.origin, context.conversationId, journalKey);
     const fingerprint = requestFingerprint(name, a.tabId, text, journalKey, context);
     const begun = sendJournal.begin({ requestId, agent: name, tabId: a.tabId, origin: context.origin,
