@@ -73,7 +73,16 @@ test('local form checks origin, token and immutable SHA',async()=>{
   // A same-origin HTML form POST needs a non-null Origin in Chrome.
   // The origin-only Referer policy must not disclose the approval key.
   assert.equal(approvalPage.headers.get('referrer-policy'),'origin');
-  assert.match(await approvalPage.text(),/Approve once/);
+  const html=await approvalPage.text();
+  assert.match(html,/Engineering Approval/);
+  assert.match(html,/Обновить список/);
+  assert.match(html,/Разрешить один раз/);
+  assert.match(html,/Отклонить/);
+  assert.match(html,/approvedcmd01/);
+  assert.match(html,/meta http-equiv="refresh" content="10"/);
+  assert.match(html,/name="sha256"/);
+  assert.doesNotMatch(html,/onload=|onclick=|<script\b/i);
+  assert.equal(x.executed(),0); // Rendering and refresh cannot run the job.
   const body=new URLSearchParams({id:req.requestId,sha256:p.sha256,approved:'yes'});
   const nullOrigin=await fetch(base+'/decide?key='+x.service.uiToken,
    {method:'POST',headers:{Origin:'null'},body});
