@@ -12,8 +12,13 @@ test('GCM is resolved only from an explicit Git for Windows installation',()=>{
   exists:p=>{paths.push(p);return true;},
   stat:p=>({isFile:()=>true})
  });
- assert.equal(result,'C:/Program Files/Git/mingw64/bin/git-credential-manager.exe');
+ assert.equal(result,'C:/Program Files/Git/ucrt64/bin/git-credential-manager.exe');
  assert.equal(paths.length,1);
+ const fallback=requireTrustedGitCredentialManager({
+  exists:p=>p==='C:/Program Files/Git/mingw64/bin/git-credential-manager.exe',
+  stat:()=>({isFile:()=>true})
+ });
+ assert.equal(fallback,'C:/Program Files/Git/mingw64/bin/git-credential-manager.exe');
  assert.throws(()=>requireTrustedGitCredentialManager({
   exists:()=>false
  }),/TRUSTED_GCM_NOT_INSTALLED/);
