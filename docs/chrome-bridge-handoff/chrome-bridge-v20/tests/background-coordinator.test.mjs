@@ -41,7 +41,10 @@ test('background start restricts storage before reading and creates offscreen ho
   assert.deepEqual(c.calls.map(x=>x[0]),['restrict','create','message']);
 });
 test('content scripts cannot spoof coordinator status or dispatch',async()=>{
-  const c=fakeChrome();
+  const c=fakeChrome({
+    bridgeBackgroundMode:true,bridgeConnectionDesired:true,
+    bridgeAllTabsMode:true,bridgeMutationLabMode:true
+  });
   installBackgroundCoordinator(c);
   assert.equal(c.listeners.length,1);
   const msg={target:'bridge-coordinator',type:'transport-status',status:{connected:true,state:'connected'}};
@@ -53,7 +56,8 @@ test('content scripts cannot spoof coordinator status or dispatch',async()=>{
   assert.deepEqual(response,{ok:false});
   invoke({target:'bridge-coordinator',type:'status'},{id:c.runtime.id,url:'chrome-extension://ext-mock-id/control.html'});
   assert.equal(response.connected,false);
-  invoke(msg,{id:c.runtime.id,url:c.runtime.getURL('transport-host.html')});
+  assert.equal(invoke(msg,{id:c.runtime.id,url:c.runtime.getURL('transport-host.html')}),true);
+  await Promise.resolve();
   assert.deepEqual(response,{ok:true});
   invoke({target:'bridge-coordinator',type:'status'},{id:c.runtime.id,url:'chrome-extension://ext-mock-id/control.html'});
   assert.equal(response.connected,true);
@@ -184,4 +188,48 @@ test('disconnect rejects an explicit negative offscreen stop acknowledgement',as
   await assert.rejects(stopBackgroundTransport(c),/BACKGROUND_STOP_UNCONFIRMED/);
   assert.equal(state.bridgeConnectionDesired,false);
   assert.equal(state.bridgeMutationLabMode,false);
+});
+
+test('a delayed offscreen connected notification cannot resurrect a disconnected session',async()=>{
+  const data={
+    bridgeBackgroundMode:true,bridgeConnectionDesired:true,
+    bridgeAllTabsMode:true,bridgeMutationLabMode:true
+  };
+  const c=fakeChrome(data);
+  installBackgroundCoordinator(c);
+  const sender={id:c.runtime.id,url:c.runtime.getURL('transport-host.html')};
+  const panel={id:c.runtime.id,url:c.runtime.getURL('control.html')};
+  let reply;
+  const status={target:'bridge-coordinator',type:'transport-status',
+    status:{state:'connected',connected:true}};
+  const invoke=(msg,sender)=>c.listeners[0](msg,sender,x=>reply=x);
+  assert.equal(invoke(status,sender),true);
+  await Promise.resolve();
+  assert.deepEqual(reply,{ok:true});
+  await c.storage.local.set({
+    bridgeConnectionDesired:false,bridgeAllTabsMode:false,
+    bridgeMutationLabMode:false
+  });
+  reply=undefined;
+  // The old Worker can still send queued status messages after Disconnect.
+  assert.equal(invoke(status,sender),true);
+  await Promise.resolve();
+  assert.deepEqual(reply,{ok:false,reason:'SESSION_NOT_ACTIVE'});
+  invoke({target:'bridge-coordinator',type:'status'},panel);
+  assert.equal(reply.connected,false);
+});
+
+test('positive status fails closed if persistent session storage cannot be read',async()=>{
+  const c=fakeChrome();
+  installBackgroundCoordinator(c);
+  c.storage.local.get=async()=>{throw Error('STORAGE_UNAVAILABLE');};
+  const sender={id:c.runtime.id,url:c.runtime.getURL('transport-host.html')};
+  let reply;
+  const handled=c.listeners[0]({
+    target:'bridge-coordinator',type:'transport-status',
+    status:{state:'connected',connected:true}
+  },sender,x=>reply=x);
+  assert.equal(handled,true);
+  for(let i=0;i<3;i++) await Promise.resolve();
+  assert.deepEqual(reply,{ok:false,reason:'SESSION_STATE_UNAVAILABLE'});
 });
