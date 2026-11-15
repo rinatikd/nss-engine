@@ -21,6 +21,11 @@ export const SUITES = Object.freeze({
   'platform-node': {
     command: 'node',
     args: ['--test', 'tools/ai_collaboration/local_test_runner.test.mjs',
+      'tools/ai_collaboration/chat-approval-attestation.test.mjs',
+      'tools/ai_collaboration/chat-approval-redemption.test.mjs',
+      'tools/ai_collaboration/chat-approval-replay-store.test.mjs',
+      'tools/ai_collaboration/chat-approval-service.test.mjs',
+      'tools/powershell-direct/tests/chat-approval-config.test.mjs',
       'tools/ai_collaboration/local_job_service.test.mjs',
       'tools/ai_collaboration/local_mcp_dispatch.test.mjs',
       'tools/powershell-direct/tests/service.test.mjs',
