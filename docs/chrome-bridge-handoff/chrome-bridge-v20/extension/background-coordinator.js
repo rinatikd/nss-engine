@@ -130,6 +130,7 @@ export function installBackgroundCoordinator(chromeApi) {
               flags.bridgeConnectionDesired !== true ||
               flags.bridgeAllTabsMode !== true ||
               flags.bridgeMutationLabMode !== true) {
+            updateStatus({state:'disconnected',connected:false});
             respond({ok:false,reason:'SESSION_NOT_ACTIVE'});
             return;
           }
