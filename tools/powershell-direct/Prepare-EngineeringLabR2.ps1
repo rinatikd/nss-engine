@@ -4,7 +4,6 @@ param([ValidateSet('Inspect','Prepare')][string]$Mode='Inspect')
 $ErrorActionPreference='Stop'
 $repo=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath
 $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
-$git='C:\Program Files\Git\cmd\git.exe'
 $node='C:\Program Files\nodejs\node.exe'
 $branch='platform/ai-windows-control-release-20261114'
 $tests=@(
@@ -29,13 +28,17 @@ $required=@(
  'tools/ai_collaboration/local_job_service.mjs',
  'tools/powershell-direct/tests/engineering-smoke.mjs'
 )
-foreach($exe in @($git,$node)){
+foreach($exe in @($node)){
  if(!(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'TRUSTED_BINARY_MISSING'}
 }
-$actualBranch=(& $git -C $repo rev-parse --abbrev-ref HEAD | Out-String).Trim()
-if($LASTEXITCODE -ne 0 -or $actualBranch -cne $branch){throw 'UNEXPECTED_BRANCH'}
-$dirty=(& $git -C $repo status --porcelain=v1 --untracked-files=all | Out-String).Trim()
-if($LASTEXITCODE -ne 0 -or $dirty){throw 'SOURCE_NOT_CLEAN'}
+# External Git invocations are prohibited by the constrained PowerShell executor.
+# Verify an attached branch from the repository HEAD without launching Git.
+$headFile=Join-Path $repo '.git\HEAD'
+if(!(Test-Path -LiteralPath $headFile -PathType Leaf)){throw 'GIT_HEAD_MISSING'}
+$head=(Get-Content -LiteralPath $headFile -Raw).Trim()
+$actualBranch='platform/ai-windows-control-release-20261114'
+if($head -cne ('ref: refs/heads/'+$actualBranch)){throw 'UNEXPECTED_BRANCH'}
+# A separate trusted git-status operation must validate a clean worktree.
 foreach($rel in ($required+$tests)){
  if(!(Test-Path -LiteralPath (Join-Path $repo $rel) -PathType Leaf)){throw ('SOURCE_MISSING_'+$rel)}
 }
@@ -50,14 +53,8 @@ if($Mode -eq 'Inspect'){
  return
 }
 if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_EXISTS_NO_OVERWRITE'}
-# Verify source BEFORE writing any staged files.
-Push-Location -LiteralPath $repo
-try {
- & $node --test @tests
- if($LASTEXITCODE -ne 0){throw 'SOURCE_TESTS_FAILED'}
- & $node 'tools/powershell-direct/tests/engineering-smoke.mjs'
- if($LASTEXITCODE -ne 0){throw 'SOURCE_SMOKE_FAILED'}
-}finally{Pop-Location}
+# Tests are executed through the separate allowlisted node-test runner,
+# not launched from a PowerShell script. R2 remains non-active until tests pass.
 if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_COLLISION'}
 $created=$false
 try{
@@ -72,28 +69,20 @@ try{
   $sourceHash=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
   if($sourceHash -cne (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash){throw ('HASH_MISMATCH_'+$rel)}
   $rows+= [pscustomobject]@{File=$rel;Sha256=$sourceHash}
-  & $node --check $dest
-  if($LASTEXITCODE -ne 0){throw ('SYNTAX_FAILED_'+$rel)}
  }
- Push-Location -LiteralPath $stage
- try{
-  & $node --test @tests
-  if($LASTEXITCODE -ne 0){throw 'STAGE_TESTS_FAILED'}
-  & $node 'tools/powershell-direct/tests/engineering-smoke.mjs'
-  if($LASTEXITCODE -ne 0){throw 'STAGE_SMOKE_FAILED'}
- }finally{Pop-Location}
- # Manifest is written only after hashes and tests pass.
+ # Manifest records hashes; a separate R2 verification job must still pass.
  $manifest=Join-Path $stage 'source-hashes.json'
  ConvertTo-Json -InputObject $rows -Depth 4 | Set-Content -LiteralPath $manifest -Encoding UTF8
  if(!(Test-Path -LiteralPath $manifest -PathType Leaf)){throw 'MANIFEST_MISSING'}
  [pscustomobject]@{
-  Result='R2_STAGED_AND_TESTED'
+  Result='R2_STAGED_UNTESTED'
   Target=$stage
   VerifiedModuleCount=$rows.Count
   LiveR1Restarted=$false
   ProductionTouched=$false
   TunnelTouched=$false
   CutoverPerformed=$false
+  TestsPending=$true
  } | ConvertTo-Json -Compress
 }catch{
  # Remove only the new, isolated R2 directory created by THIS invocation.
