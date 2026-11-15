@@ -3,7 +3,7 @@
 // host approval channel. A model-supplied "approved:true" never authorizes work.
 // Jobs are at-most-once: a crash or lost ACK becomes UNKNOWN, never a re-run.
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, unlink, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveTestPlan, executeTestPlan, TaskPolicyError } from './local_test_runner.mjs';
 
@@ -87,8 +87,48 @@ export function createLocalJobService({
       }
     }
   };
+  // Read-only bounded audit inbox. Do not expose commands, arguments, workspace
+  // paths or stdout/stderr in the operator's historical overview.
+  // An archived record is NEVER executable; a new request must be planned and
+  // independently approved after the operator returns.
+  const recent = async (limit=20) => {
+    if(!Number.isInteger(limit)||limit<1||limit>50)
+      throw new TaskPolicyError('INVALID_RECENT_LIMIT');
+    let entries;
+    try {entries=await readdir(auditDirectory,{withFileTypes:true});}
+    catch(error) {
+      if(error.code==='ENOENT')return [];
+      throw error;
+    }
+    const records=[];
+    for(const entry of entries){
+      if(!entry.isFile()||!entry.name.endsWith('.json'))continue;
+      const id=entry.name.slice(0,-5);
+      if(!ID.test(id))continue;
+      let item;
+      try{item=await read(id);}catch{continue;}
+      if(item.requestId!==id || typeof item.state!=='string')continue;
+      // Pending states after a service restart cannot imply an active approval.
+      // Surface them as interrupted, not as a reusable grant.
+      const state=['PENDING_LOCAL_APPROVAL','RUNNING','CLAIM_IN_PROGRESS'].includes(item.state)
+        ? 'REQUIRES_MANUAL_REVIEW' : item.state;
+      records.push({
+        requestId:id,
+        suite:typeof item.suite==='string'?item.suite.slice(0,80):'',
+        state,
+        reason:typeof item.reason==='string'?item.reason.slice(0,80):'',
+        planSha256:typeof item.planSha256==='string'?item.planSha256:'',
+        updatedAt:typeof item.endedAt==='string'?item.endedAt:
+          typeof item.createdAt==='string'?item.createdAt:''
+      });
+    }
+    records.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt) ||
+      a.requestId.localeCompare(b.requestId));
+    return records.slice(0,limit);
+  };
   return {
     status: read,
+    recent,
     async submit(request) {
       const {requestId,workspace}=request;
       const suite=request.suite||request.operation;
