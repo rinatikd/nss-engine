@@ -227,3 +227,23 @@ test('engineering approval expiry is enforced at submit decision even before tim
   await x.service.stop();
  }
 });
+
+test('local UI shows durable completed history without actionable replay form',async()=>{
+ const x=fixture();
+ x.service.engineeringService={recent:async()=>[{
+   requestId:'historicaljob01',suite:'node-test',state:'DENIED',
+   reason:'APPROVAL_EXPIRED',updatedAt:'2026-11-15T05:00:00.000Z'
+ }]};
+ await x.service.start();
+ try{
+  const base='http://127.0.0.1:'+x.service.port;
+  const page=await fetch(base+'/approve?key='+x.service.uiToken);
+  assert.equal(page.status,200);
+  const html=await page.text();
+  assert.match(html,/Журнал заданий/);
+  assert.match(html,/historicaljob01/);
+  assert.match(html,/APPROVAL_EXPIRED/);
+  assert.doesNotMatch(html,/name="id" value="historicaljob01"/);
+  assert.equal(x.executed(),0);
+ }finally{await x.service.stop();}
+});
