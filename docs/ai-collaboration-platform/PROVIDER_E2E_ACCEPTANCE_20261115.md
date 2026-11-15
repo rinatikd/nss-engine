@@ -17,15 +17,26 @@ Date: 2026-11-15. Evidence: live connector calls from ChatGPT and PR inspection.
 | Provider | Current evidence | Blocker | Required next step |
 |---|---|---|---|
 | Claude | Lab tab bound, but URL is claude.ai/login; composer matched 0, send matched 0 | Logged out / captcha present. Auth is operator-only | Operator signs in to isolated test Chrome. Recheck selector health + per-origin grant, then approval-based unique-request send and correlated reply |
-| Gemini | Lab tab bound on gemini.google.com/app; composer matched 1 visible; send matched 0; no replies present | Adapter send selector not established; no granted origin | Read-only inspect composer/send state and fix provider selector with lab tests, then obtain local grant and perform correlated send/ack/reply |
+| Gemini | Lab tab bound on gemini.google.com/app; composer matched 1 visible; send matched 0 **while the composer was empty**; no replies present | No per-origin grant; send-button visibility after text entry has not been tested, so do not classify missing send button in an empty composer as an adapter defect | After local approval, enter harmless test text WITHOUT sending; inspect whether the send control appears/enables. Only treat it as an adapter issue if that state is not recognized; then perform separately approved send/reply E2E |
 | DeepSeek | Remembered binding on disconnected Main Bridge; not present in Lab agent list | Production bridge disconnected, no lab bound tab | Restore Main browser separately or explicitly open/bind clean lab chat, verify adapter/auth and local grant |
 | Grok | No tab binding in connected PR102 Lab; current installed browser-control allowlist is limited to claude.ai/gemini.google.com/chat.deepseek.com | Provider not enabled in current adapter + origin policy | Add explicit x.com/grok or grok.com verified origin as separate reviewed provider adapter and test in isolated lab, never bypass allowlist |
 | Kimi | No tab binding in connected PR102 Lab; current installed browser-control allowlist does not include kimi.ai | Provider not enabled in adapter + origin policy | Implement/review explicit kimi.ai adapter and policy; isolated lab auth, selectors, send/reply proof |
 
+## Authentication policy: Google account first
+
+- For Grok, Claude, Gemini, Kimi and DeepSeek **prefer the provider's official “Continue with Google / Sign in with Google”** wherever that sign-in method is actually offered. Do not assume every provider supports Google OAuth in every region or session; record unsupported options and request an explicit alternative rather than silently switching methods.
+- Login, Google account selection, MFA, captcha and consent are performed by the operator in that provider's own website. ChatGPT/Bridge never requests passwords, recovery codes, OAuth tokens or cookies, does not bypass interactive checks, and never transfers authentication material between the main Chrome profile and an isolated lab profile.
+- Google sign-in is an authentication choice, **not** a blanket Chrome Bridge Control grant or permission to send messages. Each provider still requires explicit per-origin authorization for automation.
+
+## Conditional send control rule
+
+- Many AI chat websites display or enable Send **only after nonempty text is entered**. A `send matched=0` report for an empty composer is an incomplete preflight result, not evidence of a broken selector.
+- First inspect composer without mutation; after the operator permits the relevant site, type innocuous test text *without submitting it*, then recheck Send visibility/enabled state. If visible, continue to a separately approved send test; if absent, diagnose DOM/selector and login state. Do not press Enter, click send, or dispatch messages during a selector-only preflight.
+
 ## Gated E2E protocol (each of five, not inferred from any other)
 
 1. Inspect exact browser instance, profile/extension identity, connected tab, URL origin and operator login state. No copying cookies, bearer tokens or browser grants between Main and Lab.
-2. Validate provider-specific editable composer, send control, generating/stop and answer markers via read-only selftest and selector diagnostics. Gate blocks if an essential selector is missing.
+2. Validate provider-specific editable composer and answer markers read-only. Remember Send may appear only after typing; with operator approval prefill a harmless unsent test string and re-evaluate the button. Gate blocks only when the required selector fails under the proper input/authenticated state.
 3. Operator explicitly enables the specific site's Control grant locally; no global-only inferred permission, no automatic grant.
 4. Submit benign unique `requestId` challenge to one provider, record local approval, delivery outcome, and obtain a matching response. `UNKNOWN` means inspect existing chat, **never automatically retry**.
 5. Ask one follow-up tied to same conversation; verify correlated reply.
