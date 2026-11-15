@@ -136,7 +136,13 @@ export function installBackgroundCoordinator(chromeApi) {
           }
           updateStatus(msg.status);
           respond({ok:true});
-        }, () => respond({ok:false,reason:'SESSION_STATE_UNAVAILABLE'}));
+        }, () => {
+          // Storage is the source of truth: a read failure must not leave
+          // an old 'connected' badge visible in coordinator memory.
+          updateStatus({state:'disconnected',connected:false,
+            error:'SESSION_STATE_UNAVAILABLE'});
+          respond({ok:false,reason:'SESSION_STATE_UNAVAILABLE'});
+        });
         return true;
       }
       updateStatus(msg.status || {});
