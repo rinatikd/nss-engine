@@ -18,7 +18,7 @@ export const DEFAULT_ADAPTERS = {
   claude: {
     label: 'Claude', origin: 'https://claude.ai', newChatUrl: 'https://claude.ai/new',
     composer: 'div[contenteditable="true"].ProseMirror, div[contenteditable="true"][role="textbox"]',
-    send: 'button[aria-label="Send message"], button[aria-label="Send Message"]',
+    send: 'button[data-testid="chat-input-send"], button[aria-label="Send message"], button[aria-label="Send Message"]',
     stop: 'button[aria-label="Stop response"], button[aria-label="Stop Response"]',
     reply: 'div[data-is-streaming], .font-claude-response',
   },
