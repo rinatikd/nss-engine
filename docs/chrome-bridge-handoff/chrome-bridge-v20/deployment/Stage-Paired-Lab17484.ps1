@@ -24,6 +24,16 @@ if(!$normalized.StartsWith(($base+'\'),[StringComparison]::OrdinalIgnoreCase) -o
     $normalized -match '(?i)production|pr102|chrome-bridge-pr113-e2e-build-v2|chrome-bridge-recovery-install'){
   throw 'OUTPUT_MUST_BE_NEW_ISOLATED_ENGINEERING_DIRECTORY'
 }
+# Refuse an output nested under the checkout (including the selected source tree):
+# otherwise a recursive stage can ingest its own artifacts or dirty the source.
+$sourcePath=[System.IO.Path]::GetFullPath($source).TrimEnd('\\')
+$repoPath=[System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\\')
+if($normalized.StartsWith(($repoPath+'\\'),[StringComparison]::OrdinalIgnoreCase) -or
+   $normalized -ieq $repoPath -or
+   $normalized.StartsWith(($sourcePath+'\\'),[StringComparison]::OrdinalIgnoreCase) -or
+   $normalized -ieq $sourcePath) {
+  throw 'OUTPUT_INSIDE_SOURCE_CHECKOUT_DENIED'
+}
 if(Test-Path -LiteralPath $normalized){throw 'OUTPUT_EXISTS_NO_OVERWRITE'}
 $testFiles=@(
  'tests\claude-bootstrap.test.mjs',
