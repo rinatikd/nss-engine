@@ -143,6 +143,13 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     const context = await enqueue('agent_context', { tabId: a.tabId });
     if (!context?.verified || !CHAT_ORIGINS.has(context.origin) || typeof context.conversationId !== 'string')
       throw Error('SEND_CONTEXT_UNAVAILABLE: bind a provider conversation with a stable origin and conversation identifier.');
+    // First Claude message at /new: explicitly scoped bootstrap marker.
+    // This remains a durable, one-shot requestId journal entry, not a
+    // fabricated provider-issued conversation identifier.
+    const bootstrapMarker = context.conversationId === 'CLAUDE_NEW_CHAT';
+    if (bootstrapMarker !== (context.bootstrap === true) ||
+        (bootstrapMarker && (context.origin !== 'https://claude.ai' || name !== 'claude')))
+      throw Error('SEND_BOOTSTRAP_CONTEXT_INVALID');
     const conversationFp = conversationFingerprint(context.origin, context.conversationId, journalKey);
     const fingerprint = requestFingerprint(name, a.tabId, text, journalKey, context);
     const begun = sendJournal.begin({ requestId, agent: name, tabId: a.tabId, origin: context.origin,
