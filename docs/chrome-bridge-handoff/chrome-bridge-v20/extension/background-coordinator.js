@@ -118,6 +118,26 @@ export function installBackgroundCoordinator(chromeApi) {
     if (msg.type === 'transport-status') {
       // Only the offscreen document can publish connection state.
       if (sender.url !== chromeApi.runtime.getURL(PATH)) { respond({ok:false}); return false; }
+      // A delayed 'connected' notification may arrive after Disconnect.
+      // Authorize positive connection state against persistent session intent;
+      // the offscreen sender identity alone does not imply an active grant.
+      if (msg.status?.connected === true) {
+        void chromeApi.storage.local.get([
+          'bridgeBackgroundMode','bridgeConnectionDesired','bridgeAllTabsMode',
+          'bridgeMutationLabMode'
+        ]).then(flags => {
+          if (flags.bridgeBackgroundMode !== true ||
+              flags.bridgeConnectionDesired !== true ||
+              flags.bridgeAllTabsMode !== true ||
+              flags.bridgeMutationLabMode !== true) {
+            respond({ok:false,reason:'SESSION_NOT_ACTIVE'});
+            return;
+          }
+          updateStatus(msg.status);
+          respond({ok:true});
+        }, () => respond({ok:false,reason:'SESSION_STATE_UNAVAILABLE'}));
+        return true;
+      }
       updateStatus(msg.status || {});
       respond({ok:true});
       return false;
