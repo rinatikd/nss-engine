@@ -1,4 +1,4 @@
-# Run PR113 Claude bootstrap tests in a separate detached worktree.
+# Run PR113 Claude/Gemini bootstrap tests in a separate detached worktree.
 # Requires a previously fetched exact commit. Never modifies the active branch,
 # production services, credentials, or Chrome extension.
 [CmdletBinding()]
@@ -6,7 +6,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $repo = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $worktree = 'C:\Engineering\ChromeBridge-PR113-Bootstrap-Test'
-$commit = 'e3282f6f0b9157ee6028edbbbe896e1466d0f957'
+$commit = '3d35cc23cc91a847c8d6ffa06850da6d08017259'
 $relative = 'docs\chrome-bridge-handoff\chrome-bridge-v20'
 $branch = 'platform/ai-windows-control-release-20261114'
 if ((Get-Location).Path -ne $repo) { Set-Location -LiteralPath $repo }
@@ -25,17 +25,20 @@ $root=Join-Path $worktree $relative
 $head=(& git -C $worktree rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -cne $commit) { throw 'UNEXPECTED_TEST_COMMIT' }
 $tests=Join-Path $root 'tests'
-$target=Join-Path $tests 'claude-bootstrap.test.mjs'
-if (!(Test-Path -LiteralPath $target -PathType Leaf)) { throw 'CLAUDE_TEST_NOT_FOUND' }
-& node --test $target
-$claudeExit=$LASTEXITCODE
-if ($claudeExit -ne 0) { throw 'CLAUDE_BOOTSTRAP_TEST_FAILED' }
+$targets=@('claude-bootstrap.test.mjs','gemini-bootstrap.test.mjs',
+  'discovery-only-agents.test.mjs','one-click-session.test.mjs') |
+  ForEach-Object {Join-Path $tests $_}
+foreach($target in $targets){
+ if (!(Test-Path -LiteralPath $target -PathType Leaf)) { throw 'BOOTSTRAP_TEST_NOT_FOUND' }
+}
+& node --test @($targets)
+if ($LASTEXITCODE -ne 0) { throw 'BOOTSTRAP_TESTS_FAILED' }
 $all=@(Get-ChildItem -LiteralPath $tests -Filter '*.test.mjs' -File | Sort-Object Name)
 if ($all.Count -eq 0) { throw 'TESTS_NOT_FOUND' }
 & node --test @($all.FullName)
 if ($LASTEXITCODE -ne 0) { throw 'PR113_REGRESSION_FAILED' }
 [pscustomobject]@{
- Result='PR113_CLAUDE_BOOTSTRAP_TESTS_PASS'
+ Result='PR113_CLAUDE_GEMINI_TESTS_PASS'
  Commit=$head
  TestFileCount=$all.Count
  MainBranchUnaffected=$true
