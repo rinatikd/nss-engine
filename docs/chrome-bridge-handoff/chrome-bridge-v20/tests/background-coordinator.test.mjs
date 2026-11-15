@@ -232,4 +232,10 @@ test('positive status fails closed if persistent session storage cannot be read'
   assert.equal(handled,true);
   for(let i=0;i<3;i++) await Promise.resolve();
   assert.deepEqual(reply,{ok:false,reason:'SESSION_STATE_UNAVAILABLE'});
+  let visible;
+  c.listeners[0]({target:'bridge-coordinator',type:'status'},
+    {id:c.runtime.id,url:c.runtime.getURL('control.html')},
+    result=>visible=result);
+  assert.equal(visible.connected,false);
+  assert.equal(visible.error,'SESSION_STATE_UNAVAILABLE');
 });
