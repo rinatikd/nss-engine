@@ -75,7 +75,7 @@ test('git pull only uses fixed fast-forward arguments after clean branch preflig
    'origin/platform/ai-windows-control-release-20261114','',
    '1234567890abcdef1234567890abcdef12345678'];
   const result=await runEngineeringPlan(plan,{
-   platform:'win32',executableCheck:()=>true,
+   platform:'win32',executableCheck:()=>true,credentialManagerCheck:()=>true,credentialManagerCheck:()=>true,
    spawnSyncImpl:(exe,args,options)=>{
     assert.equal(options.shell,false);
     assert.equal(options.env.GIT_TERMINAL_PROMPT,'0');
@@ -113,7 +113,7 @@ test('git pull refuses dirty, detached or missing-upstream worktrees without dis
   ]){
    let probe=0,executed=0;
    await assert.rejects(runEngineeringPlan(plan,{
-    platform:'win32',executableCheck:()=>true,
+    platform:'win32',executableCheck:()=>true,credentialManagerCheck:()=>true,
     spawnSyncImpl:()=>responses[probe++]===null?
       {status:1,stdout:'',stderr:'error'}:
       {status:0,stdout:responses[probe-1],stderr:''},
