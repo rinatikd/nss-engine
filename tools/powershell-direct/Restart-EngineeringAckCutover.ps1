@@ -129,10 +129,16 @@ if($ExpectedSupervisorPid -le 0 -or $ExpectedTunnelPid -le 0){
 foreach($f in @($source,$installed,$backup,$supervisor,$recovery,$node,$client)){
  if(!(Test-Path -LiteralPath $f -PathType Leaf)){throw 'ACK_RESTART_PREREQUISITE_MISSING'}
 }
+$installedHash=Sha $installed
 if((Sha $source) -ne $expectedCurrentHash -or
-   (Sha $installed) -ne $expectedCurrentHash -or
-   (Sha $backup) -ne $expectedPreviousHash){
+   (Sha $backup) -ne $expectedPreviousHash -or
+   ($installedHash -ne $expectedCurrentHash -and $installedHash -ne $expectedPreviousHash)){
  throw 'ACK_RESTART_HASH_GUARD_FAILED'
+}
+# Read-only modes can inspect a verified recovered old stack. Restart can
+# only activate the exact new, already-staged module after a fresh check.
+if($Mode -eq 'Restart' -and $installedHash -ne $expectedCurrentHash){
+ throw 'ACK_RESTART_NEW_MODULE_NOT_STAGED'
 }
 Pair $ExpectedSupervisorPid $ExpectedTunnelPid
 if(!(Healthy $ExpectedTunnelPid)){throw 'ACK_RESTART_OLD_TUNNEL_UNHEALTHY'}
@@ -183,6 +189,7 @@ try{
   Result 'ACK_RESTART_NEW_FAILED_OLD_RESTORED' $restored.SupervisorPid $restored.TunnelPid $failure
  }catch{
   $rollbackFailure=$_.Exception.Message
+  $failedAt=$rollbackStep
   # A delayed health poll can be responsible for a false failure. If the
   # old module is now on disk and a verified stack is currently healthy,
   # classify the rollback as recovered; never terminate it again.
@@ -199,7 +206,7 @@ try{
      'ACK_RESTART_REMOTE_HEALTH_NOT_CONFIRMED_AFTER_30S','PARTIAL_STACK_REQUIRES_MANUAL_RECOVERY',
      'ROLLBACK_PORT_CONFLICT','ROLLBACK_HASH_MISMATCH','ACK_RESTART_PORTS_NOT_RELEASED')
    $category=if($codes -contains $rollbackFailure){$rollbackFailure}else{'UNCLASSIFIED_ROLLBACK_ERROR'}
-   Result 'ACK_RESTART_FAILED_MANUAL_RECOVERY_REQUIRED' 0 0 ('Stage='+$rollbackStep+';Failure='+$category)
+   Result 'ACK_RESTART_FAILED_MANUAL_RECOVERY_REQUIRED' 0 0 ('Stage='+$failedAt+';Failure='+$category)
   }
  }
 }
