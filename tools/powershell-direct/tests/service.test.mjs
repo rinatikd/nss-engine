@@ -144,3 +144,55 @@ test('opt-in chat readonly mode exposes only one additional allowlisted MCP tool
  assert.equal(denied.result.isError,true);
  assert.equal(started,1);
 });
+
+test('expired named approval card is rejected with 409 and cannot execute',async()=>{
+ const x=fixture();await x.service.start();
+ try {
+  const base='http://127.0.0.1:'+x.service.port;
+  const id='expirednamed01',sha='a'.repeat(64);
+  const body=new URLSearchParams({kind:'named',id,sha256:sha,approved:'yes'});
+  const response=await fetch(base+'/decide?key='+x.service.uiToken,{
+   method:'POST',headers:{Origin:base},body,redirect:'manual'});
+  assert.equal(response.status,409);
+  const result=await response.json();
+  assert.equal(result.error,'APPROVAL_NO_LONGER_PENDING');
+  assert.equal(x.executed(),0);
+ }finally{await x.service.stop();}
+});
+
+test('named approval rejects stale plan and redirects after single valid decision',async()=>{
+ const x=fixture();await x.service.start();
+ try {
+  const base='http://127.0.0.1:'+x.service.port;
+  const id='currentnamed01',sha='b'.repeat(64);
+  let decisions=0,decision;
+  x.service.namedPending.set(id,{
+   requestId:id,planSha256:sha,suite:'node-test',workspace,
+   command:'node',args:['--test'],expiresAt:Date.now()+30000,
+   timer:setTimeout(()=>{},30000),
+   resolve:result=>{decisions++;decision=result;}
+  });
+  const attempt=hash=>fetch(base+'/decide?key='+x.service.uiToken,{
+   method:'POST',headers:{Origin:base},
+   body:new URLSearchParams({kind:'named',id,sha256:hash,approved:'yes'}),
+   redirect:'manual'
+  });
+  const stale=await attempt('c'.repeat(64));
+  assert.equal(stale.status,409);
+  assert.equal((await stale.json()).error,'APPROVAL_PLAN_CHANGED');
+  assert.equal(decisions,0);
+  const good=await attempt(sha);
+  assert.equal(good.status,303);
+  assert.match(good.headers.get('location'),/^\\/approve\\?key=/);
+  assert.equal(decisions,1);
+  assert.equal(decision.approved,true);
+  assert.equal(decision.planSha256,sha);
+  const replay=await attempt(sha);
+  assert.equal(replay.status,409);
+  assert.equal(decisions,1);
+  assert.equal(x.executed(),0);
+ }finally{
+  for(const p of x.service.namedPending.values())clearTimeout(p.timer);
+  await x.service.stop();
+ }
+});
