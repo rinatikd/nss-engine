@@ -52,7 +52,10 @@ foreach($rel in $testFiles){
    throw "TEST_FILE_MISSING: $rel"
  }
 }
-$testPaths=@($testFiles|ForEach-Object {Join-Path $source $_})
+# Assert the critical suites above exist; run the COMPLETE source test inventory.
+$testPaths=@(Get-ChildItem -LiteralPath (Join-Path $source 'tests') -Filter '*.test.mjs' -File |
+  Sort-Object Name | ForEach-Object {$_.FullName})
+if($testPaths.Count -lt $testFiles.Count){throw 'LAB_TEST_DISCOVERY_INCOMPLETE'}
 & $node --test @testPaths
 if($LASTEXITCODE -ne 0){throw 'LAB_NODE_TESTS_FAILED_NO_STAGE'}
 $serverSource=Join-Path $source 'server'
