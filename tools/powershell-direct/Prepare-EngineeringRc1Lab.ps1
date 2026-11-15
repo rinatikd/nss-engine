@@ -7,7 +7,7 @@ $destination='C:\Engineering\PowerShellDirect-Release-RC1-Lab'
 $parent='C:\Engineering'
 $remote='https://github.com/rinatikd/nss-engine.git'
 $branch='release/engineering-mcp-rc1-20261115'
-$expectedCommit='a88cbb764f78ec5fd14390f62854459fce9ec9df'
+$expectedCommit='db1f07dd3718fc868c150788fd275931a4bed031'
 $git='C:\Program Files\Git\cmd\git.exe'
 if($env:OS -ne 'Windows_NT'){throw 'WINDOWS_REQUIRED'}
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
@@ -15,6 +15,10 @@ if(!(Test-Path -LiteralPath $parent -PathType Container)){throw 'PARENT_NOT_FOUN
 $resolved=(Resolve-Path -LiteralPath $parent).ProviderPath
 if($resolved -ine $parent){throw 'PARENT_REDIRECTED'}
 $env:GIT_TERMINAL_PROMPT='0'
+$env:GCM_INTERACTIVE='0'
+$env:GCM_GUI_PROMPT='0'
+$gcm='C:\Program Files\Git\mingw64\bin\git-credential-manager.exe'
+if(!(Test-Path -LiteralPath $gcm -PathType Leaf)){throw 'TRUSTED_GCM_NOT_FOUND'}
 $env:GIT_CONFIG_GLOBAL='NUL'
 $env:GIT_CONFIG_NOSYSTEM='1'
 $env:GIT_OPTIONAL_LOCKS='0'
@@ -38,7 +42,7 @@ if($Mode -eq 'Prepare'){
   $null=Get-Item -LiteralPath $destination -Force -ErrorAction Stop
   throw 'LAB_EXISTS_NO_OVERWRITE'
  }catch [System.Management.Automation.ItemNotFoundException] {}
- & $git -c core.hooksPath=NUL -c protocol.ext.allow=never -c protocol.file.allow=never clone --depth 1 --single-branch --branch $branch --no-tags -- $remote $destination
+ & $git -c core.hooksPath=NUL -c protocol.ext.allow=never -c protocol.file.allow=never -c credential.helper= -c credential.helper=manager -c credential.interactive=false clone --depth 1 --single-branch --branch $branch --no-tags -- $remote $destination
  if($LASTEXITCODE -ne 0){throw 'LAB_CLONE_FAILED'}
 }elseif(!(Test-Path -LiteralPath $destination)){
  [pscustomobject]@{Result='LAB_NOT_PREPARED';Path=$destination;ProductionChanged=$false}|ConvertTo-Json -Compress
