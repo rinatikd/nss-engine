@@ -4,8 +4,8 @@
 // Service approval MUST come from the trusted local UI bound to requestId+planSha256.
 const requestIdSchema={type:'string',minLength:8,maxLength:80,pattern:'^[A-Za-z0-9_-]+$'};
 const allowedSuites=[
-  'platform-contract','platform-node','nss-portable',
-  'chrome-pr113-node','chrome-pr113-build-lab17484'
+  'platform-contract','platform-node','nss-portable','platform-provider-preflight',
+  'chrome-pr113-node','chrome-pr113-bootstrap','chrome-pr113-build-lab17484'
 ];
 
 export const NAMED_SUITE_TOOLS=Object.freeze([
