@@ -197,21 +197,41 @@ export class PowerShellApprovalService {
    }
    if(url.pathname==='/approve'&&req.method==='GET'){
     if(!match(url.searchParams.get('key'),this.uiToken))return send(res,403,{error:'UI_AUTH_REQUIRED'});
-    const rows=[...this.jobs.values()].filter(j=>this.status(j.payload.id).state==='PENDING').map(j=>{
-     const p=j.payload;return '<form method="POST" action="/decide?key='+encodeURIComponent(this.uiToken)+'"><p><b>'+clean(p.task)+'</b><br>'+clean(p.workspace)+'<br><code>'+clean(p.exe+' '+p.argv.join(' '))+'</code><br>SHA256 '+clean(j.sha256)+'</p><input type="hidden" name="id" value="'+clean(p.id)+'"><input type="hidden" name="sha256" value="'+clean(j.sha256)+'"><button name="approved" value="yes">Approve once</button> <button name="approved" value="no">Deny</button></form>';
+    const action='/decide?key='+encodeURIComponent(this.uiToken);
+    const pending=[...this.jobs.values()].filter(j=>this.status(j.payload.id).state==='PENDING');
+    const card=(title,id,hash,workspace,command,expiry,kind='')=>{
+      const remaining=Math.max(0,Math.ceil((expiry-Date.now())/1000));
+      return '<section class="job"><header><strong>'+clean(title)+'</strong><span class="pill">Ожидает решения</span></header>'+
+        '<div class="meta">Задание <code>'+clean(id)+'</code></div>'+
+        '<dl><dt>Рабочая папка</dt><dd><code>'+clean(workspace)+'</code></dd>'+
+        '<dt>Команда</dt><dd><code>'+clean(command)+'</code></dd>'+
+        '<dt>Истекает через</dt><dd>'+clean(String(remaining))+' сек.</dd>'+
+        '<dt>SHA256 плана</dt><dd class="hash"><code>'+clean(hash)+'</code></dd></dl>'+
+        '<form method="POST" action="'+action+'">'+
+        '<input type="hidden" name="kind" value="'+clean(kind)+'">'+
+        '<input type="hidden" name="id" value="'+clean(id)+'">'+
+        '<input type="hidden" name="sha256" value="'+clean(hash)+'">'+
+        '<div class="actions"><button class="allow" name="approved" value="yes">Разрешить один раз</button>'+
+        '<button class="deny" name="approved" value="no">Отклонить</button></div></form></section>';
+    };
+    const rows=pending.map(j=>{
+      const p=j.payload;
+      return card('Диагностика: '+p.task,p.id,j.sha256,p.workspace,
+        p.exe+' '+p.argv.join(' '),p.expiresAt);
     }).join('');
-    const namedRows=[...this.namedPending.values()].map(p=>{
-      const action='/decide?key='+encodeURIComponent(this.uiToken);
-      return '<form method="POST" action="'+action+'"><p><b>Named suite: '+
-        clean(p.suite)+'</b><br>'+clean(p.workspace)+'<br>'+clean(p.risk||'')+' '+clean(p.command||'')+' '+clean((p.args||[]).join(' '))+'<br>SHA256 '+clean(p.planSha256)+
-        '</p><input type="hidden" name="kind" value="named">'+
-        '<input type="hidden" name="id" value="'+clean(p.requestId)+'">'+
-        '<input type="hidden" name="sha256" value="'+clean(p.planSha256)+'">'+
-        '<button name="approved" value="yes">Approve once</button> '+
-        '<button name="approved" value="no">Deny</button></form>';
-    }).join('');
-    res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','referrer-policy':'origin','content-security-policy':"default-src 'none'; form-action 'self'; base-uri 'none'"});
-    return res.end('<!doctype html><html><meta charset="utf-8"><h2>Local PowerShell approval</h2><p>Only approve commands already confirmed in ChatGPT.</p>'+((rows+namedRows)||'<p>No pending commands.</p>')+'</html>');
+    const namedRows=[...this.namedPending.values()].map(p=>
+      card('Инженерная операция: '+(p.suite||'named suite'),p.requestId,p.planSha256,
+        p.workspace,(p.risk||'')+' '+(p.command||'')+' '+(p.args||[]).join(' '),
+        p.expiresAt,'named')
+    ).join('');
+    // No JavaScript, no auto-approve. The browser refreshes only this authenticated
+    // loopback page; every POST still requires a deliberate local button click.
+    const css=':root{color-scheme:light}*{box-sizing:border-box}body{font:15px/1.5 system-ui,sans-serif;max-width:880px;margin:32px auto;padding:0 18px;color:#17212e;background:#f5f7fa}h1{font-size:25px;margin:0}p{margin:8px 0 20px}.muted{color:#5d6777}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.refresh{padding:9px 14px;border:1px solid #c3cbd7;border-radius:8px;text-decoration:none;background:white;color:#17212e}.job{background:white;border:1px solid #d9e0ea;border-radius:14px;padding:20px;margin:14px 0;box-shadow:0 2px 8px #00000008}.job header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:17px}.pill{font-size:12px;background:#fff3d3;padding:4px 10px;border-radius:20px;color:#785000}.meta{margin:6px 0 14px;color:#546174}dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 16px;margin:0 0 20px}dt{color:#606b78}dd{margin:0;min-width:0;overflow-wrap:anywhere}code{font:13px/1.55 ui-monospace,Consolas,monospace}.hash{font-size:12px;color:#667382}.actions{display:flex;flex-wrap:wrap;gap:10px}button{cursor:pointer;border-radius:9px;padding:12px 18px;font-weight:650;font-size:14px;border:1px solid #b6c0d0}.allow{color:white;background:#155bd5;border-color:#155bd5}.deny{background:white;color:#9d2b2b;border-color:#d9a3a3}.empty{padding:28px;border:1px dashed #bac5d5;border-radius:12px;text-align:center;background:white}@media(max-width:520px){dl{display:block}dt{margin-top:12px}.job{padding:14px}.actions button{flex:1}}';
+    res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-frame-options':'DENY','referrer-policy':'origin','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'"});
+    return res.end('<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="10"><title>Engineering Approval</title><style>'+css+'</style></head><body>'+
+      '<div class="top"><h1>Engineering Approval</h1><a class="refresh" href="/approve?key='+encodeURIComponent(this.uiToken)+'">Обновить список</a></div>'+
+      '<p class="muted">Локальные запросы Windows. Проверяйте команду и рабочую папку. Автоматического одобрения нет. Список обновляется каждые 10 секунд.</p>'+
+      ((rows+namedRows)||'<div class="empty">Нет заданий, ожидающих подтверждения.</div>')+'</body></html>');
    }
    if(url.pathname==='/decide'&&req.method==='POST'){
     if(!match(url.searchParams.get('key'),this.uiToken))return send(res,403,{error:'UI_AUTH_REQUIRED'});
