@@ -41,7 +41,7 @@ const approval=async(svc,entry,approved)=>{
     body:new URLSearchParams({
       kind:'named',id:entry.requestId,sha256:entry.planSha256,
       approved:approved?'yes':'no'
-    })
+    }),redirect:'manual'
   });
   return response;
 };
@@ -59,8 +59,8 @@ test('local denial blocks named-suite execution',()=>fixture(async({svc,dir,star
   assert.equal(JSON.parse(res.result.content[0].text).state,'QUEUED_FOR_LOCAL_APPROVAL');
   const entry=await waitFor(()=>svc.namedPending.get(id));
   const page=await fetch('http://127.0.0.1:'+svc.port+'/approve?key='+svc.uiToken);
-  assert.match(await page.text(),/Named suite/);
-  assert.equal((await approval(svc,entry,false)).status,200);
+  assert.match(await page.text(),/Инженерная операция/);
+  assert.equal((await approval(svc,entry,false)).status,303);
   await waitFor(async()=>(await svc.namedService.status(id)).state==='DENIED');
   assert.equal(starts(),0);
 }));
@@ -75,9 +75,9 @@ test('local approval runs once; same requestId cannot replay',()=>fixture(async(
       kind:'named',id,sha256:'tampered',approved:'yes'
     })
   });
-  assert.equal(bad.status,400);
+  assert.equal(bad.status,409);
   assert.equal(starts(),0);
-  assert.equal((await approval(svc,entry,true)).status,200);
+  assert.equal((await approval(svc,entry,true)).status,303);
   await waitFor(async()=>(await svc.namedService.status(id)).state==='FINISHED');
   assert.equal(starts(),1);
   rpc(svc,'powershell_named_suite_submit',req(dir,id));
