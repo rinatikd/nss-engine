@@ -10,6 +10,8 @@ import {resolveEngineeringPlan} from '../ai_collaboration/engineering-plan.mjs';
 import {runEngineeringPlan} from '../ai_collaboration/engineering-runner.mjs';
 
 const PORT=17486, secret=()=>crypto.randomBytes(32).toString('hex');
+// Engineering jobs require local approval; allow a reasonable operator window.
+const ENGINEERING_APPROVAL_MS=10*60*1000;
 const match=(a,b)=>{const x=Buffer.from(typeof a==='string'?a:''),y=Buffer.from(typeof b==='string'?b:'');return x.length===y.length&&crypto.timingSafeEqual(x,y);};
 const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const clean=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -67,12 +69,12 @@ export class PowerShellApprovalService {
           resolve({approved:false,requestId:details.requestId,
             planSha256:details.planSha256});return;
         }
-        const expiresAt=Date.now()+180000;
+        const expiresAt=Date.now()+ENGINEERING_APPROVAL_MS;
         const timer=setTimeout(()=>{
           this.namedPending.delete(details.requestId);
           resolve({approved:false,reason:'APPROVAL_EXPIRED',
             requestId:details.requestId,planSha256:details.planSha256});
-        },180000);
+        },ENGINEERING_APPROVAL_MS);
         this.namedPending.set(details.requestId,{...details,resolve,timer,expiresAt});
       })
     });
@@ -243,6 +245,16 @@ export class PowerShellApprovalService {
       // supervisor instance) is not an operator error. Never treat it as a grant.
       if(!p)return send(res,409,{error:'APPROVAL_NO_LONGER_PENDING',
         guidance:'Reload the local approval page. Do not resubmit an expired request.'});
+      // Check expiry at decision time, even if timer scheduling is delayed.
+      // A late user click can never authorize execution.
+      if(Date.now()>=p.expiresAt){
+        this.namedPending.delete(p.requestId);
+        clearTimeout(p.timer);
+        p.resolve({approved:false,reason:'APPROVAL_EXPIRED',
+          requestId:p.requestId,planSha256:p.planSha256});
+        return send(res,410,{error:'APPROVAL_EXPIRED',
+          guidance:'This request expired. A fresh review is required.'});
+      }
       if(!match(f.get('sha256'),p.planSha256))
         return send(res,409,{error:'APPROVAL_PLAN_CHANGED',
           guidance:'Reload and inspect the current plan before deciding.'});
