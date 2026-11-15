@@ -49,6 +49,19 @@ if(!(Test-Path (Join-Path $serverSource 'bridge.mjs')) -or
 New-Item -ItemType Directory -Path $normalized -ErrorAction Stop|Out-Null
 $serverDestination=Join-Path $normalized 'server'
 Copy-Item -LiteralPath $serverSource -Destination $serverDestination -Recurse -ErrorAction Stop
+# Server cannot accidentally start with production port or default user-home state.
+# This guard is inserted ONLY into the staged copy; original source unchanged.
+$stagedBridge=Join-Path $serverDestination 'bridge.mjs'
+$stateDir=Join-Path $normalized 'state'
+New-Item -ItemType Directory -Path $stateDir -ErrorAction Stop|Out-Null
+$expectedState=ConvertTo-Json -Compress $stateDir
+$guard="if (process.env.CHROME_BRIDGE_PORT !== '17484' || process.env.CHROME_BRIDGE_HOME !== $expectedState) throw Error('LAB17484_ENV_REQUIRED');"+[Environment]::NewLine
+$raw=[IO.File]::ReadAllText($stagedBridge)
+if(!$raw.Contains("export const PORT = Number(process.env.CHROME_BRIDGE_PORT || 17381);")){
+ throw 'SERVER_PORT_SOURCE_UNEXPECTED'
+}
+$raw=$guard+$raw.Replace('process.env.CHROME_BRIDGE_PORT || 17381','process.env.CHROME_BRIDGE_PORT || 17484')
+[IO.File]::WriteAllText($stagedBridge,$raw,(New-Object System.Text.UTF8Encoding($false)))
 $build=Join-Path $PSScriptRoot 'Build-OneClick-Lab.ps1'
 & $build -LabPort 17484 -SourceRoot $source -OutputRoot $normalized
 if($LASTEXITCODE -ne 0){throw 'EXTENSION_BUILD_FAILED'}
@@ -58,6 +71,24 @@ if($manifest.host_permissions -notcontains 'http://127.0.0.1:17484/*' -or
    $manifest.host_permissions -contains 'http://127.0.0.1:17381/*'){
  throw 'STAGED_EXTENSION_HOST_PERMISSIONS_UNSAFE'
 }
+# Start only by a separately approved action: never auto-start at stage time.
+# The guarded server requires this exact isolated state directory and port.
+$launch=@'
+[CmdletBinding()]
+param()
+$ErrorActionPreference='Stop'
+$port=17484
+$existing=@(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+if($existing.Count){throw 'LAB17484_PORT_OCCUPIED_NO_START'}
+$env:CHROME_BRIDGE_PORT='17484'
+$env:CHROME_BRIDGE_HOME=Join-Path $PSScriptRoot 'state'
+Remove-Item Env:CHROME_BRIDGE_CODEX_POLICY -ErrorAction SilentlyContinue
+Remove-Item Env:CHROME_BRIDGE_EXTENSION_ID -ErrorAction SilentlyContinue
+& 'C:\Program Files\nodejs\node.exe' (Join-Path $PSScriptRoot 'server\bridge.mjs')
+'@
+[IO.File]::WriteAllText((Join-Path $normalized 'Start-Paired-Lab17484.ps1'),
+ $launch,(New-Object System.Text.UTF8Encoding($false)))
+
 # Build an immutable inventory. Any later edit invalidates source hashes.
 $files=@(Get-ChildItem -LiteralPath $normalized -Recurse -File | Sort-Object FullName)
 $inventory=@($files|ForEach-Object{
