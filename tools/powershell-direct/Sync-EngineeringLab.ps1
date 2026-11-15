@@ -8,7 +8,7 @@ $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R1'
 $node='C:\Program Files\nodejs\node.exe'
 $manifest=Join-Path $stage 'source-hashes.json'
 $files=@(
- 'tools\powershell-direct\service.mjs',
+ 'tools\ai_collaboration\engineering-mcp.mjs',
  'tools\ai_collaboration\local_job_service.mjs'
 )
 $checkPaths=@(
