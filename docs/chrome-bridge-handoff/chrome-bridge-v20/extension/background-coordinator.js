@@ -66,13 +66,21 @@ async function startBackgroundTransportOnce(chromeApi) {
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
-  approvals.stop();
-  await new BackgroundControlGrants(chromeApi).clear();
+  // Disable dispatch *before* any potentially failing asynchronous cleanup.
+  // Persist the stop intent first so a concurrent keepalive cannot reconnect.
   await chromeApi.storage.local.set({
     bridgeConnectionDesired:false,bridgeMutationLabMode:false,bridgeAllTabsMode:false
   });
-  try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
+  approvals.stop();
+  let cleanupError = null;
+  try { await new BackgroundControlGrants(chromeApi).clear(); }
+  catch (error) { cleanupError = error; }
+  // Attempt the offscreen stop even when stale-grant cleanup failed.
+  // Never retry message dispatch after a failed stop.
+  try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); }
+  catch { /* A missing/offline offscreen host is already stopped. */ }
   updateStatus({state:'disconnected',connected:false});
+  if (cleanupError) throw Error('BACKGROUND_GRANT_CLEANUP_FAILED');
 }
 export function installBackgroundCoordinator(chromeApi) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
