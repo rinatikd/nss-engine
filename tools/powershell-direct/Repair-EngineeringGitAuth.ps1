@@ -10,9 +10,24 @@ $repo='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $expectedBranch='platform/ai-windows-control-release-20261114'
 $remote='https://github.com/rinatikd/nss-engine.git'
 $git='C:\Program Files\Git\cmd\git.exe'
-$gcm='C:\Program Files\Git\mingw64\bin\git-credential-manager.exe'
+# Modern Git for Windows may install GCM under ucrt64, older under mingw64.
+# Restrict discovery to standard trusted installation directories.
+$gcmCandidates=@(
+ 'C:\Program Files\Git\ucrt64\bin\git-credential-manager.exe',
+ 'C:\Program Files\Git\mingw64\bin\git-credential-manager.exe',
+ 'C:\Program Files\Git\clangarm64\bin\git-credential-manager.exe',
+ 'C:\Program Files\Git\cmd\git-credential-manager.exe',
+ 'C:\Program Files\Git Credential Manager\git-credential-manager.exe',
+ 'C:\Program Files (x86)\Git Credential Manager\git-credential-manager.exe'
+)
+$gcm=@($gcmCandidates | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf} | Select-Object -First 1)
+if($gcm.Count -eq 0){
+ throw ('GCM_NOT_FOUND_IN_STANDARD_LOCATIONS; checked '+($gcmCandidates -join '; '))
+}
+$gcm=$gcm[0]
+
 if($env:OS -ne 'Windows_NT'){throw 'WINDOWS_REQUIRED'}
-foreach($p in @($git,$gcm)){
+foreach($p in @($git)){
  if(!(Test-Path -LiteralPath $p -PathType Leaf)){throw ('TRUSTED_EXE_MISSING: '+[IO.Path]::GetFileName($p))}
 }
 if(!(Test-Path -LiteralPath $repo -PathType Container)){throw 'BASE_CHECKOUT_MISSING'}
@@ -37,7 +52,7 @@ try{
  $dirty=(& $git -C $repo status --porcelain=v1 --untracked-files=all | Out-String).Trim()
  if($LASTEXITCODE -ne 0 -or $dirty){throw 'BASE_CHECKOUT_NOT_CLEAN'}
  if($Mode -eq 'Inspect'){
-  [pscustomobject]@{Result='GIT_AUTH_BOOTSTRAP_READY';GcmInstalled=$true;Branch=$branch;BaseClean=$true;GitHubLoginStarted=$false;ProductionServiceChanged=$false}|ConvertTo-Json -Compress
+  [pscustomobject]@{Result='GIT_AUTH_BOOTSTRAP_READY';GcmInstalled=$true;GcmPath=$gcm;Branch=$branch;BaseClean=$true;GitHubLoginStarted=$false;ProductionServiceChanged=$false}|ConvertTo-Json -Compress
   return
  }
  # Credential enrollment occurs locally through the official Git for Windows
