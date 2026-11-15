@@ -40,7 +40,12 @@ export async function pageAction(name, args, expectedOrigin) {
   const verifyExpect = (e, expect) => {
     if (!expect) return;
     const d = describe(e);
-    if (d.tag !== expect.tag || d.text !== expect.text) throw Error('Element changed after approval');
+    // The target's destination is as important as its visible label.
+    // Reject href/form-action swaps between preflight and actual click.
+    if (d.tag !== expect.tag || d.text !== expect.text ||
+        d.href !== (expect.href || '') ||
+        d.formAction !== (expect.formAction || ''))
+      throw Error('Element changed after approval');
   };
   try {
     const control = () => {
