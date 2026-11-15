@@ -17,6 +17,7 @@ $audit='C:\Engineering\PowerShellDirect-Engineering-Audit-R1'
 $roots=$repo+';'+$stage
 $relative=@(
  'tools\powershell-direct\stack-supervisor.mjs',
+ 'tools\powershell-direct\service.mjs',
  'tools\powershell-direct\approval-bootstrap.mjs',
  'tools\powershell-direct\Save-ApprovalToken.ps1',
  'tools\powershell-direct\Open-Approval.ps1',
@@ -175,6 +176,7 @@ if(!(Test-Path -LiteralPath $test -PathType Leaf)){throw 'APPROVAL_BOOTSTRAP_TES
 if($LASTEXITCODE -ne 0){throw 'APPROVAL_BOOTSTRAP_TEST_FAILED'}
 foreach($file in @('tools\powershell-direct\approval-bootstrap.mjs',
                     'tools\powershell-direct\stack-supervisor.mjs',
+                    'tools\powershell-direct\service.mjs',
                     'tools\ai_collaboration\engineering-plan.mjs',
                     'tools\ai_collaboration\engineering-runner.mjs',
                     'tools\ai_collaboration\engineering-mcp.mjs',
@@ -185,6 +187,7 @@ foreach($file in @('tools\powershell-direct\approval-bootstrap.mjs',
 # Every executable mode must independently pass 27 engineering tests.
 $cases=@(
  'tools/powershell-direct/tests/engineering.test.mjs',
+ 'tools/powershell-direct/tests/service.test.mjs',
  'tools/ai_collaboration/engineering-runner.test.mjs',
  'tools/powershell-direct/tests/named-suites.test.mjs',
  'tools/ai_collaboration/local_job_service.test.mjs',
