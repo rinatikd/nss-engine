@@ -178,8 +178,13 @@ export class PowerShellApprovalService {
     annotations:{readOnlyHint:false,destructiveHint:true},
     inputSchema:{type:'object',additionalProperties:false,
       required:['requestId','payload','signatureBase64Url'],
-      properties:{requestId:{type:'string',minLength:8,maxLength:80,
-       pattern:'^[a-zA-Z0-9_-]+
+      properties:{
+       requestId:{type:'string',minLength:8,maxLength:80,pattern:'^[a-zA-Z0-9_-]+$'},
+       payload:{type:'object'},
+       signatureBase64Url:{type:'string',minLength:1}
+      }
+    }
+   }]:[]),
    ...(this.chatReadonlyEnabled?[{name:'powershell_chat_readonly',description:'Execute one pinned read-only diagnostic on the Work PC after explicit ChatGPT host approval (plugin permission MUST be Always ask). NO local approval; no arbitrary shell.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','git-branch','git-log','chrome-lab-ports','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}}]:[])
   ]}};
   if(b.method==='tools/call')try{
