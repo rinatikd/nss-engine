@@ -70,3 +70,11 @@ Workflow run `43732207788` (Chrome Bridge PR113 release source tests, triggered 
 - `c033d93dee0887c37cb5fa078a3d2af1ae1ab81a`: tests for false positive disconnected transport and separately revoked HTTP/HTTPS permission. All **5/5** dispatcher test bodies passed in isolated V8 with simulated browser dependencies; not Node.js/Chrome E2E.
 
 Independent real Node/Chrome testing on latest commit and full security review remain mandatory release gates. GitHub's PR113 test workflow previously failed with no executed runner steps and cannot be claimed PASS. No user action requested, no direct changes to production or PR102.
+
+### Source-only release preflight: server / extension pair
+
+- Fetched exact PR113 `server/bridge.mjs` blob `dd68accf9f81a925d9990de4a15309966e13ad68` for source review. Server declares component `VERSION='0.2.0'` while extension manifest declares `0.3.0` — these may represent independent component versions; release manifest must explicitly record both and prove compatibility on the staged pair, not assume they match.
+- Server uses `CHROME_BRIDGE_PORT` (default 17381) and `CHROME_BRIDGE_HOME` (default user home). Existing separate staging scripts are required to force isolated lab settings. Never start the repository server directly without verifying stage-specific overrides.
+- `loadConfig()` creates fresh random `agentToken` and `browserToken` when no isolated config exists; this does not automatically pair an unpacked extension. Exact extension origin pin (`extensionId`) is part of runtime config/validation.
+- `/bridge/poll` and `/bridge/result` own dispatch/ACK handshake and a single active command; on ACK loss, do not infer successful delivery or retry non-idempotent operations. Source inspection is **not** a live E2E demonstration.
+- Test evidence across earlier snapshots is deliberately kept separate. Most recent source-only tests were one-click session **20/20** and read-only dispatcher **5/5** in V8 using real fetched JS test bodies with injected shims; the latest release HEAD is not independently Node/Chrome-tested.
