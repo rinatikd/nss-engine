@@ -13,6 +13,13 @@ export async function pageAction(name, args, expectedOrigin) {
     };
     return location.pathname.match(routes[location.origin] || /$a/)?.[1] || null;
   };
+  // A new Claude chat has no provider conversation ID until the FIRST send.
+  // This is a narrowly scoped bootstrap marker, NEVER a provider-issued ID.
+  // It is used only with an exact /new route and the existing durable journal.
+  const bootstrapContext = () => location.origin === 'https://claude.ai' &&
+    location.pathname === '/new' && location.search === '' &&
+    location.hash === '' && !conversationId();
+  const contextId = () => bootstrapContext() ? 'CLAUDE_NEW_CHAT' : conversationId();
   const describe = (e) => ({
     tag: e.tagName.toLowerCase(), type: e.type || '', name: e.name || '', id: e.id || '',
     text: String(e.innerText || e.getAttribute('aria-label') || '').trim().slice(0, 120),
@@ -41,7 +48,10 @@ export async function pageAction(name, args, expectedOrigin) {
 
     if (name === 'exists') return { found: !!one(args.selector), loaded: document.readyState === 'complete' };
 
-    if (name === 'agent_context') return { verified: !!conversationId(), origin: location.origin, conversationId: conversationId() };
+    if (name === 'agent_context') return {
+      verified: !!contextId(), origin: location.origin,
+      conversationId: contextId(), bootstrap: bootstrapContext()
+    };
 
     if (name === 'describe') { const e = single(args.selector); if (e.closest('input[type=password], input[type=file], [autocomplete=current-password], [autocomplete=one-time-code], [data-sensitive]')) throw Error('Sensitive field inspection blocked'); return describe(e); }
 
@@ -133,7 +143,9 @@ export async function pageAction(name, args, expectedOrigin) {
     }
 
     if (name === 'agent_send') {
-      if (args.expectedOrigin !== location.origin || !conversationId() || args.expectedConversationId !== conversationId()) throw Error('Conversation changed or has no verified provider identifier');
+      if (args.expectedOrigin !== location.origin || !contextId() ||
+          args.expectedConversationId !== contextId()) throw Error('Conversation changed or has no verified provider identifier');
+      const wasBootstrap = bootstrapContext();
       const composer = single(A.composer);
       if (!(composer instanceof HTMLTextAreaElement) && !composer.isContentEditable) throw Error('Unsupported composer');
       if (/password|secret|token|credential/i.test([composer.id, composer.name, composer.autocomplete].join(' '))) throw Error('Sensitive composer blocked');
@@ -176,12 +188,22 @@ export async function pageAction(name, args, expectedOrigin) {
       }
       if (!btn) throw Error('Unique enabled send button required');
       control();
-      if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) throw Error('Conversation changed before dispatch; do not retry automatically');
+      if (args.expectedOrigin !== location.origin || args.expectedConversationId !== contextId() ||
+          bootstrapContext() !== wasBootstrap) throw Error('Conversation changed before dispatch; do not retry automatically');
       btn.click();
       await sleep(1200);
+      if (wasBootstrap) {
+        // Sending may create a new provider chat asynchronously. Do not mark
+        // it confirmed until a real /chat/{id} replaces /new.
+        for (let i = 0; i < 30 && !conversationId(); i++) await sleep(200);
+        if (!conversationId() || location.origin !== expectedOrigin) {
+          throw Error('BOOTSTRAP_SEND_OUTCOME_UNKNOWN_DO_NOT_RETRY');
+        }
+      }
       const confirmed = qa(A.stop).some(vis) || replies().length > baseline;
       if (!confirmed) throw Error('Submission unverified; do not retry automatically');
-      return { sent: true, baseline, confirmed, usedButton: true };
+      return { sent: true, baseline, confirmed, usedButton: true,
+        bootstrap: wasBootstrap, providerConversationCreated: wasBootstrap ? !!conversationId() : false };
     }
 
     throw Error('Unknown page command: ' + name);
