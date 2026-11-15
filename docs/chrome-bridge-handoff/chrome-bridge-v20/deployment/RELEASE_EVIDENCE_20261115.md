@@ -42,3 +42,7 @@
 **Evidence:** exact GitHub host/Worker source modules and eight test bodies executed in an isolated V8 harness with synthetic `vm.runInNewContext`, Worker, Chrome and assertion interface: **8/8 PASS**, zero failed. A separate in-memory message-exchange smoke check of exact host and Worker source confirmed positive start/stop ACK and no token in ACK. These remain **non-Node, non-browser tests**. A GitHub Actions workflow was queued on latest head during inspection; pending/failed CI must never be reported as successful testing.
 
 **No user handoff:** no new local operator approval, download or manual command requested. No production, PR102 installation, runtime credentials or tunneling altered. Release remains **Draft / NO-GO** pending actual installed lab E2E and full validation.
+
+### Latest CI availability verification
+
+Workflow run `43732207788` (Chrome Bridge PR113 release source tests, triggered by commit `429d099e19ff88a1651a2fee82dedab3005a13f2`) finished with `conclusion=failure`, but the sole Node test job `132866918923` has **zero returned execution steps**. This is a CI infrastructure/runner-availability blocker, not evidence the Node tests failed. Do not re-run or treat this as a test result until GitHub runner/account restrictions are resolved. The release suite remains unexecuted on this new head in an actual Node runtime.
