@@ -1,0 +1,52 @@
+name: Chrome Bridge PR113 release source tests
+
+on:
+  pull_request:
+    paths:
+      - 'docs/chrome-bridge-handoff/chrome-bridge-v20/**'
+      - '.github/workflows/chrome-bridge-pr113.yml'
+  push:
+    branches:
+      - 'feature/chrome-bridge-one-click-all-tabs-20261114'
+    paths:
+      - 'docs/chrome-bridge-handoff/chrome-bridge-v20/**'
+      - '.github/workflows/chrome-bridge-pr113.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chrome-bridge-pr113-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-source-tests:
+    name: Node 24 - all Chrome Bridge source unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+    steps:
+      - name: Checkout exact triggering commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Assert source metadata and run full test suite
+        shell: bash
+        run: |
+          test -f extension/package.json
+          test -f extension/transport-host.js
+          test -f extension/transport-worker.js
+          test -f tests/transport-control-ack.test.mjs
+          node --test tests/*.test.mjs
+      - name: Release gate clarification
+        shell: bash
+        run: |
+          echo "PASS here proves Node unit tests only."
+          echo "This is NOT PR113 Chrome extension installation, provider E2E, or production approval."
