@@ -192,7 +192,7 @@ export function installBackgroundCoordinator(chromeApi) {
             }
           });
         }
-        return dispatchReadOnly(msg.command,chromeApi);
+        return dispatchReadOnly(msg.command,chromeApi,{transportStatus:currentStatus()});
       };
       void run().then(result=>respond({result}),e=>respond({error:e.message}));
       return true;
