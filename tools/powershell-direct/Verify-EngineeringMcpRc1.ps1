@@ -22,6 +22,7 @@ $syntax=@(
 )
 $tests=@(
  'tools/powershell-direct/tests/engineering.test.mjs',
+ 'tools/powershell-direct/upgrade-rehearse.test.mjs',
  'tools/ai_collaboration/engineering-runner.test.mjs',
  'tools/powershell-direct/tests/named-suites.test.mjs',
  'tools/ai_collaboration/local_job_service.test.mjs',
