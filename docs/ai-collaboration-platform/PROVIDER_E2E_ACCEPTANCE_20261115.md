@@ -88,3 +88,13 @@ Fresh `PR102 Lab.agent_selftest` observations (no typing, clicks, OAuth, grants 
 - **Kimi**: no bound PR102 Lab tab; no live selector evidence.
 
 Main Bridge remains `connected=false`; PR102 Lab `connected=true`, queue `0`. These observations establish only read-only DOM/connection state, **not** successful authentication, origin permission or send/ACK/reply. PR #110 stays **Draft / NO-GO**.
+
+
+## Read-only checkpoint — 2026-11-15 21:43 Asia/Almaty
+
+- Main Chrome Bridge: `connected=false`, queue `0`. PR102 Lab: `connected=true`, queue `0`; no processes or credentials touched.
+- Lab `browser_tabs` now exposes **five** visible permitted-origin tabs, including **Kimi** at `https://www.kimi.ai/` (tab `1867452533`, `mode=read`, `adapter=null`). This is a **new browser-tab observation**, not a Kimi chat adapter binding, Control grant, login proof, or send capability. Earlier statements that no Kimi tab existed are now historical, but the Kimi integration blocker remains.
+- Four `mode=chat` lab tabs are Claude `/new`, Gemini `/app`, DeepSeek `/sign_in`, Grok `/`. DeepSeek remains on a login URL; do not automate Google/OAuth/CAPTCHA/MFA.
+- Reviewed actual source locations `tools/ai_collaboration/provider-preflight.mjs` and `provider-preflight.test.mjs`. Exact-origin policy already allows `https://www.kimi.ai` and `https://kimi.ai`; the absence of an installed Kimi chat adapter is a **different gate**. No changes to origin allowlists or Control grants.
+- The preflight classifier explicitly returns `NEEDS_APPROVED_UNSENT_PREFILL` for an empty composer irrespective of Send visibility, and `canSend:false` even for `READY_FOR_SEPARATELY_APPROVED_SEND`. Source-only review, not a native Node or browser E2E test.
+- Release gate remains **NO-GO**. Kimi next gate: operator-authenticated lab session where needed, explicit reviewed adapter and per-origin grant, read-only composer/reply selectors, then separately approved unsent prefill and send/ACK/reply. No operator action initiated here. No Codex CLI before 2026-11-28.
