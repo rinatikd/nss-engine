@@ -36,8 +36,10 @@ foreach ($file in $required) {
 $meta=Get-Content -LiteralPath (Join-Path $source 'extension\package.json') -Raw -Encoding UTF8 |
   ConvertFrom-Json
 if ($meta.type -ne 'module') { throw 'EXTENSION_ESM_METADATA_MISSING' }
-$tests=@($required | Where-Object { $_ -like 'tests\*.test.mjs' } |
-  ForEach-Object { Join-Path $source $_ })
+# Release must run every checked-in Node unit test, not an outdated subset.
+$tests=@(Get-ChildItem -LiteralPath (Join-Path $source 'tests') -Filter '*.test.mjs' -File |
+  Sort-Object Name | ForEach-Object { $_.FullName })
+if($tests.Count -lt 1){throw 'PR113_TEST_DISCOVERY_EMPTY'}
 Write-Output "PR113_ZIP_UNIT_TESTS_START; Source: $source; Count: $($tests.Count)"
 # Keep Node's assertion output and exit code verbatim.
 & $Node --test @tests
