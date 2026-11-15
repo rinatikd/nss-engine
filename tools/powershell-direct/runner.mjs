@@ -12,7 +12,10 @@ export const POLICY=Object.freeze({
   'dotnet-version':{exe:'dotnet.exe',args:['--version'],timeout:10000},
   'node-version':{exe:'node.exe',args:['--version'],timeout:10000},
   // Fixed literal command: no user-provided script text or interpolation.
-  'powershell-version':{exe:'powershell.exe',args:['-NoProfile','-NonInteractive','-Command','$PSVersionTable.PSVersion.ToString()'],timeout:10000}
+  'powershell-version':{exe:'powershell.exe',args:['-NoProfile','-NonInteractive','-Command','$PSVersionTable.PSVersion.ToString()'],timeout:10000},
+  // Fixed port-only local listener inventory; never returns credentials or command lines.
+  'chrome-lab-ports':{exe:'powershell.exe',args:['-NoProfile','-NonInteractive','-Command',
+    '$ports=@(17484,17486,18086);foreach($port in $ports){$open=@(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue);Write-Output ("{0}: {1}" -f $port,($open.Count -gt 0))}'],timeout:15000}
 });
 // Resolve trusted executables by explicit paths: NEVER allow PATH/CWD hijack.
 const EXECUTABLES=Object.freeze({
