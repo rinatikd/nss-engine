@@ -174,8 +174,8 @@ test('Worker does not acknowledge a stale start after later stop',async()=>{
   handler({data:{type:'start',requestId:11,token:'fixture'}});
   handler({data:{type:'stop',requestId:12}});
   releaseStart();
-  await Promise.resolve();
-  await Promise.resolve();
+  // Allow nested async start() and the Worker acknowledgement continuation.
+  for(let i=0;i<8;i++) await Promise.resolve();
   const started=posted.find(x=>x.type==='control-ack'&&x.requestId===11);
   const stopped=posted.find(x=>x.type==='control-ack'&&x.requestId===12);
   assert.equal(started?.ok,false);
