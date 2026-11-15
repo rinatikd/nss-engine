@@ -38,6 +38,14 @@ export const DEFAULT_ADAPTERS = {
   // Their CSS selectors require live calibration before enabling write operations.
   grok: {
     label: 'Grok (candidate, read-only)', origin: 'https://grok.com', newChatUrl: 'https://grok.com/',
+    // Read-only calibrated from real lab selector census: two generic
+    // composers matched, only the Tiptap/ProseMirror one is intended.
+    composer: 'div.tiptap.ProseMirror[contenteditable="true"][role="textbox"]',
+    send: 'button[data-testid="chat-submit"]', stop: '', reply: '',
+  },
+  kimi: {
+    label: 'Kimi (candidate, read-only)', origin: 'https://www.kimi.ai',
+    newChatUrl: 'https://www.kimi.ai/',
     composer: 'textarea, [contenteditable="true"][role="textbox"]',
     send: '', stop: '', reply: '',
   },
