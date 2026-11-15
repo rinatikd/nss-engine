@@ -21,11 +21,31 @@ export function createOneClickSession(chromeApi, {
   let generation = 0;
   const status = async () => {
     const s = await getStatus();
-    const { bridgeConnectionDesired } = await chromeApi.storage.local.get('bridgeConnectionDesired');
+    const { bridgeConnectionDesired, bridgeAllTabsMode, bridgeMutationLabMode } =
+      await chromeApi.storage.local.get([
+        'bridgeConnectionDesired', 'bridgeAllTabsMode', 'bridgeMutationLabMode'
+      ]);
+    if (bridgeConnectionDesired !== true)
+      return { connected: false, state: 'disconnected', error: s?.error || null };
+    if (bridgeAllTabsMode !== true || bridgeMutationLabMode !== true)
+      return { connected: false, state: 'permission-revoked', error: 'ALL_TABS_CONTROL_DISABLED' };
+    // Chrome permissions may be revoked from chrome://extensions while the
+    // transport is still healthy. Never report "Подключено" in this state.
+    if (typeof chromeApi.permissions.contains !== 'function')
+      return { connected: false, state: 'permission-revoked',
+        error: 'HOST_PERMISSION_VERIFICATION_UNAVAILABLE' };
+    try {
+      for (const origin of BROWSER_ORIGINS) {
+        if (!(await chromeApi.permissions.contains({ origins: [origin] })))
+          return { connected: false, state: 'permission-revoked', error: 'HOST_PERMISSION_REVOKED' };
+      }
+    } catch {
+      return { connected: false, state: 'permission-revoked',
+        error: 'HOST_PERMISSION_VERIFICATION_FAILED' };
+    }
     return {
-      connected: bridgeConnectionDesired === true && s?.connected === true,
-      state: bridgeConnectionDesired !== true ? 'disconnected' :
-        s?.connected === true ? 'connected' : 'connecting',
+      connected: s?.connected === true,
+      state: s?.connected === true ? 'connected' : 'connecting',
       error: s?.error || null
     };
   };
