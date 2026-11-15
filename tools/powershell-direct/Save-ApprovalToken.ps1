@@ -6,10 +6,14 @@ trap {
  # Only stable operation identifiers and .NET error types may be emitted.
  # Do not emit exception messages, paths, scripts, credential text or token bytes.
  $e=$_.Exception
+ # PowerShell may wrap .NET errors. Use the innermost exception, never its
+ # message or target path, to keep diagnostics useful without leaking secrets.
+ for($n=0;$n -lt 6 -and $e.InnerException;$n++){$e=$e.InnerException}
  $type=$e.GetType().Name
- if($e.InnerException){$type=$e.InnerException.GetType().Name}
+ $hresult=[uint32]($e.HResult -band 0xFFFFFFFF)
+ $hex=('0x{0:X8}' -f $hresult)
  if($type -cnotmatch '^[A-Za-z][A-Za-z0-9]{0,60}$'){$type='UnknownException'}
- [Console]::Error.WriteLine('APPROVAL_BOOTSTRAP_FAILURE_STAGE_'+$script:bootstrapStep+'_TYPE_'+$type)
+ [Console]::Error.WriteLine('APPROVAL_BOOTSTRAP_FAILURE_STAGE_'+$script:bootstrapStep+'_TYPE_'+$type+'_HR_'+$hex)
  exit 1
 }
 Add-Type -AssemblyName System.Security -ErrorAction Stop
@@ -102,8 +106,9 @@ try{
    }
   }
   $script:bootstrapStep='ATOMIC_REPLACE'
-  try{[IO.File]::Replace($temp,$file,$null)}
-  catch{throw 'APPROVAL_EXISTING_TOKEN_ATOMIC_REPLACE_FAILED'}
+  # Let the outer sanitized trap see the ORIGINAL File.Replace exception.
+  # Replacing it with a string throw loses the Windows error type and HResult.
+  [IO.File]::Replace($temp,$file,$null)
  }elseif(Test-Path -LiteralPath $file){
   throw 'APPROVAL_TOKEN_DESTINATION_NOT_FILE'
  }else{
