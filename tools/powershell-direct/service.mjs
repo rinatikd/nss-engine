@@ -226,6 +226,17 @@ export class PowerShellApprovalService {
         p.workspace,(p.risk||'')+' '+(p.command||'')+' '+(p.args||[]).join(' '),
         p.expiresAt,'named')
     ).join('');
+    const auditItems=await Promise.all([
+      this.engineeringService?.recent?.(15)??[],
+      this.namedService?.recent?.(10)??[]
+    ]);
+    const archived=auditItems.flat().sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0,20).map(item=>'<li><code>'+clean(item.requestId)+'</code> — '+
+        clean(item.suite)+' — <strong>'+clean(item.state)+'</strong>'+
+        (item.reason?' ('+clean(item.reason)+')':'')+'</li>').join('');
+    const history=archived?'<section class="job"><h2>Журнал заданий</h2>'+
+      '<p class="muted">Только просмотр. Истёкшие и прерванные задания нельзя разрешить повторно — для выполнения нужен новый план.</p>'+
+      '<ul>'+archived+'</ul></section>':'';
     // No JavaScript, no auto-approve. The browser refreshes only this authenticated
     // loopback page; every POST still requires a deliberate local button click.
     const css=':root{color-scheme:light}*{box-sizing:border-box}body{font:15px/1.5 system-ui,sans-serif;max-width:880px;margin:32px auto;padding:0 18px;color:#17212e;background:#f5f7fa}h1{font-size:25px;margin:0}p{margin:8px 0 20px}.muted{color:#5d6777}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.refresh{padding:9px 14px;border:1px solid #c3cbd7;border-radius:8px;text-decoration:none;background:white;color:#17212e}.job{background:white;border:1px solid #d9e0ea;border-radius:14px;padding:20px;margin:14px 0;box-shadow:0 2px 8px #00000008}.job header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:17px}.pill{font-size:12px;background:#fff3d3;padding:4px 10px;border-radius:20px;color:#785000}.meta{margin:6px 0 14px;color:#546174}dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 16px;margin:0 0 20px}dt{color:#606b78}dd{margin:0;min-width:0;overflow-wrap:anywhere}code{font:13px/1.55 ui-monospace,Consolas,monospace}.hash{font-size:12px;color:#667382}.actions{display:flex;flex-wrap:wrap;gap:10px}button{cursor:pointer;border-radius:9px;padding:12px 18px;font-weight:650;font-size:14px;border:1px solid #b6c0d0}.allow{color:white;background:#155bd5;border-color:#155bd5}.deny{background:white;color:#9d2b2b;border-color:#d9a3a3}.empty{padding:28px;border:1px dashed #bac5d5;border-radius:12px;text-align:center;background:white}@media(max-width:520px){dl{display:block}dt{margin-top:12px}.job{padding:14px}.actions button{flex:1}}';
@@ -233,7 +244,7 @@ export class PowerShellApprovalService {
     return res.end('<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="10"><title>Engineering Approval</title><style>'+css+'</style></head><body>'+
       '<div class="top"><h1>Engineering Approval</h1><a class="refresh" href="/approve?key='+encodeURIComponent(this.uiToken)+'">Обновить список</a></div>'+
       '<p class="muted">Локальные запросы Windows. Проверяйте команду и рабочую папку. Автоматического одобрения нет. Список обновляется каждые 10 секунд.</p>'+
-      ((rows+namedRows)||'<div class="empty">Нет заданий, ожидающих подтверждения.</div>')+'</body></html>');
+      ((rows+namedRows)||'<div class="empty">Нет заданий, ожидающих подтверждения.</div>')+history+'</body></html>');
    }
    if(url.pathname==='/decide'&&req.method==='POST'){
     if(!match(url.searchParams.get('key'),this.uiToken))return send(res,403,{error:'UI_AUTH_REQUIRED'});
