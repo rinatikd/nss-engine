@@ -74,6 +74,8 @@ test('offscreen fails closed if Worker never acknowledges the stop',async()=>{
   assert.equal(response.response(),undefined);
   assert.equal(f.timers.size,1);
   for(const fn of f.timers.values()) fn();
+  // sendResponse is invoked through a resolved Promise in the host handler.
+  await Promise.resolve();
   assert.equal(response.response().ok,false);
   assert.equal(response.response().reason,'WORKER_CONTROL_ACK_TIMEOUT');
   await f.ack({type:'control-ack',operation:'stop',
