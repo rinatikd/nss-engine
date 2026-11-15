@@ -76,3 +76,15 @@ All items here are direct read-only connector observations or repository inspect
 - Source-only audit of `tools/ai_collaboration/provider-preflight.mjs` at blob `a84f5f6013675eb30147b5f03c0f81554325037b`: five exact-origin entries, explicit rejection of unsupported origins, zero-text composer classified `NEEDS_APPROVED_UNSENT_PREFILL`, and even READY returns `canSend:false`. Test file includes cases for conditional Send, spoofed origins, grants and auth; tests were **read**, not executed in this run.
 - Prior snapshot lines claiming Claude `/login` and DeepSeek/Grok absent from Lab are historical and superseded by the current table. No OAuth, CAPTCHA, MFA, text prefill, send, process restart, credential handling or Codex CLI execution.
 - Release verdict unchanged: **NO-GO** pending real per-provider approved send→ACK→reply evidence and independent review.
+
+## Read-only adapter selector checkpoint — 2026-11-15 20:42 Asia/Almaty
+
+Fresh `PR102 Lab.agent_selftest` observations (no typing, clicks, OAuth, grants or sends):
+
+- **Grok** `https://grok.com/`: two visible composer candidates; the live DOM includes a visible button with `data-testid="chat-submit"`. The installed Grok adapter still reports empty `send`, `stop` and `reply` selectors, hence `send.matched=0` is an **adapter configuration gap**, not evidence that the site lacks a Send button. The button was inspected while composer was empty; do **not** infer enabled-after-typing or send readiness. Candidate selector for isolated review: `button[data-testid="chat-submit"]`. No deployed adapter modification.
+- **Claude** `https://claude.ai/new`: one visible ProseMirror composer; one visible Send match, but live `chat-input-send` button disabled with empty input; zero reply matches. This is expected, not a defect.
+- **Gemini** `https://gemini.google.com/app`: one visible composer; zero Send matches on an empty composer. Do not flag a selector failure until a separately authorized unsent-prefill check.
+- **DeepSeek** `https://chat.deepseek.com/sign_in`: zero composer matches on login page; one primary-button selector match there **does not imply a chat Send button**. Authentication is operator-only.
+- **Kimi**: no bound PR102 Lab tab; no live selector evidence.
+
+Main Bridge remains `connected=false`; PR102 Lab `connected=true`, queue `0`. These observations establish only read-only DOM/connection state, **not** successful authentication, origin permission or send/ACK/reply. PR #110 stays **Draft / NO-GO**.
