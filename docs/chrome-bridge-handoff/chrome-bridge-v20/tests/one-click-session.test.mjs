@@ -183,3 +183,52 @@ test('disconnect revokes both host scopes and does not silently reconnect',async
   assert.equal((await h.session.status()).state,'disconnected');
   assert.equal(h.events.filter(x=>x[0]==='request').length,1);
 });
+
+test('failed start rolls back a possibly live Worker before reporting connection failure',async()=>{
+  const events=[];
+  const data={};
+  const api={
+    permissions:{
+      request:async()=>true,contains:async()=>true,remove:async()=>true
+    },
+    storage:{local:{
+      get:async keys=>Object.fromEntries(keys.map(k=>[k,data[k]])),
+      set:async value=>{Object.assign(data,value);events.push('disable-or-enable');}
+    }}
+  };
+  const s=createOneClickSession(api,{
+    loadKey:async()=>({value:'fixture'}),
+    start:async()=>{events.push('start');return {ok:false,reason:'BACKGROUND_START_UNCONFIRMED'};},
+    stop:async()=>{events.push('stop');},
+    getStatus:async()=>({connected:false})
+  });
+  await assert.rejects(s.connect({trustedGesture:true}),/BACKGROUND_START_UNCONFIRMED/);
+  assert.equal(data.bridgeConnectionDesired,false);
+  assert.deepEqual(events.slice(-2),['disable-or-enable','stop']);
+});
+
+test('failed start with failed rollback reports explicit uncertain stop',async()=>{
+  const data={};
+  const api={
+    permissions:{request:async()=>true,remove:async()=>true,contains:async()=>true},
+    storage:{local:{set:async v=>Object.assign(data,v),get:async()=>data}}
+  };
+  const s=createOneClickSession(api,{
+    loadKey:async()=>({value:'fixture'}),
+    start:async()=>{throw Error('START_ACK_LOST');},
+    stop:async()=>{throw Error('WORKER_UNREACHABLE');},
+    getStatus:async()=>({connected:false})
+  });
+  await assert.rejects(s.connect({trustedGesture:true}),/CONNECT_ROLLBACK_UNCONFIRMED/);
+  assert.equal(data.bridgeConnectionDesired,false);
+  assert.equal(data.bridgeMutationLabMode,false);
+});
+
+test('permission rejection and pairing failure never attempt to stop another session',async()=>{
+  const denied=harness({permission:false});
+  await assert.rejects(denied.session.connect({trustedGesture:true}),/CHROME_HOST_PERMISSION_DENIED/);
+  assert.equal(denied.events.filter(e=>e[0]==='stop').length,0);
+  const missing=harness({key:''});
+  await assert.rejects(missing.session.connect({trustedGesture:true}),/PAIRING_REQUIRED/);
+  assert.equal(missing.events.filter(e=>e[0]==='stop').length,0);
+});
