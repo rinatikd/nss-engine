@@ -31,8 +31,9 @@ if(!(Test-Path -LiteralPath $stage -PathType Container)){throw 'STAGE_MISSING'}
 if(!(Test-Path -LiteralPath $manifest -PathType Leaf)){throw 'STAGE_MANIFEST_MISSING'}
 if(!(Test-Path -LiteralPath $node -PathType Leaf)){throw 'NODE_MISSING'}
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'GIT_MISSING'}
-$branch=(& $git -C $repo branch --show-current).Trim()
-if($LASTEXITCODE -ne 0 -or $branch -ne 'platform/ai-windows-control-release-20261114'){throw 'UNEXPECTED_BRANCH'}
+$branchText=(& $git -C $repo rev-parse --abbrev-ref HEAD 2>&1 | Out-String).Trim()
+if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branchText)){throw 'GIT_BRANCH_QUERY_FAILED'}
+if($branchText -cne 'platform/ai-windows-control-release-20261114'){throw 'UNEXPECTED_BRANCH'}
 $changes=@(& $git -C $repo status --porcelain -- tools/powershell-direct tools/ai_collaboration)
 if($LASTEXITCODE -ne 0 -or $changes.Count){throw 'SOURCE_DIRTY'}
 $drift=@()
