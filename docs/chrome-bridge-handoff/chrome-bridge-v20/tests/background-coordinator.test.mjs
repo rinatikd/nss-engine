@@ -144,3 +144,44 @@ test('disconnect during offscreen creation cannot start stale background transpo
   assert.equal(result.reason,'MANUAL_DISCONNECT_DURING_START');
   assert.equal(chrome.calls.some(x=>x[0]==='message' && x[1]==='start'),false);
 });
+
+test('start rejects an offscreen host that explicitly fails to accept the command',async()=>{
+  const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'fixture-only'});
+  c.runtime.sendMessage=async msg=>{
+    c.calls.push(['message',msg.type]);
+    return {ok:false};
+  };
+  const result=await startBackgroundTransport(c);
+  assert.deepEqual(result,{ok:false,reason:'BACKGROUND_START_UNCONFIRMED'});
+});
+
+test('disconnect does not claim offscreen stop when a live host cannot be reached',async()=>{
+  const state={bridgeConnectionDesired:true,bridgeMutationLabMode:true,bridgeAllTabsMode:true};
+  const c=fakeChrome(state);
+  c.runtime.getContexts=async()=>[{contextType:'OFFSCREEN_DOCUMENT'}];
+  c.runtime.sendMessage=async msg=>{
+    c.calls.push(['message',msg.type]);
+    throw Error('PORT_CLOSED');
+  };
+  await assert.rejects(stopBackgroundTransport(c),/BACKGROUND_STOP_UNCONFIRMED/);
+  assert.equal(state.bridgeConnectionDesired,false);
+  assert.equal(state.bridgeMutationLabMode,false);
+  assert.equal(state.bridgeAllTabsMode,false);
+  assert.ok(c.calls.some(x=>x[0]==='message'&&x[1]==='stop'));
+});
+
+test('missing offscreen host is accepted as stopped after failed delivery',async()=>{
+  const c=fakeChrome({bridgeConnectionDesired:true});
+  c.runtime.sendMessage=async()=>{throw Error('NO_RECEIVER');};
+  c.runtime.getContexts=async()=>[];
+  await stopBackgroundTransport(c);
+});
+
+test('disconnect rejects an explicit negative offscreen stop acknowledgement',async()=>{
+  const state={bridgeConnectionDesired:true,bridgeMutationLabMode:true};
+  const c=fakeChrome(state);
+  c.runtime.sendMessage=async()=>({ok:false});
+  await assert.rejects(stopBackgroundTransport(c),/BACKGROUND_STOP_UNCONFIRMED/);
+  assert.equal(state.bridgeConnectionDesired,false);
+  assert.equal(state.bridgeMutationLabMode,false);
+});
