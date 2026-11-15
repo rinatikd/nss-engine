@@ -23,7 +23,7 @@ function harness({ key = 'stored-token', permission = true, startResult = {ok:tr
     stop:async()=>{events.push(['stop']);},
     getStatus:async()=>({connected,error:null})
   });
-  return {data,events,session};
+  return {data,events,session,grants};
 }
 
 test('only a user gesture can begin a connection', async()=>{
@@ -37,7 +37,9 @@ test('permission request happens before credential lookup and startup', async()=
   assert.equal(s.connected,true);
   assert.equal(h.events[0][0],'request');
   assert.deepEqual(h.events[0][1],BROWSER_ORIGINS);
-  assert.equal(h.events.at(-1)[0],'start');
+  assert.ok(h.events.some(x=>x[0]==='start'));
+  assert.ok(h.events.findIndex(x=>x[0]==='start') < h.events.findIndex(x=>x[0]==='contains'));
+  assert.equal(h.events.filter(x=>x[0]==='contains').length,2);
 });
 test('connection is never reported established on network uncertainty',async()=>{
   const h=harness({connected:false});
@@ -132,4 +134,52 @@ test('Disconnect detects a partially retained Chrome permission', async()=>{
   await assert.rejects(session.disconnect(),/HOST_PERMISSION_REMAINED_GRANTED/);
   assert.equal(data.bridgeConnectionDesired,false);
   assert.deepEqual(attempted,['stop','remove',...BROWSER_ORIGINS]);
+});
+
+test('one session covers both HTTP and HTTPS without per-origin grants or timers',async()=>{
+  const h=harness();
+  const connected=await h.session.connect({trustedGesture:true});
+  assert.equal(connected.state,'connected');
+  assert.deepEqual([...h.grants].sort(),[...BROWSER_ORIGINS].sort());
+  assert.equal(h.events.filter(x=>x[0]==='request').length,1);
+  assert.equal((await h.session.status()).connected,true);
+});
+
+test('externally revoked HTTPS permission cannot show false Connected',async()=>{
+  const h=harness();
+  await h.session.connect({trustedGesture:true});
+  h.grants.delete('https://*/*');
+  const result=await h.session.status();
+  assert.equal(result.connected,false);
+  assert.equal(result.state,'permission-revoked');
+  assert.equal(result.error,'HOST_PERMISSION_REVOKED');
+});
+
+test('externally revoked HTTP permission cannot show false Connected',async()=>{
+  const h=harness();
+  await h.session.connect({trustedGesture:true});
+  h.grants.delete('http://*/*');
+  const result=await h.session.status();
+  assert.equal(result.connected,false);
+  assert.equal(result.error,'HOST_PERMISSION_REVOKED');
+});
+
+test('stale all-tabs mode never counts as an active session',async()=>{
+  const h=harness();
+  await h.session.connect({trustedGesture:true});
+  h.data.bridgeAllTabsMode=false;
+  const result=await h.session.status();
+  assert.equal(result.connected,false);
+  assert.equal(result.state,'permission-revoked');
+  assert.equal(result.error,'ALL_TABS_CONTROL_DISABLED');
+});
+
+test('disconnect revokes both host scopes and does not silently reconnect',async()=>{
+  const h=harness();
+  await h.session.connect({trustedGesture:true});
+  const result=await h.session.disconnect();
+  assert.equal(result.permissionsRevoked,true);
+  assert.equal(h.grants.size,0);
+  assert.equal((await h.session.status()).state,'disconnected');
+  assert.equal(h.events.filter(x=>x[0]==='request').length,1);
 });
