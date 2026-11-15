@@ -247,3 +247,23 @@ test('local UI shows durable completed history without actionable replay form',a
   assert.equal(x.executed(),0);
  }finally{await x.service.stop();}
 });
+
+test('safe read-only diagnostics include bounded Git and Chrome lab port inventory',()=>{
+ const x=fixture();
+ const offered=x.service.rpc({jsonrpc:'2.0',id:100,method:'tools/list'}).result.tools
+   .find(t=>t.name==='powershell_propose');
+ const tasks=offered.inputSchema.properties.task.enum;
+ for(const required of ['git-status','git-diff-check','git-branch','git-log',
+  'chrome-lab-ports','node-version','dotnet-version','powershell-version'])
+  assert.ok(tasks.includes(required),required);
+ const a=x.service.propose({...req,requestId:'read_git_branch01',task:'git-branch'});
+ assert.equal(a.state,'PENDING');
+ const b=x.service.propose({...req,requestId:'read_chrome_port1',task:'chrome-lab-ports'});
+ assert.match(b.command,/Get-NetTCPConnection/);
+ assert.match(b.command,/17484,17486,18086/);
+ assert.ok(!/17381|17382/.test(b.command));
+ assert.equal(x.executed(),0);
+ for(const task of ['git fetch','git-log --all','node --eval','chrome-lab-ports -Port 17381'])
+  assert.throws(()=>x.service.propose({...req,requestId:'unsafe_diag_001',task}),
+    /TASK_NOT_ALLOWED/);
+});
