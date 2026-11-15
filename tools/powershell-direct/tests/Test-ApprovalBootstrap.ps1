@@ -53,6 +53,44 @@ try{
    throw 'FILE_ACL_UNEXPECTED_PRINCIPAL'
   }
  }
+ # A cutover publishes a token to an ALREADY EXISTING DPAPI file.
+ # Test that real overwrite path in this isolated profile (never the live profile).
+ $newToken=('b'*64)
+ $newPsi=New-Object System.Diagnostics.ProcessStartInfo
+ $newPsi.FileName='powershell.exe'
+ $newPsi.Arguments='-NoProfile -NonInteractive -File "'+$save+'"'
+ $newPsi.UseShellExecute=$false
+ $newPsi.CreateNoWindow=$true
+ $newPsi.RedirectStandardInput=$true
+ $newPsi.RedirectStandardOutput=$true
+ $newPsi.RedirectStandardError=$true
+ $newPsi.EnvironmentVariables['LOCALAPPDATA']=$testRoot
+ $newProcess=[Diagnostics.Process]::Start($newPsi)
+ try{
+  $newProcess.StandardInput.WriteLine($newToken)
+  $newProcess.StandardInput.Close()
+  if(!$newProcess.WaitForExit(12000)){
+   try{$newProcess.Kill()}catch{}
+   throw 'OVERWRITE_WRITER_TIMEOUT'
+  }
+  $newOutput=$newProcess.StandardOutput.ReadToEnd()+$newProcess.StandardError.ReadToEnd()
+  if($newOutput.Contains($token) -or $newOutput.Contains($newToken)){
+   throw 'OVERWRITE_SECRET_EMITTED'
+  }
+  if($newProcess.ExitCode -ne 0){
+   throw ('OVERWRITE_WRITER_FAILED_EXIT_'+$newProcess.ExitCode)
+  }
+ }finally{$newProcess.Dispose()}
+ $replacementCipher=[IO.File]::ReadAllBytes($file)
+ $replacementPlain=[System.Security.Cryptography.ProtectedData]::Unprotect(
+   $replacementCipher,$entropy,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+ try{
+  if([Text.Encoding]::UTF8.GetString($replacementPlain) -cne $newToken){
+   throw 'OVERWRITE_TOKEN_NOT_REPLACED'
+  }
+ }finally{[Array]::Clear($replacementPlain,0,$replacementPlain.Length)}
+ $overwrittenAcl=Get-Acl -LiteralPath $file
+ if(!$overwrittenAcl.AreAccessRulesProtected){throw 'OVERWRITE_FILE_ACL_NOT_PROTECTED'}
  # False/stale URL must not open the browser or reveal token. -CheckOnly errors.
  $previousErrorAction=$ErrorActionPreference
  try{
@@ -70,6 +108,7 @@ try{
   FileAclProtected=$true
   DirectoryAclProtected=$true
   StaleApprovalRejected=$true
+  ExistingTokenOverwritePassed=$true
   ProductionServiceTouched=$false
  }|ConvertTo-Json
 }finally{
