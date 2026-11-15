@@ -1,3 +1,4 @@
+import { requireOneClickControl } from './one-click-control-gate.js';
 // One-click routine DOM executor. It never trusts a page or stale tab state,
 // and never handles secrets, privileged Chrome pages or arbitrary OS commands.
 import { permittedTab } from './read-only-dispatch.js';
@@ -18,12 +19,6 @@ async function inject(api,tabId,origin,name,args) {
   if(!v || v.error) throw Error(v?.error || 'INJECTION_FAILED');
   return v;
 }
-async function checkSession(api) {
-  const {bridgeAllTabsMode,bridgeConnectionDesired,bridgeMutationLabMode} =
-    await api.storage.local.get(['bridgeAllTabsMode','bridgeConnectionDesired','bridgeMutationLabMode']);
-  if(bridgeAllTabsMode!==true || bridgeConnectionDesired!==true ||
-     bridgeMutationLabMode!==true) throw Error('ALL_TABS_CONTROL_DISABLED');
-}
 async function stableTab(api,id,url,origin) {
   const t=await permittedTab(api,id);
   if(t.tab.url!==url || t.origin!==origin) throw Error('TAB_CHANGED');
@@ -33,7 +28,7 @@ async function stableTab(api,id,url,origin) {
 export async function dispatchOneClickMutation(cmd, api) {
   if(!cmd || !ACTIONS.has(cmd.name) || !Number.isSafeInteger(cmd.args?.tabId) ||
       expired(cmd)) throw Error('INVALID_OR_EXPIRED_COMMAND');
-  await checkSession(api);
+  await requireOneClickControl(api);
   const {tab,origin}=await permittedTab(api,cmd.args.tabId);
   if(SENSITIVE.test(tab.url)) throw Error('SENSITIVE_PAGE_REQUIRES_SEPARATE_APPROVAL');
   let preflight,adapter;
@@ -67,7 +62,7 @@ export async function dispatchOneClickMutation(cmd, api) {
       throw Error('SENSITIVE_ACTION_REQUIRES_APPROVAL');
   }
   // Revalidate immediately before acting. There is no background approval queue.
-  await checkSession(api);
+  await requireOneClickControl(api);
   if(expired(cmd)) throw Error('COMMAND_EXPIRED');
   await stableTab(api,tab.id,tab.url,origin);
   let args;
@@ -86,8 +81,9 @@ export async function dispatchOneClickMutation(cmd, api) {
       controlExpires:cmd.expires,allTabsSession:true};
   }
   // Last pre-dispatch check. Dispatch is at-most-once; UNKNOWN is never retried here.
-  await checkSession(api);
+  await requireOneClickControl(api);
   if(expired(cmd)) throw Error('COMMAND_EXPIRED');
+  await stableTab(api,tab.id,tab.url,origin);
   const result=await inject(api,tab.id,origin,cmd.name,args);
   return result?.text ? {...result,text:redact(result.text)} : result;
 }
