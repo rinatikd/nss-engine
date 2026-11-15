@@ -20,7 +20,9 @@ if ($destinationFull -ieq $repoRoot -or $destinationFull.StartsWith($repoRoot + 
 if ($destinationFull -match '(?i)production|pr102|recovery-install|17381|17382' -or (Test-Path -LiteralPath $destinationFull)) { throw 'DESTINATION_EXISTS_OR_IS_PROTECTED' }
 $branch = (& $git -C $repoRoot symbolic-ref --short HEAD 2>$null).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -ne 'platform/ai-windows-control-release-20261114') { throw "UNEXPECTED_SOURCE_BRANCH: $branch" }
-& $git -C $repoRoot cat-file -e "$Commit^{commit}" 2>$null
+# --quiet writes no diagnostic stderr for a missing local object. PowerShell 5.1
+# can otherwise convert Git's stderr into a terminating NativeCommandError.
+$null = & $git -C $repoRoot rev-parse --verify --quiet "$Commit^{commit}"
 if ($LASTEXITCODE -ne 0) {
   Write-Output 'PR113_COMMIT_NOT_PRESENT_OFFLINE'
   Write-Output ('Expected SHA: ' + $Commit)
