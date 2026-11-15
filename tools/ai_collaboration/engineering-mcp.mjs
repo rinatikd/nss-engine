@@ -15,6 +15,11 @@ export const ENGINEERING_TOOLS=Object.freeze([
     pid:{type:'integer',minimum:1,maximum:2147483647},
     port:{type:'integer',minimum:1024,maximum:65535}
    }}},
+ {name:'powershell_engineering_recent',
+  description:'List bounded sanitized historical engineering jobs. No execution, approval or retry.',
+  inputSchema:{type:'object',additionalProperties:false,properties:{
+   limit:{type:'integer',minimum:1,maximum:50}
+  }}},
  {name:'powershell_engineering_status',
   description:'Read existing engineering job outcome and clipped logs. Never executes or retries.',
   inputSchema:{type:'object',additionalProperties:false,required:['requestId'],
@@ -32,6 +37,16 @@ export function createEngineeringHandlers(service){
  return Object.freeze({
   powershell_engineering_submit:request=>{
    validateEngineeringRequest(request);return service.submit(request);
+  },
+  powershell_engineering_recent:request=>{
+   if(!request||typeof request!=='object'||Array.isArray(request)||
+      Object.keys(request).some(key=>key!=='limit'))
+     throw Error('INVALID_RECENT_REQUEST');
+   const limit=request.limit??20;
+   if(!Number.isInteger(limit)||limit<1||limit>50)
+     throw Error('INVALID_RECENT_LIMIT');
+   if(typeof service.recent!=='function')throw Error('RECENT_UNAVAILABLE');
+   return service.recent(limit);
   },
   powershell_engineering_status:request=>{
    validateEngineeringStatus(request);return service.status(request.requestId);
