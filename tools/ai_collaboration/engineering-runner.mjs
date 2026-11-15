@@ -19,8 +19,12 @@ const GCM_EXES=Object.freeze([
 export function requireTrustedGitCredentialManager({exists=fs.existsSync,stat=fs.statSync}={}){
  for(const candidate of GCM_EXES){
   if(!exists(candidate))continue;
-  try{if(stat(candidate).isFile())return candidate;}
-  catch{throw Error('TRUSTED_GCM_UNREADABLE');}
+  try{if(!stat(candidate).isFile())throw Error('TRUSTED_GCM_NOT_FILE');}
+  catch(e){
+    if(e.message==='TRUSTED_GCM_NOT_FILE')throw e;
+    throw Error('TRUSTED_GCM_UNREADABLE');
+  }
+  return candidate;
  }
  throw Error('TRUSTED_GCM_NOT_INSTALLED');
 }
