@@ -190,3 +190,58 @@ test('offscreen reports failed worker.postMessage rather than false success',asy
   assert.equal(response.response().ok,false);
   assert.equal(response.response().reason,'WORKER_CONTROL_POST_FAILED');
 });
+
+test('Worker rejects credential rotation while a transport is already active',async()=>{
+  const posted=[];
+  let handler;
+  let actualStartCount=0;
+  class CredentialTransport {
+    constructor({onStatus}) {this.onStatus=onStatus;this.active=false;this.token=null;}
+    async start(token) {
+      actualStartCount++;
+      this.active=true;
+      this.token=token;
+    }
+    stop(){this.active=false;this.token=null;}
+  }
+  const self={postMessage:m=>posted.push(m),set onmessage(fn){handler=fn;}};
+  const code=source('transport-worker.js').replace(
+    /^import\s+\{ BridgeTransport \}\s+from\s+'\.\/transport-engine\.js';\s*/,'');
+  runInNewContext(code,{self,BridgeTransport:CredentialTransport,
+    setTimeout:()=>1,clearTimeout:()=>{},Date,Map,Number,Error});
+  handler({data:{type:'start',requestId:21,token:'credential-A'}});
+  for(let i=0;i<6;i++) await Promise.resolve();
+  handler({data:{type:'start',requestId:22,token:'credential-B'}});
+  for(let i=0;i<6;i++) await Promise.resolve();
+  const ackA=posted.find(x=>x.type==='control-ack'&&x.requestId===21);
+  const ackB=posted.find(x=>x.type==='control-ack'&&x.requestId===22);
+  assert.equal(ackA?.ok,true);
+  assert.equal(ackB?.ok,false);
+  assert.equal(ackB?.reason,'ACTIVE_SESSION_CREDENTIAL_MISMATCH');
+  assert.equal(actualStartCount,1);
+  assert.equal(JSON.stringify(ackB).includes('credential-'),false);
+});
+
+test('obsolete rejected Worker start cannot override status after stop',async()=>{
+  const posted=[];
+  let handler;
+  let rejectStart;
+  const barrier=new Promise((_resolve,reject)=>{rejectStart=reject;});
+  class FailingTransport {
+    async start(){await barrier;}
+    stop(){}
+  }
+  const self={postMessage:m=>posted.push(m),set onmessage(fn){handler=fn;}};
+  const code=source('transport-worker.js').replace(
+    /^import\s+\{ BridgeTransport \}\s+from\s+'\.\/transport-engine\.js';\s*/,'');
+  runInNewContext(code,{self,BridgeTransport:FailingTransport,
+    setTimeout:()=>1,clearTimeout:()=>{},Date,Map,Number,Error});
+  handler({data:{type:'start',requestId:31,token:'fixture'}});
+  handler({data:{type:'stop',requestId:32}});
+  rejectStart(Error('NETWORK_DOWN'));
+  for(let i=0;i<8;i++) await Promise.resolve();
+  const ack=posted.find(x=>x.type==='control-ack'&&x.requestId===31);
+  assert.equal(ack?.ok,false);
+  assert.equal(ack?.reason,'START_SUPERSEDED_BY_STOP');
+  assert.equal(posted.some(x=>x.type==='transport-status'&&x.status?.state==='error'),false);
+});
