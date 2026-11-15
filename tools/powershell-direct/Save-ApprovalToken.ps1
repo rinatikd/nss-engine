@@ -109,7 +109,10 @@ try{
   $script:bootstrapStep='ATOMIC_REPLACE'
   # Let the outer sanitized trap see the ORIGINAL File.Replace exception.
   # Replacing it with a string throw loses the Windows error type and HResult.
-  [IO.File]::Replace($temp,$file,$null)
+  # Windows PowerShell 5.1 can coerce $null into an empty string for a
+  # [string] parameter. File.Replace then rejects the empty backup path with
+  # ArgumentException 0x80070057. Preserve a genuine null string.
+  [IO.File]::Replace($temp,$file,[NullString]::Value)
  }elseif(Test-Path -LiteralPath $file){
   throw 'APPROVAL_TOKEN_DESTINATION_NOT_FILE'
  }else{
