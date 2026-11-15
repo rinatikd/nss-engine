@@ -6,6 +6,7 @@ $ErrorActionPreference='Stop'
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R1'
 $node='C:\Program Files\nodejs\node.exe'
+$git='C:\Program Files\Git\cmd\git.exe'
 $manifest=Join-Path $stage 'source-hashes.json'
 $files=@(
  'tools\ai_collaboration\engineering-mcp.mjs',
@@ -29,9 +30,10 @@ $tests=@(
 if(!(Test-Path -LiteralPath $stage -PathType Container)){throw 'STAGE_MISSING'}
 if(!(Test-Path -LiteralPath $manifest -PathType Leaf)){throw 'STAGE_MANIFEST_MISSING'}
 if(!(Test-Path -LiteralPath $node -PathType Leaf)){throw 'NODE_MISSING'}
-$branch=(& git -C $repo branch --show-current).Trim()
+if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'GIT_MISSING'}
+$branch=(& $git -C $repo branch --show-current).Trim()
 if($LASTEXITCODE -ne 0 -or $branch -ne 'platform/ai-windows-control-release-20261114'){throw 'UNEXPECTED_BRANCH'}
-$changes=@(& git -C $repo status --porcelain -- tools/powershell-direct tools/ai_collaboration)
+$changes=@(& $git -C $repo status --porcelain -- tools/powershell-direct tools/ai_collaboration)
 if($LASTEXITCODE -ne 0 -or $changes.Count){throw 'SOURCE_DIRTY'}
 $drift=@()
 foreach($rel in $checkPaths){
