@@ -204,3 +204,24 @@ test('new fixed Git operations appear in MCP schema without arbitrary refspecs',
  assert.ok(plan.args.includes('--ff-only'));
  assert.ok(!plan.args.includes('--force'));
 }));
+
+test('engineering recent MCP lists durable outcomes without command replay',()=>fixture(async({svc,root,starts})=>{
+ const id='engineering-recent-01';
+ const initially=await rpc(svc,'powershell_engineering_recent',{limit:10});
+ assert.deepEqual(JSON.parse(initially.result.content[0].text),[]);
+ rpc(svc,'powershell_engineering_submit',req(root,id,'git-status'));
+ const entry=await pending(svc,id);
+ const decision=await approve(svc,entry,false);
+ assert.equal(decision.status,303);
+ assert.equal((await status(svc,id)).state,'DENIED');
+ const audit=await rpc(svc,'powershell_engineering_recent',{limit:10});
+ const items=JSON.parse(audit.result.content[0].text);
+ assert.equal(items.length,1);
+ assert.equal(items[0].requestId,id);
+ assert.equal(items[0].state,'DENIED');
+ assert.equal('command' in items[0],false);
+ assert.equal('stdout' in items[0],false);
+ assert.equal(starts(),0);
+ const invalid=await rpc(svc,'powershell_engineering_recent',{limit:500});
+ assert.equal(invalid.result.isError,true);
+}));
