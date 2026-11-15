@@ -7,7 +7,7 @@ $destination='C:\Engineering\PowerShellDirect-Release-RC1-Lab'
 $parent='C:\Engineering'
 $remote='https://github.com/rinatikd/nss-engine.git'
 $branch='release/engineering-mcp-rc1-20261115'
-$expectedCommit='db1f07dd3718fc868c150788fd275931a4bed031'
+$expectedCommit='beae503e197847b3b44605b65d6abad3185673c1'
 $git='C:\Program Files\Git\cmd\git.exe'
 if($env:OS -ne 'Windows_NT'){throw 'WINDOWS_REQUIRED'}
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
