@@ -1,5 +1,15 @@
 import { ApprovalBroker } from './approval-broker.js';
 
+const SAFE_APPROVAL_REQUEST_ERRORS = new Set([
+  'INVALID_APPROVAL_ID',
+  'DUPLICATE_APPROVAL',
+  'INVALID_TAB_ID',
+  'INVALID_ORIGIN',
+  'INVALID_APPROVAL_EXPIRY',
+  'COMMAND_NOT_APPROVABLE',
+  'INVALID_APPROVAL_PREVIEW'
+]);
+
 // Coordinator-owned approval lifecycle. No mutation is executed here.
 // A browser panel can be closed/reopened while approvals remain pending.
 export class ApprovalSession {
@@ -18,7 +28,7 @@ export class ApprovalSession {
       item = this.broker.request(data);
     } catch (error) {
       // Do not leak unexpected provider/DOM data across the transport.
-      if (/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message || '')) throw error;
+      if (SAFE_APPROVAL_REQUEST_ERRORS.has(error?.message)) throw error;
       throw Error('APPROVAL_REGISTRATION_FAILED');
     }
     return new Promise((resolve, reject) => {
