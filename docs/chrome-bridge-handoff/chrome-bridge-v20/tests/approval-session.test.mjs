@@ -64,3 +64,38 @@ test('known broker validation code remains explicit',()=>{
   assert.throws(()=>s.request({...request('invalid'),expires:clock-1}),/INVALID_APPROVAL_EXPIRY/);
   assert.equal(s.list().length,0);
 });
+
+test('unexpected uppercase broker code is sanitized, never forwarded',()=>{
+  clock=1000;timers.clear();const s=session();
+  s.broker.request=()=>{throw Error('SECRET_INTERNAL_STATE');};
+  assert.throws(()=>s.request(request('uppercase-secret')),(e)=>
+    e.message==='APPROVAL_REGISTRATION_FAILED');
+  assert.equal(s.waiters.size,0);
+  assert.equal(s.list().length,0);
+  assert.equal(timers.size,0);
+});
+
+test('only documented broker registration codes cross the approval-session boundary',()=>{
+  const allowlisted=[
+    'INVALID_APPROVAL_ID','DUPLICATE_APPROVAL','INVALID_TAB_ID',
+    'INVALID_ORIGIN','INVALID_APPROVAL_EXPIRY','COMMAND_NOT_APPROVABLE',
+    'INVALID_APPROVAL_PREVIEW'
+  ];
+  for(const code of allowlisted){
+    clock=1000;timers.clear();const s=session();
+    s.broker.request=()=>{throw Error(code);};
+    assert.throws(()=>s.request(request('allowed-code')),(e)=>e.message===code,code);
+    assert.equal(s.waiters.size,0);
+    assert.equal(s.list().length,0);
+    assert.equal(timers.size,0);
+  }
+  for(const code of ['CUSTOM_UNTRUSTED_CODE','SECRET_INTERNAL_STATE','USER_DENIED','UNKNOWN']){
+    clock=1000;timers.clear();const s=session();
+    s.broker.request=()=>{throw Error(code);};
+    assert.throws(()=>s.request(request('unexpected-code')),(e)=>
+      e.message==='APPROVAL_REGISTRATION_FAILED',code);
+    assert.equal(s.waiters.size,0);
+    assert.equal(s.list().length,0);
+    assert.equal(timers.size,0);
+  }
+});
