@@ -8,13 +8,13 @@ export const OPERATIONS = Object.freeze(new Set([
 ]));
 export const AGENTS = Object.freeze(new Set(['codex','claude','gemini','deepseek','kimi','qwen']));
 const ID = /^[a-zA-Z0-9_-]{8,80}$/;
-export function translateOpenAgentsTask(event, {allowedRoots = []} = {}) {
+export function translateOpenAgentsTask(event, {allowedRoots = [], authorizedTaskIds = []} = {}) {
   if (!event || typeof event !== 'object' || Array.isArray(event)) throw new Error('INVALID_EVENT');
   const {taskId, agent, operation, workspace, approvalState, target} = event;
   if (typeof taskId !== 'string' || !ID.test(taskId)) throw new Error('INVALID_TASK_ID');
   if (!AGENTS.has(agent)) throw new Error('UNSUPPORTED_AGENT');
   if (!OPERATIONS.has(operation)) throw new Error('UNSUPPORTED_OPERATION');
-  if (approvalState !== 'approved') throw new Error('APPROVAL_REQUIRED');
+  // The sender cannot grant itself approval: authorization must come from a trusted local registry.\n  if (approvalState !== 'approved' || !authorizedTaskIds.includes(taskId)) throw new Error('APPROVAL_REQUIRED');
   if (typeof workspace !== 'string' || !allowedRoots.includes(workspace)) throw new Error('WORKSPACE_NOT_ALLOWED');
   if (target !== undefined && (typeof target !== 'string' || target.length > 300 || /[\r\n\0]/.test(target))) throw new Error('INVALID_TARGET');
   const requestId = 'oa_' + createHash('sha256').update(taskId).digest('hex').slice(0,32);
