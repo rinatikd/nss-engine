@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {translateOpenAgentsTask, DispatchGate} from './openagents-adapter.mjs';
 const root='C:\\Engineering';
 const valid={taskId:'task_12345678',agent:'codex',operation:'node-test',workspace:root,approvalState:'approved'};
-const opts={allowedRoots:[root]};
+const opts={allowedRoots:[root],authorizedTaskIds:[valid.taskId]};
+test('reject sender self-approval without trusted authorization',()=>assert.throws(()=>translateOpenAgentsTask(valid,{allowedRoots:[root]}),/APPROVAL_REQUIRED/));
 test('valid bounded request',()=>{const x=translateOpenAgentsTask(valid,opts);assert.equal(x.operation,'node-test');assert.match(x.requestId,/^oa_[a-f0-9]{32}$/)});
 for (const [field,value] of [['approvalState','pending'],['operation','powershell-script'],['workspace','C:\\Secrets'],['agent','unknown'],['taskId','bad']]) {
   test('reject '+field,()=>assert.throws(()=>translateOpenAgentsTask({...valid,[field]:value},opts)));
