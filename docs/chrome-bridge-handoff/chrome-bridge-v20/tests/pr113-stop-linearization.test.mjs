@@ -13,6 +13,8 @@ function syntheticPage(events, barrierReached, releasePage) {
   let value = '';
   let sendQueries = 0;
   let clicked = false;
+  const names = ['HTMLTextAreaElement','document','location','setTimeout'];
+  const previous = new Map(names.map(name => [name,Object.getOwnPropertyDescriptor(globalThis,name)]));
 
   class FakeTextArea {
     constructor() {
@@ -58,8 +60,7 @@ function syntheticPage(events, barrierReached, releasePage) {
       if (selector === '#composer') return [composer];
       if (selector === '#send') {
         sendQueries += 1;
-        // First readiness poll sees no button and enters pageAction's real
-        // 200ms await. After release, the next poll sees the enabled button.
+        // The first Send readiness poll enters pageAction's real 200ms await.
         return sendQueries === 1 ? [] : [button];
       }
       if (selector === '#stop') return clicked ? [stopButton] : [];
@@ -84,21 +85,22 @@ function syntheticPage(events, barrierReached, releasePage) {
       releasePage.promise.then(() => callback(...args));
       return 1;
     }
-    // Other pageAction waits are completed deterministically. The only held
-    // await is its final Send-button readiness poll.
+    // Keep all other pageAction waits deterministic; only the real Send
+    // readiness await is held by the deferred barrier.
     queueMicrotask(() => callback(...args));
     return 1;
   };
 
   return () => {
-    globalThis.setTimeout = nativeSetTimeout;
-    delete globalThis.document;
-    delete globalThis.location;
-    delete globalThis.HTMLTextAreaElement;
+    for (const name of names) {
+      const descriptor = previous.get(name);
+      if (descriptor) Object.defineProperty(globalThis,name,descriptor);
+      else delete globalThis[name];
+    }
   };
 }
 
-function syntheticChrome(events) {
+function syntheticChrome(events, stopAckSeen) {
   const flags = {
     bridgeBackgroundMode: true,
     bridgeMutationLabMode: true,
@@ -124,6 +126,7 @@ function syntheticChrome(events) {
       getContexts: async () => [],
       sendMessage: async message => {
         events.push('offscreen-' + message.type + '-ack');
+        if (message.type === 'stop') stopAckSeen.resolve();
         return {ok:true};
       }
     },
@@ -156,23 +159,23 @@ function syntheticChrome(events) {
     },
     scripting: {
       executeScript: async ({func,args}) => {
-        // Execute the actual imported pageAction function. Do not substitute
-        // a guessed result or a fake page-action promise.
+        // Execute the actual imported pageAction, not a guessed result.
         assert.equal(func, pageAction);
         const result = await func(...args);
         return [{result}];
       }
     }
   };
-  return {chromeApi,listeners,flags,tab};
+  return {chromeApi,listeners};
 }
 
-test('PR113 all-tabs Stop must not acknowledge while an injected pageAction can still click', async () => {
+test('PR113 all-tabs Stop never reports success before an accepted pageAction is safe', async () => {
   const events = [];
   const barrierReached = deferred();
   const releasePage = deferred();
+  const stopAckSeen = deferred();
   const restorePage = syntheticPage(events, barrierReached, releasePage);
-  const {chromeApi,listeners} = syntheticChrome(events);
+  const {chromeApi,listeners} = syntheticChrome(events, stopAckSeen);
   installBackgroundCoordinator(chromeApi);
 
   const offscreen = {
@@ -196,6 +199,13 @@ test('PR113 all-tabs Stop must not acknowledge while an injected pageAction can 
 
   let dispatchReply;
   const dispatchCompleted = new Promise(resolve => { dispatchReply = resolve; });
+  let stopResult;
+  const stopCompleted = new Promise(resolve => {
+    const stopReply = resolve;
+    // The listener callback below records the response ordering.
+    globalThis.__pr113StopReply = stopReply;
+  });
+
   try {
     events.push('dispatch-accepted');
     assert.equal(listeners[0]({
@@ -205,42 +215,50 @@ test('PR113 all-tabs Stop must not acknowledge while an injected pageAction can 
       dispatchReply(response);
     }),true);
 
-    // This resolves only from the real pageAction's awaited Send readiness
-    // loop, immediately before it resumes into the synchronous control(),
-    // conversation checks and btn.click() sequence.
+    // Resolved by the real imported pageAction at its final asynchronous
+    // Send-button readiness wait, before its synchronous Control/context
+    // checks and btn.click().
     await barrierReached.promise;
 
-    let stopReply;
-    const stopCompleted = new Promise(resolve => { stopReply = resolve; });
     events.push('stop-request');
     assert.equal(listeners[0]({
       target:'bridge-coordinator',type:'stop-background'
     },control,response => {
+      stopResult = response;
       events.push('stop-response:' + JSON.stringify(response));
-      stopReply(response);
+      globalThis.__pr113StopReply(response);
     }),true);
 
-    const stopResult = await stopCompleted;
-    assert.deepEqual(stopResult,{ok:true});
-    assert.ok(events.includes('offscreen-stop-ack'));
-    assert.equal(events.includes('page-click'),false,
-      'page action must still be held when Stop responds');
+    // Let the current Stop handler finish its offscreen ACK continuation.
+    // A correct drain implementation remains pending while pageAction is held.
+    await stopAckSeen.promise;
+    await new Promise(resolve => setImmediate(resolve));
+    const stopRespondedWhilePageHeld = stopResult !== undefined;
 
-    // Resume the actual imported pageAction. Its final Control check only
-    // sees the captured expiry/origin, so current source can still click.
+    // Release the actual pageAction so a coordinator-owned drain can settle.
     releasePage.resolve();
-    const dispatchResult = await dispatchCompleted;
-    assert.equal(dispatchResult.result.sent,true);
+    const [dispatchResult,finalStopResult] = await Promise.all([
+      dispatchCompleted,
+      stopCompleted
+    ]);
 
-    const stopIndex = events.indexOf('stop-response:{"ok":true}');
+    const stopIndex = events.findIndex(event =>
+      typeof event === 'string' && event.startsWith('stop-response:'));
     const clickIndex = events.indexOf('page-click');
-    assert.ok(stopIndex >= 0 && clickIndex > stopIndex,
-      'expected the current-source race to be visible in the event trace');
-    assert.ok(clickIndex < stopIndex,
-      'STOP LINEARIZATION VIOLATED: a synthetic Send click occurred after Stop reported success. Trace: ' +
-      events.join(' -> '));
+    assert.ok(stopIndex >= 0, 'Stop handler did not return a response');
+    assert.ok(clickIndex >= 0 || dispatchResult?.error,
+      'pageAction neither clicked nor returned a fail-closed error');
+
+    // The only forbidden outcome is a successful Stop response followed by
+    // a click from work accepted before Stop. A bounded unconfirmed Stop is
+    // not success and must remain distinguishable to the caller.
+    assert.ok(finalStopResult.ok !== true || clickIndex === -1 || clickIndex < stopIndex,
+      'STOP LINEARIZATION VIOLATED: successful Stop preceded a later page click. ' +
+      'stopRespondedWhilePageHeld=' + stopRespondedWhilePageHeld +
+      '; trace=' + events.join(' -> '));
   } finally {
     releasePage.resolve();
+    delete globalThis.__pr113StopReply;
     restorePage();
   }
 });
