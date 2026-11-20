@@ -34,7 +34,7 @@ export async function dispatchOneClickMutation(cmd, api) {
   let preflight,adapter;
   if(cmd.name==='agent_send') {
     const provider=providerForOrigin(origin);
-    if(!['claude','gemini','deepseek'].includes(provider)) throw Error('AGENT_ADAPTER_NOT_VERIFIED');
+    if(!['claude','gemini','deepseek','kimi'].includes(provider)) throw Error('AGENT_ADAPTER_NOT_VERIFIED');
     const text=cmd.args.text;
     if(typeof text!=='string'||!text.trim()||text.length>12000||findSecret(text))
       throw Error('INVALID_OR_SENSITIVE_MESSAGE');
