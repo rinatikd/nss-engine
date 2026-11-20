@@ -245,14 +245,20 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
     assert.ok(stopIndex >= 0, 'Stop handler did not return a response');
     assert.ok(clickIndex >= 0 || dispatchResult?.error,
       'pageAction neither clicked nor returned a fail-closed error');
+    if (clickIndex === -1) {
+      assert.match(String(dispatchResult?.error || ''), /STOP|CONTROL|CANCEL|DISCONNECT|REVOKE/i,
+        'a no-click outcome must be attributable to fail-closed Stop/Control cancellation');
+    }
 
-    // The only forbidden outcome is a successful Stop response followed by
-    // a click from work accepted before Stop. A bounded unconfirmed Stop is
-    // not success and must remain distinguishable to the caller.
+    // A successful Stop must not return while the accepted page action is
+    // still held at its real asynchronous readiness boundary. Once released,
+    // either the action is safely cancelled or any click must precede Stop.
+    assert.ok(finalStopResult.ok !== true || !stopRespondedWhilePageHeld,
+      'STOP LINEARIZATION VIOLATED: Stop reported success while an accepted pageAction was still held. ' +
+      'trace=' + events.join(' -> '));
     assert.ok(finalStopResult.ok !== true || clickIndex === -1 || clickIndex < stopIndex,
       'STOP LINEARIZATION VIOLATED: successful Stop preceded a later page click. ' +
-      'stopRespondedWhilePageHeld=' + stopRespondedWhilePageHeld +
-      '; trace=' + events.join(' -> '));
+      'trace=' + events.join(' -> '));
   } finally {
     releasePage.resolve();
     restorePage();
