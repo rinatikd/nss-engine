@@ -1,12 +1,16 @@
 import { dispatchReadOnly } from './read-only-dispatch.js';
 import { ApprovalSession } from './approval-session.js';
 import { dispatchMutation } from './mutation-dispatch.js';
+import { dispatchOneClickMutation } from './one-click-mutation.js';
+import { dispatchOneClickNavigation } from './one-click-navigation.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
 
 const PATH = 'transport-host.html';
 let creating = null;
 let status = {state:'disconnected',connected:false,error:null,updatedAt:0};
 let starting = null;
+// Invalidates a positive status check that was queued before Disconnect.
+let disconnectEpoch = 0;
 const approvals = new ApprovalSession();
 // Extension control.html opened via chrome.windows.create is still a tab.
 // Reject web content scripts by requiring the exact extension page URL, not
@@ -49,6 +53,7 @@ export async function startBackgroundTransport(chromeApi) {
   return starting;
 }
 async function startBackgroundTransportOnce(chromeApi) {
+  const expectedEpoch = disconnectEpoch;
   // Restrict access before reading secrets, not after obtaining the key.
   await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   const {bridgeConnectionDesired, browserToken} = await chromeApi.storage.local.get(
@@ -60,17 +65,68 @@ async function startBackgroundTransportOnce(chromeApi) {
   if (typeof browserToken !== 'string' || !browserToken)
     return {ok:false,reason:'NO_STORED_CREDENTIAL'};
   await ensureHost(chromeApi);
-  await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'start',token:browserToken});
+  // ensureHost is asynchronous: a user can disconnect while Chrome creates
+  // the offscreen document. Re-read persistent intent immediately before start.
+  const latest = await chromeApi.storage.local.get([
+    'bridgeBackgroundMode','bridgeConnectionDesired'
+  ]);
+  if (latest.bridgeBackgroundMode !== true || latest.bridgeConnectionDesired !== true)
+    return {ok:false,reason:'MANUAL_DISCONNECT_DURING_START'};
+  const acknowledged = await chromeApi.runtime.sendMessage({
+    target:'bridge-offscreen',type:'start',token:browserToken
+  });
+  if (acknowledged?.ok !== true)
+    return {ok:false,reason:'BACKGROUND_START_UNCONFIRMED'};
+  // A Disconnect can overtake the worker acknowledgement. Do not report
+  // success from an obsolete start even if the Worker briefly accepted it.
+  if (disconnectEpoch !== expectedEpoch)
+    return {ok:false,reason:'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT'};
+  const finalIntent = await chromeApi.storage.local.get([
+    'bridgeBackgroundMode','bridgeConnectionDesired'
+  ]);
+  if (disconnectEpoch !== expectedEpoch ||
+      finalIntent.bridgeBackgroundMode !== true ||
+      finalIntent.bridgeConnectionDesired !== true)
+    return {ok:false,reason:'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT'};
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
-  approvals.stop();
-  await new BackgroundControlGrants(chromeApi).clear();
-  await chromeApi.storage.local.set({
-    bridgeConnectionDesired:false,bridgeMutationLabMode:false
-  });
-  try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
+  // Fence pending positive status notifications before the first await.
+  ++disconnectEpoch;
   updateStatus({state:'disconnected',connected:false});
+  // Disable dispatch *before* any potentially failing asynchronous cleanup.
+  // Persist the stop intent first so a concurrent keepalive cannot reconnect.
+  await chromeApi.storage.local.set({
+    bridgeConnectionDesired:false,bridgeMutationLabMode:false,bridgeAllTabsMode:false
+  });
+  approvals.stop();
+  let cleanupError = null;
+  try { await new BackgroundControlGrants(chromeApi).clear(); }
+  catch (error) { cleanupError = error; }
+  // Attempt the offscreen stop even when stale-grant cleanup failed.
+  // A failed message is only harmless when Chrome proves the offscreen host
+  // does not exist. Otherwise NEVER falsely acknowledge a stopped transport.
+  let stopUnconfirmed = false;
+  try {
+    const ack = await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'});
+    if (ack?.ok !== true) stopUnconfirmed = true;
+  } catch {
+    try {
+      if (typeof chromeApi.runtime?.getContexts !== 'function') {
+        stopUnconfirmed = true;
+      } else {
+        const contexts = await chromeApi.runtime.getContexts({
+          contextTypes:['OFFSCREEN_DOCUMENT'],
+          documentUrls:[chromeApi.runtime.getURL(PATH)]
+        });
+        if (!Array.isArray(contexts) || contexts.length > 0) stopUnconfirmed = true;
+      }
+    } catch { stopUnconfirmed = true; }
+  }
+  updateStatus({state:'disconnected',connected:false,
+    error:stopUnconfirmed ? 'BACKGROUND_STOP_UNCONFIRMED' : null});
+  if (cleanupError) throw Error('BACKGROUND_GRANT_CLEANUP_FAILED');
+  if (stopUnconfirmed) throw Error('BACKGROUND_STOP_UNCONFIRMED');
 }
 export function installBackgroundCoordinator(chromeApi) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
@@ -79,6 +135,35 @@ export function installBackgroundCoordinator(chromeApi) {
     if (msg.type === 'transport-status') {
       // Only the offscreen document can publish connection state.
       if (sender.url !== chromeApi.runtime.getURL(PATH)) { respond({ok:false}); return false; }
+      // A delayed 'connected' notification may arrive after Disconnect.
+      // Authorize positive connection state against persistent session intent;
+      // the offscreen sender identity alone does not imply an active grant.
+      if (msg.status?.connected === true) {
+        const expectedEpoch = disconnectEpoch;
+        void chromeApi.storage.local.get([
+          'bridgeBackgroundMode','bridgeConnectionDesired','bridgeAllTabsMode',
+          'bridgeMutationLabMode'
+        ]).then(flags => {
+          if (disconnectEpoch !== expectedEpoch ||
+              flags.bridgeBackgroundMode !== true ||
+              flags.bridgeConnectionDesired !== true ||
+              flags.bridgeAllTabsMode !== true ||
+              flags.bridgeMutationLabMode !== true) {
+            updateStatus({state:'disconnected',connected:false});
+            respond({ok:false,reason:'SESSION_NOT_ACTIVE'});
+            return;
+          }
+          updateStatus(msg.status);
+          respond({ok:true});
+        }, () => {
+          // Storage is the source of truth: a read failure must not leave
+          // an old 'connected' badge visible in coordinator memory.
+          updateStatus({state:'disconnected',connected:false,
+            error:'SESSION_STATE_UNAVAILABLE'});
+          respond({ok:false,reason:'SESSION_STATE_UNAVAILABLE'});
+        });
+        return true;
+      }
       updateStatus(msg.status || {});
       respond({ok:true});
       return false;
@@ -92,15 +177,19 @@ export function installBackgroundCoordinator(chromeApi) {
         respond({error:'OFFSCREEN_CONTEXT_REQUIRED'}); return false;
       }
       const run = async () => {
-        const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired} =
+        const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired,bridgeAllTabsMode} =
           await chromeApi.storage.local.get([
-            'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
+            'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired','bridgeAllTabsMode'
           ]);
         if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
           throw Error('BACKGROUND_TRANSPORT_DISABLED');
         const name=msg.command?.name;
+        if (bridgeAllTabsMode===true && ['browser_open','agent_new_chat'].includes(name)) {
+          return dispatchOneClickNavigation(msg.command,chromeApi);
+        }
         if (['browser_click','browser_fill','agent_send'].includes(name)) {
           if (bridgeMutationLabMode!==true) throw Error('BACKGROUND_MUTATIONS_DISABLED');
+          if (bridgeAllTabsMode===true) return dispatchOneClickMutation(msg.command,chromeApi);
           const grants=new BackgroundControlGrants(chromeApi);
           return dispatchMutation(msg.command,chromeApi,{
             approvals,
@@ -115,7 +204,7 @@ export function installBackgroundCoordinator(chromeApi) {
             }
           });
         }
-        return dispatchReadOnly(msg.command,chromeApi);
+        return dispatchReadOnly(msg.command,chromeApi,{transportStatus:currentStatus()});
       };
       void run().then(result=>respond({result}),e=>respond({error:e.message}));
       return true;

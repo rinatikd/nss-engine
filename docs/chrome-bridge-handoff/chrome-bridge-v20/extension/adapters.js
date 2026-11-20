@@ -18,7 +18,7 @@ export const DEFAULT_ADAPTERS = {
   claude: {
     label: 'Claude', origin: 'https://claude.ai', newChatUrl: 'https://claude.ai/new',
     composer: 'div[contenteditable="true"].ProseMirror, div[contenteditable="true"][role="textbox"]',
-    send: 'button[aria-label="Send message"], button[aria-label="Send Message"]',
+    send: 'button[data-testid="chat-input-send"], button[aria-label="Send message"], button[aria-label="Send Message"]',
     stop: 'button[aria-label="Stop response"], button[aria-label="Stop Response"]',
     reply: 'div[data-is-streaming], .font-claude-response',
   },
@@ -38,6 +38,14 @@ export const DEFAULT_ADAPTERS = {
   // Their CSS selectors require live calibration before enabling write operations.
   grok: {
     label: 'Grok (candidate, read-only)', origin: 'https://grok.com', newChatUrl: 'https://grok.com/',
+    // Read-only calibrated from real lab selector census: two generic
+    // composers matched, only the Tiptap/ProseMirror one is intended.
+    composer: 'div.tiptap.ProseMirror[contenteditable="true"][role="textbox"]',
+    send: 'button[data-testid="chat-submit"]', stop: '', reply: '',
+  },
+  kimi: {
+    label: 'Kimi (candidate, read-only)', origin: 'https://www.kimi.ai',
+    newChatUrl: 'https://www.kimi.ai/',
     composer: 'textarea, [contenteditable="true"][role="textbox"]',
     send: '', stop: '', reply: '',
   },
