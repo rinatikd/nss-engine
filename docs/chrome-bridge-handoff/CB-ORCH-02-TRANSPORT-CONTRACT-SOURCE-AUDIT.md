@@ -416,3 +416,37 @@ Release may move to conditional GO only when:
 - Production remains unchanged until a separate, explicit deployment plan is approved.
 
 **Decision:** accept the thin Bridge / separate Orchestrator architecture. Do not patch or release PR #113's mutation path until Phase 0 reproducer and independent review are complete.
+
+
+---
+
+## 11. Phase 0 execution log — 2026-11-21
+
+A separate ChatGPT-authored test-only artifact was created from the exact PR113 base SHA:
+
+- Branch: `test/pr113-stop-linearization-reproducer-20261121`
+- Commit: `f42ef095a9da18451f8bb15cbec3a6b86d04ab0f`
+- Draft PR: #121
+- Test path: `tests/pr113-stop-linearization.test.mjs` (under `chrome-bridge-v20`)
+
+The harness is designed to:
+1. invoke the actual `installBackgroundCoordinator()` listener;
+2. enter the actual all-tabs `agent_send` route and `dispatchOneClickMutation()`;
+3. run the imported `pageAction` against a synthetic textarea/button DOM;
+4. hold the actual page action in its Send-button readiness await using a deferred promise;
+5. invoke the trusted coordinator `stop-background` handler while held;
+6. release the action and assert that no click occurs after Stop reports success.
+
+The test contains no production source edits. It is intentionally expected to fail if the unsafe ordering is reproduced.
+
+### Execution evidence
+
+The PR generated six check-runs. All six jobs returned empty `steps[]`; job-log downloads returned Azure `BlobNotFound` / HTTP 404. The dedicated Node 24 source-test workflow completed as failure in approximately two seconds without observable execution steps.
+
+**Classification: NOT EXECUTED / UNKNOWN.** No test PASS or runtime reproduction is claimed. The harness is committed but remains unverified until an executable Node runner provides raw output. The Codex-specific executor ACK requested in Issue #83 has not been observed; this artifact is explicitly authored by ChatGPT and does not impersonate Codex or bypass `CODEX_DISABLED`.
+
+Issue #83 has been updated with the exact branch, commit, PR and evidence classification. PR #121 remains Draft. Production ports, credentials, tunnel, installed extension, permissions and Control were not touched; no provider message was sent.
+
+### Phase 0 next gate
+
+Do not patch runtime source yet. Obtain a runner that can execute the exact commit's Node test suite with non-empty steps and logs. If that cannot be made available, preserve the harness and report the execution boundary as blocked rather than treating the GitHub workflow's failure status as a test failure.
