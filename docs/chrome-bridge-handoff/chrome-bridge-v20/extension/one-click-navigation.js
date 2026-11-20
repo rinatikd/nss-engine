@@ -25,7 +25,7 @@ export async function dispatchOneClickNavigation(cmd,api) {
   }
   const {tab,origin,site}=await permittedTab(api,cmd.args?.tabId);
   const provider=providerForOrigin(origin);
-  if(!['claude','gemini','deepseek','kimi'].includes(provider) ||
+  if(!['claude','gemini','deepseek'].includes(provider) ||
      site.adapter!==provider || site.mode!=='chat')
     throw Error('CHAT_NAVIGATION_DENIED');
   const next=DEFAULT_ADAPTERS[provider]?.newChatUrl;
