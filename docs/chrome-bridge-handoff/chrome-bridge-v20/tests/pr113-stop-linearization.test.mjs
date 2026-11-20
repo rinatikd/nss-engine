@@ -200,11 +200,8 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
   let dispatchReply;
   const dispatchCompleted = new Promise(resolve => { dispatchReply = resolve; });
   let stopResult;
-  const stopCompleted = new Promise(resolve => {
-    const stopReply = resolve;
-    // The listener callback below records the response ordering.
-    globalThis.__pr113StopReply = stopReply;
-  });
+  let stopReply;
+  const stopCompleted = new Promise(resolve => { stopReply = resolve; });
 
   try {
     events.push('dispatch-accepted');
@@ -226,7 +223,7 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
     },control,response => {
       stopResult = response;
       events.push('stop-response:' + JSON.stringify(response));
-      globalThis.__pr113StopReply(response);
+      stopReply(response);
     }),true);
 
     // Let the current Stop handler finish its offscreen ACK continuation.
@@ -258,7 +255,6 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
       '; trace=' + events.join(' -> '));
   } finally {
     releasePage.resolve();
-    delete globalThis.__pr113StopReply;
     restorePage();
   }
 });
