@@ -16,26 +16,30 @@ const approvals = new ApprovalSession();
 // synchronously, then drains every lane before it can acknowledge success.
 const mutationLanes = new Map();
 const mutationFencedTabs = new Map();
-// Control grants are serialized separately from page mutations. A Revoke
-// fences the tab synchronously, then drains grants accepted before that fence.
-const controlLanes = new Map();
+// The grant store is one shared object, so ALL grant mutations must share one
+// FIFO. Per-tab fences still make Revoke synchronous for the affected tab.
+let controlStorageLane = Promise.resolve();
+let controlClearRequested = false;
 const mutationQuarantinedTabs = new Set();
 let mutationQuarantinePersistenceFailed = false;
 let mutationStopRequested = false;
 let mutationStopCount = 0;
 const STOP_DRAIN_TIMEOUT_MS = 5000;
 
-function enqueueTabControl(tabId, task) {
-  if (mutationFencedTabs.has(tabId)) throw Error('TAB_CONTROL_REVOKING');
-  const previous = controlLanes.get(tabId) || Promise.resolve();
-  const next = previous.catch(() => {}).then(() => {
-    if (mutationFencedTabs.has(tabId)) throw Error('TAB_CONTROL_REVOKING');
+function enqueueControlOperation(task, {tabId=null,allowDuringClear=false}={}) {
+  if (tabId !== null && mutationFencedTabs.has(tabId))
+    throw Error('TAB_CONTROL_REVOKING');
+  if (controlClearRequested && !allowDuringClear)
+    throw Error('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  const next = controlStorageLane.catch(() => {}).then(() => {
+    if (tabId !== null && mutationFencedTabs.has(tabId))
+      throw Error('TAB_CONTROL_REVOKING');
+    if (controlClearRequested && !allowDuringClear)
+      throw Error('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
     return task();
   });
-  controlLanes.set(tabId, next);
-  void next.finally(() => {
-    if (controlLanes.get(tabId) === next) controlLanes.delete(tabId);
-  }).catch(() => {});
+  controlStorageLane = next;
+  void next.catch(() => {});
   return next;
 }
 function enqueueTabMutation(tabId, task) {
@@ -156,6 +160,10 @@ async function startBackgroundTransportOnce(chromeApi) {
   const expectedEpoch = disconnectEpoch;
   if (mutationQuarantinePersistenceFailed)
     return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
+  if (mutationStopCount > 0)
+    return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
+  // A pending explicit clear must finish before a new transport can resume.
+  await controlStorageLane.catch(() => {});
   // Restrict access before reading secrets, not after obtaining the key.
   await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   const {bridgeConnectionDesired, browserToken, bridgeMutationQuarantineLock} =
@@ -198,12 +206,14 @@ async function startBackgroundTransportOnce(chromeApi) {
   if (mutationStopCount > 0)
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
   mutationStopRequested = false;
+  controlClearRequested = false;
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
   // Fence accepted-work admission before the first await. No mutation may
   // enter a lane after Stop has begun.
   mutationStopRequested = true;
+  controlClearRequested = true;
   mutationStopCount += 1;
   try {
   // Fence pending positive status notifications before the first await.
@@ -215,12 +225,15 @@ export async function stopBackgroundTransport(chromeApi) {
     bridgeConnectionDesired:false,bridgeMutationLabMode:false,bridgeAllTabsMode:false
   });
   approvals.stop();
-  // A Grant accepted before Stop must not write a fresh session grant after
-  // Stop has cleared the grant store.
-  await Promise.allSettled([...controlLanes.values()]);
+  // The shared control-storage FIFO drains accepted Grants before clearing.
+  // The global clear fence rejects every later Grant until a successful Connect.
   let cleanupError = null;
-  try { await new BackgroundControlGrants(chromeApi).clear(); }
-  catch (error) { cleanupError = error; }
+  try {
+    await enqueueControlOperation(
+      () => new BackgroundControlGrants(chromeApi).clear(),
+      {allowDuringClear:true}
+    );
+  } catch (error) { cleanupError = error; }
   // Attempt the offscreen stop even when stale-grant cleanup failed.
   // A failed message is only harmless when Chrome proves the offscreen host
   // does not exist. Otherwise NEVER falsely acknowledge a stopped transport.
@@ -371,8 +384,15 @@ export function installBackgroundCoordinator(chromeApi) {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
       }
-      void new BackgroundControlGrants(chromeApi).clear()
-        .then(()=>respond({ok:true}),e=>respond({error:e.message}));
+      controlClearRequested = true;
+      void enqueueControlOperation(
+        () => new BackgroundControlGrants(chromeApi).clear(),
+        {allowDuringClear:true}
+      ).then(() => {
+        if (!mutationStopRequested && mutationStopCount === 0)
+          controlClearRequested = false;
+        respond({ok:true});
+      }, e => respond({error:e.message}));
       return true;
     }
     if (msg.type === 'grant-background-control' || msg.type === 'revoke-background-control') {
@@ -388,11 +408,12 @@ export function installBackgroundCoordinator(chromeApi) {
         mutationFencedTabs.set(tabId,(mutationFencedTabs.get(tabId) || 0) + 1);
         const revoke = async () => {
           try {
-            const pendingControl = controlLanes.get(tabId);
-            if (pendingControl) await pendingControl.catch(() => {});
             const pendingMutation = mutationLanes.get(tabId);
             if (pendingMutation) await pendingMutation.catch(() => {});
-            await new BackgroundControlGrants(chromeApi).revoke(tabId);
+            await enqueueControlOperation(
+              () => new BackgroundControlGrants(chromeApi).revoke(tabId),
+              {tabId,allowDuringClear:true}
+            );
             return {ok:true};
           } finally {
             const remaining = (mutationFencedTabs.get(tabId) || 1) - 1;
@@ -405,7 +426,7 @@ export function installBackgroundCoordinator(chromeApi) {
       }
       let accepted;
       try {
-        accepted = enqueueTabControl(msg.tabId, async () => {
+        accepted = enqueueControlOperation(async () => {
           const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
             ['bridgeMutationLabMode','bridgeConnectionDesired']);
           if(bridgeMutationLabMode!==true || bridgeConnectionDesired!==true)
@@ -413,7 +434,7 @@ export function installBackgroundCoordinator(chromeApi) {
           return new BackgroundControlGrants(chromeApi).grant({
             tabId:msg.tabId,durationMinutes:msg.durationMinutes,localGesture:msg.localGesture===true
           });
-        });
+        }, {tabId:msg.tabId});
       } catch (error) {
         respond({error:error.message});
         return false;
