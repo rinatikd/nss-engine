@@ -3,10 +3,28 @@ import assert from 'node:assert/strict';
 import {installBackgroundCoordinator} from '../extension/background-coordinator.js';
 import {pageAction} from '../extension/page.js';
 
+// Capture the real Node timers before syntheticPage replaces globalThis.setTimeout.
+const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
+const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
 function deferred() {
   let resolve;
   const promise = new Promise(r => { resolve = r; });
   return {promise, resolve};
+}
+
+function bounded(promise, phase, events, timeoutMs = 2000) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = nativeSetTimeout(() => {
+      reject(new Error(
+        'Timed out waiting for ' + phase + '; trace=' + events.join(' -> ')
+      ));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    nativeClearTimeout(timer);
+  });
 }
 
 function syntheticPage(events, barrierReached, releasePage) {
@@ -76,7 +94,7 @@ function syntheticPage(events, barrierReached, releasePage) {
     href: 'https://claude.ai/chat/abcdefgh12345678'
   };
 
-  const nativeSetTimeout = globalThis.setTimeout;
+  const pageNativeSetTimeout = globalThis.setTimeout;
   let held = false;
   globalThis.setTimeout = (callback, delay, ...args) => {
     if (delay === 200 && !held) {
@@ -92,6 +110,9 @@ function syntheticPage(events, barrierReached, releasePage) {
   };
 
   return () => {
+    // Keep a reference to the original timer in this fixture so restoration
+    // remains independent of the module-level watchdog implementation.
+    void pageNativeSetTimeout;
     for (const name of names) {
       const descriptor = previous.get(name);
       if (descriptor) Object.defineProperty(globalThis,name,descriptor);
@@ -202,6 +223,13 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
   let stopResult;
   let stopReply;
   const stopCompleted = new Promise(resolve => { stopReply = resolve; });
+  const overallDeadline = Date.now() + 7000;
+  const waitFor = (promise, phase) => bounded(
+    promise,
+    phase,
+    events,
+    Math.max(1, Math.min(1500, overallDeadline - Date.now()))
+  );
 
   try {
     events.push('dispatch-accepted');
@@ -215,7 +243,7 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
     // Resolved by the real imported pageAction at its final asynchronous
     // Send-button readiness wait, before its synchronous Control/context
     // checks and btn.click().
-    await barrierReached.promise;
+    await waitFor(barrierReached.promise, 'pageAction Send-readiness barrier');
 
     events.push('stop-request');
     assert.equal(listeners[0]({
@@ -228,16 +256,16 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
 
     // Let the current Stop handler finish its offscreen ACK continuation.
     // A correct drain implementation remains pending while pageAction is held.
-    await stopAckSeen.promise;
-    await new Promise(resolve => setImmediate(resolve));
+    await waitFor(stopAckSeen.promise, 'offscreen Stop ACK');
+    await waitFor(new Promise(resolve => setImmediate(resolve)), 'event-loop settle');
     const stopRespondedWhilePageHeld = stopResult !== undefined;
 
     // Release the actual pageAction so a coordinator-owned drain can settle.
     releasePage.resolve();
-    const [dispatchResult,finalStopResult] = await Promise.all([
-      dispatchCompleted,
-      stopCompleted
-    ]);
+    const [dispatchResult,finalStopResult] = await waitFor(
+      Promise.all([dispatchCompleted, stopCompleted]),
+      'dispatch and Stop completion'
+    );
 
     const stopIndex = events.findIndex(event =>
       typeof event === 'string' && event.startsWith('stop-response:'));
@@ -261,6 +289,45 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
       'trace=' + events.join(' -> '));
   } finally {
     releasePage.resolve();
+    // Always release the held page action and give accepted dispatch/Stop
+    // callbacks a bounded cleanup window before restoring global descriptors.
+    try {
+      await bounded(
+        Promise.allSettled([dispatchCompleted, stopCompleted]),
+        'cleanup drain',
+        events,
+        1000
+      );
+    } catch (error) {
+      events.push('cleanup-timeout:' + error.message);
+    }
     restorePage();
+  }
+});
+
+test('harness watchdog bounds a missing barrier and restores synthetic globals', async () => {
+  const names = ['HTMLTextAreaElement','document','location','setTimeout'];
+  const before = new Map(names.map(name => [name,Object.getOwnPropertyDescriptor(globalThis,name)]));
+  const events = [];
+  const barrierReached = deferred();
+  const releasePage = deferred();
+  const restorePage = syntheticPage(events, barrierReached, releasePage);
+
+  try {
+    await assert.rejects(
+      bounded(barrierReached.promise, 'synthetic missing pageAction barrier', events, 25),
+      /Timed out waiting for synthetic missing pageAction barrier/
+    );
+  } finally {
+    releasePage.resolve();
+    restorePage();
+  }
+
+  for (const name of names) {
+    assert.deepEqual(
+      Object.getOwnPropertyDescriptor(globalThis,name),
+      before.get(name),
+      'global descriptor was not restored for ' + name
+    );
   }
 });
