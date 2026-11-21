@@ -175,7 +175,9 @@ function syntheticChrome(events, stopAckSeen) {
       },
       session: {
         setAccessLevel: async () => {},
-        get: async key => ({[key]:sessionState[key] || {}}),
+        get: async key => Array.isArray(key)
+          ? Object.fromEntries(key.map(name=>[name,sessionState[name]]))
+          : {[key]:sessionState[key]},
         set: async next => Object.assign(sessionState,next),
         remove: async key => { delete sessionState[key]; }
       }
