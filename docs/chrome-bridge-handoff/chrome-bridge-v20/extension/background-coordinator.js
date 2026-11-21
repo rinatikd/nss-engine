@@ -20,6 +20,7 @@ const mutationFencedTabs = new Map();
 // FIFO. Per-tab fences still make Revoke synchronous for the affected tab.
 let controlStorageLane = Promise.resolve();
 let controlClearRequested = false;
+let controlClearFailed = false;
 const mutationQuarantinedTabs = new Set();
 let mutationQuarantinePersistenceFailed = false;
 let mutationStopRequested = false;
@@ -29,11 +30,15 @@ const STOP_DRAIN_TIMEOUT_MS = 5000;
 function enqueueControlOperation(task, {tabId=null,allowDuringClear=false,allowFencedTab=false}={}) {
   if (!allowFencedTab && tabId !== null && mutationFencedTabs.has(tabId))
     throw Error('TAB_CONTROL_REVOKING');
+  if (controlClearFailed && !allowDuringClear)
+    throw Error('BACKGROUND_CONTROL_CLEAR_FAILED');
   if (controlClearRequested && !allowDuringClear)
     throw Error('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
   const next = controlStorageLane.catch(() => {}).then(() => {
     if (!allowFencedTab && tabId !== null && mutationFencedTabs.has(tabId))
       throw Error('TAB_CONTROL_REVOKING');
+    if (controlClearFailed && !allowDuringClear)
+      throw Error('BACKGROUND_CONTROL_CLEAR_FAILED');
     if (controlClearRequested && !allowDuringClear)
       throw Error('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
     return task();
@@ -160,6 +165,8 @@ async function startBackgroundTransportOnce(chromeApi) {
   const expectedEpoch = disconnectEpoch;
   if (mutationQuarantinePersistenceFailed)
     return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
+  if (controlClearFailed)
+    return {ok:false,reason:'BACKGROUND_CONTROL_CLEAR_FAILED'};
   if (mutationStopCount > 0)
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
   // A pending explicit clear must finish before a new transport can resume.
@@ -233,7 +240,11 @@ export async function stopBackgroundTransport(chromeApi) {
       () => new BackgroundControlGrants(chromeApi).clear(),
       {allowDuringClear:true}
     );
-  } catch (error) { cleanupError = error; }
+    controlClearFailed = false;
+  } catch (error) {
+    controlClearFailed = true;
+    cleanupError = error;
+  }
   // Attempt the offscreen stop even when stale-grant cleanup failed.
   // A failed message is only harmless when Chrome proves the offscreen host
   // does not exist. Otherwise NEVER falsely acknowledge a stopped transport.
@@ -389,10 +400,14 @@ export function installBackgroundCoordinator(chromeApi) {
         () => new BackgroundControlGrants(chromeApi).clear(),
         {allowDuringClear:true}
       ).then(() => {
+        controlClearFailed = false;
         if (!mutationStopRequested && mutationStopCount === 0)
           controlClearRequested = false;
         respond({ok:true});
-      }, e => respond({error:e.message}));
+      }, e => {
+        controlClearFailed = true;
+        respond({error:e.message});
+      });
       return true;
     }
     if (msg.type === 'grant-background-control' || msg.type === 'revoke-background-control') {
