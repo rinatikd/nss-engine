@@ -16,13 +16,32 @@ const approvals = new ApprovalSession();
 // synchronously, then drains every lane before it can acknowledge success.
 const mutationLanes = new Map();
 const mutationFencedTabs = new Map();
+// Control grants are serialized separately from page mutations. A Revoke
+// fences the tab synchronously, then drains grants accepted before that fence.
+const controlLanes = new Map();
+const mutationQuarantinedTabs = new Set();
+let mutationQuarantinePersistenceFailed = false;
 let mutationStopRequested = false;
 let mutationStopCount = 0;
 const STOP_DRAIN_TIMEOUT_MS = 5000;
 
+function enqueueTabControl(tabId, task) {
+  if (mutationFencedTabs.has(tabId)) throw Error('TAB_CONTROL_REVOKING');
+  const previous = controlLanes.get(tabId) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => {
+    if (mutationFencedTabs.has(tabId)) throw Error('TAB_CONTROL_REVOKING');
+    return task();
+  });
+  controlLanes.set(tabId, next);
+  void next.finally(() => {
+    if (controlLanes.get(tabId) === next) controlLanes.delete(tabId);
+  }).catch(() => {});
+  return next;
+}
 function enqueueTabMutation(tabId, task) {
   if (mutationStopRequested) throw Error('BACKGROUND_STOP_IN_PROGRESS');
   if (mutationFencedTabs.has(tabId)) throw Error('TAB_MUTATION_REVOKING');
+  if (mutationQuarantinedTabs.has(tabId)) throw Error('TAB_MUTATION_QUARANTINED');
   const previous = mutationLanes.get(tabId) || Promise.resolve();
   const next = previous.catch(() => {}).then(() => {
     if (mutationStopRequested) throw Error('BACKGROUND_STOP_IN_PROGRESS');
@@ -36,6 +55,36 @@ function enqueueTabMutation(tabId, task) {
   return next;
 }
 
+async function persistMutationQuarantine(chromeApi, tabIds) {
+  // Fence immediately in this worker, before any fallible storage operation.
+  for (const tabId of tabIds) mutationQuarantinedTabs.add(tabId);
+  try {
+    const state = await chromeApi.storage.local.get('bridgeMutationQuarantinedTabs');
+    const prior = Array.isArray(state.bridgeMutationQuarantinedTabs)
+      ? state.bridgeMutationQuarantinedTabs : [];
+    await chromeApi.storage.local.set({
+      bridgeMutationQuarantinedTabs:[...new Set([...prior,...tabIds])]
+    });
+    return true;
+  } catch {
+    // storage.local may be temporarily unavailable while session storage still
+    // works. Session storage survives MV3 service-worker restarts.
+    try {
+      const state = await chromeApi.storage.session.get('bridgeMutationQuarantinedTabs');
+      const prior = Array.isArray(state.bridgeMutationQuarantinedTabs)
+        ? state.bridgeMutationQuarantinedTabs : [];
+      await chromeApi.storage.session.set({
+        bridgeMutationQuarantinedTabs:[...new Set([...prior,...tabIds])]
+      });
+      return true;
+    } catch {
+      // No durable quarantine channel is available. Keep this worker globally
+      // fail-closed: Connect and every new mutation remain disabled.
+      mutationQuarantinePersistenceFailed = true;
+      return false;
+    }
+  }
+}
 async function drainMutationLanes(chromeApi) {
   const entries = [...mutationLanes.entries()];
   if (!entries.length) return true;
@@ -50,14 +99,7 @@ async function drainMutationLanes(chromeApi) {
   // Persist quarantine so a service-worker restart cannot silently reopen
   // a tab whose accepted page action did not drain within the bound.
   const tabIds = entries.map(([tabId]) => tabId);
-  try {
-    const state = await chromeApi.storage.local.get('bridgeMutationQuarantinedTabs');
-    const prior = Array.isArray(state.bridgeMutationQuarantinedTabs)
-      ? state.bridgeMutationQuarantinedTabs : [];
-    await chromeApi.storage.local.set({
-      bridgeMutationQuarantinedTabs:[...new Set([...prior,...tabIds])]
-    });
-  } catch { /* the caller must still report an unconfirmed Stop */ }
+  await persistMutationQuarantine(chromeApi, tabIds);
   return false;
 }
 // Extension control.html opened via chrome.windows.create is still a tab.
@@ -138,6 +180,8 @@ async function startBackgroundTransportOnce(chromeApi) {
     return {ok:false,reason:'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT'};
   if (mutationStopCount > 0)
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
+  if (mutationQuarantinePersistenceFailed)
+    return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
   mutationStopRequested = false;
   return {ok:true};
 }
@@ -156,6 +200,9 @@ export async function stopBackgroundTransport(chromeApi) {
     bridgeConnectionDesired:false,bridgeMutationLabMode:false,bridgeAllTabsMode:false
   });
   approvals.stop();
+  // A Grant accepted before Stop must not write a fresh session grant after
+  // Stop has cleared the grant store.
+  await Promise.allSettled([...controlLanes.values()]);
   let cleanupError = null;
   try { await new BackgroundControlGrants(chromeApi).clear(); }
   catch (error) { cleanupError = error; }
@@ -245,6 +292,9 @@ export function installBackgroundCoordinator(chromeApi) {
             'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired','bridgeAllTabsMode',
             'bridgeMutationQuarantinedTabs'
           ]);
+        const sessionQuarantine = await chromeApi.storage.session.get('bridgeMutationQuarantinedTabs');
+        const sessionQuarantinedTabs = Array.isArray(sessionQuarantine.bridgeMutationQuarantinedTabs)
+          ? sessionQuarantine.bridgeMutationQuarantinedTabs : [];
         if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
           throw Error('BACKGROUND_TRANSPORT_DISABLED');
         const name=msg.command?.name;
@@ -254,8 +304,10 @@ export function installBackgroundCoordinator(chromeApi) {
         if (['browser_click','browser_fill','agent_send'].includes(name)) {
           if (bridgeMutationLabMode!==true) throw Error('BACKGROUND_MUTATIONS_DISABLED');
           const tabId = msg.command?.args?.tabId;
-          if (Array.isArray(bridgeMutationQuarantinedTabs) &&
-              bridgeMutationQuarantinedTabs.includes(tabId))
+          if (mutationQuarantinedTabs.has(tabId) ||
+              (Array.isArray(bridgeMutationQuarantinedTabs) &&
+                bridgeMutationQuarantinedTabs.includes(tabId)) ||
+              sessionQuarantinedTabs.includes(tabId))
             throw Error('TAB_MUTATION_QUARANTINED');
           if (bridgeAllTabsMode===true) return dispatchOneClickMutation(msg.command,chromeApi);
           const grants=new BackgroundControlGrants(chromeApi);
@@ -306,31 +358,46 @@ export function installBackgroundCoordinator(chromeApi) {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
       }
-      const run=async()=>{
-        const grants=new BackgroundControlGrants(chromeApi);
-        if (msg.type==='revoke-background-control') {
-          if (!Number.isSafeInteger(msg.tabId)) throw Error('INVALID_TAB_ID');
-          mutationFencedTabs.set(msg.tabId,(mutationFencedTabs.get(msg.tabId) || 0) + 1);
+      if (!Number.isSafeInteger(msg.tabId) || msg.tabId <= 0) {
+        respond({error:'INVALID_TAB_ID'}); return false;
+      }
+      if (msg.type === 'revoke-background-control') {
+        const tabId = msg.tabId;
+        // The fence is synchronous: later Grants and mutations cannot enter.
+        mutationFencedTabs.set(tabId,(mutationFencedTabs.get(tabId) || 0) + 1);
+        const revoke = async () => {
           try {
-            const pending = mutationLanes.get(msg.tabId);
-            if (pending) await pending.catch(() => {});
-            await grants.revoke(msg.tabId);
+            const pendingControl = controlLanes.get(tabId);
+            if (pendingControl) await pendingControl.catch(() => {});
+            const pendingMutation = mutationLanes.get(tabId);
+            if (pendingMutation) await pendingMutation.catch(() => {});
+            await new BackgroundControlGrants(chromeApi).revoke(tabId);
             return {ok:true};
           } finally {
-            const remaining = (mutationFencedTabs.get(msg.tabId) || 1) - 1;
-            if (remaining > 0) mutationFencedTabs.set(msg.tabId,remaining);
-            else mutationFencedTabs.delete(msg.tabId);
+            const remaining = (mutationFencedTabs.get(tabId) || 1) - 1;
+            if (remaining > 0) mutationFencedTabs.set(tabId,remaining);
+            else mutationFencedTabs.delete(tabId);
           }
-        }
-        const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
-          ['bridgeMutationLabMode','bridgeConnectionDesired']);
-        if(bridgeMutationLabMode!==true || bridgeConnectionDesired!==true)
-          throw Error('BACKGROUND_CONTROL_DISABLED');
-        return grants.grant({
-          tabId:msg.tabId,durationMinutes:msg.durationMinutes,localGesture:msg.localGesture===true
+        };
+        void revoke().then(respond,e=>respond({error:e.message}));
+        return true;
+      }
+      let accepted;
+      try {
+        accepted = enqueueTabControl(msg.tabId, async () => {
+          const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
+            ['bridgeMutationLabMode','bridgeConnectionDesired']);
+          if(bridgeMutationLabMode!==true || bridgeConnectionDesired!==true)
+            throw Error('BACKGROUND_CONTROL_DISABLED');
+          return new BackgroundControlGrants(chromeApi).grant({
+            tabId:msg.tabId,durationMinutes:msg.durationMinutes,localGesture:msg.localGesture===true
+          });
         });
-      };
-      void run().then(respond,e=>respond({error:e.message}));
+      } catch (error) {
+        respond({error:error.message});
+        return false;
+      }
+      void accepted.then(respond,e=>respond({error:e.message}));
       return true;
     }
     if (msg.type === 'approval-list') {
