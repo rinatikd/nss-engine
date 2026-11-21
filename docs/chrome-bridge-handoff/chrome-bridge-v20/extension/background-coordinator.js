@@ -82,6 +82,15 @@ async function persistMutationQuarantine(chromeApi, tabIds) {
       // No durable quarantine channel is available. Keep this worker globally
       // fail-closed: Connect and every new mutation remain disabled.
       mutationQuarantinePersistenceFailed = true;
+      // Try a compact global lock in either store. If either store accepts it,
+      // a later worker can still refuse all mutations even without the tab list.
+      try {
+        await chromeApi.storage.local.set({bridgeMutationQuarantineLock:true});
+      } catch {
+        try {
+          await chromeApi.storage.session.set({bridgeMutationQuarantineLock:true});
+        } catch { /* only the in-memory fail-closed latch remains */ }
+      }
       return false;
     }
   }
@@ -149,9 +158,14 @@ async function startBackgroundTransportOnce(chromeApi) {
     return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
   // Restrict access before reading secrets, not after obtaining the key.
   await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
-  const {bridgeConnectionDesired, browserToken} = await chromeApi.storage.local.get(
-    ['bridgeConnectionDesired','browserToken']
-  );
+  const {bridgeConnectionDesired, browserToken, bridgeMutationQuarantineLock} =
+    await chromeApi.storage.local.get([
+      'bridgeConnectionDesired','browserToken','bridgeMutationQuarantineLock'
+    ]);
+  const sessionLock = await chromeApi.storage.session.get('bridgeMutationQuarantineLock');
+  if (bridgeMutationQuarantineLock === true ||
+      sessionLock.bridgeMutationQuarantineLock === true)
+    return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
   const {bridgeBackgroundMode} = await chromeApi.storage.local.get('bridgeBackgroundMode');
   if (bridgeBackgroundMode !== true) return {ok:false,reason:'BACKGROUND_MODE_DISABLED'};
   if (bridgeConnectionDesired !== true) return {ok:false,reason:'MANUAL_DISCONNECT'};
@@ -289,11 +303,13 @@ export function installBackgroundCoordinator(chromeApi) {
       }
       const run = async () => {
         const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired,bridgeAllTabsMode,
-          bridgeMutationQuarantinedTabs} = await chromeApi.storage.local.get([
+          bridgeMutationQuarantinedTabs,bridgeMutationQuarantineLock} = await chromeApi.storage.local.get([
             'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired','bridgeAllTabsMode',
-            'bridgeMutationQuarantinedTabs'
+            'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock'
           ]);
-        const sessionQuarantine = await chromeApi.storage.session.get('bridgeMutationQuarantinedTabs');
+        const sessionQuarantine = await chromeApi.storage.session.get([
+          'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock'
+        ]);
         const sessionQuarantinedTabs = Array.isArray(sessionQuarantine.bridgeMutationQuarantinedTabs)
           ? sessionQuarantine.bridgeMutationQuarantinedTabs : [];
         if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
@@ -305,6 +321,10 @@ export function installBackgroundCoordinator(chromeApi) {
         if (['browser_click','browser_fill','agent_send'].includes(name)) {
           if (bridgeMutationLabMode!==true) throw Error('BACKGROUND_MUTATIONS_DISABLED');
           const tabId = msg.command?.args?.tabId;
+          if (mutationQuarantinePersistenceFailed ||
+              bridgeMutationQuarantineLock === true ||
+              sessionQuarantine.bridgeMutationQuarantineLock === true)
+            throw Error('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
           if (mutationQuarantinedTabs.has(tabId) ||
               (Array.isArray(bridgeMutationQuarantinedTabs) &&
                 bridgeMutationQuarantinedTabs.includes(tabId)) ||
