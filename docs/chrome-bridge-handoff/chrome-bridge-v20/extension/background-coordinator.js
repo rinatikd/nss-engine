@@ -247,6 +247,11 @@ export async function stopBackgroundTransport(chromeApi) {
     controlClearFailed = true;
     cleanupError = error;
   }
+  // A Start accepted before this Stop may still be awaiting its Worker ACK.
+  // Drain it before sending Stop, otherwise a late Start message can overtake
+  // the Stop message and resurrect the transport after Stop has acknowledged.
+  const pendingStart = starting;
+  if (pendingStart) await pendingStart.catch(() => {});
   // Attempt the offscreen stop even when stale-grant cleanup failed.
   // A failed message is only harmless when Chrome proves the offscreen host
   // does not exist. Otherwise NEVER falsely acknowledge a stopped transport.
