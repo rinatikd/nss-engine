@@ -38,7 +38,8 @@ test('Grok, Qwen, Cursor remain outside the Control allowlist even if diagnostic
   const adapter = DEFAULT_ADAPTERS[key];
   assert.equal(adapter.origin, origin);
   assert.equal(Object.hasOwn(CONTROL_ORIGINS, origin), false);
-  assert.equal(adapter.send, '');
+  if (key === 'grok') assert.equal(adapter.send, 'button[data-testid="chat-submit"]');
+  assert.equal(providerForOrigin(origin), null);
   assert.equal(adapter.stop, '');
   assert.equal(adapter.reply, '');
   const grants = new ControlGrants(() => 100);

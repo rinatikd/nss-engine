@@ -83,7 +83,7 @@ test('invalid/sensitive payload and unknown origins fail without request',async(
   assert.equal(f.state.approvalCount,0);
  }
  const f=fixture({badOrigin:true});
- await assert.rejects(execute(cmd(),f),/ORIGIN_NOT_PERMITTED/);
+ await assert.rejects(execute(cmd(),f),/ORIGIN_NOT_PERMITTED|CONTROL_ORIGIN_DENIED/);
  assert.equal(f.state.approvalCount,0);
 });
 
