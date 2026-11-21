@@ -205,7 +205,7 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
   const releasePage = deferred();
   const stopAckSeen = deferred();
   const restorePage = syntheticPage(events, barrierReached, releasePage);
-  const {chromeApi,listeners} = syntheticChrome(events, stopAckSeen);
+  const {chromeApi,listeners,flags} = syntheticChrome(events, stopAckSeen);
   installBackgroundCoordinator(chromeApi);
 
   const offscreen = {
