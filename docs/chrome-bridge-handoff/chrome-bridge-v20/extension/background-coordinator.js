@@ -40,6 +40,7 @@ function enqueueTabControl(tabId, task) {
 }
 function enqueueTabMutation(tabId, task) {
   if (mutationStopRequested) throw Error('BACKGROUND_STOP_IN_PROGRESS');
+  if (mutationQuarantinePersistenceFailed) throw Error('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
   if (mutationFencedTabs.has(tabId)) throw Error('TAB_MUTATION_REVOKING');
   if (mutationQuarantinedTabs.has(tabId)) throw Error('TAB_MUTATION_QUARANTINED');
   const previous = mutationLanes.get(tabId) || Promise.resolve();
@@ -144,6 +145,8 @@ export async function startBackgroundTransport(chromeApi) {
 }
 async function startBackgroundTransportOnce(chromeApi) {
   const expectedEpoch = disconnectEpoch;
+  if (mutationQuarantinePersistenceFailed)
+    return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
   // Restrict access before reading secrets, not after obtaining the key.
   await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   const {bridgeConnectionDesired, browserToken} = await chromeApi.storage.local.get(
@@ -180,8 +183,6 @@ async function startBackgroundTransportOnce(chromeApi) {
     return {ok:false,reason:'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT'};
   if (mutationStopCount > 0)
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
-  if (mutationQuarantinePersistenceFailed)
-    return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
   mutationStopRequested = false;
   return {ok:true};
 }
