@@ -12,6 +12,53 @@ let starting = null;
 // Invalidates a positive status check that was queued before Disconnect.
 let disconnectEpoch = 0;
 const approvals = new ApprovalSession();
+// Accepted one-click mutations are serialized per tab. Stop fences new work
+// synchronously, then drains every lane before it can acknowledge success.
+const mutationLanes = new Map();
+const mutationFencedTabs = new Set();
+let mutationStopRequested = false;
+const STOP_DRAIN_TIMEOUT_MS = 5000;
+
+function enqueueTabMutation(tabId, task) {
+  if (mutationStopRequested) throw Error('BACKGROUND_STOP_IN_PROGRESS');
+  if (mutationFencedTabs.has(tabId)) throw Error('TAB_MUTATION_REVOKING');
+  const previous = mutationLanes.get(tabId) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => {
+    if (mutationStopRequested) throw Error('BACKGROUND_STOP_IN_PROGRESS');
+    if (mutationFencedTabs.has(tabId)) throw Error('TAB_MUTATION_REVOKING');
+    return task();
+  });
+  mutationLanes.set(tabId, next);
+  void next.finally(() => {
+    if (mutationLanes.get(tabId) === next) mutationLanes.delete(tabId);
+  }).catch(() => {});
+  return next;
+}
+
+async function drainMutationLanes(chromeApi) {
+  const entries = [...mutationLanes.entries()];
+  if (!entries.length) return true;
+  let timer;
+  const drained = Promise.allSettled(entries.map(([,pending]) => pending)).then(() => true);
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => resolve(false), STOP_DRAIN_TIMEOUT_MS);
+  });
+  const clean = await Promise.race([drained, timeout]);
+  clearTimeout(timer);
+  if (clean) return true;
+  // Persist quarantine so a service-worker restart cannot silently reopen
+  // a tab whose accepted page action did not drain within the bound.
+  const tabIds = entries.map(([tabId]) => tabId);
+  try {
+    const state = await chromeApi.storage.local.get('bridgeMutationQuarantinedTabs');
+    const prior = Array.isArray(state.bridgeMutationQuarantinedTabs)
+      ? state.bridgeMutationQuarantinedTabs : [];
+    await chromeApi.storage.local.set({
+      bridgeMutationQuarantinedTabs:[...new Set([...prior,...tabIds])]
+    });
+  } catch { /* the caller must still report an unconfirmed Stop */ }
+  return false;
+}
 // Extension control.html opened via chrome.windows.create is still a tab.
 // Reject web content scripts by requiring the exact extension page URL, not
 // by treating sender.tab presence as proof of an untrusted sender.
@@ -88,9 +135,13 @@ async function startBackgroundTransportOnce(chromeApi) {
       finalIntent.bridgeBackgroundMode !== true ||
       finalIntent.bridgeConnectionDesired !== true)
     return {ok:false,reason:'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT'};
+  mutationStopRequested = false;
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
+  // Fence accepted-work admission before the first await. No mutation may
+  // enter a lane after Stop has begun.
+  mutationStopRequested = true;
   // Fence pending positive status notifications before the first await.
   ++disconnectEpoch;
   updateStatus({state:'disconnected',connected:false});
@@ -123,6 +174,10 @@ export async function stopBackgroundTransport(chromeApi) {
       }
     } catch { stopUnconfirmed = true; }
   }
+  // Offscreen ACK is not an end-to-end Stop ACK. Wait for every mutation
+  // accepted before the fence; otherwise the page may click Send after Stop.
+  const mutationsDrained = await drainMutationLanes(chromeApi);
+  if (!mutationsDrained) stopUnconfirmed = true;
   updateStatus({state:'disconnected',connected:false,
     error:stopUnconfirmed ? 'BACKGROUND_STOP_UNCONFIRMED' : null});
   if (cleanupError) throw Error('BACKGROUND_GRANT_CLEANUP_FAILED');
@@ -177,9 +232,10 @@ export function installBackgroundCoordinator(chromeApi) {
         respond({error:'OFFSCREEN_CONTEXT_REQUIRED'}); return false;
       }
       const run = async () => {
-        const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired,bridgeAllTabsMode} =
-          await chromeApi.storage.local.get([
-            'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired','bridgeAllTabsMode'
+        const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired,bridgeAllTabsMode,
+          bridgeMutationQuarantinedTabs} = await chromeApi.storage.local.get([
+            'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired','bridgeAllTabsMode',
+            'bridgeMutationQuarantinedTabs'
           ]);
         if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
           throw Error('BACKGROUND_TRANSPORT_DISABLED');
@@ -189,6 +245,10 @@ export function installBackgroundCoordinator(chromeApi) {
         }
         if (['browser_click','browser_fill','agent_send'].includes(name)) {
           if (bridgeMutationLabMode!==true) throw Error('BACKGROUND_MUTATIONS_DISABLED');
+          const tabId = msg.command?.args?.tabId;
+          if (Array.isArray(bridgeMutationQuarantinedTabs) &&
+              bridgeMutationQuarantinedTabs.includes(tabId))
+            throw Error('TAB_MUTATION_QUARANTINED');
           if (bridgeAllTabsMode===true) return dispatchOneClickMutation(msg.command,chromeApi);
           const grants=new BackgroundControlGrants(chromeApi);
           return dispatchMutation(msg.command,chromeApi,{
@@ -206,7 +266,24 @@ export function installBackgroundCoordinator(chromeApi) {
         }
         return dispatchReadOnly(msg.command,chromeApi,{transportStatus:currentStatus()});
       };
-      void run().then(result=>respond({result}),e=>respond({error:e.message}));
+      const mutation = ['browser_click','browser_fill','agent_send'].includes(msg.command?.name);
+      if (mutation) {
+        const tabId = msg.command?.args?.tabId;
+        if (!Number.isSafeInteger(tabId)) {
+          respond({error:'INVALID_MUTATION_TAB'});
+          return false;
+        }
+        let accepted;
+        try {
+          accepted = enqueueTabMutation(tabId, run);
+        } catch (error) {
+          respond({error:error.message});
+          return false;
+        }
+        void accepted.then(result=>respond({result}),e=>respond({error:e.message}));
+      } else {
+        void run().then(result=>respond({result}),e=>respond({error:e.message}));
+      }
       return true;
     }
     if (msg.type === 'clear-background-controls') {
@@ -224,7 +301,16 @@ export function installBackgroundCoordinator(chromeApi) {
       const run=async()=>{
         const grants=new BackgroundControlGrants(chromeApi);
         if (msg.type==='revoke-background-control') {
-          await grants.revoke(msg.tabId);return {ok:true};
+          if (!Number.isSafeInteger(msg.tabId)) throw Error('INVALID_TAB_ID');
+          mutationFencedTabs.add(msg.tabId);
+          try {
+            const pending = mutationLanes.get(msg.tabId);
+            if (pending) await pending.catch(() => {});
+            await grants.revoke(msg.tabId);
+            return {ok:true};
+          } finally {
+            mutationFencedTabs.delete(msg.tabId);
+          }
         }
         const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
           ['bridgeMutationLabMode','bridgeConnectionDesired']);
@@ -262,7 +348,11 @@ export function installBackgroundCoordinator(chromeApi) {
       return true;
     }
     if (msg.type === 'stop-background') {
-      void stopBackgroundTransport(chromeApi).then(() => respond({ok:true}),e=>respond({ok:false,reason:e.message}));
+      void stopBackgroundTransport(chromeApi).then(
+        () => respond({ok:true}),
+        e => respond({ok:false,reason:e.message,
+          ...(e.message === 'BACKGROUND_STOP_UNCONFIRMED' ? {outcome:'UNKNOWN'} : {})})
+      );
       return true;
     }
     return false;
