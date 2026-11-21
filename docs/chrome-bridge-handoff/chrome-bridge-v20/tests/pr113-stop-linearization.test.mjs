@@ -278,15 +278,33 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
         'a no-click outcome must be attributable to fail-closed Stop/Control cancellation');
     }
 
-    // A successful Stop must not return while the accepted page action is
-    // still held at its real asynchronous readiness boundary. Once released,
-    // either the action is safely cancelled or any click must precede Stop.
-    assert.ok(finalStopResult.ok !== true || !stopRespondedWhilePageHeld,
-      'STOP LINEARIZATION VIOLATED: Stop reported success while an accepted pageAction was still held. ' +
-      'trace=' + events.join(' -> '));
-    assert.ok(finalStopResult.ok !== true || clickIndex === -1 || clickIndex < stopIndex,
-      'STOP LINEARIZATION VIOLATED: successful Stop preceded a later page click. ' +
-      'trace=' + events.join(' -> '));
+    // Forward gate: a successful Stop must wait until the accepted page action
+    // is settled, and any click must precede the successful Stop response.
+    // A failed Stop is not a loophole: it must use the canonical unconfirmed
+    // result and explicitly classify the side-effect outcome.
+    if (finalStopResult?.ok === true) {
+      assert.equal(stopRespondedWhilePageHeld, false,
+        'STOP LINEARIZATION VIOLATED: Stop reported success while an accepted pageAction was still held. ' +
+        'trace=' + events.join(' -> '));
+      assert.ok(clickIndex === -1 || clickIndex < stopIndex,
+        'STOP LINEARIZATION VIOLATED: successful Stop preceded a later page click. ' +
+        'trace=' + events.join(' -> '));
+    } else {
+      assert.equal(finalStopResult?.ok, false,
+        'Stop must return an explicit success or failure result');
+      assert.equal(finalStopResult?.reason, 'BACKGROUND_STOP_UNCONFIRMED',
+        'a failed Stop must use the canonical unconfirmed reason; arbitrary {ok:false} is not a safe outcome');
+      if (clickIndex > stopIndex) {
+        assert.equal(finalStopResult?.outcome, 'UNKNOWN',
+          'a page click after an unconfirmed Stop response must remain UNKNOWN; never retry automatically');
+      } else if (clickIndex === -1) {
+        assert.equal(finalStopResult?.outcome, 'NOT_PERFORMED',
+          'a no-click fail-closed result must explicitly report NOT_PERFORMED');
+      } else {
+        assert.equal(finalStopResult?.outcome, 'UNKNOWN',
+          'a click before Stop still requires an explicit side-effect outcome');
+      }
+    }
   } finally {
     releasePage.resolve();
     // Always release the held page action and give accepted dispatch/Stop
