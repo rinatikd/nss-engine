@@ -292,7 +292,7 @@ test('Disconnect fences a pending positive status read even if storage returns s
   assert.equal(visible.connected,false);
 });
 
-test('a delayed successful Worker start ACK cannot override a completed Disconnect',async()=>{
+test('Stop waits for an in-flight Start ACK and sends Stop after the late Start',async()=>{
   const flags={bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'fixture'};
   const c=fakeChrome(flags);
   let resolveAck,enteredSend;
@@ -305,12 +305,23 @@ test('a delayed successful Worker start ACK cannot override a completed Disconne
   };
   const first=startBackgroundTransport(c);
   await started;
-  await stopBackgroundTransport(c);
+  let stopSettled=false;
+  const stopping=stopBackgroundTransport(c).then(
+    value=>{stopSettled=true;return value;},
+    error=>{stopSettled=true;throw error;}
+  );
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(stopSettled,false,
+    'Stop must wait for the already accepted Start before acknowledging');
+  assert.deepEqual(c.calls.filter(x=>x[0]==='message').map(x=>x[1]),['start'],
+    'Stop must not send its offscreen message before the in-flight Start settles');
   resolveAck({ok:true});
-  const result=await first;
+  const [result]=await Promise.all([first,stopping]);
   assert.equal(result.ok,false);
   assert.equal(result.reason,'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT');
   assert.equal(flags.bridgeConnectionDesired,false);
+  assert.deepEqual(c.calls.filter(x=>x[0]==='message').map(x=>x[1]),['start','stop'],
+    'the Stop command must be the final transport message');
 });
 
 test('a stale positive Worker ACK must respect the final persisted disconnect flag',async()=>{
