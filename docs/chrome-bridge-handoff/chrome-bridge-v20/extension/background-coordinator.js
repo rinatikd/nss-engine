@@ -26,13 +26,13 @@ let mutationStopRequested = false;
 let mutationStopCount = 0;
 const STOP_DRAIN_TIMEOUT_MS = 5000;
 
-function enqueueControlOperation(task, {tabId=null,allowDuringClear=false}={}) {
-  if (tabId !== null && mutationFencedTabs.has(tabId))
+function enqueueControlOperation(task, {tabId=null,allowDuringClear=false,allowFencedTab=false}={}) {
+  if (!allowFencedTab && tabId !== null && mutationFencedTabs.has(tabId))
     throw Error('TAB_CONTROL_REVOKING');
   if (controlClearRequested && !allowDuringClear)
     throw Error('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
   const next = controlStorageLane.catch(() => {}).then(() => {
-    if (tabId !== null && mutationFencedTabs.has(tabId))
+    if (!allowFencedTab && tabId !== null && mutationFencedTabs.has(tabId))
       throw Error('TAB_CONTROL_REVOKING');
     if (controlClearRequested && !allowDuringClear)
       throw Error('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
@@ -412,7 +412,7 @@ export function installBackgroundCoordinator(chromeApi) {
             if (pendingMutation) await pendingMutation.catch(() => {});
             await enqueueControlOperation(
               () => new BackgroundControlGrants(chromeApi).revoke(tabId),
-              {tabId,allowDuringClear:true}
+              {tabId,allowDuringClear:true,allowFencedTab:true}
             );
             return {ok:true};
           } finally {
