@@ -451,8 +451,14 @@ test('Stop timeout returns UNKNOWN, quarantines the tab, and fences new mutation
   const releasePage = deferred();
   const stopAckSeen = deferred();
   const restorePage = syntheticPage(events, barrierReached, releasePage);
-  const {chromeApi,listeners,flags} = syntheticChrome(events, stopAckSeen);
+  const {chromeApi,listeners,flags,sessionState} = syntheticChrome(events, stopAckSeen);
   installBackgroundCoordinator(chromeApi);
+  const originalLocalSet=chromeApi.storage.local.set.bind(chromeApi.storage.local);
+  chromeApi.storage.local.set=async next=>{
+    if(Object.hasOwn(next,'bridgeMutationQuarantinedTabs'))
+      throw Error('SYNTHETIC_LOCAL_QUARANTINE_WRITE_FAILURE');
+    return originalLocalSet(next);
+  };
 
   const offscreen = {
     id: chromeApi.runtime.id,
