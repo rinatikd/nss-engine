@@ -5,13 +5,22 @@ import {startBackgroundTransport, stopBackgroundTransport, installBackgroundCoor
 function fakeChrome(data={}) {
   const listeners=[];
   const calls=[];
+  const sessionData={};
   return {
     calls,listeners,
-    storage:{local:{
-      setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
-      get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
-      set:async next=>{Object.assign(data,next);calls.push(['set',next]);}
-    }},
+    storage:{
+      local:{
+        setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
+        get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
+        set:async next=>{Object.assign(data,next);calls.push(['set',next]);}
+      },
+      session:{
+        setAccessLevel:async opts=>calls.push(['session-access',opts.accessLevel]),
+        get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,sessionData[k]])),
+        set:async next=>Object.assign(sessionData,next),
+        remove:async key=>{delete sessionData[key];}
+      }
+    },
     runtime:{
       id:'ext-mock-id',
       getURL:part=>'chrome-extension://ext-mock-id/'+part,
