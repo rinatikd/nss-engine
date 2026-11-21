@@ -93,6 +93,8 @@ class RepoGuardTests(unittest.TestCase):
         for path, data, expected in [
             ('drawing.dwg', b'ordinary source text', 1),
             ('ordinary.json', b'{}', 1),
+            ('docs/chrome-bridge-handoff/chrome-bridge-v20/extension/manifest.json', b'{\"manifest_version\":3}', 0),
+            ('docs/chrome-bridge-handoff/chrome-bridge-v20/extension/package.json', b'{\"type\":\"module\"}', 0),
             ('skills-lock.json', b'{}', 0),
             ('ordinary.txt', b'ordinary source text', 0),
             ('binary.txt', bytes([65, 0, 66]), 1),
