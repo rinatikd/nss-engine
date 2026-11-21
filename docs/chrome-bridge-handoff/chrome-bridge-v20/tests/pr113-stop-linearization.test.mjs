@@ -187,10 +187,7 @@ function syntheticChrome(events, stopAckSeen) {
       contains: async () => true
     },
     tabs: {
-      get: async id => {
-        assert.equal(id, tab.id);
-        return {...tab};
-      }
+      get: async id => ({...tab,id})
     },
     scripting: {
       executeScript: async ({func,args}) => {
@@ -618,5 +615,56 @@ test('Grant accepted before Revoke drains first; late concurrent Grant cannot re
       'successful Revoke must be the final writer for this tab grant');
   }finally{
     releaseGrantRead.resolve();
+  }
+});
+
+
+test('grants for different tabs share one serialized storage read-modify-write lane', async () => {
+  const events=[];
+  const {chromeApi,listeners,sessionState}=syntheticChrome(events,deferred());
+  installBackgroundCoordinator(chromeApi);
+  const control={id:chromeApi.runtime.id,url:chromeApi.runtime.getURL('control.html')};
+  const firstReadStarted=deferred();
+  const secondReadStarted=deferred();
+  const releaseFirstRead=deferred();
+  const originalGet=chromeApi.storage.session.get.bind(chromeApi.storage.session);
+  let grantReads=0;
+  chromeApi.storage.session.get=async key=>{
+    if(key==='bridgeBackgroundControlGrants'){
+      grantReads+=1;
+      if(grantReads===1){
+        firstReadStarted.resolve();
+        await releaseFirstRead.promise;
+      } else if(grantReads===2) secondReadStarted.resolve();
+    }
+    return originalGet(key);
+  };
+  let firstReply,secondReply;
+  const firstDone=new Promise(resolve=>{firstReply=resolve;});
+  const secondDone=new Promise(resolve=>{secondReply=resolve;});
+  try{
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'grant-background-control',
+      tabId:17,durationMinutes:15,localGesture:true
+    },control,response=>firstReply(response)),true);
+    await bounded(firstReadStarted.promise,'first cross-tab Grant read',events,1500);
+
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'grant-background-control',
+      tabId:18,durationMinutes:15,localGesture:true
+    },control,response=>secondReply(response)),true);
+    await bounded(new Promise(resolve=>setImmediate(resolve)),
+      'second Grant remains queued behind shared storage operation',events,1500);
+    assert.equal(grantReads,1,
+      'different tab IDs must not concurrently read-modify-write the shared grants object');
+
+    releaseFirstRead.resolve();
+    const [first,second]=await bounded(Promise.all([firstDone,secondDone]),
+      'both cross-tab Grants complete',events,1500);
+    assert.equal(first?.tabId,17);
+    assert.equal(second?.tabId,18);
+    assert.deepEqual(Object.keys(sessionState.bridgeBackgroundControlGrants).sort(),['17','18']);
+  }finally{
+    releaseFirstRead.resolve();
   }
 });
