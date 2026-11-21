@@ -26,6 +26,7 @@ let mutationQuarantinePersistenceFailed = false;
 let mutationStopRequested = false;
 let mutationStopCount = 0;
 const STOP_DRAIN_TIMEOUT_MS = 5000;
+const START_DRAIN_TIMEOUT_MS = 5000;
 
 function enqueueControlOperation(task, {tabId=null,allowDuringClear=false,allowFencedTab=false}={}) {
   if (!allowFencedTab && tabId !== null && mutationFencedTabs.has(tabId))
@@ -250,12 +251,24 @@ export async function stopBackgroundTransport(chromeApi) {
   // A Start accepted before this Stop may still be awaiting its Worker ACK.
   // Drain it before sending Stop, otherwise a late Start message can overtake
   // the Stop message and resurrect the transport after Stop has acknowledged.
+  // Bound this wait: an unresponsive Worker must not hang Stop indefinitely.
   const pendingStart = starting;
-  if (pendingStart) await pendingStart.catch(() => {});
+  let startDrainUnconfirmed = false;
+  if (pendingStart) {
+    let timer;
+    const settled = await Promise.race([
+      pendingStart.then(() => true, () => true),
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve(false), START_DRAIN_TIMEOUT_MS);
+      })
+    ]);
+    clearTimeout(timer);
+    if (!settled) startDrainUnconfirmed = true;
+  }
   // Attempt the offscreen stop even when stale-grant cleanup failed.
   // A failed message is only harmless when Chrome proves the offscreen host
   // does not exist. Otherwise NEVER falsely acknowledge a stopped transport.
-  let stopUnconfirmed = false;
+  let stopUnconfirmed = startDrainUnconfirmed;
   try {
     const ack = await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'});
     if (ack?.ok !== true) stopUnconfirmed = true;
