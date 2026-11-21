@@ -17,6 +17,7 @@ const approvals = new ApprovalSession();
 const mutationLanes = new Map();
 const mutationFencedTabs = new Map();
 let mutationStopRequested = false;
+let mutationStopInProgress = false;
 const STOP_DRAIN_TIMEOUT_MS = 5000;
 
 function enqueueTabMutation(tabId, task) {
@@ -135,6 +136,8 @@ async function startBackgroundTransportOnce(chromeApi) {
       finalIntent.bridgeBackgroundMode !== true ||
       finalIntent.bridgeConnectionDesired !== true)
     return {ok:false,reason:'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT'};
+  if (mutationStopInProgress)
+    return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
   mutationStopRequested = false;
   return {ok:true};
 }
@@ -142,6 +145,8 @@ export async function stopBackgroundTransport(chromeApi) {
   // Fence accepted-work admission before the first await. No mutation may
   // enter a lane after Stop has begun.
   mutationStopRequested = true;
+  mutationStopInProgress = true;
+  try {
   // Fence pending positive status notifications before the first await.
   ++disconnectEpoch;
   updateStatus({state:'disconnected',connected:false});
@@ -182,6 +187,9 @@ export async function stopBackgroundTransport(chromeApi) {
     error:stopUnconfirmed ? 'BACKGROUND_STOP_UNCONFIRMED' : null});
   if (stopUnconfirmed) throw Error('BACKGROUND_STOP_UNCONFIRMED');
   if (cleanupError) throw Error('BACKGROUND_GRANT_CLEANUP_FAILED');
+  } finally {
+    mutationStopInProgress = false;
+  }
 }
 export function installBackgroundCoordinator(chromeApi) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {

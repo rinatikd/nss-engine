@@ -412,6 +412,17 @@ test('Stop timeout returns UNKNOWN, quarantines the tab, and fences new mutation
     }),true);
     await bounded(stopAckSeen.promise,'offscreen Stop ACK',events,1500);
 
+    // A concurrent Connect/start must not clear the Stop admission fence.
+    flags.bridgeConnectionDesired = true;
+    let concurrentStart;
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'start-background'
+    },control,response => { concurrentStart = response; }),true);
+    await bounded(new Promise(resolve => setImmediate(resolve)),
+      'concurrent start rejection',events,1500);
+    assert.equal(concurrentStart?.ok,false);
+    assert.equal(concurrentStart?.reason,'BACKGROUND_STOP_IN_PROGRESS');
+
     let secondDispatch;
     assert.equal(listeners[0]({
       target:'bridge-coordinator',type:'dispatch',command
