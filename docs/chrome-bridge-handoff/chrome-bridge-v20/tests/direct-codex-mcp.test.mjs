@@ -27,8 +27,9 @@ test('current bridge through isolated proxy fixture: discovery and closed execut
   const expected = await checkDiscovery(direct, config.agentToken);
   const actual = await checkDiscovery(proxy, config.agentToken);
   assert.equal(actual.ok, true);
-  assert.equal(actual.count, 18);
+  assert.equal(actual.count, expected.count);
   assert.deepEqual(actual, expected);
+  assert.equal(new Set(actual.names).size, actual.names.length);
   const call = async (url, name, args, token = config.agentToken, extra = {}) => fetch(url, {
     method: 'POST', headers: { authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...extra },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),

@@ -2,21 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const html=readFileSync(new URL('../extension/control.html',import.meta.url),'utf8');
-const js=readFileSync(new URL('../extension/control.js',import.meta.url),'utf8');
+const js=readFileSync(new URL('../extension/one-click-control.js',import.meta.url),'utf8');
 
-test('global Control buttons remain available',()=>{
-  assert.match(html,/id="backgroundGrantAll"/);
-  assert.match(html,/id="backgroundRevokeAll"/);
-  assert.match(html,/id="backgroundGrantMinutes"/);
-  assert.match(js,/eligibleBackgroundControlTabs/);
-  assert.match(js,/clear-background-controls/);
+test('single-entry control panel exposes Connect, Disconnect and local recovery',()=>{
+  assert.match(html,/id="connect"/);
+  assert.match(html,/id="disconnect"/);
+  assert.match(html,/id="recover"/);
+  assert.match(html,/id="pairing-key"/);
+  assert.match(js,/session\.connect/);
+  assert.match(js,/session\.disconnect/);
+  assert.match(js,/requestLocalRecovery/);
 });
-test('duplicate per-tab Control controls and their handlers are absent',()=>{
-  assert.doesNotMatch(html,/id="backgroundGrantTabId"|id="backgroundGrant"|id="backgroundRevoke"/);
-  assert.doesNotMatch(js,/selectedBackgroundTab|\$\('backgroundGrant'\)|\$\('backgroundRevoke'\)/);
+test('legacy global grant controls are not exposed in the single-entry panel',()=>{
+  assert.doesNotMatch(html,/backgroundGrantAll|backgroundRevokeAll|backgroundGrantMinutes/);
+  assert.doesNotMatch(js,/clear-background-controls|grant-background-control/);
 });
-test('site list does not create redundant legacy Control buttons or misleading status',()=>{
-  assert.doesNotMatch(js,/dataset\.connectControl|dataset\.disconnectControl|dataset\.ttl/);
-  assert.doesNotMatch(js,/ttl\.textContent\s*=/);
-  assert.match(js,/li\.append\(left, rm\)/);
+test('connect and disconnect require trusted user gestures',()=>{
+  assert.match(js,/if \(!e\.isTrusted \|\| busy\) return/);
+  assert.match(js,/target:'bridge-coordinator',type:'stop-background'/);
 });

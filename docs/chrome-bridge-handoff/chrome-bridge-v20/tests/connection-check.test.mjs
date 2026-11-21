@@ -28,14 +28,18 @@ test('rejects unexpected server replies and network failures', async () => {
 test('HTML has readable labels and the controller verifies before persisting', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../extension/control.html', import.meta.url), 'utf8');
-  const js = readFileSync(new URL('../extension/control.js', import.meta.url), 'utf8');
-  assert.match(html, /Подключение/);
-  assert.match(html, /Удалить сохранённый ключ/);
+  const js = readFileSync(new URL('../extension/one-click-control.js', import.meta.url), 'utf8');
+  const checks = readFileSync(new URL('../extension/connection-check.js', import.meta.url), 'utf8');
+  assert.match(html, /id="connect"/);
+  assert.match(html, /id="disconnect"/);
+  assert.match(html, /id="pairing-key"/);
+  assert.match(html, /id="recover"/);
   assert.doesNotMatch(html, /РџРѕ|РњРѕ|РєР»/);
-  const handler = js.slice(js.indexOf('async function connectBridge'), js.indexOf("$('forgetKey').onclick"));
-  assert.ok(handler.indexOf('verifyBridgeCredential') < handler.indexOf('saveBrowserKey'));
-  assert.match(handler, /BROWSER_KEY_REJECTED_401/);
-  assert.match(handler, /EXTENSION_ORIGIN_REJECTED_403/);
+  const pairing = js.slice(js.indexOf('loadKey:'), js.indexOf('start:'));
+  assert.ok(pairing.indexOf('verifyBridgeCredential') < pairing.indexOf('saveBrowserKey'));
+  assert.match(checks, /BROWSER_KEY_REJECTED_401/);
+  assert.match(checks, /EXTENSION_ORIGIN_REJECTED_403/);
+  assert.doesNotMatch(html, /browserToken\s*[:=]/);
 });
 
 test('persistent key automatically reconnects without granting control', async () => {

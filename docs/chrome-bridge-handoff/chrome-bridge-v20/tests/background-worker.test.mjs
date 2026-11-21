@@ -11,11 +11,11 @@ test('mutation commands never execute in background prototype',async()=>{
 });
 test('unknown command names fail closed',async()=>{
 
- await assert.rejects(dispatchReadOnly({name:'agent_peek'},{}),/BACKGROUND_COMMAND_NOT_MIGRATED/);
+ await assert.rejects(dispatchReadOnly({name:'agent_unknown_command'},{}),/BACKGROUND_COMMAND_NOT_MIGRATED/);
  await assert.rejects(dispatchReadOnly({},{}),/INVALID_COMMAND/);
 });
 test('control introspection stays non-mutating',async()=>{
- const r=await dispatchReadOnly({name:'control_status'},{});
+ const r=await dispatchReadOnly({name:'control_status'},{storage:{local:{get:async()=>({})}}});
  assert.equal(r.globalEnabled,false);
  assert.equal(r.approvalPending,0);
  assert.deepEqual(r.origins,[]);

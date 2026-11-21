@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {installBackgroundCoordinator} from '../extension/background-coordinator.js';
+import {installBackgroundCoordinator,startBackgroundTransport} from '../extension/background-coordinator.js';
 import {pageAction} from '../extension/page.js';
 
 // Capture the real Node timers before syntheticPage replaces globalThis.setTimeout.
@@ -103,10 +103,9 @@ function syntheticPage(events, barrierReached, releasePage) {
       releasePage.promise.then(() => callback(...args));
       return 1;
     }
-    // Keep all other pageAction waits deterministic; only the real Send
-    // readiness await is held by the deferred barrier.
-    queueMicrotask(() => callback(...args));
-    return 1;
+    // Preserve real timer semantics for the coordinator's bounded drain;
+    // only the pageAction Send-readiness wait is held by the deferred barrier.
+    return pageNativeSetTimeout(callback, delay, ...args);
   };
 
   return () => {
@@ -121,17 +120,26 @@ function syntheticPage(events, barrierReached, releasePage) {
   };
 }
 
+async function resetSyntheticStopState(chromeApi, flags) {
+  flags.bridgeConnectionDesired = true;
+  flags.bridgeMutationLabMode = true;
+  flags.bridgeAllTabsMode = true;
+  await startBackgroundTransport(chromeApi);
+}
+
 function syntheticChrome(events, stopAckSeen) {
   const flags = {
     bridgeBackgroundMode: true,
     bridgeMutationLabMode: true,
     bridgeConnectionDesired: true,
     bridgeAllTabsMode: true,
+    browserToken: 'synthetic-browser-token',
     adapters: JSON.stringify({
       claude: {composer:'#composer',send:'#send',stop:'#stop',reply:'#reply'}
     })
   };
   const listeners = [];
+  const sessionState = {};
   const tab = {
     id: 17,
     url: 'https://claude.ai/chat/abcdefgh12345678',
@@ -162,13 +170,17 @@ function syntheticChrome(events, stopAckSeen) {
         set: async next => {
           Object.assign(flags, next);
           events.push('persist-stop-intent');
-        }
+        },
+        setAccessLevel: async () => {}
       },
       session: {
         setAccessLevel: async () => {},
-        remove: async () => {}
+        get: async key => ({[key]:sessionState[key] || {}}),
+        set: async next => Object.assign(sessionState,next),
+        remove: async key => { delete sessionState[key]; }
       }
     },
+    offscreen: {createDocument: async () => {}},
     permissions: {
       contains: async () => true
     },
@@ -187,7 +199,7 @@ function syntheticChrome(events, stopAckSeen) {
       }
     }
   };
-  return {chromeApi,listeners};
+  return {chromeApi,listeners,flags};
 }
 
 test('PR113 all-tabs Stop never reports success before an accepted pageAction is safe', async () => {
@@ -196,7 +208,7 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
   const releasePage = deferred();
   const stopAckSeen = deferred();
   const restorePage = syntheticPage(events, barrierReached, releasePage);
-  const {chromeApi,listeners} = syntheticChrome(events, stopAckSeen);
+  const {chromeApi,listeners,flags} = syntheticChrome(events, stopAckSeen);
   installBackgroundCoordinator(chromeApi);
 
   const offscreen = {
@@ -266,6 +278,8 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
       Promise.all([dispatchCompleted, stopCompleted]),
       'dispatch and Stop completion'
     );
+    assert.equal(finalStopResult?.ok,true,
+      'a pageAction released within the drain bound must yield a confirmed Stop, not an early UNKNOWN');
 
     const stopIndex = events.findIndex(event =>
       typeof event === 'string' && event.startsWith('stop-response:'));
@@ -320,6 +334,7 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
       events.push('cleanup-timeout:' + error.message);
     }
     restorePage();
+    await resetSyntheticStopState(chromeApi, flags);
   }
 });
 
@@ -347,5 +362,178 @@ test('harness watchdog bounds a missing barrier and restores synthetic globals',
       before.get(name),
       'global descriptor was not restored for ' + name
     );
+  }
+});
+
+
+
+test('per-tab Revoke fences new work and waits for accepted pageAction lane', async () => {
+  const events = [];
+  const barrierReached = deferred();
+  const releasePage = deferred();
+  const stopAckSeen = deferred();
+  const restorePage = syntheticPage(events, barrierReached, releasePage);
+  const {chromeApi,listeners,flags} = syntheticChrome(events, stopAckSeen);
+  installBackgroundCoordinator(chromeApi);
+  const offscreen = {
+    id:chromeApi.runtime.id,
+    url:chromeApi.runtime.getURL('transport-host.html')
+  };
+  const control = {
+    id:chromeApi.runtime.id,
+    url:chromeApi.runtime.getURL('control.html')
+  };
+  const command = {
+    name:'agent_send',
+    expires:Date.now()+60_000,
+    args:{
+      tabId:17,
+      text:'Synthetic per-tab Revoke fixture; never sent to a provider',
+      expectedOrigin:'https://claude.ai',
+      expectedConversationId:'abcdefgh12345678'
+    }
+  };
+  let firstReply, secondReply, revokeReply, lateReply;
+  const firstDone=new Promise(resolve=>{firstReply=resolve;});
+  const secondDone=new Promise(resolve=>{secondReply=resolve;});
+  const revokeDone=new Promise(resolve=>{revokeReply=resolve;});
+
+  try {
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'dispatch',command
+    },offscreen,response=>firstReply(response)),true);
+    await bounded(barrierReached.promise,'Revoke held pageAction barrier',events,1500);
+
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'dispatch',command
+    },offscreen,response=>secondReply(response)),true);
+
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'revoke-background-control',tabId:17
+    },control,response=>{
+      events.push('revoke-response');
+      revokeReply(response);
+    }),true);
+
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'dispatch',command
+    },offscreen,response=>{lateReply=response;}),false);
+    assert.equal(lateReply?.error,'TAB_MUTATION_REVOKING');
+
+    await bounded(new Promise(resolve=>setImmediate(resolve)),
+      'Revoke remains pending while accepted lane is held',events,1500);
+    assert.equal(events.includes('revoke-response'),false);
+
+    releasePage.resolve();
+    const [first,second,revoke]=await bounded(
+      Promise.all([firstDone,secondDone,revokeDone]),
+      'per-tab Revoke drain',events,2500
+    );
+    assert.ok(first?.result);
+    assert.equal(second?.error,'TAB_MUTATION_REVOKING');
+    assert.deepEqual(revoke,{ok:true});
+    assert.equal(events.filter(event=>event==='page-click').length,1);
+    assert.ok(events.indexOf('page-click')<events.indexOf('revoke-response'));
+  } finally {
+    releasePage.resolve();
+    try {
+      await bounded(Promise.allSettled([firstDone,secondDone,revokeDone]),
+        'Revoke test cleanup',events,1500);
+    } catch {}
+    restorePage();
+    await resetSyntheticStopState(chromeApi,flags);
+  }
+});
+
+test('Stop timeout returns UNKNOWN, quarantines the tab, and fences new mutations', async () => {
+  const events = [];
+  const barrierReached = deferred();
+  const releasePage = deferred();
+  const stopAckSeen = deferred();
+  const restorePage = syntheticPage(events, barrierReached, releasePage);
+  const {chromeApi,listeners,flags} = syntheticChrome(events, stopAckSeen);
+  installBackgroundCoordinator(chromeApi);
+
+  const offscreen = {
+    id: chromeApi.runtime.id,
+    url: chromeApi.runtime.getURL('transport-host.html')
+  };
+  const control = {
+    id: chromeApi.runtime.id,
+    url: chromeApi.runtime.getURL('control.html')
+  };
+  const command = {
+    name:'agent_send',
+    expires:Date.now()+60_000,
+    args:{
+      tabId:17,
+      text:'Synthetic timeout regression fixture; never sent to a provider',
+      expectedOrigin:'https://claude.ai',
+      expectedConversationId:'abcdefgh12345678'
+    }
+  };
+
+  let dispatchReply;
+  const dispatchCompleted = new Promise(resolve => { dispatchReply = resolve; });
+  let stopResult;
+  let stopReply;
+  const stopCompleted = new Promise(resolve => { stopReply = resolve; });
+
+  try {
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'dispatch',command
+    },offscreen,response => dispatchReply(response)),true);
+    await bounded(barrierReached.promise,'held pageAction barrier',events,1500);
+
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'stop-background'
+    },control,response => {
+      stopResult = response;
+      events.push('stop-response:' + JSON.stringify(response));
+      stopReply(response);
+    }),true);
+    await bounded(stopAckSeen.promise,'offscreen Stop ACK',events,1500);
+
+    // A concurrent Connect/start must not clear the Stop admission fence.
+    flags.bridgeConnectionDesired = true;
+    let concurrentStart;
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'start-background'
+    },control,response => { concurrentStart = response; }),true);
+    await bounded(new Promise(resolve => setImmediate(resolve)),
+      'concurrent start rejection',events,1500);
+    assert.equal(concurrentStart?.ok,false);
+    assert.equal(concurrentStart?.reason,'BACKGROUND_STOP_IN_PROGRESS');
+
+    let secondDispatch;
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'dispatch',command
+    },offscreen,response => { secondDispatch = response; }),false);
+    assert.equal(secondDispatch?.error,'BACKGROUND_STOP_IN_PROGRESS',
+      'Stop must synchronously reject new mutations after fencing admission');
+
+    await bounded(stopCompleted,'bounded Stop timeout',events,6500);
+    assert.equal(stopResult?.ok,false);
+    assert.equal(stopResult?.reason,'BACKGROUND_STOP_UNCONFIRMED');
+    assert.equal(stopResult?.outcome,'UNKNOWN');
+    assert.deepEqual(flags.bridgeMutationQuarantinedTabs,[17]);
+    assert.equal(events.includes('page-click'),false,
+      'the held page action must not have clicked before the timeout response');
+
+    const stopIndex = events.findIndex(event =>
+      typeof event === 'string' && event.startsWith('stop-response:'));
+    releasePage.resolve();
+    await bounded(dispatchCompleted,'late pageAction settlement',events,1500);
+    const clickIndex = events.indexOf('page-click');
+    assert.ok(clickIndex > stopIndex,
+      'late click after unconfirmed Stop is allowed only as UNKNOWN and must remain quarantined');
+  } finally {
+    releasePage.resolve();
+    try {
+      await bounded(Promise.allSettled([dispatchCompleted,stopCompleted]),
+        'timeout test cleanup',events,1500);
+    } catch {}
+    restorePage();
+    await resetSyntheticStopState(chromeApi, flags);
   }
 });
