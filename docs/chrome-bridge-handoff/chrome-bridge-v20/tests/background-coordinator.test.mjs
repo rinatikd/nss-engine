@@ -344,3 +344,26 @@ test('a stale positive Worker ACK must respect the final persisted disconnect fl
   assert.equal(result.ok,false);
   assert.equal(result.reason,'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT');
 });
+
+
+test('Stop bounds a Worker Start that never ACKs and reports UNKNOWN',async()=>{
+  const flags={bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'fixture'};
+  const c=fakeChrome(flags);
+  let resolveAck,enteredSend;
+  const started=new Promise(resolve=>{enteredSend=resolve;});
+  const ack=new Promise(resolve=>{resolveAck=resolve;});
+  c.runtime.sendMessage=async msg=>{
+    c.calls.push(['message',msg.type]);
+    if(msg.type==='start'){enteredSend();return ack;}
+    return {ok:true};
+  };
+  const first=startBackgroundTransport(c);
+  await started;
+  await assert.rejects(stopBackgroundTransport(c),/BACKGROUND_STOP_UNCONFIRMED/);
+  assert.equal(flags.bridgeConnectionDesired,false);
+  assert.deepEqual(c.calls.filter(x=>x[0]==='message').map(x=>x[1]),['start','stop']);
+  resolveAck({ok:true});
+  const result=await first;
+  assert.equal(result.ok,false);
+  assert.equal(result.reason,'BACKGROUND_START_SUPERSEDED_BY_DISCONNECT');
+});
