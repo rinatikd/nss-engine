@@ -127,7 +127,8 @@ test('failed grant cleanup still disables dispatch and attempts offscreen stop',
     setAccessLevel:async()=>{throw Error('SESSION_STORAGE_FAILED');},
     remove:async()=>{throw Error('unexpected-clear');}
   };
-  await assert.rejects(stopBackgroundTransport(chrome),/BACKGROUND_GRANT_CLEANUP_FAILED/);
+  const isolatedCoordinator = await import('../extension/background-coordinator.js?failed-grant-cleanup');
+  await assert.rejects(isolatedCoordinator.stopBackgroundTransport(chrome),/BACKGROUND_GRANT_CLEANUP_FAILED/);
   assert.equal(state.bridgeConnectionDesired,false);
   assert.equal(state.bridgeAllTabsMode,false);
   assert.equal(state.bridgeMutationLabMode,false);
