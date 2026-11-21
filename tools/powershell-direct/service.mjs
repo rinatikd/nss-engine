@@ -2,7 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {runApproved,validateTask,canonicalWorkspace} from './runner.mjs';
+import {runApproved,validateTask,canonicalWorkspace,canonicalRoot,isDrivePath} from './runner.mjs';
 
 const PORT=17486, secret=()=>crypto.randomBytes(32).toString('hex');
 const match=(a,b)=>{const x=Buffer.from(typeof a==='string'?a:''),y=Buffer.from(typeof b==='string'?b:'');return x.length===y.length&&crypto.timingSafeEqual(x,y);};
@@ -11,15 +11,19 @@ const clean=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(obj));};
 
 export class PowerShellApprovalService {
- constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false}={}){
-  const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
-  const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
-  const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
-  if(!root||!path.win32.isAbsolute(root)||(port!==PORT&&port!==0)||driveRoot||
-     normalizedRoot.startsWith('\\\\')||
-     pathSegments.some(x=>['windows','system32','program files'].includes(x)))
-    throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
-  this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
+ constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,resolveRoot=(r=>process.platform==='win32'?canonicalRoot(r):r),chatReadonlyEnabled=false}={}){
+  const unsafeRoot=r=>{
+   const n=typeof r==='string'?path.win32.normalize(r):'';
+   const drive=n&&path.win32.parse(n).root.toLowerCase()===n.toLowerCase();
+   return !isDrivePath(r)||drive||n.startsWith('\\\\')||
+     n.toLowerCase().split(path.win32.sep).some(x=>['windows','system32','program files'].includes(x));
+  };
+  if(unsafeRoot(root)||(port!==PORT&&port!==0))throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
+  // The safety policy must apply to the REAL root: a junction/subst alias must not
+  // smuggle a drive root or a system directory past the textual check above.
+  const realRoot=resolveRoot(root);
+  if(unsafeRoot(realRoot))throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
+  this.root=realRoot;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
   this.chatReadonlyEnabled=chatReadonlyEnabled===true;
   this.jobs=new Map();this.active=null;this.server=http.createServer((req,res)=>this.route(req,res));
  }

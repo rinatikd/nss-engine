@@ -21,15 +21,36 @@ const EXECUTABLES=Object.freeze({
 });
 const MAX_OUTPUT=32768;
 
-export function canonicalWorkspace(candidate,root){
-  if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
-  if(typeof candidate!=='string'||!path.win32.isAbsolute(candidate)||candidate.startsWith('\\\\'))throw Error('WORKSPACE_NOT_ABSOLUTE');
-  const actual=fs.realpathSync.native(candidate);
-  const base=fs.realpathSync.native(root);
+// Stable, non-leaking error codes: raw fs errors (ENOENT: ... 'C:\\path') must never
+// reach MCP clients or be collapsed into a generic INVALID_REQUEST.
+// path.win32.isAbsolute() also accepts '\\foo' and '/c/foo' (drive-less, resolved against the
+// current drive); only an explicit 'X:\\' or 'X:/' form is accepted here.
+export const isDrivePath=p=>typeof p==='string'&&/^[A-Za-z]:[\\/]/.test(p);
+function resolveReal(p,fsImpl,missingCode){
+  try{return fsImpl.realpathSync.native(p);}
+  catch(e){throw Error(e&&(e.code==='ENOENT'||e.code==='ENOTDIR')?missingCode:'WORKSPACE_UNREADABLE');}
+}
+// Resolves the operator-configured root to its real path (junctions/subst/8.3 names).
+export function canonicalRoot(root,{fsImpl=fs,platform=process.platform}={}){
+  if(platform!=='win32')throw Error('WINDOWS_ONLY');
+  if(!isDrivePath(root))throw Error('ROOT_NOT_ABSOLUTE');
+  const actual=resolveReal(root,fsImpl,'ROOT_NOT_FOUND');
+  let isDir=false;
+  try{isDir=fsImpl.statSync(actual).isDirectory();}catch{throw Error('ROOT_NOT_FOUND');}
+  if(!isDir)throw Error('ROOT_NOT_DIRECTORY');
+  return actual;
+}
+export function canonicalWorkspace(candidate,root,{fsImpl=fs,platform=process.platform}={}){
+  if(platform!=='win32')throw Error('WINDOWS_ONLY');
+  if(!isDrivePath(candidate))throw Error('WORKSPACE_NOT_ABSOLUTE');
+  const actual=resolveReal(candidate,fsImpl,'WORKSPACE_NOT_FOUND');
+  const base=resolveReal(root,fsImpl,'ROOT_NOT_FOUND');
   const rel=path.win32.relative(base,actual);
   if(rel==='..'||rel.startsWith('..\\')||path.win32.isAbsolute(rel))
     throw Error('WORKSPACE_OUTSIDE_ALLOWED_ROOT');
-  if(!fs.statSync(actual).isDirectory())throw Error('WORKSPACE_NOT_DIRECTORY');
+  let isDir=false;
+  try{isDir=fsImpl.statSync(actual).isDirectory();}catch{throw Error('WORKSPACE_NOT_FOUND');}
+  if(!isDir)throw Error('WORKSPACE_NOT_DIRECTORY');
   return actual;
 }
 export function validateTask(task){
