@@ -17,10 +17,6 @@ PATTERNS={
  'jwt':re.compile(rb'\beyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\b'),
 }
 ASSIGN=re.compile(rb'''(?i)(?:api[_-]?key|client[_-]?secret|access[_-]?token|password)\s*[:=]\s*['"]([^'"\r\n]{12,})['"]''')
-SOURCE_JSON_ALLOWLIST={
- 'docs/chrome-bridge-handoff/chrome-bridge-v20/extension/manifest.json',
- 'docs/chrome-bridge-handoff/chrome-bridge-v20/extension/package.json',
-}
 PLACEHOLDERS=(b'example',b'placeholder',b'your',b'change',b'replace',b'dummy',b'test',b'xxx',b'...',b'getenv',b'environ',b'<',b'process.env',b'secret_name')
 
 def git(*args):
@@ -51,7 +47,7 @@ def main():
   if mode not in ('100644','100755'):problems.append((path,'nonportable-link-or-submodule'));continue
   if pp.suffix.lower() in BANNED_SUFFIX or any(x in BANNED_DIR for x in lower[:-1]):problems.append((path,'excluded-artifact'))
   if name=='.env' or name.startswith('.env.') or name in ('auth.json','credentials.json','secrets.json','.git-credentials','.netrc'):problems.append((path,'credential-file'))
-  if pp.suffix.lower()=='.json' and path!='skills-lock.json' and not path.startswith('.agents/skills/') and path not in SOURCE_JSON_ALLOWLIST:problems.append((path,'local-json-or-dump'))
+  if pp.suffix.lower()=='.json' and path!='skills-lock.json' and not path.startswith('.agents/skills/'):problems.append((path,'local-json-or-dump'))
   if pp.suffix.lower()=='.csv' and name!='catalog.csv':problems.append((path,'local-csv-or-dump'))
   data=git('cat-file','blob',oid);total+=len(data)
   if len(data)>2*1024*1024:problems.append((path,'blob-over-2MiB'))

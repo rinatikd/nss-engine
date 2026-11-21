@@ -103,10 +103,9 @@ function syntheticPage(events, barrierReached, releasePage) {
       releasePage.promise.then(() => callback(...args));
       return 1;
     }
-    // Keep all other pageAction waits deterministic; only the real Send
-    // readiness await is held by the deferred barrier.
-    queueMicrotask(() => callback(...args));
-    return 1;
+    // Preserve real timer semantics for the coordinator's bounded drain;
+    // only the pageAction Send-readiness wait is held by the deferred barrier.
+    return pageNativeSetTimeout(callback, delay, ...args);
   };
 
   return () => {
@@ -266,6 +265,8 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
       Promise.all([dispatchCompleted, stopCompleted]),
       'dispatch and Stop completion'
     );
+    assert.equal(finalStopResult?.ok,true,
+      'a pageAction released within the drain bound must yield a confirmed Stop, not an early UNKNOWN');
 
     const stopIndex = events.findIndex(event =>
       typeof event === 'string' && event.startsWith('stop-response:'));

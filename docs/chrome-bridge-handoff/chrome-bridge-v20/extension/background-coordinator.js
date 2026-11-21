@@ -15,7 +15,7 @@ const approvals = new ApprovalSession();
 // Accepted one-click mutations are serialized per tab. Stop fences new work
 // synchronously, then drains every lane before it can acknowledge success.
 const mutationLanes = new Map();
-const mutationFencedTabs = new Set();
+const mutationFencedTabs = new Map();
 let mutationStopRequested = false;
 const STOP_DRAIN_TIMEOUT_MS = 5000;
 
@@ -180,8 +180,8 @@ export async function stopBackgroundTransport(chromeApi) {
   if (!mutationsDrained) stopUnconfirmed = true;
   updateStatus({state:'disconnected',connected:false,
     error:stopUnconfirmed ? 'BACKGROUND_STOP_UNCONFIRMED' : null});
-  if (cleanupError) throw Error('BACKGROUND_GRANT_CLEANUP_FAILED');
   if (stopUnconfirmed) throw Error('BACKGROUND_STOP_UNCONFIRMED');
+  if (cleanupError) throw Error('BACKGROUND_GRANT_CLEANUP_FAILED');
 }
 export function installBackgroundCoordinator(chromeApi) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
@@ -302,14 +302,16 @@ export function installBackgroundCoordinator(chromeApi) {
         const grants=new BackgroundControlGrants(chromeApi);
         if (msg.type==='revoke-background-control') {
           if (!Number.isSafeInteger(msg.tabId)) throw Error('INVALID_TAB_ID');
-          mutationFencedTabs.add(msg.tabId);
+          mutationFencedTabs.set(msg.tabId,(mutationFencedTabs.get(msg.tabId) || 0) + 1);
           try {
             const pending = mutationLanes.get(msg.tabId);
             if (pending) await pending.catch(() => {});
             await grants.revoke(msg.tabId);
             return {ok:true};
           } finally {
-            mutationFencedTabs.delete(msg.tabId);
+            const remaining = (mutationFencedTabs.get(msg.tabId) || 1) - 1;
+            if (remaining > 0) mutationFencedTabs.set(msg.tabId,remaining);
+            else mutationFencedTabs.delete(msg.tabId);
           }
         }
         const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
