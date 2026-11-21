@@ -171,6 +171,8 @@ async function startBackgroundTransportOnce(chromeApi) {
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
   // A pending explicit clear must finish before a new transport can resume.
   await controlStorageLane.catch(() => {});
+  if (controlClearFailed)
+    return {ok:false,reason:'BACKGROUND_CONTROL_CLEAR_FAILED'};
   // Restrict access before reading secrets, not after obtaining the key.
   await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   const {bridgeConnectionDesired, browserToken, bridgeMutationQuarantineLock} =
