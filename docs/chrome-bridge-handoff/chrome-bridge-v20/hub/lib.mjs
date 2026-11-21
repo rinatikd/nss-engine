@@ -30,7 +30,7 @@ function balancedJsonCandidates(text) {
 export function extractVerdict(input) {
   if(typeof input!=='string') return null;
   const fence=String.fromCharCode(96).repeat(3);
-  const fenced=[...input.matchAll(new RegExp(fence+'(?:json)?\\\\s*([\\\\s\\\\S]*?)\\\\s*'+fence,'gi'))].map(m=>m[1]);
+  const fenced=[...input.matchAll(new RegExp(fence+'(?:json)?\\s*([\\s\\S]*?)\\s*'+fence,'gi'))].map(m=>m[1]);
   const candidates=[...fenced,...balancedJsonCandidates(input)];
   for(const candidate of candidates) {
     try {
@@ -46,11 +46,11 @@ export function extractVerdict(input) {
 export function extractFiles(input) {
   if(typeof input!=='string') throw Error('Invalid file payload');
   const out=[];
-  const pattern=/^=== FILE: ([^\\r\\n]+) ===\\r?\\n([\\s\\S]*?)^=== END FILE ===\\s*$/gm;
+  const pattern=/^=== FILE: ([^\r\n]+) ===\r?\n([\s\S]*?)^=== END FILE ===\s*$/gm;
   let match;
   while((match=pattern.exec(input))!==null) {
     const filePath=match[1].trim();
-    const normalized=filePath.replace(/\\\\/g,'/');
+    const normalized=filePath.replace(/\\/g,'/');
     const parts=normalized.split('/');
     if(!filePath || normalized.startsWith('/') || /^[A-Za-z]:/.test(filePath) ||
        parts.some(part=>part==='..'||part==='.'||part===''))
@@ -63,7 +63,7 @@ export function extractFiles(input) {
 
 export function deepRender(value, variables) {
   if(typeof value==='string') {
-    return value.replace(/\\{\\{\\s*([A-Za-z0-9_.-]+)\\s*\\}\\}/g,(_all,key)=>{
+    return value.replace(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g,(_all,key)=>{
       const result=key.split('.').reduce((current,part)=>
         current && Object.prototype.hasOwnProperty.call(current,part) ? current[part] : undefined,variables);
       return result===undefined || result===null ? '' : String(result);
