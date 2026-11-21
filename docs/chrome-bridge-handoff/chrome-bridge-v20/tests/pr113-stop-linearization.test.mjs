@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {installBackgroundCoordinator} from '../extension/background-coordinator.js';
+import {installBackgroundCoordinator,startBackgroundTransport} from '../extension/background-coordinator.js';
 import {pageAction} from '../extension/page.js';
 
 // Capture the real Node timers before syntheticPage replaces globalThis.setTimeout.
@@ -120,12 +120,20 @@ function syntheticPage(events, barrierReached, releasePage) {
   };
 }
 
+async function resetSyntheticStopState(chromeApi, flags) {
+  flags.bridgeConnectionDesired = true;
+  flags.bridgeMutationLabMode = true;
+  flags.bridgeAllTabsMode = true;
+  await startBackgroundTransport(chromeApi);
+}
+
 function syntheticChrome(events, stopAckSeen) {
   const flags = {
     bridgeBackgroundMode: true,
     bridgeMutationLabMode: true,
     bridgeConnectionDesired: true,
     bridgeAllTabsMode: true,
+    browserToken: 'synthetic-browser-token',
     adapters: JSON.stringify({
       claude: {composer:'#composer',send:'#send',stop:'#stop',reply:'#reply'}
     })
@@ -161,13 +169,15 @@ function syntheticChrome(events, stopAckSeen) {
         set: async next => {
           Object.assign(flags, next);
           events.push('persist-stop-intent');
-        }
+        },
+        setAccessLevel: async () => {}
       },
       session: {
         setAccessLevel: async () => {},
         remove: async () => {}
       }
     },
+    offscreen: {createDocument: async () => {}},
     permissions: {
       contains: async () => true
     },
@@ -321,6 +331,7 @@ test('PR113 all-tabs Stop never reports success before an accepted pageAction is
       events.push('cleanup-timeout:' + error.message);
     }
     restorePage();
+    await resetSyntheticStopState(chromeApi, flags);
   }
 });
 
