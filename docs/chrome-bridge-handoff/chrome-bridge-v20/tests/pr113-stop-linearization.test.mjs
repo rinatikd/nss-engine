@@ -175,7 +175,9 @@ function syntheticChrome(events, stopAckSeen) {
       },
       session: {
         setAccessLevel: async () => {},
-        get: async key => ({[key]:sessionState[key] || {}}),
+        get: async key => Array.isArray(key)
+          ? Object.fromEntries(key.map(name=>[name,sessionState[name]]))
+          : {[key]:sessionState[key]},
         set: async next => Object.assign(sessionState,next),
         remove: async key => { delete sessionState[key]; }
       }
@@ -185,10 +187,7 @@ function syntheticChrome(events, stopAckSeen) {
       contains: async () => true
     },
     tabs: {
-      get: async id => {
-        assert.equal(id, tab.id);
-        return {...tab};
-      }
+      get: async id => ({...tab,id})
     },
     scripting: {
       executeScript: async ({func,args}) => {
@@ -199,7 +198,7 @@ function syntheticChrome(events, stopAckSeen) {
       }
     }
   };
-  return {chromeApi,listeners,flags};
+  return {chromeApi,listeners,flags,sessionState};
 }
 
 test('PR113 all-tabs Stop never reports success before an accepted pageAction is safe', async () => {
@@ -451,8 +450,14 @@ test('Stop timeout returns UNKNOWN, quarantines the tab, and fences new mutation
   const releasePage = deferred();
   const stopAckSeen = deferred();
   const restorePage = syntheticPage(events, barrierReached, releasePage);
-  const {chromeApi,listeners,flags} = syntheticChrome(events, stopAckSeen);
+  const {chromeApi,listeners,flags,sessionState} = syntheticChrome(events, stopAckSeen);
   installBackgroundCoordinator(chromeApi);
+  const originalLocalSet=chromeApi.storage.local.set.bind(chromeApi.storage.local);
+  chromeApi.storage.local.set=async next=>{
+    if(Object.hasOwn(next,'bridgeMutationQuarantinedTabs'))
+      throw Error('SYNTHETIC_LOCAL_QUARANTINE_WRITE_FAILURE');
+    return originalLocalSet(next);
+  };
 
   const offscreen = {
     id: chromeApi.runtime.id,
@@ -516,7 +521,8 @@ test('Stop timeout returns UNKNOWN, quarantines the tab, and fences new mutation
     assert.equal(stopResult?.ok,false);
     assert.equal(stopResult?.reason,'BACKGROUND_STOP_UNCONFIRMED');
     assert.equal(stopResult?.outcome,'UNKNOWN');
-    assert.deepEqual(flags.bridgeMutationQuarantinedTabs,[17]);
+    assert.deepEqual(sessionState.bridgeMutationQuarantinedTabs,[17],
+      'when local quarantine persistence fails, the session fallback must preserve the tab fence');
     assert.equal(events.includes('page-click'),false,
       'the held page action must not have clicked before the timeout response');
 
@@ -527,6 +533,22 @@ test('Stop timeout returns UNKNOWN, quarantines the tab, and fences new mutation
     const clickIndex = events.indexOf('page-click');
     assert.ok(clickIndex > stopIndex,
       'late click after unconfirmed Stop is allowed only as UNKNOWN and must remain quarantined');
+
+    // A fresh worker instance must recover the quarantine from storage.session,
+    // even though its module-level in-memory Set starts empty.
+    const restartedApi = await import('../extension/background-coordinator.js?worker-restart-quarantine');
+    const restarted = syntheticChrome(events, deferred());
+    restarted.sessionState.bridgeMutationQuarantinedTabs = [17];
+    restartedApi.installBackgroundCoordinator(restarted.chromeApi);
+    let restartedReply;
+    const restartedAccepted = restarted.listeners[0]({
+      target:'bridge-coordinator',type:'dispatch',command
+    },offscreen,response=>{restartedReply=response;});
+    assert.equal(restartedAccepted,true);
+    await bounded(new Promise(resolve=>setImmediate(resolve)),
+      'restarted worker quarantine lookup',events,1500);
+    assert.equal(restartedReply?.error,'TAB_MUTATION_QUARANTINED',
+      'worker restart must read the session-persisted quarantine before page mutation');
   } finally {
     releasePage.resolve();
     try {
@@ -535,5 +557,114 @@ test('Stop timeout returns UNKNOWN, quarantines the tab, and fences new mutation
     } catch {}
     restorePage();
     await resetSyntheticStopState(chromeApi, flags);
+  }
+});
+
+
+test('Grant accepted before Revoke drains first; late concurrent Grant cannot restore the grant', async () => {
+  const events=[];
+  const stopAckSeen=deferred();
+  const {chromeApi,listeners,sessionState}=syntheticChrome(events,stopAckSeen);
+  installBackgroundCoordinator(chromeApi);
+  const control={id:chromeApi.runtime.id,url:chromeApi.runtime.getURL('control.html')};
+  const grantReadStarted=deferred();
+  const releaseGrantRead=deferred();
+  const originalGet=chromeApi.storage.session.get.bind(chromeApi.storage.session);
+  let held=false;
+  chromeApi.storage.session.get=async key=>{
+    if(key==='bridgeBackgroundControlGrants' && !held){
+      held=true;
+      grantReadStarted.resolve();
+      await releaseGrantRead.promise;
+    }
+    return originalGet(key);
+  };
+
+  let grantReply,revokeReply,lateGrantReply;
+  const grantDone=new Promise(resolve=>{grantReply=resolve;});
+  const revokeDone=new Promise(resolve=>{revokeReply=resolve;});
+  try{
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'grant-background-control',
+      tabId:17,durationMinutes:15,localGesture:true
+    },control,response=>grantReply(response)),true);
+    await bounded(grantReadStarted.promise,'Grant storage read barrier',events,1500);
+
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'revoke-background-control',tabId:17
+    },control,response=>revokeReply(response)),true);
+
+    // This Grant arrives after Revoke fenced the tab and must be rejected
+    // synchronously rather than queued behind the Revoke.
+    const lateAccepted=listeners[0]({
+      target:'bridge-coordinator',type:'grant-background-control',
+      tabId:17,durationMinutes:15,localGesture:true
+    },control,response=>{lateGrantReply=response;});
+    assert.equal(lateAccepted,false);
+    assert.equal(lateGrantReply?.error,'TAB_CONTROL_REVOKING');
+
+    await bounded(new Promise(resolve=>setImmediate(resolve)),
+      'Revoke waits for accepted Grant',events,1500);
+    assert.equal(revokeDone instanceof Promise,true);
+    releaseGrantRead.resolve();
+    const [grant,revoke]=await bounded(Promise.all([grantDone,revokeDone]),
+      'Grant then Revoke serialization',events,1500);
+    assert.equal(grant?.origin,'https://claude.ai');
+    assert.deepEqual(revoke,{ok:true});
+    assert.equal(sessionState.bridgeBackgroundControlGrants?.['17'],undefined,
+      'successful Revoke must be the final writer for this tab grant');
+  }finally{
+    releaseGrantRead.resolve();
+  }
+});
+
+
+test('grants for different tabs share one serialized storage read-modify-write lane', async () => {
+  const events=[];
+  const {chromeApi,listeners,sessionState}=syntheticChrome(events,deferred());
+  installBackgroundCoordinator(chromeApi);
+  const control={id:chromeApi.runtime.id,url:chromeApi.runtime.getURL('control.html')};
+  const firstReadStarted=deferred();
+  const secondReadStarted=deferred();
+  const releaseFirstRead=deferred();
+  const originalGet=chromeApi.storage.session.get.bind(chromeApi.storage.session);
+  let grantReads=0;
+  chromeApi.storage.session.get=async key=>{
+    if(key==='bridgeBackgroundControlGrants'){
+      grantReads+=1;
+      if(grantReads===1){
+        firstReadStarted.resolve();
+        await releaseFirstRead.promise;
+      } else if(grantReads===2) secondReadStarted.resolve();
+    }
+    return originalGet(key);
+  };
+  let firstReply,secondReply;
+  const firstDone=new Promise(resolve=>{firstReply=resolve;});
+  const secondDone=new Promise(resolve=>{secondReply=resolve;});
+  try{
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'grant-background-control',
+      tabId:17,durationMinutes:15,localGesture:true
+    },control,response=>firstReply(response)),true);
+    await bounded(firstReadStarted.promise,'first cross-tab Grant read',events,1500);
+
+    assert.equal(listeners[0]({
+      target:'bridge-coordinator',type:'grant-background-control',
+      tabId:18,durationMinutes:15,localGesture:true
+    },control,response=>secondReply(response)),true);
+    await bounded(new Promise(resolve=>setImmediate(resolve)),
+      'second Grant remains queued behind shared storage operation',events,1500);
+    assert.equal(grantReads,1,
+      'different tab IDs must not concurrently read-modify-write the shared grants object');
+
+    releaseFirstRead.resolve();
+    const [first,second]=await bounded(Promise.all([firstDone,secondDone]),
+      'both cross-tab Grants complete',events,1500);
+    assert.equal(first?.tabId,17);
+    assert.equal(second?.tabId,18);
+    assert.deepEqual(Object.keys(sessionState.bridgeBackgroundControlGrants).sort(),['17','18']);
+  }finally{
+    releaseFirstRead.resolve();
   }
 });
