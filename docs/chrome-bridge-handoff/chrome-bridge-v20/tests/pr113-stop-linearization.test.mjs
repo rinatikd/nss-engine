@@ -441,5 +441,6 @@ test('Stop timeout returns UNKNOWN, quarantines the tab, and fences new mutation
         'timeout test cleanup',events,1500);
     } catch {}
     restorePage();
+    await resetSyntheticStopState(chromeApi, flags);
   }
 });
