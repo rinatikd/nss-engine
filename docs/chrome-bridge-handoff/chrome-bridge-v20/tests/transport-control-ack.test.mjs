@@ -130,8 +130,7 @@ function workerFixture() {
 test('Worker acknowledges a processed start and stop without exposing token in ACK',async()=>{
   const f=workerFixture();
   f.receive({type:'start',requestId:101,token:'fixture'});
-  await Promise.resolve();
-  await Promise.resolve();
+  await new Promise(resolve => setImmediate(resolve));
   const start=f.posted.find(x=>x.type==='control-ack'&&x.requestId===101);
   assert.equal(start?.ok,true);
   assert.equal(start?.token,undefined);

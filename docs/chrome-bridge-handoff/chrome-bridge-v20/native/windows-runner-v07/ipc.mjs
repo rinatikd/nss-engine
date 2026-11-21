@@ -1,7 +1,35 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { decoder } from '../windows-runner-v06/ipc.mjs';
+export function decoder(onMessage) {
+  if (typeof onMessage !== 'function') throw Error('INVALID_DECODER_CALLBACK');
+  let buffer = Buffer.alloc(0);
+  let ended = false;
+  return {
+    push(chunk) {
+      if (ended) throw Error('DECODER_ENDED');
+      if (!Buffer.isBuffer(chunk)) chunk = Buffer.from(chunk);
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 4) {
+        const length = buffer.readUInt32BE(0);
+        if (length < 1 || length > 4096) throw Error('FRAME_LIMIT');
+        if (buffer.length < length + 4) break;
+        const payload = buffer.subarray(4, length + 4);
+        const text = payload.toString('utf8');
+        if (!Buffer.from(text, 'utf8').equals(payload)) throw Error('INVALID_UTF8');
+        let value;
+        try { value = JSON.parse(text); } catch { throw Error('INVALID_JSON'); }
+        onMessage(value);
+        buffer = buffer.subarray(length + 4);
+      }
+      if (buffer.length > 4100) throw Error('FRAME_LIMIT');
+    },
+    end() {
+      ended = true;
+      if (buffer.length) throw Error('TRUNCATED_FRAME');
+    }
+  };
+}
 const executable = fileURLToPath(new URL('./broker.exe', import.meta.url));
 export function wire(text) { const b=Buffer.from(text); if(!b.length||b.length>4096)throw Error('FRAME_LIMIT');const h=Buffer.alloc(4);h.writeUInt32BE(b.length);return Buffer.concat([h,b]); }
 export function nativeRequest(args={}) {

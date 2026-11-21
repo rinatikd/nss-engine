@@ -10,8 +10,17 @@ function fixture({
   const chromeApi={
     tabs:{get:async()=>({id:9,url:changed && !state.allowAt ?
       'https://claude.ai/chat/other12345':url,title:'Test'})},
-    storage:{local:{get:async key=>key==='sites'?
-      {sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:{adapters:'{}'}}},
+    storage:{local:{get:async keys=>{
+      const values={
+        sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}},
+        adapters:'{}',
+        bridgeAllTabsMode:true,
+        bridgeConnectionDesired:true
+      };
+      if(Array.isArray(keys)) return Object.fromEntries(keys.map(key=>[key,values[key]]));
+      if(typeof keys==='string') return {[keys]:values[keys]};
+      return values;
+    }}},
     permissions:{contains:async()=>true},
     scripting:{executeScript:async({args})=>{
       const [name,details]=args;

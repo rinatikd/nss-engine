@@ -33,7 +33,7 @@ test('each allowed origin has its own complete adapter', () => {
   for (const k of ['composer','send','reply','stop']) assert.ok(a[k]);
  }
 });
-test('Grok, Qwen, Cursor remain read-only candidates without Control grants or send selectors', () => {
+test('Grok, Qwen, Cursor remain outside the Control allowlist even if diagnostic selectors exist', () => {
  for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai'], ['cursor','https://cursor.com']]) {
   const adapter = DEFAULT_ADAPTERS[key];
   assert.equal(adapter.origin, origin);
