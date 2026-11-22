@@ -338,19 +338,20 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     const origins = [...new Set(tabs
       .filter(tab => tab.mode==='chat' && COUNCIL_ORIGINS[new URL(tab.url).origin]===tab.adapter)
       .map(tab => new URL(tab.url).origin))].sort();
-    if (!origins.includes('https://claude.ai')) throw Error('SESSION_CLAUDE_REQUIRED');
+    const missingProviders = Object.entries(COUNCIL_ORIGINS)
+      .filter(([origin]) => !origins.includes(origin))
+      .map(([,provider]) => provider);
+    if (missingProviders.length) {
+      sessionChallenges.clear();
+      return {ready:false,approvalRequired:false,changedNothing:true,
+        providers:origins.map(origin=>COUNCIL_ORIGINS[origin]),missingProviders,
+        reasonCode:'SESSION_PROVIDERS_NOT_READY'};
+    }
     const challengeId = crypto.randomBytes(16).toString('hex');
     const sessionId = crypto.randomUUID();
     const expiresAt = Date.now() + SESSION_CHALLENGE_TTL_MS;
     sessionChallenges.clear();
     sessionChallenges.set(challengeId,{sessionId,durationMinutes,origins,bridgeEpoch:epoch,expiresAt});
-    const missingProviders = Object.entries(COUNCIL_ORIGINS)
-      .filter(([origin]) => !origins.includes(origin))
-      .map(([,provider]) => provider);
-    if (missingProviders.length) {
-      return {ready:false,approvalRequired:false,changedNothing:true,providers:origins.map(origin=>COUNCIL_ORIGINS[origin]),
-        missingProviders,reasonCode:'SESSION_PROVIDERS_NOT_READY'};
-    }
     return {ready:true,challengeId,sessionId,durationMinutes,expiresAt,bridgeEpoch:epoch,
       origins,providers:origins.map(origin=>COUNCIL_ORIGINS[origin]),missingProviders:[],
       capabilities:['agent_send','provider_prepare','provider_commit'],

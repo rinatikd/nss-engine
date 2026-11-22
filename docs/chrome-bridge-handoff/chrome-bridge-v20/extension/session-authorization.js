@@ -43,6 +43,9 @@ export class SessionAuthorization {
     for (const origin of unique) {
       if (!Object.hasOwn(CONTROL_ORIGINS, origin)) throw Error('SESSION_ORIGIN_DENIED');
     }
+    const requiredOrigins = Object.keys(CONTROL_ORIGINS);
+    if (unique.length !== requiredOrigins.length || requiredOrigins.some(origin => !unique.includes(origin)))
+      throw Error('SESSION_ORIGINS_INCOMPLETE');
 
     const { sites = {} } = await this.api.storage.local.get('sites');
     const eligible = await eligibleBackgroundControlTabs(this.api, sites, CONTROL_ORIGINS);
@@ -67,17 +70,28 @@ export class SessionAuthorization {
       status: 'active'
     };
     const previous = await this.read();
-    if (previous && previous.expiresAt > issuedAt)
-      throw Error('SESSION_ALREADY_ACTIVE');
+    if (previous) {
+      const previousStatus = this.publicStatus(previous, bridgeEpoch);
+      if (previousStatus.active) throw Error('SESSION_ALREADY_ACTIVE');
+      await this.revoke();
+    }
     await this.api.storage.session.set({ [STORAGE_KEY]: lease });
     return this.publicStatus(lease, bridgeEpoch);
   }
 
   publicStatus(lease, bridgeEpoch) {
     if (!lease) return inactive();
+    const requiredOrigins = Object.keys(CONTROL_ORIGINS).sort();
+    const leaseOrigins = Array.isArray(lease.origins) ? [...lease.origins].sort() : [];
+    const capabilitiesMatch = Array.isArray(lease.capabilities) &&
+      lease.capabilities.length === SESSION_CAPABILITIES.length &&
+      SESSION_CAPABILITIES.every(capability => lease.capabilities.includes(capability));
+    const originsMatch = leaseOrigins.length === requiredOrigins.length &&
+      requiredOrigins.every((origin, index) => leaseOrigins[index] === origin);
     if (lease.schemaVersion !== 1 || !idPattern.test(lease.sessionId || '') ||
-        !epochPattern.test(lease.bridgeEpoch || '') || !Number.isFinite(lease.expiresAt) ||
-        !Array.isArray(lease.origins) || !Array.isArray(lease.capabilities))
+        !epochPattern.test(lease.bridgeEpoch || '') || !Number.isFinite(lease.issuedAt) ||
+        !Number.isFinite(lease.expiresAt) || !originsMatch || !capabilitiesMatch ||
+        lease.approvalMode !== 'chat-owner-approved' || lease.status !== 'active')
       return inactive('SESSION_STATE_INVALID');
     if (lease.expiresAt <= this.now()) return inactive('SESSION_EXPIRED');
     if (lease.bridgeEpoch !== bridgeEpoch) return inactive('SESSION_EPOCH_MISMATCH');
