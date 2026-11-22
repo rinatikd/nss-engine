@@ -96,3 +96,17 @@ test('tampered journal fails closed',()=>{
     assert.throws(()=>journal(dir),/PROVIDER_JOURNAL_CORRUPT_FAIL_CLOSED/);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
+
+test('one unresolved or prepared transaction quarantines the tab against a new request ID',()=>{
+  const dir=tmp();
+  try {
+    const j=journal(dir);
+    j.beginPrepare(identity,payloadHash);
+    j.completePrepare(identity,{preparedId:'prepared_0005',expiresAt:new Date(Date.now()+60000).toISOString()});
+    const next={...identity,requestId:'request_0002'};
+    assert.throws(()=>j.beginPrepare(next,'c'.repeat(64)),/PROVIDER_TAB_QUARANTINED/);
+    const stopped=j.stop(identity);
+    assert.equal(stopped.state,'STOPPED_CLEAN');
+    assert.deepEqual(j.beginPrepare({...next,epoch:8},'c'.repeat(64)),{duplicate:false});
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
