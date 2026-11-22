@@ -255,72 +255,8 @@ jobs:
         shell: powershell
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
-          $root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-TestFixture'
-          $installed = Join-Path $root 'extension'
-          New-Item -ItemType Directory -Path $installed -Force | Out-Null
-          Copy-Item -Path (Join-Path (Get-Location).Path 'extension\*') -Destination $installed -Recurse -Force
-          $manifest = @{
-            manifest_version = 3
-            version = '0.2.0'
-            key = 'ZmFrZS1wcm9kdWN0aW9uLWlkZW50aXR5LWtleQ=='
-            permissions = @('storage','scripting','activeTab')
-            host_permissions = @('http://127.0.0.1:17381/*','http://127.0.0.1/*','http://localhost/*','https://claude.ai/*')
-            background = @{service_worker='background.js'}
-          }
-          $manifestPath = Join-Path $installed 'manifest.json'
-          [IO.File]::WriteAllText($manifestPath,($manifest | ConvertTo-Json -Depth 20),(New-Object System.Text.UTF8Encoding($false)))
-          $beforeManifest = (Get-FileHash $manifestPath -Algorithm SHA256).Hash
-          $beforeControl = [IO.File]::ReadAllText((Join-Path $installed 'control.js'))
-          $dry = & ./deployment/upgrade-pr102-lab.ps1 -LabRoot $root -CandidateRoot . -LabPort 17484 -TestFixture
-          if (($dry -join ' ') -notmatch '\[DRY_RUN\]') { throw 'PR102 Lab dry-run failed' }
-          if ((Get-FileHash $manifestPath -Algorithm SHA256).Hash -ne $beforeManifest) { throw 'PR102 Lab dry-run changed installed manifest' }
-          if ([IO.File]::ReadAllText((Join-Path $installed 'control.js')) -ne $beforeControl) { throw 'PR102 Lab dry-run changed installed code' }
-          if (Test-Path (Join-Path $root 'backups')) { throw 'PR102 Lab dry-run created a persistent backup' }
-
-          & ./deployment/upgrade-pr102-lab.ps1 -LabRoot $root -CandidateRoot . -LabPort 17484 -TestFixture -Apply
-          if ($LASTEXITCODE -ne 0) { throw 'PR102 Lab apply failed' }
-          $updated = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-          if ($updated.key -ne $manifest.key) { throw 'Unpacked extension identity key changed' }
-          if (@($updated.host_permissions) -notcontains 'http://127.0.0.1:17484/*') { throw 'Exact PR102 Lab endpoint permission missing' }
-          foreach ($hostPattern in @($updated.host_permissions)) {
-            if ($hostPattern -match '^http://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/\*        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: chrome-bridge-rc1-lab-hashes
-          path: ${{ runner.temp }}/chrome-bridge-rc1-lab-evidence.json
-          if-no-files-found: error
-          retention-days: 30
-      - name: Package source-only Windows upgrade candidate
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: chrome-bridge-rc-windows-upgrade
-          path: |
-            docs/chrome-bridge-handoff/chrome-bridge-v20/extension/
-            docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/
-          if-no-files-found: error
-          retention-days: 7
- -and $hostPattern -ne 'http://127.0.0.1:17484/*') { throw ('Unexpected loopback permission: '+$hostPattern) }
-          }
-          foreach ($permission in @('activeTab','offscreen','alarms')) {
-            if (@($updated.permissions) -notcontains $permission) { throw ('Required permission missing: '+$permission) }
-          }
-          foreach ($name in @('control.js','connection-check.js','transport-engine.js')) {
-            $source = [IO.File]::ReadAllText((Join-Path $installed $name))
-            if (-not $source.Contains('127.0.0.1:17484')) { throw ('Lab endpoint not written to '+$name) }
-          }
-          foreach ($file in Get-ChildItem -LiteralPath $installed -Recurse -File -Filter '*.js') {
-            $source = [IO.File]::ReadAllText($file.FullName)
-            if ($source.Contains('127.0.0.1:17381') -or $source.Contains('127.0.0.1:17382')) { throw ('Production endpoint remained in '+$file.Name) }
-          }
-          $backups = @(Get-ChildItem -LiteralPath (Join-Path $root 'backups') -Directory)
-          if ($backups.Count -ne 1) { throw 'Exactly one PR102 Lab rollback backup expected' }
-          if (-not (Test-Path (Join-Path $backups[0].FullName 'lab-backup.json'))) { throw 'Lab rollback marker missing' }
-          & ./deployment/upgrade-pr102-lab.ps1 -LabRoot $root -CandidateRoot . -LabPort 17484 -TestFixture -RollbackFrom $backups[0].FullName -Apply
-          if ($LASTEXITCODE -ne 0) { throw 'PR102 Lab rollback failed' }
-          if ((Get-FileHash $manifestPath -Algorithm SHA256).Hash -ne $beforeManifest) { throw 'PR102 Lab rollback did not restore manifest exactly' }
-          if ([IO.File]::ReadAllText((Join-Path $installed 'control.js')) -ne $beforeControl) { throw 'PR102 Lab rollback did not restore extension source exactly' }
-          Write-Output '[PASS] PR102 Lab dry-run/apply/rollback; exact 17484 endpoint; old loopback hosts removed; key preserved'
+          & ./tests/upgrade-pr102-lab.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PR102 Lab updater integration test failed' }
       - name: Upload immutable lab file-hash evidence
         if: success()
         uses: actions/upload-artifact@v4
