@@ -600,3 +600,40 @@ The PR #111 JSONL ledger may remain as an offline mock/export format, but it mus
 | PRODUCTION_RELEASE | Separate owner-approved cutover with evidence | NO-GO |
 
 **Decision:** do not install or overwrite the target Workbench folder until its actual local state is verified. Do not add a second Supervisor, scheduler or writable task ledger. Keep the P0 prototype as a contained offline experiment and evolve it into an EDRP client only after the EDRP API and identity/authorization contract are stable.
+
+
+## 18. Current approval-channel compatibility — operational blocker
+
+### 18.1. Observed tool boundaries (22.11.2026)
+
+The user has explicitly chosen that consequential-operation approval prompts must be presented in the current ChatGPT conversation. The currently exposed Windows tool surface does not yet support that choice end-to-end:
+
+- PowerShell Direct engineering submit tools describe local approval as mandatory.
+- The chat-approved PowerShell read-only endpoint is limited to a small fixed diagnostic set (git-status, git-diff-check, dotnet/node/PowerShell version). It does not accept arbitrary scripts or write operations. Two attempted read-only Workbench git-status requests returned QUEUE_FULL before a durable request was created.
+- Windows Maintenance v0.4.3 reports mode approval-required and writeMode per-operation-local-approval. Its file/write proposal handlers require local operator approval.
+- A maintenance_execute_chat_approved handler exists, but its contract requires a pending exact file operation and SHA-256 values. The proposal stage is not currently exposed as a chat-approved action.
+- The 17488 R2 service is reachable and identified as node.exe PID 17324, but its inspection reports executionEnabled=false and diagnosticsReadOnly=true. This is the R2 Maintenance channel, not PowerShell Direct 17486 and not the PR102 Bridge Lab port.
+
+This creates a broken approval chain: the host can execute a pending, hash-bound operation after ChatGPT approval, but the user cannot currently create the pending proposal from the chat-only path without crossing a local-approval gate.
+
+### 18.2. Required architecture correction
+
+Make the ChatGPT conversation approval route a complete first-class workflow, not only the final execute step:
+
+1. Agent submits a typed operation proposal: requestId, operation type, environment, exact target path, old SHA-256, new SHA-256, source provenance, effect summary, rollback plan and expiry.
+2. Policy Kernel validates scope and emits a canonical proposal digest.
+3. Host shows the exact proposal in the current ChatGPT conversation; a user approval must bind to that digest and be single-use.
+4. The chat-approved execution handler accepts only the exact pending proposal, matching requestId/path/old hash/new hash and unexpired digest.
+5. Host executes once, then independently verifies the resulting hash and writes a receipt.
+6. If queue is full, approval UI unavailable, or the host result is UNKNOWN, do not fall back to local approval or silently retry. Preserve the request and report the blocker.
+
+The proposal endpoint itself must be non-mutating: it may stage a request record and calculate preconditions, but may not write the target file or start a process. The only mutating step is the exact chat-approved execute operation.
+
+### 18.3. Immediate effect on current work
+
+- Do not deploy PR #132 into the PR102 Lab by using legacy local approval while the owner has requested chat-only approvals.
+- Do not run the existing engineering-submit tools that require local approval.
+- Continue source/CI/documentation review and isolated tests that do not mutate the user's PC.
+- Resume local Lab staging only when the whole proposal → ChatGPT approval → exact execute → evidence receipt flow is available and verified.
+
+This is not merely a UX preference: if a supposedly chat-approved workflow silently requires a second, unavailable local approval, the automation is not autonomous within the agreed operating policy.
