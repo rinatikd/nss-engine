@@ -11,14 +11,14 @@ const ACTOR_TOKENS = [
   ['CONSILIUM_OWNER_TOKEN', { id: 'owner', role: 'owner' }],
   ['CONSILIUM_CHATGPT_TOKEN', { id: 'chatgpt', role: 'operator' }],
   ['CONSILIUM_CLAUDE_TOKEN', { id: 'claude', role: 'operator' }],
-  ['CONSILIUM_DEEPSEEK_TOKEN', { id: 'deepseek', role: 'operator' }],
-  ['CONSILIUM_QWEN_TOKEN', { id: 'qwen', role: 'operator' }],
-  ['CONSILIUM_KIMI_TOKEN', { id: 'kimi', role: 'operator' }],
-  ['CONSILIUM_GROK_TOKEN', { id: 'grok', role: 'operator' }],
-  ['CONSILIUM_GEMINI_TOKEN', { id: 'gemini', role: 'operator' }]
+  ['CONSILIUM_DEEPSEEK_TOKEN', { id: 'deepseek', role: 'participant' }],
+  ['CONSILIUM_QWEN_TOKEN', { id: 'qwen', role: 'participant' }],
+  ['CONSILIUM_KIMI_TOKEN', { id: 'kimi', role: 'participant' }],
+  ['CONSILIUM_GROK_TOKEN', { id: 'grok', role: 'participant' }],
+  ['CONSILIUM_GEMINI_TOKEN', { id: 'gemini', role: 'participant' }]
 ];
 const TOKEN_MIN = 32;
-const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'operator', qwen: 'operator', kimi: 'operator', grok: 'operator', gemini: 'operator' };
+const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'participant', qwen: 'participant', kimi: 'participant', grok: 'participant', gemini: 'participant' };
 const MAX_BODY = 128 * 1024;
 const SECRET = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+\/-]{16,}|\b(?:sk|rk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{16,}/i;
 
@@ -173,6 +173,16 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
         if (!validString(body.provider, 32) || !validString(body.text, 40000) || !validString(body.requestId, 100) || !['ACCEPTED', 'DISPATCHED', 'SENT', 'DELIVERED', 'REPLIED', 'VERIFIED', 'UNKNOWN', 'NOT_PERFORMED', 'BLOCKED', 'FAILED'].includes(body.deliveryStatus || 'UNKNOWN')) throw Error('INVALID_MESSAGE');
         return json(res, 201, { event: append('message.recorded', { provider: body.provider, text: body.text, deliveryStatus: body.deliveryStatus || 'UNKNOWN', providerRequestId: body.requestId, sourceCommit: body.sourceCommit || null }) });
       }
+      if (url.pathname === '/api/rounds/propose') {
+        requireRole(actor, ['operator', 'participant']);
+        if (!validId(body.roundId) || !validString(body.objective, 500) || !Array.isArray(body.participants) || !body.participants.length || body.participants.length > 7 || body.participants.some(x => !['chatgpt', 'claude', 'deepseek', 'qwen', 'kimi', 'grok', 'gemini'].includes(x)) || new Set(body.participants).size !== body.participants.length) throw Error('INVALID_ROUND_PROPOSAL');
+        return json(res, 201, { event: append('round.proposed', { roundId: body.roundId, objective: body.objective.trim(), participants: body.participants.slice(), proposedBy: actor.id }) });
+      }
+      if (url.pathname === '/api/rounds/start') {
+        requireRole(actor, ['operator']);
+        if (!validId(body.roundId)) throw Error('INVALID_ROUND_ID');
+        return json(res, 202, { event: append('round.started', { roundId: body.roundId, startedBy: actor.id }) });
+      }
       if (url.pathname === '/api/decisions') {
         requireRole(actor, ['owner', 'operator', 'participant']);
         if (!validString(body.title, 180) || !validString(body.rationale, 12000) || !Array.isArray(body.evidence || []) || !['routine', 'consequential'].includes(body.risk || 'consequential')) throw Error('INVALID_DECISION');
@@ -180,7 +190,7 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
         return json(res, 201, { event: append('decision.proposed', { decisionId, title: body.title.trim(), rationale: body.rationale.trim(), risk: body.risk || 'consequential', evidence: (body.evidence || []).slice(0, 50) }) });
       }
       if (url.pathname === '/api/decisions/review') {
-        requireRole(actor, ['operator']);
+        requireRole(actor, ['operator', 'participant']);
         if (!validId(body.decisionId) || !['SUPPORT', 'OBJECT', 'NEEDS_EVIDENCE'].includes(body.verdict) || !validString(body.rationale, 4000) || (body.revisionOf && !validId(body.revisionOf)) || !Array.isArray(body.evidence || []) || (body.evidence || []).length > 20 || (body.evidence || []).some(x => !validString(x, 2000))) throw Error('INVALID_DECISION_REVIEW');
         return json(res, 201, { event: append('decision.reviewed', { decisionId: body.decisionId, verdict: body.verdict, rationale: body.rationale.trim(), evidence: (body.evidence || []).slice(0, 20), revisionOf: body.revisionOf || null }) });
       }
