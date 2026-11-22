@@ -1,10 +1,10 @@
 # Free AI Workbench — offline proof of concept
 
-This folder starts a provider-neutral, free multi-agent coordination layer.
-It is **not** a chat UI, coding agent, network service, or execution engine.
-It never executes shell commands, talks to LLM APIs, launches browsers,
-mutates Git repositories, or accesses PowerShell Direct. It provides a local
-append-only review/audit trail only.
+This folder is an offline proof of concept for a provider-neutral multi-agent workspace.
+It contains an append-only local task ledger and a static **read-only JSONL viewer**.
+It is not a multi-agent chat UI, coding agent, orchestration service, or execution engine.
+It never talks to LLM APIs, dispatches provider messages, launches browsers, mutates Git,
+or accesses PowerShell Direct.
 
 Requirements: Node.js 20+ (already present in Work PC).
 
@@ -13,7 +13,7 @@ Requirements: Node.js 20+ (already present in Work PC).
 ```powershell
 $root='C:/Engineering/Free-AI-Workbench'
 node --check "$root/tools/free-ai-workbench/ledger.mjs"
-node --test "$root/tools/free-ai-workbench/tests/ledger.test.mjs"
+node --test "$root/tools/free-ai-workbench/tests/ledger.test.mjs" "$root/tools/free-ai-workbench/tests/viewer.test.mjs"
 ```
 
 ## Task workflow
@@ -60,3 +60,18 @@ New records use a SHA-256 hash chain, a stable requestId, a payload fingerprint 
 A torn final JSONL line or a hash mismatch fails closed. The prototype does not truncate, repair or skip corrupted records automatically. A pre-existing .lock also blocks writes; the tool does not guess whether another process is still alive and never steals a stale lock automatically. Preserve the file and investigate lock owner / last durable record manually before recovery.
 
 These controls provide local corruption detection and safer retries, not authenticated actors, an external signature, or proof against an administrator who can rewrite the whole file. Do not use this ledger to authorize Windows, Git, browser or provider operations.
+
+
+## Offline read-only viewer
+
+The viewer is a static file-import board. It verifies v2 payload hashes and the SHA-256 event chain before projecting task cards. Legacy-only logs are labelled LEGACY_UNCHAINED rather than presented as verified. Torn files, tampering, invalid transitions and duplicate request IDs fail closed.
+
+Because browsers restrict ES modules loaded from file:// URLs, serve only the static UI folder on loopback (no API and no write endpoints):
+
+```powershell
+python -m http.server 8787 --bind 127.0.0.1 --directory "$root/tools/free-ai-workbench/ui"
+```
+
+Open http://127.0.0.1:8787/ and select a JSONL ledger using the file picker. The browser reads the selected file locally; the static server only serves the viewer assets. Stop the server with Ctrl+C. No ledger file is uploaded or modified by the viewer.
+
+The viewer is a projection only. It does not authenticate actor/role fields and cannot authorize tasks or execution. Keep the ledger offline and single-operator until the EDRP API and authenticated identity contract exist.
