@@ -38,13 +38,13 @@ function validateResult(result, { requestId, binding, states, stage }) {
     requireString(result.quarantineId, 'UNKNOWN_REQUIRES_QUARANTINE_ID', 128);
     return clone(result);
   }
-  if (stage === 'prepare' && result.status === 'PREPARED') {
+  if (result.status === 'PREPARED') {
     requireString(result.prepareId, 'PREPARE_ID_REQUIRED', 128);
     requireString(result.fencingToken, 'FENCING_TOKEN_REQUIRED', 512);
     const expiresAt = Date.parse(result.expiresAt);
     if (!Number.isFinite(expiresAt)) throw Error('PREPARE_EXPIRY_REQUIRED');
   }
-  if (stage === 'commit' && result.status === 'SENT') requireString(result.deliveryId, 'DELIVERY_ID_REQUIRED', 128);
+  if (result.status === 'SENT') requireString(result.deliveryId, 'DELIVERY_ID_REQUIRED', 128);
   return clone(result);
 }
 
