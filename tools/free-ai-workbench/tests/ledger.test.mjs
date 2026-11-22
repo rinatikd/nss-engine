@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {apply,getState,replay} from '../ledger.mjs';
 
+import crypto from 'node:crypto';
+const requireLegacyHash=events=>crypto.createHash('sha256').update(events.map(JSON.stringify).join('\n')+'\n','utf8').digest('hex');
+
 const id='task_001';
 const create={id,requestId:'req_create_001',action:'create',actor:'coordinator',role:'planner',title:'NSS Engine read-only smoke test',project:'NSS Engine'};
 const assign={id,requestId:'req_assign_001',action:'assign',actor:'coordinator',role:'planner',owner:'gemini'};
@@ -97,5 +100,38 @@ test('no task execution or model invocation, only local journal writes',()=>{
   assert.equal(readFileSync(f.file,'utf8').trim().split('\n').length,4);
   assert.throws(()=>apply(f.file,{...accept,requestId:'req_accept_second'}),/INVALID_TRANSITION/);
   assert.equal(readFileSync(f.file,'utf8').trim().split('\n').length,4);
+ }finally{f.cleanup();}
+});
+
+
+test('legacy JSONL history can be extended and anchored by the first v2 hash-chain record',()=>{
+ const f=fixture();
+ try{
+  const legacyCreate={...create};
+  delete legacyCreate.requestId;
+  const legacyAssign={...assign};
+  delete legacyAssign.requestId;
+  const legacyRows=[
+   {...legacyCreate,recordedAt:'2026-11-14T10:00:00.000Z',eventId:'legacy-event-1'},
+   {...legacyAssign,recordedAt:'2026-11-14T10:01:00.000Z',eventId:'legacy-event-2'}
+  ];
+  writeFileSync(f.file,legacyRows.map(row=>JSON.stringify(row)).join('\n')+'\n');
+  const next={...submit,requestId:'req_submit_after_legacy'};
+  apply(f.file,next);
+  const rows=readFileSync(f.file,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(rows.length,3);
+  assert.equal(rows[2].formatVersion,2);
+  assert.equal(rows[2].previousHash,requireLegacyHash(legacyRows));
+  assert.equal(getState(f.file)[id].state,'IN_REVIEW');
+ }finally{f.cleanup();}
+});
+
+test('invalid transition leaves journal bytes unchanged',()=>{
+ const f=fixture();
+ try{
+  apply(f.file,create);
+  const before=readFileSync(f.file,'utf8');
+  assert.throws(()=>apply(f.file,{...accept,requestId:'req_invalid_transition'}),/INVALID_TRANSITION/);
+  assert.equal(readFileSync(f.file,'utf8'),before);
  }finally{f.cleanup();}
 });
