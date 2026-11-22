@@ -37,7 +37,7 @@ test('auth, origin, host and tool validation', async () => {
     const init = await s.post('/mcp', { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }).then((r) => r.json());
     assert.equal(init.result.protocolVersion, '2025-06-18');
     const list = await s.post('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/list' }).then((r) => r.json());
-    assert.equal(list.result.tools.length, 18);
+    assert.equal(list.result.tools.length, 24);
     assert.equal((await s.post('/mcp', [])).status, 200);
   } finally { await s.close(); }
 });
