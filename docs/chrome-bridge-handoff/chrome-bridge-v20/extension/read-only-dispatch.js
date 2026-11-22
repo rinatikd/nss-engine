@@ -3,7 +3,7 @@ import { redact } from './secrets.js';
 import { CONTROL_ORIGINS } from './permissions.js';
 import { mergeAdapters } from './adapters.js';
 
-const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','agent_new_chat']);
+const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','provider_prepare','provider_commit','agent_new_chat']);
 const LOCAL = new Set(['localhost','127.0.0.1','[::1]']);
 const ALLOWED = new Set(['browser_tabs','browser_read','control_status',
   'agent_probe','agent_selftest','agent_context','agent_peek']);
