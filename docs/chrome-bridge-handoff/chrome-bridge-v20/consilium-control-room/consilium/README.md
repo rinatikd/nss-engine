@@ -13,7 +13,7 @@ Provider brand does not define trust. Technical availability and task capabiliti
 
 ## Run locally
 
-Requires Node.js 22 or newer. Configure three unique random tokens, each at least 32 characters:
+Requires Node.js 22 or newer. From this folder run `npm test` for all tests, `npm run check` for syntax plus tests, or `npm start` after configuring the tokens below. Configure three unique random tokens, each at least 32 characters:
 
 - `CONSILIUM_OWNER_TOKEN`
 - `CONSILIUM_CHATGPT_TOKEN`
@@ -38,6 +38,7 @@ Open the printed `http://127.0.0.1:18765/` address. Tokens remain in the current
 - Authenticated loopback HTTP API and browser UI.
 - Append-only JSONL event ledger with fsync, a single-writer lock, SHA-256 hash chain, stable request IDs and fail-closed corruption detection.
 - Human-readable timeline with sequence, timestamp, actor, event type and original payload.
+- Authenticated full journal export as newline-delimited JSON (`consilium-events.ndjson`) and paginated event API.
 - Session start/pause/resume/stop-request controls for owner and both co-operators.
 - Discussion comments and attributed message records with explicit delivery state.
 - Decision proposals, independent ChatGPT/Claude verdicts, visible disagreement, review revisions linked to prior events and owner approval of consequential decisions.
