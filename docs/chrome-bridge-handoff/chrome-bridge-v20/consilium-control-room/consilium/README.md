@@ -43,7 +43,7 @@ Open the printed `http://127.0.0.1:18765/` address. Tokens remain in the current
 - Authenticated full journal export as newline-delimited JSON (`consilium-events.ndjson`) and paginated event API.
 - Session start/pause/resume/stop-request controls are available equally to all seven AI members; owner remains separate.
 - Discussion comments and attributed message records with explicit delivery state.
-- Decision proposals, independent ChatGPT/Claude verdicts, reviews by all five expert participants, visible disagreement, review revisions linked to prior events and owner approval of consequential decisions.
+- Decision proposals, mandatory independent ChatGPT/Claude verdicts, reviews by all seven AI members, visible disagreement, review revisions linked to prior events and owner approval of consequential decisions.
 - Round proposals and launch are available equally to all seven AI members.
 - Tasks only from accepted decisions; all seven AI identities can update tasks regardless of assignee.
 - Artifact manifest with SHA-256 and explicit recipient receipt events. The MVP stores references and receipts; binary transfer itself belongs to a separately verified transport.
