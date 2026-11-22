@@ -116,6 +116,13 @@ export class ProviderTransport {
   async revoke(input) {
     const identity = validateTransportIdentity(input);
     const result = await this.adapter.revoke(identity);
+    if (result?.state === 'UNKNOWN') {
+      validateState(result, identity, ['UNKNOWN']);
+      if (!Number.isSafeInteger(result.nextEpoch) || result.nextEpoch <= identity.epoch) {
+        throw new TransportContractError('FENCING_REVOKE_ATTESTATION_INVALID');
+      }
+      return result;
+    }
     if (!result || result.state !== 'REVOKED' || !result.identity || !equalIdentity(result.identity, identity) ||
         !Number.isSafeInteger(result.nextEpoch) || result.nextEpoch <= identity.epoch) {
       throw new TransportContractError('FENCING_REVOKE_ATTESTATION_INVALID');
