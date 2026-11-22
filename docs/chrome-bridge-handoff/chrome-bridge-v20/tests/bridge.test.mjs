@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createBridge, loadConfig } from '../server/bridge.mjs';
+import { tools as registeredTools } from '../server/tools.mjs';
 import { createChromeBridgeProviderTransport } from '../consilium-control-room/consilium/chrome-bridge-provider-adapter.mjs';
 import { extractVerdict, extractFiles, deepRender } from '../hub/lib.mjs';
 
@@ -37,7 +38,10 @@ test('auth, origin, host and tool validation', async () => {
     const init = await s.post('/mcp', { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }).then((r) => r.json());
     assert.equal(init.result.protocolVersion, '2025-06-18');
     const list = await s.post('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/list' }).then((r) => r.json());
-    assert.equal(list.result.tools.length, 24);
+    assert.deepEqual(list.result.tools, registeredTools.map(({ kind, ...tool }) => tool));
+    assert.ok(list.result.tools.some(({ name }) => name === 'agent_send'));
+    for (const name of ['session_request', 'session_authorize', 'session_revoke', 'session_status'])
+      assert.ok(list.result.tools.some((tool) => tool.name === name), `missing ${name}`);
     assert.equal((await s.post('/mcp', [])).status, 200);
   } finally { await s.close(); }
 });
