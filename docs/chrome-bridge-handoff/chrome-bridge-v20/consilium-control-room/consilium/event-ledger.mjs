@@ -12,7 +12,7 @@ const TYPES = new Set([
 const MAX_EVENT_BYTES = 128 * 1024;
 const MAX_LEDGER_BYTES = 64 * 1024 * 1024;
 const ZERO_HASH = '0'.repeat(64);
-const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'participant', qwen: 'participant', kimi: 'participant', grok: 'participant', gemini: 'participant' };
+const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'operator', qwen: 'operator', kimi: 'operator', grok: 'operator', gemini: 'operator' };
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -209,18 +209,24 @@ export function projectEvents(events) {
       case 'decision.reviewed': {
         const d = decisionById.get(p.decisionId);
         if (!d || !['PROPOSED', 'UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE'].includes(d.status)) throw Error('DECISION_NOT_REVIEWABLE');
-        if (event.actor.role !== 'operator' || !['chatgpt', 'claude'].includes(event.actor.id)) throw Error('CO_OPERATOR_REVIEW_REQUIRED');
+        if (event.actor.role !== 'operator') throw Error('CO_OPERATOR_REVIEW_REQUIRED');
         if (!['SUPPORT', 'OBJECT', 'NEEDS_EVIDENCE'].includes(p.verdict)) throw Error('INVALID_REVIEW_VERDICT');
         const prior = d.reviews.find(r => r.operator === event.actor.id);
         if (prior) {
-          if (!['DISPUTED', 'NEEDS_EVIDENCE'].includes(d.status) || p.revisionOf !== prior.eventId) throw Error('REVIEW_REVISION_REQUIRES_PRIOR_EVENT');
+          if (!['UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE'].includes(d.status) || p.revisionOf !== prior.eventId) throw Error('REVIEW_REVISION_REQUIRES_PRIOR_EVENT');
           d.reviewHistory.push(prior);
           d.reviews = d.reviews.filter(r => r.operator !== event.actor.id);
         } else if (p.revisionOf) throw Error('REVIEW_REVISION_TARGET_NOT_FOUND');
         d.reviews.push({ eventId: event.id, operator: event.actor.id, verdict: p.verdict, rationale: p.rationale || '', evidence: p.evidence || [], at: event.at });
-        if (d.reviews.some(r => r.verdict === 'OBJECT')) d.status = 'DISPUTED';
-        else if (d.reviews.some(r => r.verdict === 'NEEDS_EVIDENCE')) d.status = 'NEEDS_EVIDENCE';
-        else if (d.reviews.length === 2 && d.reviews.every(r => r.verdict === 'SUPPORT')) d.status = d.risk === 'routine' ? 'ACCEPTED' : 'READY_FOR_OWNER';
+        const objection = d.reviews.some(r => r.verdict === 'OBJECT');
+        const evidenceGap = d.reviews.some(r => r.verdict === 'NEEDS_EVIDENCE');
+        const corePairSupported = ['chatgpt', 'claude'].every(id =>
+          d.reviews.some(r => r.operator === id && r.verdict === 'SUPPORT')
+        );
+        if (objection) d.status = 'DISPUTED';
+        else if (evidenceGap) d.status = 'NEEDS_EVIDENCE';
+        else if (corePairSupported && d.reviews.every(r => r.verdict === 'SUPPORT'))
+          d.status = d.risk === 'routine' ? 'ACCEPTED' : 'READY_FOR_OWNER';
         else d.status = 'UNDER_REVIEW';
         break;
       }
