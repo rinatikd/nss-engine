@@ -5,6 +5,7 @@ export async function pageAction(name, args, expectedOrigin) {
   const vis = (e) => !!e && e.getClientRects().length > 0;
   const qa = (s) => { try { return s ? [...document.querySelectorAll(s)] : []; } catch { return []; } };
   const one = (s) => qa(s).find(vis);
+  let releaseActionLock = () => {};
   const conversationId = () => {
     const routes = {
       'https://claude.ai': /^\/chat\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
@@ -39,6 +40,13 @@ export async function pageAction(name, args, expectedOrigin) {
     };
     if (['browser_click', 'browser_fill', 'agent_send', 'provider_prepare', 'provider_commit'].includes(name)) control();
     if (location.origin !== expectedOrigin) throw Error('Tab navigated to another origin');
+    if (['browser_click','browser_fill','agent_send','provider_prepare','provider_commit'].includes(name)) {
+      const key='__chromeBridgeMutationLock';
+      if (window[key]) throw Error('TAB_MUTATION_BUSY');
+      const lock={requestId:typeof args.requestId==='string'?args.requestId:'local-'+Date.now(),name};
+      window[key]=lock;
+      releaseActionLock=()=>{if(window[key]===lock)delete window[key];};
+    }
 
     if (name === 'exists') return { found: !!one(args.selector), loaded: document.readyState === 'complete' };
 
@@ -280,6 +288,6 @@ export async function pageAction(name, args, expectedOrigin) {
     }
 
     throw Error('Unknown page command: ' + name);
-  } catch (e) { return { error: e.message }; }
+  } catch (e) { return { error: e.message }; } finally { releaseActionLock(); }
 }
 
