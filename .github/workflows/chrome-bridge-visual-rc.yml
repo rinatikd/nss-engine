@@ -236,9 +236,9 @@ jobs:
             background = @{service_worker='background.js'}
           }
           [IO.File]::WriteAllText((Join-Path $installed 'manifest.json'),($m | ConvertTo-Json -Depth 10),(New-Object System.Text.UTF8Encoding($false)))
-          $dry = & ./deployment/stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out
+          $dry = & ./deployment/stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out -LabPort 17484
           if ((($dry -join ' ') -notmatch '\[DRY-RUN\]') -or (Test-Path $out)) { throw 'Lab dry run changed files' }
-          & ./deployment/stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out -Apply
+          & ./deployment/stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out -LabPort 17484 -Apply
           if ($LASTEXITCODE -ne 0) { throw 'Lab stage failed' }
           $labManifest = Get-Content (Join-Path $out 'manifest.json') -Raw | ConvertFrom-Json
           if ($labManifest.background.type -ne 'module') { throw 'Module worker not enabled' }
@@ -246,10 +246,10 @@ jobs:
           if (@($labManifest.permissions) -notcontains 'alarms') { throw 'Alarms permission missing' }
           if ((Get-Content (Join-Path $installed 'manifest.json') -Raw | ConvertFrom-Json).background.type) { throw 'Installed manifest modified' }
           if (-not (Test-Path (Join-Path $out 'transport-worker.js'))) { throw 'Worker missing' }
-          & ./deployment/verify-adapter-lab.ps1 -LabRoot $out
+          & ./deployment/verify-adapter-lab.ps1 -LabRoot $out -LabPort 17484
           if ($LASTEXITCODE -ne 0) { throw 'Adapter lab package validation failed' }
           Write-Output '[PASS] MV3 background lab prepared without modifying the installed extension'
-          & ./deployment/write-lab-release-manifest.ps1 -LabRoot $out -OutputPath (Join-Path $env:RUNNER_TEMP 'chrome-bridge-rc1-lab-evidence.json') -CommitSha $env:GITHUB_SHA
+          & ./deployment/write-lab-release-manifest.ps1 -LabRoot $out -OutputPath (Join-Path $env:RUNNER_TEMP 'chrome-bridge-rc1-lab-evidence.json') -CommitSha $env:GITHUB_SHA -LabPort 17484
           if ($LASTEXITCODE -ne 0) { throw 'Release evidence generation failed' }
       - name: Upload immutable lab file-hash evidence
         if: success()
