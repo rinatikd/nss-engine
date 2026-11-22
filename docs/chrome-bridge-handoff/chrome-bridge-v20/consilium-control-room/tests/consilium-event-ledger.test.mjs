@@ -9,7 +9,7 @@ function temp(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-ledger-')
 const owner={id:'owner',role:'owner'};
 const chatgpt={id:'chatgpt',role:'operator'};
 const claude={id:'claude',role:'operator'};
-const kimi={id:'kimi',role:'operator'};
+const kimi={id:'kimi',role:'participant'};
 
 test('ledger persists a hash-chained sequence and replays identical request IDs',()=>{
  const dir=temp();let ledger=new EventLedger(dir,{now:()=> '2026-11-22T12:00:00.000Z'});
@@ -118,5 +118,19 @@ test('any additional operator objection or evidence gap blocks the dual-review g
  ledger.append({type:'decision.owner_approved',actor:owner,payload:{decisionId:'decision_blockers_01'}});
  assert.equal(ledger.snapshot().state.decisions[0].status,'ACCEPTED');
  assert.equal(ledger.snapshot().state.decisions[0].reviewHistory.length,2);
+ ledger.close();
+});
+
+test('participant may propose a round but only ChatGPT or Claude may start it',()=>{
+ const ledger=new EventLedger(temp());
+ ledger.append({type:'session.started',actor:chatgpt,payload:{sessionId:'session_round_01',title:'Round authority test'}});
+ ledger.append({type:'round.proposed',actor:kimi,payload:{roundId:'round_proposal_01',objective:'Review transport fencing',participants:['chatgpt','claude','kimi']}});
+ assert.equal(ledger.snapshot().state.rounds[0].status,'PROPOSED');
+ assert.throws(()=>ledger.append({type:'round.started',actor:kimi,payload:{roundId:'round_proposal_01'}}),/ROUND_START_REQUIRES_CO_OPERATOR/);
+ ledger.append({type:'round.started',actor:claude,payload:{roundId:'round_proposal_01'}});
+ const round=ledger.snapshot().state.rounds[0];
+ assert.equal(round.status,'STARTED');
+ assert.equal(round.proposedBy,'kimi');
+ assert.equal(round.startedBy,'claude');
  ledger.close();
 });
