@@ -213,11 +213,11 @@ export class ProviderJournal {
     return {state:'SENT',identity,clickedAt,clickedSend:true};
   }
 
-  outcome(input,state,reasonCode='') {
+  outcome(input,state,reasonCode='',extra={}) {
     const identity=validateProviderIdentity(input);
     if(!['UNKNOWN','NOT_PERFORMED','BLOCKED','REVOKED'].includes(state))throw Error('PROVIDER_OUTCOME_STATE_INVALID');
     const quarantineId=state==='UNKNOWN'?'quarantine-'+identity.requestId:null;
-    this.#append('transaction.outcome',identity,{state,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(reasonCode)?reasonCode:'',quarantineId});
+    this.#append('transaction.outcome',identity,{state,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(reasonCode)?reasonCode:'',quarantineId,...extra});
     return {state,identity,...(quarantineId?{quarantineId}:{}),...(reasonCode?{reasonCode}:{})};
   }
 
