@@ -6,13 +6,13 @@ const ID = /^[A-Za-z0-9_-]{8,100}$/;
 const ACTOR_ID = /^[a-z][a-z0-9_-]{1,31}$/;
 const TYPES = new Set([
   'session.started', 'session.paused', 'session.resumed', 'session.stop_requested', 'session.stopped',
-  'comment.added', 'message.recorded', 'decision.proposed', 'decision.reviewed', 'decision.owner_approved',
+  'comment.added', 'message.recorded', 'round.proposed', 'round.started', 'decision.proposed', 'decision.reviewed', 'decision.owner_approved',
   'decision.rejected', 'task.created', 'task.state_changed', 'artifact.linked', 'artifact.received', 'agent.availability'
 ]);
 const MAX_EVENT_BYTES = 128 * 1024;
 const MAX_LEDGER_BYTES = 64 * 1024 * 1024;
 const ZERO_HASH = '0'.repeat(64);
-const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'operator', qwen: 'operator', kimi: 'operator', grok: 'operator', gemini: 'operator' };
+const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'participant', qwen: 'participant', kimi: 'participant', grok: 'participant', gemini: 'participant' };
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -168,7 +168,7 @@ export class EventLedger {
 export function projectEvents(events) {
   const state = {
     session: { status: 'IDLE', id: null, title: null, epoch: 0 },
-    decisions: [], tasks: [], messages: [], comments: [], artifacts: [], agents: [], lastSequence: 0
+    rounds: [], decisions: [], tasks: [], messages: [], comments: [], artifacts: [], agents: [], lastSequence: 0
   };
   const decisionById = new Map();
   const taskById = new Map();
@@ -198,6 +198,21 @@ export function projectEvents(events) {
         if (state.session.status !== 'STOP_REQUESTED') throw Error('STOP_NOT_REQUESTED');
         state.session.status = 'STOPPED';
         break;
+      case 'round.proposed': {
+        if (state.session.status !== 'RUNNING' && state.session.status !== 'PAUSED') throw Error('ROUND_PROPOSAL_REQUIRES_ACTIVE_SESSION');
+        if (state.rounds.some(r => r.id === p.roundId)) throw Error('DUPLICATE_ROUND_ID');
+        if (!['operator', 'participant'].includes(event.actor.role)) throw Error('ROUND_PROPOSAL_REQUIRES_AI_ACTOR');
+        state.rounds.push({ id: p.roundId, objective: p.objective, participants: p.participants, proposedBy: event.actor.id, status: 'PROPOSED' });
+        break;
+      }
+      case 'round.started': {
+        const round = state.rounds.find(r => r.id === p.roundId);
+        if (!round || round.status !== 'PROPOSED') throw Error('ROUND_NOT_PROPOSED');
+        if (state.session.status !== 'RUNNING') throw Error('ROUND_START_REQUIRES_RUNNING_SESSION');
+        if (event.actor.role !== 'operator') throw Error('ROUND_START_REQUIRES_CO_OPERATOR');
+        round.status = 'STARTED'; round.startedBy = event.actor.id; round.startedAt = event.at;
+        break;
+      }
       case 'comment.added': state.comments.push(event); break;
       case 'message.recorded': state.messages.push(event); break;
       case 'decision.proposed': {
@@ -209,7 +224,7 @@ export function projectEvents(events) {
       case 'decision.reviewed': {
         const d = decisionById.get(p.decisionId);
         if (!d || !['PROPOSED', 'UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE', 'READY_FOR_OWNER'].includes(d.status)) throw Error('DECISION_NOT_REVIEWABLE');
-        if (event.actor.role !== 'operator') throw Error('CO_OPERATOR_REVIEW_REQUIRED');
+        if (!['operator', 'participant'].includes(event.actor.role)) throw Error('AI_REVIEW_REQUIRED');
         if (!['SUPPORT', 'OBJECT', 'NEEDS_EVIDENCE'].includes(p.verdict)) throw Error('INVALID_REVIEW_VERDICT');
         const prior = d.reviews.find(r => r.operator === event.actor.id);
         if (prior) {
