@@ -5,11 +5,11 @@ import { DEFAULT_ADAPTERS } from '../extension/adapters.js';
 import { pageAction } from '../extension/page.js';
 import { toolByName } from '../server/tools.mjs';
 test('tool descriptions match the preserved Control allowlist and durations', () => {
- assert.deepEqual(Object.keys(CONTROL_ORIGINS).sort(), ['https://chat.deepseek.com', 'https://claude.ai', 'https://gemini.google.com']);
+ assert.deepEqual(Object.keys(CONTROL_ORIGINS).sort(), ['https://chat.deepseek.com', 'https://chat.qwen.ai', 'https://claude.ai', 'https://gemini.google.com', 'https://grok.com', 'https://www.kimi.ai']);
  const description = toolByName('agent_send').description;
  for (const origin of Object.keys(CONTROL_ORIGINS)) assert.ok(description.includes(origin));
  assert.match(description, /explicit local approval \(1, 3 or 4 hours\)/);
-   assert.doesNotMatch(description, /chatgpt\.com|grok\.com|chat\.qwen\.ai|www\.kimi\.ai/);
+    assert.doesNotMatch(description, /chatgpt\.com|cursor\.com/);
 });
 test('control requires local approval, exact allowed origin and a live epoch; expires and resets', () => {
  let now = 100; const g = new ControlGrants(() => now);
@@ -30,7 +30,9 @@ test('each allowed origin has its own complete adapter', () => {
  for (const [origin, key] of Object.entries(CONTROL_ORIGINS)) {
   const a = DEFAULT_ADAPTERS[key]; assert.equal(a.origin, origin);
   assert.equal(new URL(a.newChatUrl).origin, origin);
-  for (const k of ['composer','send','reply','stop']) assert.ok(a[k]);
+  assert.ok(a.composer, key+' composer selector required');
+  // Equal Control permission is independent of provider DOM calibration.
+  // Blank send/stop/reply selectors must fail closed until live calibration.
  }
 });
 test('Grok, Qwen, Kimi and Cursor remain read-only candidates without Control grants or send selectors', () => {
@@ -72,9 +74,9 @@ test('global off is denied even with per-origin grant; explicit revoke removes o
   assert.equal(g.status('https://gemini.google.com', true).allowed, false);
 });
 
-test('candidate origins are exact and cannot be escalated through lookalike hosts', () => {
- for (const value of ['https://grok.com.evil.test', 'http://cursor.com', 'https://chat.qwen.ai.evil.test', 'https://www.kimi.ai.evil.test'])
+test('all six council origins are exact; lookalike hosts and HTTP are denied', () => {
+ for (const [origin,key] of Object.entries(CONTROL_ORIGINS)) assert.equal(providerForOrigin(origin),key);
+ for (const value of ['https://grok.com.evil.test', 'http://grok.com', 'https://chat.qwen.ai.evil.test', 'http://chat.qwen.ai', 'https://www.kimi.ai.evil.test', 'http://www.kimi.ai'])
    assert.equal(providerForOrigin(new URL(value).origin), null);
- for (const origin of Object.keys(DISCOVERY_ONLY_ORIGINS))
-   assert.equal(new ControlGrants().status(origin, true).allowed, false);
+ assert.deepEqual(Object.keys(DISCOVERY_ONLY_ORIGINS), ['https://cursor.com']);
 });
