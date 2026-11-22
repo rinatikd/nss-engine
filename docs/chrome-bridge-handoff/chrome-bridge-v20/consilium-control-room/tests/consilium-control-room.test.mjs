@@ -131,9 +131,9 @@ test('authenticated export returns a newline-delimited, hash-chained journal',as
   await request(base,tokens[2].token,'/api/comments',{text:'second event',requestId:'export_event_002'});
   const denied=await fetch(base+'/api/export');assert.equal(denied.status,401);
   const response=await request(base,tokens[0].token,'/api/export');
-  assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/application\\/x-ndjson/);
-  const body=await response.text();assert.ok(body.endsWith('\\n'));
-  const events=body.trimEnd().split('\\n').map(line=>JSON.parse(line));
+  assert.equal(response.status,200);assert.ok(response.headers.get('content-type').includes('application/x-ndjson'));
+  const body=await response.text();const newline=String.fromCharCode(10);assert.ok(body.endsWith(newline));
+  const events=body.trimEnd().split(newline).map(line=>JSON.parse(line));
   assert.equal(events.length,2);assert.equal(events[1].previousHash,events[0].hash);
  }finally{await app.close()}
 });
