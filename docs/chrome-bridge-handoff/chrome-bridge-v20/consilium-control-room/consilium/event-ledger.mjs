@@ -149,7 +149,8 @@ export class EventLedger {
 
   exportNdjson() {
     if (this.closed) throw Error('LEDGER_CLOSED');
-    return this.events.map(event => JSON.stringify(event)).join('\\n') + (this.events.length ? '\\n' : '');
+    const newline = String.fromCharCode(10);
+    return this.events.map(event => JSON.stringify(event)).join(newline) + (this.events.length ? newline : '');
   }
 
   close() {
