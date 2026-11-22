@@ -142,7 +142,15 @@ function StartLabServer([string]$State,[string]$RunDir,[string]$ConfigHash) {
 function WaitHealthy($Started,[string]$State,[string]$ExpectedFile,[string]$RunDir) {
   $deadline = [DateTime]::UtcNow.AddSeconds(15)
   do {
-    Require (-not $Started.process.HasExited) 'Candidate Bridge process exited during startup'
+    if ($Started.process.HasExited) {
+      $stdout = ''
+      $stderr = ''
+      try { if ($Started.stdoutTask) { $stdout = [string]$Started.stdoutTask.GetAwaiter().GetResult() } } catch {}
+      try { if ($Started.stderrTask) { $stderr = [string]$Started.stderrTask.GetAwaiter().GetResult() } } catch {}
+      $detail = ('Candidate Bridge exited during startup; exitCode=' + $Started.process.ExitCode +
+        '; stdout=' + $stdout + '; stderr=' + $stderr)
+      throw $detail
+    }
     try {
       AssertListener $Started.process.Id
       Probe $script:HealthScript $script:LabRoot $State $ExpectedFile $RunDir 'live'
