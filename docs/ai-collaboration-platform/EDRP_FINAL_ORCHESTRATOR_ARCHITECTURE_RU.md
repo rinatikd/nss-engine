@@ -863,12 +863,12 @@ No Grok message was sent, no site grant was changed, and no local approval was r
 | Направление | Артефакт / текущий результат | Подтверждено | Блокирует следующий уровень |
 |---|---|---|---|
 | Consilium / Control Room | NSS Engine PR #131, head 7e4c8f7f0c87578ba9c63ca6a52dbde141318657 | Source checks #45052131433 и RC1 Control Gates #45052131455 — SUCCESS; Windows Lab package: 20 files, 41/41 tests, loopback API/role smoke PASS; manifest 692a20e2…; ZIP e7139bee… | Visual RC #45052131480 — SUCCESS; пакет не установлен в пользовательский Lab; нет реального раунда, provider receipt или доставки сообщений |
-| Chrome Bridge | NSS Engine PR #132, head 8cfb86d4e21aae9e77406041435b35f0a3561e92 | Source checks #45050999238, RC1 Control Gates #45050999279 и Visual RC #45050999227 — SUCCESS (все три workflow exact-head завершены) | Активный Lab tool registry не показывает session API; active agent_send требует local approval; Gemini/Grok и response selectors не готовы; live Lab deployment не выполнен |
-| EDRP | NSS Engine PR #134, head 03be171d58da1f6fd4579e16f16b8084f84da397 | Source checks #45052411729 — SUCCESS; §22.2/22.10 закрывают точные статусы Consilium/Bridge | Только архитектурный документ; нет сервиса, SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
+| Chrome Bridge | NSS Engine PR #132, head 8cfb86d4e21aae9e77406041435b35f0a3561e92 | Source #45050999238, RC1 #45050999279, Visual RC #45050999227 — SUCCESS; fresh Lab control_status/browser_tabs read-only probes recorded | Runtime: connected=true, globalEnabled=false, approvalPending=0, origins=[]; browser_status/agent_list UNKNOWN_TOOL; DeepSeek has composer but no response; Claude/Gemini peek unavailable; Grok stored binding stale; no provider send |
+| EDRP | NSS Engine PR #134, head 6b2d6c4250afeafc61fcff97cafc8b77304e89fd | Документ обновлён §22.12 exact AGPT M1a value-hash evidence; Source checks #45054319733 — IN_PROGRESS at last check | Только архитектурный документ; нет Supervisor/SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
 | Free AI Workbench | NSS Engine PR #111, head 9ee6e02fbc6a0796985bc3756cfda5e4e3823323 | Source #45046307182 и CCTV guards #45046307226 — SUCCESS; 17/17 Node tests | Не установлен в целевую папку; Windows/browser E2E и authenticated actor identity отсутствуют; журнал не является EDRP source of truth |
 | PowerShell Direct / WM43 | §20 данного документа и read-only runtime observations | Были отдельные read-only probes; точные неуспехи сохранены ниже | QUEUE_FULL до durable job, APPROVAL_EXPIRED для request 18086, WM43 service/runtime execution mismatch; нет безопасного chat-only proposal-to-execution path |
 | AGPT Palette | AGPT_Plugin PR #1, head 3a74df36ac418d1d914d77a1a09d081c8245126c | Source/XData provenance addendum committed; prior portable GasCalc workflow #45044651876 — SUCCESS (standalone only) | Новая doc-only head run не подтверждена; нет AutoCAD 2026/ObjectARX build и NETLOAD smoke; GasCalc не включён в DLL; расчётные действия отключены |
-| AGPT GasCalc | AGPT_Plugin PR #2, head aa2cd4a0293c1f3a8f1bd43f8625b50df4eb30e1 | .NET 8 workflow #45046706704 и #45046804152 — SUCCESS; 7 normative golden cases и 17 validation checks | Не включён в основной AGPT.csproj; legacy/demo calculation paths не удалены; каталог Mб требует данных производителя |
+| AGPT GasCalc / M1a | AGPT_Plugin PR #2 head aa2cd4a0293c1f3a8f1bd43f8625b50df4eb30e1 + PR #4 head 8fca47ee9297d29c0e53a5100a491b861feed896 | PR #2 numeric/golden CI PASS; PR #4 provenance push #45054154863, provenance PR #45054159515 and GasCalc PR #45054159527 — all SUCCESS; 11 provenance cases, numeric validation and golden cases PASS | M1a service/tests only; no XData adapter, no main AGPT.dll integration, no removal of legacy/demo paths, no AutoCAD E2E; manufacturer catalog evidence still required |
 
 Все перечисленные PR на дату среза остаются Draft/open. Успешный CI относится только к указанному commit и workflow; он не заменяет target-PC E2E, deployment или owner acceptance.
 
@@ -1058,4 +1058,21 @@ Exact-head CI at `8fca47ee9297d29c0e53a5100a491b861feed896`:
 - An intermediate head `a1302fc` failed because fixtures had not regenerated field hashes after legitimate input mutations; fixtures were corrected and the production hash check was kept strict.
 
 **Gate interpretation:** M1a source/test gate = PASS for this exact commit. Full AGPT M1 remains BLOCKED: no AutoCAD XData provenance adapter, no main `AGPT.csproj` inclusion, legacy commands/formulas and demo fallback remain unchanged, manufacturer module catalog evidence is still outstanding, and no AutoCAD 2026 disposable-DWG E2E has been performed. Calculation UI remains hidden. No local PC or DWG changes.
+
+### 22.13. Fresh active Bridge Lab runtime inventory — 2026-11-22
+
+Проведены только read-only MCP probes; никаких сообщений, bind/site-grant changes или local approvals не выполнялось.
+
+**Control plane**
+- `control_status` now responds with `connected=true`, `globalEnabled=false`, `approvalPending=0`, `origins=[]`.
+- `browser_status` and `agent_list` return `UNKNOWN_TOOL`.
+- `browser_tabs` responds and lists current browser tabs. Open tabs exist for Claude, Gemini, DeepSeek, Qwen and Grok; this proves tabs only, not verified agent readiness.
+
+**Provider probes**
+- DeepSeek `agent_peek`: `composerFound=true`, `count=0`, `chars=0`, `generating=false`, generic root page; no response.
+- Claude and Gemini `agent_peek` return `UNKNOWN_TOOL`.
+- Grok `agent_peek` still resolves stale stored tab ID `1867452532`; active tab IDs differ.
+- Qwen has no registered adapter binding (`Unknown agent "qwen"`).
+
+**Decision:** Bridge G2 remains BLOCKED. Current state is more specific than a total transport outage: limited control/browser-tab methods work, but no allowed origins are registered, global control is disabled, and provider adapter identity/readiness is incomplete. Do not enable origins, bind providers, issue approvals or dispatch messages until the exact Lab registration/cutover and owner-approved scope are established. No task delivery/reply receipt exists.
 
