@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readFileSync,writeFileSync,appendFileSync} from 'node:fs';
 import os from 'node:os';
@@ -71,7 +72,7 @@ test('viewer fails closed on tamper, torn tail and invalid transitions',async()=
 
 
 test('viewer UI stays local, read-only and resistant to imported HTML injection',()=>{
- const uiDir=path.resolve(path.dirname(new URL(import.meta.url).pathname),'../ui');
+ const uiDir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../ui');
  const html=readFileSync(path.join(uiDir,'index.html'),'utf8');
  const app=readFileSync(path.join(uiDir,'app.mjs'),'utf8');
  const viewer=readFileSync(path.join(uiDir,'viewer.mjs'),'utf8');
