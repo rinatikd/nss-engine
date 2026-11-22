@@ -42,7 +42,7 @@ function validateResult(result, { requestId, binding, states, stage }) {
     requireString(result.prepareId, 'PREPARE_ID_REQUIRED', 128);
     requireString(result.fencingToken, 'FENCING_TOKEN_REQUIRED', 512);
     const expiresAt = Date.parse(result.expiresAt);
-    if (!Number.isFinite(expiresAt)) throw Error('PREPARE_EXPIRY_REQUIRED');
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw Error('PREPARE_EXPIRY_INVALID');
   }
   if (result.status === 'SENT') requireString(result.deliveryId, 'DELIVERY_ID_REQUIRED', 128);
   return clone(result);
