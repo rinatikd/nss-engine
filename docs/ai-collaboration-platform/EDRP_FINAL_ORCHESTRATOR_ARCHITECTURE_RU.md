@@ -724,3 +724,20 @@ PowerShell Direct's current ChatGPT-approved read-only diagnostic surface remain
 | A12 | Rollback | Separate proposal and explicit approval; verify restored SHA |
 
 **Current operational ruling remains unchanged:** no local approvals, no direct arbitrary PowerShell, no Windows Maintenance proposal mutation and no Lab deployment until the full chat-only proposal → owner approval → exact execution → verification receipt chain is implemented and tested. Production, autostart and working DWGs remain out of scope.
+
+
+### 20.5. Live status reconciliation note — 2026-11-22
+
+A read-only WM43 v0.4.3 inspection returned two different levels of status:
+
+- maintenance_status: service mode approval-required, executionEnabled=true, writeMode=per-operation-local-approval, TCP reachable on R2 port 17488.
+- maintenance_inspect for R2: port 17488 reachable, owner PID 17324 (node.exe, process creation time 2026-11-19 00:09:30), but executionEnabled=false and diagnosticsReadOnly=true.
+
+These values must not be collapsed into a single “execution enabled” claim. The first result may describe service-level policy/configuration; the second describes the inspected R2 runtime. Until the service exposes a single timestamped effective-capability result and explains the difference, treat R2 execution as DISABLED and diagnostics as READ-ONLY. TCP reachability and a process identity do not prove mutation readiness.
+
+PowerShell Direct observations are also kept separate:
+- The fixed chat-approved read-only task for port 17486 previously completed with exit code 0. A listener PID 14716 (node.exe, parent PID 3616) was captured, but a later process-inspect returned NOT_FOUND; current liveness is therefore not established by that earlier snapshot.
+- The user's later report identifies request 18086 as DENIED / APPROVAL_EXPIRED. Treat it as denied, not pending, and do not retry it.
+- Earlier chat-approved Workbench target diagnostics returned QUEUE_FULL before a durable request was created; no write or install followed.
+
+**Additional fail-closed gate:** before any future approval proposal is shown, the status API must return a reconciled tuple of service instance, process identity, effective execution mode, operation allowlist, chat-approval capability, current epoch and timestamp. A contradiction or missing field produces BLOCKED, not an optimistic interpretation.
