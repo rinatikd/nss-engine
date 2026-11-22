@@ -14,23 +14,23 @@ const tokens=[
 ];
 function dir(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-room-'));}
 async function request(base, token, route, body, {origin=base,host}={}){
- const headers={Authorization:\`Bearer \${token}\`,Origin:origin};if(body)headers['Content-Type']='application/json';if(host)headers.Host=host;
+ const headers={Authorization:`Bearer ${token}`,Origin:origin};if(body)headers['Content-Type']='application/json';if(host)headers.Host=host;
  return fetch(base+route,{method:body?'POST':'GET',headers,body:body?JSON.stringify(body):undefined});
 }
 
 test('Control Room binds to loopback and authenticates both co-operators independently',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   assert.equal((await request(base,'bad-token-abcdefghijklmnopqrstuvwxyz','/api/snapshot')).status,401);
   assert.equal((await request(base,tokens[1].token,'/api/snapshot')).status,200);
   assert.equal((await request(base,tokens[2].token,'/api/snapshot')).status,200);
-  const wrongHost=await fetch(base+'/api/snapshot',{headers:{Authorization:\`Bearer \${tokens[1].token}\`,'X-Forwarded-Host':'evil.example'}});
+  const wrongHost=await fetch(base+'/api/snapshot',{headers:{Authorization:`Bearer ${tokens[1].token}`,'X-Forwarded-Host':'evil.example'}});
   assert.equal(wrongHost.status,200);
  }finally{await app.close()}
 });
 
 test('co-operators can pause and request stop; owner alone approves decisions',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const start=await request(base,tokens[1].token,'/api/session/start',{title:'Root-cause analysis',requestId:'start_req_0001'});assert.equal(start.status,201);
   const pause=await request(base,tokens[2].token,'/api/session/pause',{requestId:'pause_req_0001'});assert.equal(pause.status,200);
@@ -47,7 +47,7 @@ test('co-operators can pause and request stop; owner alone approves decisions',a
 });
 
 test('participant can comment and propose work but cannot control session or review as co-operator',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const comment=await request(base,tokens[3].token,'/api/comments',{text:'Independent challenge',requestId:'comment_req_0001'});assert.equal(comment.status,201);
   const proposal=await request(base,tokens[3].token,'/api/decisions',{title:'Participant proposal',rationale:'Independent evidence suggests this should be discussed',risk:'routine',requestId:'decision_req_participant'});assert.equal(proposal.status,201);
@@ -58,12 +58,12 @@ test('participant can comment and propose work but cannot control session or rev
 });
 
 test('state-changing POST requires same-origin',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{const r=await request(base,tokens[1].token,'/api/session/start',{title:'CSRF test',requestId:'start_req_0003'},{origin:'http://attacker.invalid'});assert.equal(r.status,403)}finally{await app.close()}
 });
 
 test('source/artifact handoff is distinct from recipient receipt',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const sha='b'.repeat(64), commit='c'.repeat(40);
   const linked=await request(base,tokens[1].token,'/api/artifacts',{artifactId:'sourcepack_01',name:'review-source-pack',sha256:sha,sourceCommit:commit,uri:'https://github.com/rinatikd/nss-engine/tree/'+commit,recipients:['claude','kimi'],requestId:'artifact_req_01'});
@@ -76,7 +76,7 @@ test('source/artifact handoff is distinct from recipient receipt',async()=>{
 });
 
 test('static UI is served with restrictive CSP and without exposing data before auth',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const page=await fetch(base+'/');assert.equal(page.status,200);const html=await page.text();assert.match(html,/Consilium Control Room/);assert.match(page.headers.get('content-security-policy'),/script-src 'self'/);
   const js=await fetch(base+'/app.js');assert.equal(js.status,200);const jsText=await js.text();assert.match(jsText,/api\\/decisions\\/review/);assert.match(jsText,/RESPONSE_UNCERTAIN_RETRY_SAME_REQUEST/);
@@ -90,7 +90,7 @@ test('unrecognized actor IDs and role escalation are rejected',()=>{
 });
 
 test('stop cannot be marked complete by caller-supplied quiescence strings',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   await request(base,tokens[1].token,'/api/session/start',{title:'Stop proof test',requestId:'start_stopproof_01'});
   await request(base,tokens[1].token,'/api/session/stop',{requestId:'stop_stopproof_01'});
@@ -102,7 +102,7 @@ test('stop cannot be marked complete by caller-supplied quiescence strings',asyn
 });
 
 test('participant may update only the task assigned to that participant',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   await request(base,tokens[1].token,'/api/decisions',{decisionId:'decision_task_0001',title:'Routine choice',rationale:'Reversible',risk:'routine',requestId:'decision_task_req'});
   await request(base,tokens[1].token,'/api/decisions/review',{decisionId:'decision_task_0001',verdict:'SUPPORT',rationale:'ChatGPT supports',requestId:'review_task_cgpt'});
@@ -116,7 +116,7 @@ test('participant may update only the task assigned to that participant',async()
 });
 
 test('all write routes require a stable idempotency requestId',async()=>{
- const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=\`http://\${a.host}:\${a.port}\`;
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const r=await request(base,tokens[1].token,'/api/comments',{text:'missing id'},{ });
   assert.equal(r.status,400);
