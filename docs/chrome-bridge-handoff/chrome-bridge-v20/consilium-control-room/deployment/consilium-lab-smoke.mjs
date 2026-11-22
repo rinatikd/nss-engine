@@ -5,9 +5,9 @@ import path from 'node:path';
 import { createControlRoom } from '../consilium/control-room.mjs';
 
 const ids = [
-  ['owner','owner'], ['chatgpt','operator'], ['claude','operator'],
-  ['deepseek','participant'], ['qwen','participant'], ['kimi','participant'],
-  ['grok','participant'], ['gemini','participant']
+  ['owner','owner'], ['chatgpt','ai_member'], ['claude','ai_member'],
+  ['deepseek','ai_member'], ['qwen','ai_member'], ['kimi','ai_member'],
+  ['grok','ai_member'], ['gemini','ai_member']
 ];
 const tokens = ids.map(([id,role],index)=>({
   token: ('synthetic-consilium-lab-token-'+id+'-'+String(index).padStart(2,'0')+'-').padEnd(56,'x'),
@@ -55,15 +55,15 @@ try{
   });
   assert.equal(proposal.status,201);
 
-  const participantLaunch=await request('/api/rounds/start',{
-    actor:'deepseek',method:'POST',body:{requestId:'smoke-round-deny-0001',roundId:'smoke-round-0001'}
+  const memberLaunch=await request('/api/rounds/start',{
+    actor:'deepseek',method:'POST',body:{requestId:'smoke-round-member-0001',roundId:'smoke-round-0001'}
   });
   assert.equal(participantLaunch.status,202);
 
   const secondProposal=await request('/api/rounds/propose',{
     actor:'kimi',method:'POST',
     body:{requestId:'smoke-round-propose-0002',roundId:'smoke-round-0002',
-      objective:'Second round launched by the co-operator pair',participants:['chatgpt','claude','kimi']}
+      objective:'Second round launched by a different AI member',participants:['chatgpt','claude','kimi']}
   });
   assert.equal(secondProposal.status,201);
   const cooperatorLaunch=await request('/api/rounds/start',{
@@ -71,8 +71,8 @@ try{
   });
   assert.equal(cooperatorLaunch.status,202);
 
-  const participantControl=await request('/api/session/pause',{
-    actor:'gemini',method:'POST',body:{requestId:'smoke-session-deny-0001',reason:'role-boundary-test'}
+  const memberControl=await request('/api/session/pause',{
+    actor:'gemini',method:'POST',body:{requestId:'smoke-session-member-0001',reason:'equal-member-control-test'}
   });
   assert.equal(participantControl.status,200);
 
@@ -87,7 +87,7 @@ try{
   assert.ok(snapshot.events.some(e=>e.type==='round.started'&&e.actor.id==='claude'));
   console.log(JSON.stringify({ok:true,host:address.host,port:address.port,identities:tokens.length,
     tested:['loopback-only','healthz','ui-csp','unauthenticated-denied','chatgpt-auth','claude-auth',
-      'participant-propose','participant-launch','claude-launch','participant-session-control','claude-session-control'],providerDispatch:false,production:false,realSecrets:false}));
+      'member-propose','member-launch','claude-launch','member-session-control','claude-session-control'],providerDispatch:false,production:false,realSecrets:false}));
 }finally{
   await app.close();
   fs.rmSync(dataDir,{recursive:true,force:true});
