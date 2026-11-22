@@ -741,3 +741,18 @@ PowerShell Direct observations are also kept separate:
 - Earlier chat-approved Workbench target diagnostics returned QUEUE_FULL before a durable request was created; no write or install followed.
 
 **Additional fail-closed gate:** before any future approval proposal is shown, the status API must return a reconciled tuple of service instance, process identity, effective execution mode, operation allowlist, chat-approval capability, current epoch and timestamp. A contradiction or missing field produces BLOCKED, not an optimistic interpretation.
+
+
+### 20.6. PR102 Lab live preflight snapshot — 2026-11-22
+
+A fresh read-only check of the current Lab adapter surface returned:
+
+- browser_status: connected=true, queued=0.
+- agent_list: live tabs for Claude, Gemini and DeepSeek are visible; stale bound aliases exist for Grok/restore tabs. A visible tab is not proof that its adapter is ready.
+- control_status: tool invocation returned UNKNOWN_TOOL, so effective session/grant state could not be read through this call.
+- agent_selftest(gemini): composer selector matched 1 visible element; send selector matched 0; stop selector matched 0; reply selector matched 0. The page was fully loaded.
+- agent_selftest(claude) and agent_selftest(deepseek) returned UNKNOWN_TOOL in this check.
+
+**Operational effect:** Gemini is NOT_READY for dispatch despite its visible composer. Do not include it in a provider session until a disposable-browser test or an updated adapter establishes one unambiguous send control and a trustworthy response selector on the current UI. Claude and DeepSeek remain unverified by this fresh selftest because their calls were unavailable. No provider was sent a message and no adapter settings were changed.
+
+The PR132 disposable-Chrome CI pass verifies the pinned adapter against its test fixture/browser environment; it does not override this live-profile preflight result. Runtime and CI evidence are separate gates.
