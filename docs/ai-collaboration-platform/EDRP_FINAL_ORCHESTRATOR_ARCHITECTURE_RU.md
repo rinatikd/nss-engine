@@ -823,3 +823,15 @@ It hardens the standalone AGPT.Calc.GasCalc input boundary:
 - No AutoCAD/DWG E2E was performed.
 
 M1 must therefore be tracked as three distinct gates: (a) standalone calculation/input correctness (PR #2), (b) one unified calculation use case integrated into AGPT.dll with explicit XData mapping and no legacy/demo fallback, and (c) verified manufacturer catalogue plus AutoCAD 2026 disposable-DWG E2E. Passing (a) does not imply (b) or (c).
+
+
+### 20.10. Grok binding preflight — runtime site approval mismatch (2026-11-22)
+
+A controlled attempt was made to repair the stale Grok agent binding without sending a message:
+- visible Grok transformer-zone tab: tabId 1864257573, origin https://grok.com;
+- existing bound alias "grok" pointed to a missing tab (1867452532);
+- agent_bind(name="grok", tabId=1864257573) returned AGENT_SITE_NOT_APPROVED.
+
+The binding was not changed. This indicates that the active Lab site-approval/registration scope does not currently permit the Grok origin for agent control, even though Grok is included in the intended PR132 source-level CONTROL_ORIGINS model. The active Lab tool descriptions still restrict control to Claude, Gemini and DeepSeek. Treat this as a runtime-version/configuration mismatch to resolve during the isolated deployment gate, not as a reason to expand permissions ad hoc.
+
+No Grok message was sent, no site grant was changed, and no local approval was requested or used.
