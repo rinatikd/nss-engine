@@ -123,3 +123,17 @@ test('all write routes require a stable idempotency requestId',async()=>{
   assert.equal((await r.json()).error,'INVALID_REQUEST_ID');
  }finally{await app.close()}
 });
+
+test('authenticated export returns a newline-delimited, hash-chained journal',async()=>{
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
+ try{
+  await request(base,tokens[1].token,'/api/comments',{text:'first event',requestId:'export_event_001'});
+  await request(base,tokens[2].token,'/api/comments',{text:'second event',requestId:'export_event_002'});
+  const denied=await fetch(base+'/api/export');assert.equal(denied.status,401);
+  const response=await request(base,tokens[0].token,'/api/export');
+  assert.equal(response.status,200);assert.match(response.headers.get('content-type'),/application\\/x-ndjson/);
+  const body=await response.text();assert.ok(body.endsWith('\\n'));
+  const events=body.trimEnd().split('\\n').map(line=>JSON.parse(line));
+  assert.equal(events.length,2);assert.equal(events[1].previousHash,events[0].hash);
+ }finally{await app.close()}
+});
