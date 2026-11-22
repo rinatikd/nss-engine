@@ -258,10 +258,10 @@ function providerFixture({deny=false,conversationChanged=false,grant=true}={}) {
       const [name,details]=args;state.injections.push(name);
       if(name==='agent_context')return [{result:{verified:true,origin:'https://claude.ai',
         conversationId:conversationChanged&&!state.allowAt?'other12345':'abcdefghi'}}];
-      if(name==='provider_prepare')return [{result:{prepared:true,preparedId:details.preparedId,
+      if(name==='provider_prepare')return [{result:{prepared:true,requestId:details.requestId,preparedId:details.preparedId,
         expiresAt:details.expiresAt,payloadHash:details.payloadHash,
         sideEffect:'composer-filled-no-send',clickedSend:false}}];
-      if(name==='provider_commit')return [{result:{clickedSend:true,clickedAt:new Date().toISOString()}}];
+      if(name==='provider_commit')return [{result:{clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,payloadHash:details.payloadHash,clickedAt:new Date().toISOString()}}];
       return [{result:{ok:true}}];
     }}
   };
