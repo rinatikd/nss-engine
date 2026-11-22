@@ -159,7 +159,8 @@ export async function pageAction(name, args, expectedOrigin) {
     if (name === 'provider_prepare') {
       if (args.expectedOrigin !== location.origin || !conversationId() ||
           args.expectedConversationId !== conversationId()) throw Error('PROVIDER_CONVERSATION_CHANGED');
-      if (typeof args.message !== 'string' || !args.message.trim() || args.message.length > 100000 ||
+      if (!/^[A-Za-z0-9_-]{8,100}$/.test(args.requestId || '') || !Number.isSafeInteger(args.epoch) || args.epoch < 1 ||
+          typeof args.message !== 'string' || !args.message.trim() || args.message.length > 100000 ||
           !/^[a-f0-9]{64}$/.test(args.payloadHash || '') ||
           !/^[A-Za-z0-9_-]{8,100}$/.test(args.preparedId || '') ||
           !Number.isFinite(Date.parse(args.expiresAt || '')) || Date.parse(args.expiresAt) <= Date.now()) {
@@ -203,16 +204,27 @@ export async function pageAction(name, args, expectedOrigin) {
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) {
         throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_PREPARE');
       }
-      return { prepared:true, preparedId:args.preparedId, expiresAt:args.expiresAt,
+      window.__chromeBridgePreparedDraft = {
+        requestId:args.requestId,preparedId:args.preparedId,payloadHash:actualHash,
+        origin:location.origin,conversationId:args.expectedConversationId,epoch:args.epoch,expiresAt:args.expiresAt
+      };
+      return { prepared:true, requestId:args.requestId, preparedId:args.preparedId, expiresAt:args.expiresAt,
         payloadHash:actualHash, sideEffect:'composer-filled-no-send', clickedSend:false, baseline };
     }
 
     if (name === 'provider_commit') {
       if (args.expectedOrigin !== location.origin || !conversationId() ||
           args.expectedConversationId !== conversationId()) throw Error('PROVIDER_CONVERSATION_CHANGED');
-      if (!/^[A-Za-z0-9_-]{8,100}$/.test(args.preparedId || '') ||
+      if (!/^[A-Za-z0-9_-]{8,100}$/.test(args.requestId || '') ||
+          !Number.isSafeInteger(args.epoch) || args.epoch < 1 ||
+          !/^[A-Za-z0-9_-]{8,100}$/.test(args.preparedId || '') ||
           !/^[a-f0-9]{64}$/.test(args.fencingToken || '') ||
           !/^[a-f0-9]{64}$/.test(args.payloadHash || '')) throw Error('PROVIDER_COMMIT_INPUT_INVALID');
+      const prepared = window.__chromeBridgePreparedDraft;
+      if (!prepared || prepared.requestId !== args.requestId || prepared.preparedId !== args.preparedId ||
+          prepared.payloadHash !== args.payloadHash || prepared.origin !== location.origin ||
+          prepared.conversationId !== args.expectedConversationId || prepared.epoch !== args.epoch ||
+          Date.parse(prepared.expiresAt) <= Date.now()) throw Error('PROVIDER_PREPARED_BINDING_MISMATCH');
       const composer = single(A.composer);
       if (!(composer instanceof HTMLTextAreaElement) && !composer.isContentEditable) throw Error('Unsupported composer');
       if (textOf(composer).length === 0) throw Error('PROVIDER_PREPARED_DRAFT_MISSING');
@@ -229,10 +241,13 @@ export async function pageAction(name, args, expectedOrigin) {
         throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_COMMIT');
       }
       const clickedAt = new Date().toISOString();
+      // Consume the page-side prepare receipt before the irreversible click.
+      delete window.__chromeBridgePreparedDraft;
       sendButtons[0].click();
       await sleep(1200);
       const confirmed = qa(A.stop).some(vis) || replies().length > baseline;
-      return { clickedSend:true, clickedAt, baseline, confirmed, preparedId:args.preparedId };
+      return { clickedSend:true, clickedAt, baseline, confirmed, requestId:args.requestId,
+        preparedId:args.preparedId, payloadHash:actualHash };
     }
 
     if (name === 'agent_send') {
