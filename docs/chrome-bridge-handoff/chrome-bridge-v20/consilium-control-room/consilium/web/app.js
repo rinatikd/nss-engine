@@ -69,3 +69,15 @@ $('propose-decision').onclick=async()=>{const title=$('decision-title').value.tr
 $('create-task').onclick=async()=>{const decisionId=$('task-decision').value,title=$('task-title').value.trim(),assignee=$('task-assignee').value;if(!decisionId||!title)return toast('Выбери принятое решение и укажи задачу.');try{await api('/api/tasks',{taskId:crypto.randomUUID(),decisionId,title,assignee});$('task-title').value='';await refresh()}catch(e){toast(e.message)}};
 
 $('disconnect').onclick=()=>{bearer='';currentActor=null;if(refreshHandle)clearInterval(refreshHandle);refreshHandle=null;lastSeq=0;$('identity').textContent='Отключено.';$('session-status').textContent='НЕ ПОДКЛЮЧЕНО';$('session-title').textContent='Сессия скрыта до следующего подключения.';$('timeline').replaceChildren();renderDecisions([]);renderTasks([]);toast('Локальная сессия просмотра отключена.')};
+
+$('export-events').onclick=async()=>{
+  try{
+    const response=await fetch('/api/export',{headers:{Authorization:`Bearer ${bearer}`}});
+    if(!response.ok)throw Error((await response.json()).error||`HTTP_${response.status}`);
+    const blob=await response.blob();
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');link.href=url;link.download='consilium-events.ndjson';
+    document.body.append(link);link.click();link.remove();URL.revokeObjectURL(url);
+    toast('Полный журнал экспортирован.');
+  }catch(e){toast(`Экспорт не выполнен: ${e.message}`)}
+};
