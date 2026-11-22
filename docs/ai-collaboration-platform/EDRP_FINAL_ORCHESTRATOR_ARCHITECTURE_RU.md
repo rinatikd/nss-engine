@@ -538,3 +538,65 @@ R4 нельзя считать пройденным, пока не провер�
 - [Windows Service Failure Actions](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actionsa)
 - [Moving and Replacing Files](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-and-replacing-files)
 - [ReplaceFile](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilea)
+
+
+## 17. Free AI Workbench — product surface, not a second orchestrator
+
+### 17.1. Current verified baseline
+
+PR #111 (Free AI Workbench P0 — architecture and offline task ledger, head 52937cd64752bc5d9faadee13dedbd9cc300fc6b) is a **design + offline prototype**, not an installed multi-agent Workbench. Its declared scope is a local task ledger; it does not implement live LLM calls, browser control, Bridge delivery, Git workspace operations, PowerShell Direct, shell execution or project builds. This boundary is correct and should remain explicit.
+
+The README's local test example points to C:/Engineering/ChromeBridge-PowerShell-Direct-Validation, not the intended target C:/Engineering/Free-AI-Workbench. That path mismatch means no successful installation or E2E test in the target folder is proven.
+
+### 17.2. Prototype findings
+
+The current tools/free-ai-workbench/ledger.mjs is useful for prototyping task transitions, but it must not become the long-term runtime ledger without hardening:
+
+1. **Unauthenticated actor identity.** Actor and role are event fields supplied by the caller. A task record that says actor=claude is not cryptographic proof that Claude wrote it.
+2. **Stale lock after crash.** An O_EXCL lock is deleted in finally, but finally is not run after power loss or hard process termination. There is no safe owner identity (PID + process start time + process image + machine ID) or recovery state.
+3. **No durable append barrier.** appendFileSync without fsync does not demonstrate that an acknowledged event survives power loss.
+4. **Torn tail.** A partial last JSONL record can make the entire replay fail. No incomplete-tail quarantine, truncation to the last verified offset or recovery manifest exists.
+5. **No idempotent request admission.** Stable request IDs and payload fingerprints are needed to distinguish an identical retry from a conflicting action or a second execution.
+6. **Minimal regression coverage.** The current tests do not demonstrate concurrent writers, stale lock recovery, partial record recovery, disk-full/fsync failure, duplicate delivery, tamper evidence or backup restore.
+7. **No deployment evidence.** There is no verified Git remote/worktree/commit in the target local folder and no Node test result from C:\Engineering\Free-AI-Workbench.
+
+These are reasons to keep the prototype offline, not reasons to discard it.
+
+### 17.3. Target relationship to EDRP
+
+Free AI Workbench should be the **human-facing task/workspace UI and multi-agent discussion surface** on top of EDRP, not another control plane:
+
+- Workbench owns task intake, task views, user-facing plans, agent discussion, review presentation, decisions and evidence navigation.
+- EDRP owns authenticated actors, desired/observed state, operations, approvals, provider/worker execution, idempotency, retries, leases, event history and recovery.
+- Chrome Bridge owns exact-origin/tab/conversation transport, fenced prepare/commit, provider receipts and UNKNOWN quarantine.
+- Project workspaces (NSS, APS, AGPT) are separate resource scopes, each with its own repo, branch, build/test policy and evidence.
+- Workbench must never write an authoritative SENT, DELIVERED, REPLIED, VERIFIED or COMMITTED status from its own UI or from an AI response. It may display the state only after reading the EDRP/Bridge evidence record.
+- There must be one authoritative operation ID and one idempotency key across UI, Control Room, Bridge adapter and worker. A UI retry must not create a second provider action.
+
+The PR #111 JSONL ledger may remain as an offline mock/export format, but it must not be a second writable production ledger after EDRP adopts SQLite transactions and a durable outbox. Importing prototype tasks into EDRP should be a one-time, schema-validated migration with source hashes and a receipt; it must not silently create new executions.
+
+### 17.4. Workbench integration gates
+
+1. Confirm the exact target folder, Git remote, branch, commit, clean/dirty status and file hashes using chat-approved read-only PowerShell diagnostics. No install/overwrite before this baseline exists.
+2. Keep the current offline prototype isolated; no auto-dispatch and no shell/PowerShell tools.
+3. Add authenticated actor identities and server-issued role claims; user-supplied actor/role fields are display metadata only.
+4. Move authoritative task/operation state to the EDRP store; expose a typed API for task create/read/update, review submission, approval request, and evidence receipts.
+5. Add requestId, idempotency key and payload hash to every mutation; reject duplicate or conflicting IDs.
+6. Add crash recovery and fault-injection coverage for lock ownership, partial append, full disk, interrupted commit and restore.
+7. Connect AI participants only after Bridge session authorization, per-provider preflight, exact recipient binding and an owner-approved challenge; ChatGPT and Claude remain equal co-operators.
+8. Demonstrate a read-only end-to-end flow first: Workbench task → EDRP journal → review record → evidence view. Add provider dispatch only in a later gate after the STOP/revoke and session challenge E2E tests pass.
+9. Keep Production endpoints, profiles and secrets outside the Workbench Lab build. The Lab build must not silently fall back to Production.
+
+### 17.5. Acceptance states
+
+| State | Meaning | Current evidence |
+|---|---|---|
+| PROTOTYPE_OFFLINE | Local mock ledger only; no provider/OS execution | PR #111 source |
+| TARGET_FOLDER_VERIFIED | Exact local path, remote, branch and clean/dirty status captured | NOT VERIFIED; chat-approved request returned QUEUE_FULL |
+| EDRP_API_CONNECTED | Workbench task UI reads/writes authenticated EDRP records | NOT IMPLEMENTED |
+| READ_ONLY_COUNCIL_E2E | Task and independent reviews flow across UI/EDRP without provider send | NOT RUN |
+| PROVIDER_SESSION_E2E | Explicit owner-approved session challenge, exact provider dispatch and correlated receipt | NOT RUN |
+| LAB_RELEASE | Reproducible package, rollback and Windows Lab evidence | NOT RUN |
+| PRODUCTION_RELEASE | Separate owner-approved cutover with evidence | NO-GO |
+
+**Decision:** do not install or overwrite the target Workbench folder until its actual local state is verified. Do not add a second Supervisor, scheduler or writable task ledger. Keep the P0 prototype as a contained offline experiment and evolve it into an EDRP client only after the EDRP API and identity/authorization contract are stable.
