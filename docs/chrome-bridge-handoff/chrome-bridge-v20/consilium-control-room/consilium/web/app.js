@@ -6,7 +6,7 @@ const pendingRequestIds = new Map();
 const $ = id => document.getElementById(id);
 const actorLabels = { owner:'Владелец', chatgpt:'ChatGPT · со-оператор', claude:'Claude · со-оператор', deepseek:'DeepSeek', qwen:'Qwen', kimi:'Kimi', grok:'Grok', gemini:'Gemini' };
 function syncPermissions(){
-  const canOperate=currentActor?.role==='operator'||currentActor?.role==='owner';
+  const canOperate=['owner','operator','participant'].includes(currentActor?.role);
   for(const id of ['start','pause','resume','stop'])$(id).disabled=!canOperate;
   $('propose-round').disabled=!['operator','participant'].includes(currentActor?.role);
 }
@@ -64,7 +64,7 @@ function renderRounds(items){
     const title=document.createElement('b');title.textContent=round.objective;
     const meta=document.createElement('p');meta.className='muted';meta.textContent=`${round.id} · ${round.status} · предложил: ${actorLabels[round.proposedBy]||round.proposedBy}${round.startedBy?' · запустил: '+(actorLabels[round.startedBy]||round.startedBy):''}`;
     row.append(title,meta);
-    if(currentActor?.role==='operator'&&round.status==='PROPOSED'){
+    if(['operator','participant'].includes(currentActor?.role)&&round.status==='PROPOSED'){
       const launch=document.createElement('button');launch.textContent='Запустить раунд';
       launch.onclick=async()=>{try{await api('/api/rounds/start',{roundId:round.id});await refresh()}catch(e){toast(e.message)}};
       row.append(launch);
