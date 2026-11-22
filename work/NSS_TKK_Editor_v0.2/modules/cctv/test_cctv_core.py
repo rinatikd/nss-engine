@@ -85,7 +85,7 @@ class T(unittest.TestCase):
                 env={**os.environ, "PYTHONIOENCODING": "utf-8"})
             self.assertTrue(os.path.isfile(output))
             self.assertIn("Архив 30 сут", completed.stdout)
-            self.assertIn("'Observe, м': 23.0", completed.stdout)
+            self.assertIn("Observe, м: 23.0", completed.stdout)
             self.assertGreater(len(c.read_walls(output, ["CCTV_FOV"])), 10)
             with open(output, encoding="utf-8") as f:
                 result_dxf = f.read()
