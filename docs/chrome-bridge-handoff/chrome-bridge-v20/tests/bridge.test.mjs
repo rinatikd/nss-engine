@@ -234,12 +234,13 @@ test('Chrome Bridge ProviderTransport adapter completes a synthetic prepare/comm
         verified: true, origin: 'https://claude.ai', conversationId: 'conversation_001'
       };
       else if (command.name === 'provider_prepare') result = {
-        prepared: true, preparedId: command.args.preparedId,
+        prepared: true, requestId: command.args.requestId, preparedId: command.args.preparedId,
         expiresAt: command.args.expiresAt, payloadHash: command.args.payloadHash,
         sideEffect: 'composer-filled-no-send', clickedSend: false
       };
       else if (command.name === 'provider_commit') result = {
-        clickedSend: true, clickedAt: new Date().toISOString(), confirmed: true
+        clickedSend: true, requestId: command.args.requestId, preparedId: command.args.preparedId,
+        payloadHash: command.args.payloadHash, clickedAt: new Date().toISOString(), confirmed: true
       };
       else throw Error('Unexpected synthetic Bridge command: ' + command.name);
       const ack = await s.post('/bridge/result', { id: command.id, result }, 'b'.repeat(64));
@@ -263,7 +264,7 @@ test('Chrome Bridge ProviderTransport adapter completes a synthetic prepare/comm
     assert.equal(prepared.clickedSend, false);
     assert.ok(prepared.fencingToken);
     const sent = await transport.commit({
-      ...identity, preparedId: prepared.preparedId, fencingToken: prepared.fencingToken
+      ...identity, preparedId: prepared.preparedId, fencingToken: prepared.fencingToken, payloadHash: prepared.payloadHash
     });
     assert.equal(sent.state, 'SENT');
     assert.equal(sent.clickedSend, true);
