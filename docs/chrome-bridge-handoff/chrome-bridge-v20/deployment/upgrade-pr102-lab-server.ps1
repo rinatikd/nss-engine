@@ -304,7 +304,7 @@ try {
   }
 } finally {
   if ($oldProc) { $oldProc.Dispose() }
-  if (Test-Path -LiteralPath $run -and -not $Apply) {
+  if ((Test-Path -LiteralPath $run) -and -not $Apply) {
     Remove-Item -LiteralPath $run -Recurse -Force
   }
 }
