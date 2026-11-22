@@ -6,9 +6,9 @@ const pendingRequestIds = new Map();
 const $ = id => document.getElementById(id);
 const actorLabels = { owner:'Владелец', chatgpt:'ChatGPT · со-оператор', claude:'Claude · со-оператор', deepseek:'DeepSeek', qwen:'Qwen', kimi:'Kimi', grok:'Grok', gemini:'Gemini' };
 function syncPermissions(){
-  const canOperate=['owner','operator','participant'].includes(currentActor?.role);
+  const canOperate=['owner','ai_member'].includes(currentActor?.role);
   for(const id of ['start','pause','resume','stop'])$(id).disabled=!canOperate;
-  $('propose-round').disabled=!['operator','participant'].includes(currentActor?.role);
+  $('propose-round').disabled=!['ai_member'].includes(currentActor?.role);
 }
 function toast(message){const el=$('toast');el.textContent=message;el.style.display='block';setTimeout(()=>{el.style.display='none'},3500)}
 async function api(path, body){
@@ -50,8 +50,8 @@ function renderDecisions(items){
   if(!items.length){box.className='empty';box.textContent='Пока нет предложенных решений.';return}
   box.className='';
   for(const d of items){const item=document.createElement('div');item.className='decision';const title=document.createElement('b');title.textContent=d.title;const meta=document.createElement('span');meta.className='pill '+(d.status==='ACCEPTED'?'success-pill':d.status==='PROPOSED'?'warning-pill':'');meta.textContent=`${d.status} · ${d.proposer}`;const body=document.createElement('p');body.textContent=d.rationale;item.append(title,meta,body);
-    const reviews=document.createElement('p');reviews.className='muted';reviews.textContent='Текущие ревью: '+(d.reviews||[]).map(r=>`${r.operator}: ${r.verdict}`).join(' · ')+(d.reviewHistory?.length?` · История заменённых ревью: ${d.reviewHistory.length}`:'');item.append(reviews);
-    if(['operator','participant'].includes(currentActor?.role)&&['PROPOSED','UNDER_REVIEW','DISPUTED','NEEDS_EVIDENCE','READY_FOR_OWNER'].includes(d.status)){const prior=(d.reviews||[]).find(r=>r.operator===currentActor.id);const actions=document.createElement('div');actions.className='review-actions';for(const verdict of ['SUPPORT','OBJECT','NEEDS_EVIDENCE']){const btn=document.createElement('button');btn.className='secondary';btn.textContent=prior?`Изменить на ${verdict}`:verdict;btn.onclick=async()=>{const rationale=prompt('Обоснование ревью');if(!rationale)return;try{await api('/api/decisions/review',{decisionId:d.id,verdict,rationale,revisionOf:prior?.eventId||undefined});await refresh()}catch(e){toast(e.message)}};actions.append(btn)}item.append(actions)}
+    const reviews=document.createElement('p');reviews.className='muted';reviews.textContent='Текущие ревью: '+(d.reviews||[]).map(r=>`${r.reviewerId}: ${r.verdict}`).join(' · ')+(d.reviewHistory?.length?` · История заменённых ревью: ${d.reviewHistory.length}`:'');item.append(reviews);
+    if(['ai_member'].includes(currentActor?.role)&&['PROPOSED','UNDER_REVIEW','DISPUTED','NEEDS_EVIDENCE','READY_FOR_OWNER'].includes(d.status)){const prior=(d.reviews||[]).find(r=>r.reviewerId===currentActor.id);const actions=document.createElement('div');actions.className='review-actions';for(const verdict of ['SUPPORT','OBJECT','NEEDS_EVIDENCE']){const btn=document.createElement('button');btn.className='secondary';btn.textContent=prior?`Изменить на ${verdict}`:verdict;btn.onclick=async()=>{const rationale=prompt('Обоснование ревью');if(!rationale)return;try{await api('/api/decisions/review',{decisionId:d.id,verdict,rationale,revisionOf:prior?.eventId||undefined});await refresh()}catch(e){toast(e.message)}};actions.append(btn)}item.append(actions)}
     if(currentActor?.role==='owner'&&d.status==='READY_FOR_OWNER'){const accept=document.createElement('button');accept.textContent='Утвердить';accept.onclick=async()=>{try{await api('/api/decisions/approve',{decisionId:d.id});await refresh()}catch(e){toast(e.message)}};item.append(accept)}
     box.append(item)}
 }
@@ -64,7 +64,7 @@ function renderRounds(items){
     const title=document.createElement('b');title.textContent=round.objective;
     const meta=document.createElement('p');meta.className='muted';meta.textContent=`${round.id} · ${round.status} · предложил: ${actorLabels[round.proposedBy]||round.proposedBy}${round.startedBy?' · запустил: '+(actorLabels[round.startedBy]||round.startedBy):''}`;
     row.append(title,meta);
-    if(['operator','participant'].includes(currentActor?.role)&&round.status==='PROPOSED'){
+    if(['ai_member'].includes(currentActor?.role)&&round.status==='PROPOSED'){
       const launch=document.createElement('button');launch.textContent='Запустить раунд';
       launch.onclick=async()=>{try{await api('/api/rounds/start',{roundId:round.id});await refresh()}catch(e){toast(e.message)}};
       row.append(launch);
