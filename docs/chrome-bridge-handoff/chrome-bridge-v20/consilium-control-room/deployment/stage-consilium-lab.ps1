@@ -24,10 +24,13 @@ $repoRoot=(& $git.Source -C $candidate rev-parse --show-toplevel).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $repoRoot) { throw 'Could not resolve repository root' }
 $candidateRelative=$candidate.Substring($repoRoot.Length).TrimStart('\').Replace('\','/')
 $permissionSource=Join-Path (Split-Path $candidate -Parent) 'extension\permissions.js'
+$cryptoSource=Join-Path (Split-Path $candidate -Parent) 'server\provider-transport-crypto.mjs'
 if (-not (Test-Path -LiteralPath $permissionSource -PathType Leaf)) { throw 'ProviderTransport dependency extension/permissions.js missing' }
+if (-not (Test-Path -LiteralPath $cryptoSource -PathType Leaf)) { throw 'ProviderTransport dependency server/provider-transport-crypto.mjs missing' }
 $critical=@(
   ($candidateRelative+'/consilium'),($candidateRelative+'/tests'),($candidateRelative+'/scripts'),
-  ($candidateRelative+'/deployment'),'docs/chrome-bridge-handoff/chrome-bridge-v20/extension/permissions.js'
+  ($candidateRelative+'/deployment'),'docs/chrome-bridge-handoff/chrome-bridge-v20/extension/permissions.js',
+  'docs/chrome-bridge-handoff/chrome-bridge-v20/server/provider-transport-crypto.mjs'
 )
 & $git.Source -C $repoRoot diff --quiet HEAD -- $critical
 if ($LASTEXITCODE -ne 0) { throw 'Consilium package source differs from committed content' }
@@ -57,6 +60,9 @@ try {
   $extensionDir=Join-Path $temp 'extension'
   New-Item -ItemType Directory -Path $extensionDir -Force | Out-Null
   Copy-Item -LiteralPath $permissionSource -Destination (Join-Path $extensionDir 'permissions.js') -Force
+  $serverDir=Join-Path $temp 'server'
+  New-Item -ItemType Directory -Path $serverDir -Force | Out-Null
+  Copy-Item -LiteralPath $cryptoSource -Destination (Join-Path $serverDir 'provider-transport-crypto.mjs') -Force
   $files=@(Get-ChildItem -LiteralPath $temp -Recurse -File | Sort-Object FullName)
   if ($files.Count -lt 15) { throw 'Consilium Lab package appears incomplete' }
   foreach($file in $files) {
