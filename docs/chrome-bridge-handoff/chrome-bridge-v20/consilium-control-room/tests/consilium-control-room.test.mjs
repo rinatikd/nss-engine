@@ -9,11 +9,11 @@ const tokens=[
  {token:'owner-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'owner',role:'owner'}},
  {token:'chatgpt-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'chatgpt',role:'operator'}},
  {token:'claude-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'claude',role:'operator'}},
- {token:'kimi-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'kimi',role:'operator'}},
- {token:'qwen-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'qwen',role:'operator'}}
- ,{token:'deepseek-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'deepseek',role:'operator'}}
- ,{token:'grok-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'grok',role:'operator'}}
- ,{token:'gemini-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'gemini',role:'operator'}}
+ {token:'kimi-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'kimi',role:'participant'}},
+ {token:'qwen-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'qwen',role:'participant'}}
+ ,{token:'deepseek-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'deepseek',role:'participant'}}
+ ,{token:'grok-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'grok',role:'participant'}}
+ ,{token:'gemini-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'gemini',role:'participant'}}
 ];
 function dir(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-room-'));}
 async function request(base, token, route, body, {origin=base,host}={}){
@@ -49,23 +49,27 @@ test('co-operators can pause and request stop; owner alone approves decisions',a
  }finally{await app.close()}
 });
 
-test('all seven AI accounts have equal operator rights',async()=>{
+test('two co-operators control execution while five participants retain expert rights',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   for(const operator of tokens.slice(1)){
    const snapshot=await request(base,operator.token,'/api/snapshot');
    assert.equal(snapshot.status,200,`snapshot read failed for ${operator.actor.id}`);
   }
-  const start=await request(base,tokens[5].token,'/api/session/start',{title:'Equal operator pilot',requestId:'start_equal_ops_01'});assert.equal(start.status,201);
-  const pause=await request(base,tokens[4].token,'/api/session/pause',{requestId:'pause_equal_ops_01'});assert.equal(pause.status,200);
-  const resume=await request(base,tokens[3].token,'/api/session/resume',{requestId:'resume_equal_ops_01'});assert.equal(resume.status,200);
-  const pauseAgain=await request(base,tokens[6].token,'/api/session/pause',{requestId:'pause_equal_ops_02'});assert.equal(pauseAgain.status,200);
-  const resumeAgain=await request(base,tokens[7].token,'/api/session/resume',{requestId:'resume_equal_ops_02'});assert.equal(resumeAgain.status,200);
+  const startDenied=await request(base,tokens[5].token,'/api/session/start',{title:'Participant cannot start session',requestId:'start_participant_denied'});assert.equal(startDenied.status,403);
+  const start=await request(base,tokens[1].token,'/api/session/start',{title:'Two co-operator control pilot',requestId:'start_equal_ops_01'});assert.equal(start.status,201);
+  const pause=await request(base,tokens[2].token,'/api/session/pause',{requestId:'pause_equal_ops_01'});assert.equal(pause.status,200);
+  const resume=await request(base,tokens[1].token,'/api/session/resume',{requestId:'resume_equal_ops_01'});assert.equal(resume.status,200);
+  const roundProposal=await request(base,tokens[5].token,'/api/rounds/propose',{roundId:'round_proposal_01',objective:'Independent review of the transport race',participants:['chatgpt','claude','kimi','deepseek'],requestId:'round_proposal_req'});assert.equal(roundProposal.status,201);
+  const launchDenied=await request(base,tokens[5].token,'/api/rounds/start',{roundId:'round_proposal_01',requestId:'round_start_denied'});assert.equal(launchDenied.status,403);
+  const launch=await request(base,tokens[2].token,'/api/rounds/start',{roundId:'round_proposal_01',requestId:'round_start_claude'});assert.equal(launch.status,202);
+  const pauseAgain=await request(base,tokens[1].token,'/api/session/pause',{requestId:'pause_equal_ops_02'});assert.equal(pauseAgain.status,200);
+  const resumeAgain=await request(base,tokens[2].token,'/api/session/resume',{requestId:'resume_equal_ops_02'});assert.equal(resumeAgain.status,200);
   for(const operator of tokens.slice(1)){
    const comment=await request(base,operator.token,'/api/comments',{text:`Comment from ${operator.actor.id}`,requestId:`comment_${operator.actor.id}_01`});
    assert.equal(comment.status,201,`comment failed for ${operator.actor.id}`);
   }
-  const proposal=await request(base,tokens[5].token,'/api/decisions',{title:'Equal rights',rationale:'All seven assistants are independently authenticated operators',risk:'consequential',requestId:'decision_equal_ops'});assert.equal(proposal.status,201);
+  const proposal=await request(base,tokens[5].token,'/api/decisions',{title:'Equal expert participation',rationale:'All five participants can submit independent findings and reviews',risk:'consequential',requestId:'decision_equal_ops'});assert.equal(proposal.status,201);
   const decision=await proposal.json(), decisionId=decision.event.payload.decisionId;
   const reviewOrder=[tokens[5],tokens[4],tokens[3],tokens[6],tokens[7],tokens[1],tokens[2]];
   for(let i=0;i<reviewOrder.length;i++){
@@ -80,7 +84,8 @@ test('all seven AI accounts have equal operator rights',async()=>{
   const ready=await (await request(base,tokens[0].token,'/api/snapshot')).json();
   assert.equal(ready.state.decisions[0].status,'READY_FOR_OWNER');
   const approved=await request(base,tokens[0].token,'/api/decisions/approve',{decisionId,requestId:'approve_equal_owner'});assert.equal(approved.status,200);
-  const stop=await request(base,tokens[4].token,'/api/session/stop',{requestId:'stop_equal_ops_01'});assert.equal(stop.status,202);
+  const stopDenied=await request(base,tokens[4].token,'/api/session/stop',{requestId:'stop_participant_denied'});assert.equal(stopDenied.status,403);
+  const stop=await request(base,tokens[1].token,'/api/session/stop',{requestId:'stop_equal_ops_01'});assert.equal(stop.status,202);
  }finally{await app.close()}
 });
 
@@ -163,7 +168,7 @@ test('authenticated export returns a newline-delimited, hash-chained journal',as
  }finally{await app.close()}
 });
 
-test('loadActorTokens configures all seven AI identities as equal operators',()=>{
+test('loadActorTokens configures two co-operators and five expert participants',()=>{
  const env={
   CONSILIUM_OWNER_TOKEN:'owner-token-abcdefghijklmnopqrstuvwxyz-123456',
   CONSILIUM_CHATGPT_TOKEN:'chatgpt-token-abcdefghijklmnopqrstuvwxyz-123456',
@@ -176,8 +181,8 @@ test('loadActorTokens configures all seven AI identities as equal operators',()=
  };
  const loaded=loadActorTokens(env);
  assert.equal(loaded.length,8);
- assert.deepEqual(loaded.filter(x=>x.actor.role==='operator').map(x=>x.actor.id).sort(),
-  ['chatgpt','claude','deepseek','gemini','grok','kimi','qwen']);
+ assert.deepEqual(loaded.filter(x=>x.actor.role==='operator').map(x=>x.actor.id).sort(),['chatgpt','claude']);
+  assert.deepEqual(loaded.filter(x=>x.actor.role==='participant').map(x=>x.actor.id).sort(),['deepseek','gemini','grok','kimi','qwen']);
  assert.equal(loaded.find(x=>x.actor.id==='owner').actor.role,'owner');
  const app=createControlRoom({dataDir:dir(),tokens:loaded});
  app.ledger.close();
