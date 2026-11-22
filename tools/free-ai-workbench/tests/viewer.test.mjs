@@ -89,3 +89,15 @@ test('viewer UI stays local, read-only and resistant to imported HTML injection'
  }
  assert.match(app,/\.textContent\s*=/);
 });
+
+
+test('committed synthetic sample ledger verifies as accepted without external dependencies',async()=>{
+ const samplePath=path.join(path.dirname(fileURLToPath(import.meta.url)),'../examples/sample-ledger.jsonl');
+ const raw=readFileSync(samplePath,'utf8');
+ const result=await projectLedger(raw);
+ assert.equal(result.integrity,'V2_CHAIN_VERIFIED');
+ assert.equal(result.eventCount,4);
+ assert.equal(result.tasks[0].state,'ACCEPTED');
+ assert.equal(result.tasks[0].title,'Синтетическая задача для проверки Workbench');
+ assert.equal(result.tasks[0].owner,'claude');
+});
