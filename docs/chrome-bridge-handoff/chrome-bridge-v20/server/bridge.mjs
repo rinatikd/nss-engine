@@ -347,8 +347,12 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     const missingProviders = Object.entries(COUNCIL_ORIGINS)
       .filter(([origin]) => !origins.includes(origin))
       .map(([,provider]) => provider);
-    return {challengeId,sessionId,durationMinutes,expiresAt,bridgeEpoch:epoch,
-      origins,providers:origins.map(origin=>COUNCIL_ORIGINS[origin]),missingProviders,
+    if (missingProviders.length) {
+      return {ready:false,approvalRequired:false,changedNothing:true,providers:origins.map(origin=>COUNCIL_ORIGINS[origin]),
+        missingProviders,reasonCode:'SESSION_PROVIDERS_NOT_READY'};
+    }
+    return {ready:true,challengeId,sessionId,durationMinutes,expiresAt,bridgeEpoch:epoch,
+      origins,providers:origins.map(origin=>COUNCIL_ORIGINS[origin]),missingProviders:[],
       capabilities:['agent_send','provider_prepare','provider_commit'],
       approvalRequired:true,changedNothing:true};
   }

@@ -311,3 +311,90 @@ test('provider stages fail closed on denial, conversation change and missing loc
     assert.equal(f.state.approvalCount,opts.grant===false?0:1);
   }
 });
+
+
+test('Chat-approved session suppresses per-action approval only for agent_send',async()=>{
+ const f=fixture();
+ let statusEpoch;
+ const sessionAuthorization={
+   status:async epoch=>{statusEpoch=epoch;return {active:true,expiresAt:Date.now()+120000};},
+   require:async identity=>{
+     assert.equal(identity.origin,'https://claude.ai');
+     assert.equal(identity.tabId,9);
+     assert.equal(identity.command,'agent_send');
+     assert.equal(identity.bridgeEpoch,'bridge-epoch-0001');
+     return Date.now()+120000;
+   }
+ };
+ const request={...cmd('agent_send'),bridgeEpoch:'bridge-epoch-0001'};
+ const result=await dispatchMutation(request,f.chromeApi,{
+   approvals:f.approvals,
+   controlGrant:async()=>{throw Error('LEGACY_GRANT_MUST_NOT_BE_USED');},
+   sessionAuthorization,stillEnabled:async()=>true,uuid:()=> 'session-test'
+ });
+ assert.equal(result.sent,true);
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(statusEpoch,'bridge-epoch-0001');
+ assert.deepEqual(f.state.injections,['agent_context','agent_context','agent_send']);
+});
+
+test('Chat-approved session suppresses per-action approval for provider prepare and commit',async()=>{
+ for(const name of ['provider_prepare','provider_commit']) {
+   const f=providerFixture();
+   const sessionAuthorization={
+     status:async epoch=>({active:epoch==='bridge-epoch-0001',expiresAt:Date.now()+120000}),
+     require:async identity=>{
+       assert.equal(identity.origin,'https://claude.ai');
+       assert.equal(identity.tabId,9);
+       assert.equal(identity.command,name);
+       assert.equal(identity.bridgeEpoch,'bridge-epoch-0001');
+       return Date.now()+120000;
+     }
+   };
+   const request={...providerCommand(name),bridgeEpoch:'bridge-epoch-0001'};
+   const result=await dispatchMutation(request,f.chromeApi,{
+     approvals:f.approvals,
+     controlGrant:async()=>{throw Error('LEGACY_GRANT_MUST_NOT_BE_USED');},
+     sessionAuthorization,stillEnabled:async()=>true,uuid:()=> 'session-provider'
+   });
+   assert.equal(name==='provider_prepare'?result.clickedSend===false:result.clickedSend===true,true);
+   assert.equal(f.state.approvalCount,0);
+   assert.deepEqual(f.state.injections,['agent_context','agent_context',name]);
+ }
+});
+
+test('Chat-approved session never authorizes arbitrary browser clicks or fills',async()=>{
+ for(const name of ['browser_click','browser_fill']) {
+   const f=fixture();
+   const sessionAuthorization={
+     status:async()=>({active:true,expiresAt:Date.now()+120000}),
+     require:async()=>{throw Error('SESSION_CAPABILITY_DENIED');}
+   };
+   await assert.rejects(dispatchMutation(cmd(name),f.chromeApi,{
+     approvals:f.approvals,controlGrant:f.controlGrant,sessionAuthorization,
+     stillEnabled:async()=>true,uuid:()=> 'session-no-click'
+   }));
+   assert.equal(f.state.approvalCount,0);
+   assert.equal(f.state.injections.includes(name),false);
+ }
+});
+
+test('Chat-approved session fails closed on wrong epoch, origin, capability or revoked state',async()=>{
+ const cases=[
+   {active:false,reason:'SESSION_EPOCH_MISMATCH'},
+   {active:true,expiresAt:Date.now()+120000,requireError:'SESSION_ORIGIN_DENIED'}
+ ];
+ for(const item of cases) {
+   const f=fixture();
+   const sessionAuthorization={
+     status:async()=>({active:item.active,reason:item.reason,expiresAt:item.expiresAt}),
+     require:async()=>{throw Error(item.requireError||'SESSION_AUTH_REQUIRED');}
+   };
+   await assert.rejects(dispatchMutation({...cmd('agent_send'),bridgeEpoch:'bridge-epoch-0001'},f.chromeApi,{
+     approvals:f.approvals,controlGrant:async()=>null,sessionAuthorization,
+     stillEnabled:async()=>true,uuid:()=> 'session-fail-closed'
+   }));
+   assert.equal(f.state.injections.includes('agent_send'),false);
+   assert.equal(f.state.approvalCount,0);
+ }
+});

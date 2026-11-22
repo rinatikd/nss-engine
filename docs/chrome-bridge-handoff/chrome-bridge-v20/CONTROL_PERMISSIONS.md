@@ -20,3 +20,16 @@ No cookie, password manager, credential-store or session-token API is used. Sens
 
 Vendor DOM selectors can change, especially localized send/stop labels and DeepSeek response markup. Fixture tests cannot validate signed-in live-service compatibility. Replies with nested or reused containers can evade count-based freshness; parallel manual activity in a controlled tab can confuse attribution. Keep controlled tabs dedicated to bridge activity. A bridge outage during an in-flight page action cannot retract a prompt already submitted. Grant state is checked before actions; revocation cannot undo an already-dispatched click. Prompt/response content can contain unrecognized secrets. Local processes able to modify extension code or operate its UI are outside this permission boundary. No global Chrome settings or AutoCAD state are changed.
 
+
+
+## Chat-approved Session Authorization (follow-up implementation)
+
+The council's AI message workflow may use a single explicit owner approval in the ChatGPT conversation at session startup. The server first creates a random, one-use challenge (120-second lifetime) containing the exact configured provider origins, Bridge process epoch, lease duration and fixed capabilities. Challenge creation changes no permissions. Only after the owner approves that exact scope in ChatGPT may the coordinator consume the challenge and create a lease in `chrome.storage.session`.
+
+The lease is bound to the current Bridge epoch and expires after 1, 3 or 4 hours. It authorizes only `agent_send`, `provider_prepare` and `provider_commit` on the exact six council origins. Each dispatch still checks the current tab, exact origin, configured adapter, host permission, conversation identity, expiry and Bridge epoch. The lease does not authorize arbitrary `browser_click`, `browser_fill`, external navigation, credentials, files, GitHub, operating-system commands or Production changes. Those remain outside this grant.
+
+The challenge is created only when all six provider tabs are configured as chat sites, have matching adapters, have Chrome origin permissions and are currently open. A missing provider returns `SESSION_PROVIDERS_NOT_READY`; no partial session is silently authorized. The bootstrap layer must therefore enroll/open and verify all six providers before it asks the owner to approve.
+
+The lease is revoked by explicit session stop/revoke, extension/browser restart (session storage lifetime), or Bridge process epoch change. Service-worker restarts do not extend its expiry. No AI prompt is sent by preparing or approving a session; message dispatch remains a separate orchestrator action. Ambiguous sends remain UNKNOWN and are never automatically retried.
+
+The approval boundary is the trusted ChatGPT host/client workflow: the Bridge challenge itself is not a cryptographic attestation of natural-language user consent. The host must never call `session_authorize` until the owner has explicitly approved the displayed challenge in the current conversation. Do not expose the challenge ID to participant agents or put it in provider prompts.
