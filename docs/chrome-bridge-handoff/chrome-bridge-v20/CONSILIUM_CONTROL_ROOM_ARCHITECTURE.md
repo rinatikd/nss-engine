@@ -85,11 +85,12 @@ The required tests include pre-commit stop, post-commit hazard, revoke-before-co
 
 ## 6. MVP implementation status
 
-A local Node.js MVP prototype is implemented in this branch and tested with 23 automated tests (12 Control Room API/UI tests and 11 event-ledger tests). Coverage includes the two-operator/five-participant credential split, participant-proposed rounds with co-operator-only launch, and participant objection/evidence-gap blocking even after the core pair reaches READY_FOR_OWNER. It contains:
+A local Node.js MVP prototype is implemented in this branch and tested with 28 automated tests (12 Control Room API/UI tests, 11 event-ledger tests and 5 ProviderTransport contract tests). Coverage includes the two-co-operator/five-participant credential split, participant-proposed rounds with co-operator-only launch, participant objection/evidence-gap blocking after the core pair reaches READY_FOR_OWNER, and transport correlation, binding, fencing, UNKNOWN quarantine and epoch revocation. It contains:
 
 - loopback-only Control Room HTTP server and browser UI;
 - distinct owner credential, two independently authenticated co-operator credentials and five independently authenticated expert-participant credentials;
 - participant-proposed rounds with launch restricted to ChatGPT or Claude;
+- versioned ProviderTransport v1 contract defining prepare / commit / query / revoke, binding correlation, fencing tokens, delivery evidence and UNKNOWN quarantine (contract only; no live Bridge adapter is attached);
 - append-only JSONL event ledger, fsync, single-writer lock, hash chain and idempotent request IDs;
 - comments and attributed message records;
 - mandatory ChatGPT + Claude dual review, with equal review/objection rights for all other AI operators, and owner approval for consequential decisions;
@@ -115,6 +116,7 @@ Stop closes future dispatch and increments the orchestration epoch. The UI repor
 - [ ] All discussion events, source commits, artifact hashes, recipient receipts and task transitions are queryable and exportable.
 - [ ] A restart reconstructs the same state from the event ledger; corruption and duplicate request IDs fail closed.
 - [ ] Bridge exposes prepare/commit/stop/status/events with per-tab single-writer and fencing.
+- [ ] A concrete Bridge adapter implements ProviderTransport v1 and passes contract tests against real Bridge fencing and delivery evidence.
 - [ ] Stop race tests prove pre-commit cancellation and correctly classify post-commit hazard.
 - [ ] UNKNOWN remains quarantined; no automatic retry.
 - [ ] Windows Lab E2E proves separate agents, no cross-delivery, source receipt and pause/stop/recovery.
