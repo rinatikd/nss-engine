@@ -179,5 +179,6 @@ test('loadActorTokens configures all seven AI identities as equal operators',()=
  assert.deepEqual(loaded.filter(x=>x.actor.role==='operator').map(x=>x.actor.id).sort(),
   ['chatgpt','claude','deepseek','gemini','grok','kimi','qwen']);
  assert.equal(loaded.find(x=>x.actor.id==='owner').actor.role,'owner');
- assert.doesNotThrow(()=>createControlRoom({dataDir:dir(),tokens:loaded}));
+ const app=createControlRoom({dataDir:dir(),tokens:loaded});
+ app.ledger.close();
 });
