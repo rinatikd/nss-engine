@@ -35,20 +35,20 @@ test('each allowed origin has its own complete adapter', () => {
   // Blank send/stop/reply selectors must fail closed until live calibration.
  }
 });
-test('Grok, Qwen, Kimi and Cursor remain read-only candidates without Control grants or send selectors', () => {
- for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai'], ['kimi','https://www.kimi.ai'], ['cursor','https://cursor.com']]) {
+test('Grok, Qwen and Kimi use the same explicit Control grant semantics as the primary providers', () => {
+ for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai'], ['kimi','https://www.kimi.ai']]) {
   const adapter = DEFAULT_ADAPTERS[key];
   assert.equal(adapter.origin, origin);
-  assert.equal(Object.hasOwn(CONTROL_ORIGINS, origin), false);
-  assert.equal(adapter.send, '');
-  assert.equal(adapter.stop, '');
-  assert.equal(adapter.reply, '');
+  assert.equal(CONTROL_ORIGINS[origin], key);
   const grants = new ControlGrants(() => 100);
   grants.reset('test-instance');
-  assert.throws(() => grants.approve(origin, true), /allowed origin/);
+  grants.approve(origin, true, 240);
+  assert.equal(grants.require(origin), 100 + CONTROL_DURATION_MS[240]);
+  grants.revoke(origin);
   assert.throws(() => grants.require(origin), /Control denied/);
  }
 });
+
 test('injected mutation denies other origins and expired grants before DOM access', async () => {
  globalThis.location = { origin:'https://example.com' };
  assert.match((await pageAction('agent_send',{controlExpires:Date.now()+1000},location.origin)).error,/Control denied/);
