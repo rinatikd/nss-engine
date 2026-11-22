@@ -801,3 +801,25 @@ A read-only agent_peek check did not reveal a completed task response:
 - Grok: its stored bound tab ID no longer exists (No tab with id 1867452532), although a separate Grok conversation tab is visible in agent_list. Rebinding it is a separate controlled action, not performed here.
 
 This confirms the current Lab cannot be described as a functioning multi-agent council. A visible tab, composer selector, empty root page or stale bound ID is not a task assignment, delivery receipt or completed review. No new provider task was sent and no reply was attributed to the current work.
+
+
+## 21. AGPT GasCalc validation — isolated M1a result (2026-11-22)
+
+A separate Draft PR #2 has been opened in AGPT_Plugin: https://github.com/rinatikd/AGPT_Plugin/pull/2.
+
+It hardens the standalone AGPT.Calc.GasCalc input boundary:
+- Reject null/missing room identity, non-finite or non-positive volume/height, invalid opening area/delta volume, temperature at/below absolute zero, invalid opening/fire enums, negative pipe volume, and non-positive/non-finite residual absolute pressure.
+- Reject altitude outside the coded K3 table and invalid K3 mode.
+- Validate gas kind, reference density, normative concentration, injection time and density caps.
+- Validate module catalogue entries (unique names, positive finite fill, non-negative finite residual) and engineer-selected module names.
+- Public K3/Pi/K4/residual-density helpers no longer silently accept invalid enum/range values.
+
+**Evidence:** AGPT GasCalc input validation workflow run 45046706704 completed PASS on .NET SDK 8.0.428. All seven normative golden cases passed within the existing tolerances; the class-A archive case continued to return two engineer-choice candidates; 17 input-validation regression checks passed, including a valid-room finite-Mg result.
+
+**Strict scope boundary:**
+- This validates only the standalone GasCalc source linked by tests/GasCalc.Tests.
+- It does not add GasCalc to main AGPT.csproj, replace either legacy command (AGPT_CALC, AGPT_CALC_DRAW), remove the legacy demo-room fallback, enable the palette calculation buttons or prove AutoCAD 2026/ObjectARX compatibility.
+- The current default Proffex catalogue still has zero placeholder Mб residuals and requires manufacturer documentation; catalogue provenance and actual residual data remain open.
+- No AutoCAD/DWG E2E was performed.
+
+M1 must therefore be tracked as three distinct gates: (a) standalone calculation/input correctness (PR #2), (b) one unified calculation use case integrated into AGPT.dll with explicit XData mapping and no legacy/demo fallback, and (c) verified manufacturer catalogue plus AutoCAD 2026 disposable-DWG E2E. Passing (a) does not imply (b) or (c).
