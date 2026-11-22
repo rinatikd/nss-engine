@@ -114,7 +114,10 @@ export class ProviderJournal {
       this.transactions.set(identity.requestId,{...old,state:'STOPPED_CLEAN',quiescence:clone(data.quiescence),nextEpoch:data.nextEpoch});
     } else if(type==='stop.requested') {
       const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
-      this.transactions.set(identity.requestId,{...old,state:'STOP_REQUESTED'});
+      this.transactions.set(identity.requestId,{...old,state:'STOP_REQUESTED',nextEpoch:data.nextEpoch||null});
+    } else if(type==='stop.after_commit') {
+      const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
+      this.transactions.set(identity.requestId,{...old,state:'STOP_AFTER_COMMIT',nextEpoch:data.nextEpoch||null});
     }
   }
 
@@ -226,7 +229,8 @@ export class ProviderJournal {
     const tx=this.transactions.get(identity.requestId);
     if(!tx)return {state:'NOT_PERFORMED',identity,reasonCode:'REQUEST_NOT_FOUND'};
     if(!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
-    const publicState=tx.state==='PREPARING'?'ACCEPTED':tx.state==='COMMITTING'?'DISPATCHED':tx.state;\n    const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
+    const publicState=tx.state==='PREPARING'?'ACCEPTED':tx.state==='COMMITTING'?'DISPATCHED':tx.state;
+    const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
       ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
       ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
       ...(tx.state==='PREPARED'?{fencingToken:this.#fencingToken(tx)}:{}),
