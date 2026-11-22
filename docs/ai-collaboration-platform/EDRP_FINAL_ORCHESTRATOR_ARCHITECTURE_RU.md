@@ -862,7 +862,7 @@ No Grok message was sent, no site grant was changed, and no local approval was r
 
 | Направление | Артефакт / текущий результат | Подтверждено | Блокирует следующий уровень |
 |---|---|---|---|
-| Consilium / Control Room | NSS Engine PR #131, head ad897fc059defa4d7ac5d16727dcc4cee5b31a7a | Текущие exact-head workflow: Source checks #45031281539, RC1 Control Gates #45031281456, Visual RC #45031281415 — SUCCESS; описаны роли двух операторов и пяти участников | Не развёрнут в Lab; нет подтверждённого runtime раунда, доставки/ответов и receipt correlation |
+| Consilium / Control Room | NSS Engine PR #131, head 7e4c8f7f0c87578ba9c63ca6a52dbde141318657 | Source checks #45052131433 и RC1 Control Gates #45052131455 — SUCCESS; Windows Lab package: 20 files, 41/41 tests, loopback API/role smoke PASS; manifest 692a20e2…; ZIP e7139bee… | Visual RC #45052131480 ещё IN_PROGRESS; пакет не установлен в пользовательский Lab; нет реального раунда, provider receipt или доставки сообщений |
 | Chrome Bridge | NSS Engine PR #132, head 8cfb86d4e21aae9e77406041435b35f0a3561e92 | Source checks #45050999238, RC1 Control Gates #45050999279 и Visual RC #45050999227 — SUCCESS (все три workflow exact-head завершены) | Активный Lab tool registry не показывает session API; active agent_send требует local approval; Gemini/Grok и response selectors не готовы; live Lab deployment не выполнен |
 | EDRP | NSS Engine PR #134, head 575daf7717453948baae26e693b07471708add0c | Source checks #45051028215 — SUCCESS; добавлена единая R4-REL release matrix и Bridge Lab staging remediation | Только архитектурный документ; нет сервиса, SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
 | Free AI Workbench | NSS Engine PR #111, head 9ee6e02fbc6a0796985bc3756cfda5e4e3823323 | Source #45046307182 и CCTV guards #45046307226 — SUCCESS; 17/17 Node tests | Не установлен в целевую папку; Windows/browser E2E и authenticated actor identity отсутствуют; журнал не является EDRP source of truth |
@@ -927,7 +927,7 @@ Gate statuses use only: PASS, PARTIAL, BLOCKED, NOT STARTED. A green source work
 
 | ID | Blocker | Next bounded action | Exit condition |
 |---|---|---|---|
-| R4-B01 | Live Consilium runtime is not established | Restore exact Lab tools/registry and Control Room deployment without provider sends; inspect authenticated operator and participant identity | tools/list and health receipts prove Control Room API; test one non-external round proposal/launch in disposable Lab |
+| R4-B01 | Live Consilium runtime is not established; source package is now validated | Deploy the 20-file package to a separate isolated Lab profile after explicit exact-scope approval; provision synthetic Lab identities only; no provider sends | Live Lab tools/health, authenticated owner + ChatGPT + Claude, one non-external proposed/launched round, and evidence receipt; provider dispatch stays disabled until Bridge G2 |
 | R4-B02 | Bridge session tools absent in active Lab; local-approval contract conflict | Reconcile deployed extension/host versions against PR #132, site allowlist and capabilities; do not widen origins ad hoc | Chat-approved session tools visible; exact Claude preflight and correlated receipt; revoke proven |
 | R4-B03 | Grok binding stale and site approval denied | Fix versioned Lab site registration only after origin policy review | Exact Grok origin approved in Lab, new tab binding and adapter selftest; no provider send before approved |
 | R4-B04 | Workbench target install/browser E2E unknown | Recover bounded read-only status path; do not retry after QUEUE_FULL until queue receipt/capacity is fixed | Target-folder baseline and browser E2E evidence; authenticated actor identity before multi-agent integration |
@@ -994,4 +994,26 @@ PR #132 now contains a separate disposable server package builder:
 The package builder does not start a persistent Lab server, touch the active connector, read the existing Bridge token, alter port/credentials/tunnel, replace a process, or change Production. It proves reproducible source-side package assembly and the MCP registry in an isolated temporary server; it does not deploy the server or make the live Lab tools appear.
 
 **Next G2 work:** finish Visual RC; then capture read-only identity of the actual Lab server/endpoint and stage the package in a separate isolated Lab server profile. Only after that can the ChatGPT MCP connector be pointed at that Lab endpoint under a separately approved, exact-scope action. Verify the live tools/list before any session challenge; no provider message until the exact challenge is presented and owner-approved in this conversation.
+
+### 22.10. Consilium Control Room Lab package — exact Windows CI evidence (2026-11-22)
+
+PR #131 current head: 7e4c8f7f0c87578ba9c63ca6a52dbde141318657.
+
+Exact workflow state:
+- Source checks #45052131433 — SUCCESS, including portable job and Windows consilium-lab-package job.
+- Chrome Bridge RC1 Control Gates #45052131455 — SUCCESS.
+- Chrome Bridge Visual RC #45052131480 — IN_PROGRESS at the latest check.
+
+The Windows package job used PR merge checkout SHA 0870e95e7b95bcc5c53e1014f663023f00187c22 (not the branch head) and staged 20 files while preserving the source-relative layout for Control Room, extension/permissions.js and server/provider-transport-crypto.mjs.
+
+Evidence from the job:
+- Node regression tests: 41/41 PASS.
+- Temporary loopback API smoke: PASS, bind 127.0.0.1, ephemeral port 56991.
+- Eight synthetic identity tokens (owner, ChatGPT, Claude and five expert participants); no real credentials.
+- Verified unauthenticated API rejection, UI/CSP and health; ChatGPT session start; DeepSeek round proposal; participant round-launch/session-control denial; Claude round launch and session control.
+- providerDispatch=false, production=false, realSecrets=false.
+- Package manifest SHA-256: 692a20e208ab6c669f022577bd36551a61859099be2cba45aa4e40a40fb3a521.
+- ZIP SHA-256: e7139bee117b19ce1e41dcfe60ed1abab534bac6e23a952c391c97250659c170.
+
+**Scope boundary:** this is a reproducible package plus temporary in-process API/role smoke on GitHub's Windows runner. It is not an installation on the user's Windows PC, not a persistent Lab service, not a ChatGPT connector target, and not a live provider dispatch test. G1 remains PARTIAL and R4-B01 remains open until the package is staged into a separate authorized Lab environment and the active Control Room endpoint is independently verified. No Production or user-PC state changed.
 
