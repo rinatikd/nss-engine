@@ -8,7 +8,11 @@ test('tool descriptions match the preserved Control allowlist and durations', ()
  assert.deepEqual(Object.keys(CONTROL_ORIGINS).sort(), ['https://chat.deepseek.com', 'https://chat.qwen.ai', 'https://claude.ai', 'https://gemini.google.com', 'https://grok.com', 'https://www.kimi.ai']);
  const description = toolByName('agent_send').description;
  for (const origin of Object.keys(CONTROL_ORIGINS)) assert.ok(description.includes(origin));
- assert.match(description, /explicit local approval \(1, 3 or 4 hours\)/);
+ assert.match(description, /ChatGPT-owner-approved Session Authorization lease/);
+ assert.match(description, /agent_send\/provider_prepare\/provider_commit/);
+ assert.match(description, /browser_click\/browser_fill remain individually approved/);
+ assert.match(toolByName('provider_prepare').description, /Session Authorization lease/);
+ assert.match(toolByName('provider_commit').description, /Session Authorization lease/);
     assert.doesNotMatch(description, /chatgpt\.com|cursor\.com/);
 });
 test('control requires local approval, exact allowed origin and a live epoch; expires and resets', () => {
