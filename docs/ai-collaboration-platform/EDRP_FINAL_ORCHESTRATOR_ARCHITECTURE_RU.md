@@ -864,10 +864,10 @@ No Grok message was sent, no site grant was changed, and no local approval was r
 |---|---|---|---|
 | Consilium / Control Room | NSS Engine PR #131, head 7e4c8f7f0c87578ba9c63ca6a52dbde141318657 | Source checks #45052131433 и RC1 Control Gates #45052131455 — SUCCESS; Windows Lab package: 20 files, 41/41 tests, loopback API/role smoke PASS; manifest 692a20e2…; ZIP e7139bee… | Visual RC #45052131480 — SUCCESS; пакет не установлен в пользовательский Lab; нет реального раунда, provider receipt или доставки сообщений |
 | Chrome Bridge | NSS Engine PR #132, head 8cfb86d4e21aae9e77406041435b35f0a3561e92 | Source checks #45050999238, RC1 Control Gates #45050999279 и Visual RC #45050999227 — SUCCESS (все три workflow exact-head завершены) | Активный Lab tool registry не показывает session API; active agent_send требует local approval; Gemini/Grok и response selectors не готовы; live Lab deployment не выполнен |
-| EDRP | NSS Engine PR #134, head 575daf7717453948baae26e693b07471708add0c | Source checks #45051028215 — SUCCESS; добавлена единая R4-REL release matrix и Bridge Lab staging remediation | Только архитектурный документ; нет сервиса, SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
+| EDRP | NSS Engine PR #134, head 03be171d58da1f6fd4579e16f16b8084f84da397 | Source checks #45052411729 — SUCCESS; §22.2/22.10 закрывают точные статусы Consilium/Bridge | Только архитектурный документ; нет сервиса, SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
 | Free AI Workbench | NSS Engine PR #111, head 9ee6e02fbc6a0796985bc3756cfda5e4e3823323 | Source #45046307182 и CCTV guards #45046307226 — SUCCESS; 17/17 Node tests | Не установлен в целевую папку; Windows/browser E2E и authenticated actor identity отсутствуют; журнал не является EDRP source of truth |
 | PowerShell Direct / WM43 | §20 данного документа и read-only runtime observations | Были отдельные read-only probes; точные неуспехи сохранены ниже | QUEUE_FULL до durable job, APPROVAL_EXPIRED для request 18086, WM43 service/runtime execution mismatch; нет безопасного chat-only proposal-to-execution path |
-| AGPT Palette | AGPT_Plugin PR #1, head da687d2148d23f28b053a3955d76b57b7e2e5d28 | Portable GasCalc workflow #45044651876 — SUCCESS; palette source audit | Нет AutoCAD 2026/ObjectARX build и NETLOAD smoke test; расчётные действия намеренно отключены |
+| AGPT Palette | AGPT_Plugin PR #1, head 3a74df36ac418d1d914d77a1a09d081c8245126c | Source/XData provenance addendum committed; prior portable GasCalc workflow #45044651876 — SUCCESS (standalone only) | Новая doc-only head run не подтверждена; нет AutoCAD 2026/ObjectARX build и NETLOAD smoke; GasCalc не включён в DLL; расчётные действия отключены |
 | AGPT GasCalc | AGPT_Plugin PR #2, head aa2cd4a0293c1f3a8f1bd43f8625b50df4eb30e1 | .NET 8 workflow #45046706704 и #45046804152 — SUCCESS; 7 normative golden cases и 17 validation checks | Не включён в основной AGPT.csproj; legacy/demo calculation paths не удалены; каталог Mб требует данных производителя |
 
 Все перечисленные PR на дату среза остаются Draft/open. Успешный CI относится только к указанному commit и workflow; он не заменяет target-PC E2E, deployment или owner acceptance.
@@ -1016,4 +1016,19 @@ Evidence from the job:
 - ZIP SHA-256: e7139bee117b19ce1e41dcfe60ed1abab534bac6e23a952c391c97250659c170.
 
 **Scope boundary:** this is a reproducible package plus temporary in-process API/role smoke on GitHub's Windows runner. It is not an installation on the user's Windows PC, not a persistent Lab service, not a ChatGPT connector target, and not a live provider dispatch test. G1 remains PARTIAL and R4-B01 remains open until the package is staged into a separate authorized Lab environment and the active Control Room endpoint is independently verified. No Production or user-PC state changed.
+
+### 22.11. AGPT M1 — проверенная карта XData и fail-closed пробелы (2026-11-22)
+
+PR #1 текущий head: AGPT_Plugin `3a74df36ac418d1d914d77a1a09d081c8245126c`; в `docs/M1_GASCALC_INTEGRATION_CONTRACT_RU.md` добавлен source-backed audit addendum. Проверены blob SHA AGPT.csproj, Stage3, AGPT_Plugin_Drawings и GasCalc.
+
+**Подтверждённая картина:**
+- `AGPT_ZONE` запрашивает контур/единицы, H с default 2.4 м, имя и FH с default 0.011 м²; сохраняет GUID/ZONE_NAME/S/VP/H/FH/CN/RHO0/GOTV/INSTALL_TYPE/UNITS. Поля TM, FireKind, OpeningsPosition, DeltaVolume, Project altitude/K3, Vтр, PResidualAbsMpa не вводятся этим workflow.
+- `AGPT_CALC` читает VP/H/FH/CN/RHO0 и использует legacy MassCalc/KsidCalc.
+- `Collect.FromModel` использует второй legacy path и defaults H=3, TM=25, K4=1.05, VTR=0.005, RHO0=7.28, CN=7.2, GOTV='Хладон 227еа'. Эти значения не являются подтверждённым вводом, а могут различаться от defaults AGPT_ZONE.
+- `AGPT_PIPE` хранит геометрию сегмента L/DY и нулевые DP/Q/V_FLOW; валидированный агрегатный Vтр и абсолютное остаточное давление не вычисляются/не записываются.
+- GasCalc PR #2 validation защищает числовые диапазоны/enum/catalogue structure, но default POCO values могут пройти validation без подтверждённого ввода. При null остаточном давлении и PipeVolume>0 standalone Compute выдаёт Mтр=0 с warning, не блокируя CalcResult; DefaultCatalog имеет ResidualKg=0.0.
+
+**Release effect:** AGPT M1 remains BLOCKED at input-provenance boundary. Required next deliverable is a provenance-aware adapter/validator that distinguishes ENTERED / IMPORTED_VERIFIED / PROJECT_SETTING / MANUFACTURER_DATASHEET from MISSING / UNCONFIRMED, requires residual absolute pressure whenever Vтр>0, rejects unverified module residuals/catalogues, and refuses to produce a release-ready result when a mandatory value is absent. Numeric legacy K4 must never be cast/mapped to FireKind.
+
+Do not enable calculation UI, redirect either legacy command, or modify DWG output until unified calculation-service, validated mapping tests, approved manufacturer catalog and AutoCAD 2026 disposable-DWG E2E exist.
 
