@@ -3,7 +3,7 @@
 **Status:** Draft architecture + local MVP prototype; not deployed.  
 **Base:** Chrome Bridge Lab branch `feat/ai-consilium-six-provider-discovery-20261122`.  
 **Kimi input:** owner-provided `[CB-ORCH][R2] Cross-Review Report`, dated 2026-11-21.  
-**Operators:** ChatGPT and Claude, permanent co-operators with equal operational capabilities.
+**Operators:** all seven AI accounts — ChatGPT, Claude, DeepSeek, Qwen, Kimi, Grok and Gemini — have equal operational rights. ChatGPT and Claude form the mandatory core review pair.
 
 ## 1. Why this is separate from the Bridge
 
@@ -17,20 +17,20 @@ Kimi's review says a separate Hub runtime is not justified merely for architectu
 
 ## 2. Co-operator and owner model
 
-ChatGPT and Claude are both operators, not a manager/subordinate pair. Both have independently authenticated identities and equal operational capabilities:
+All seven AI accounts are operators with the same capabilities and independently authenticated identities. ChatGPT and Claude are also the mandatory core review pair (not a manager/subordinate pair):
 
 - start, pause, resume and request-stop for a council session;
 - create tasks from accepted decisions;
 - propose decisions and counter-proposals;
-- review each other's proposals;
-- assign and update tasks;
+- review any proposal and record SUPPORT / OBJECT / NEEDS_EVIDENCE;
+- assign and update any task;
 - inspect the complete event journal, source snapshots, artifacts, evidence and unresolved disagreements.
 
 Neither operator can impersonate the other by passing an `actor` field. Identity comes from a distinct authenticated credential or trusted host assertion.
 
 The user remains the owner and final authority for consequential changes: Production, credentials, provider grants, allowlists, merge, release and irreversible environment changes. The owner approves consequential decisions after both operators have reviewed them. Routine, reversible decisions can be accepted only after both operators independently record SUPPORT. A single operator cannot approve alone.
 
-Future additional operators use the same authentication and capability model; no provider-brand-based trust tiers.
+No AI provider is assigned a weaker permission tier. The two core reviews (ChatGPT + Claude) are mandatory for acceptance; any additional operator objection or evidence-gap verdict blocks acceptance until resolved.
 
 ## 3. Transparency contract
 
@@ -85,10 +85,10 @@ The required tests include pre-commit stop, post-commit hazard, revoke-before-co
 A local Node.js MVP prototype was implemented separately and tested with 12 automated tests. It contains:
 
 - loopback-only Control Room HTTP server and browser UI;
-- distinct owner, ChatGPT operator and Claude operator credentials;
+- distinct owner credential and seven independently authenticated, equal AI operator credentials;
 - append-only JSONL event ledger, fsync, single-writer lock, hash chain and idempotent request IDs;
 - comments and attributed message records;
-- two-operator decision review and owner approval for consequential decisions;
+- mandatory ChatGPT + Claude dual review, with equal review/objection rights for all other AI operators, and owner approval for consequential decisions;
 - task state model and verified-evidence requirement;
 - artifact manifest plus per-recipient receipt events;
 - explicit STOP_REQUESTED semantics.
@@ -103,8 +103,9 @@ Stop closes future dispatch and increments the orchestration epoch. The UI repor
 
 ## 8. Acceptance gates before local Lab rollout
 
-- [ ] ChatGPT and Claude can independently authenticate as co-operators; owner identity is separate.
-- [ ] Both operators can comment, propose and cross-review; one operator cannot approve alone.
+- [ ] All seven AI accounts independently authenticate with equal operator capabilities; owner identity is separate.
+- [ ] ChatGPT and Claude both record mandatory independent reviews; other AI operators can review and their objections block acceptance.
+- [ ] No single AI operator can accept a decision alone; consequential decisions require owner approval.
 - [ ] Owner approval is required for consequential decisions.
 - [ ] All discussion events, source commits, artifact hashes, recipient receipts and task transitions are queryable and exportable.
 - [ ] A restart reconstructs the same state from the event ledger; corruption and duplicate request IDs fail closed.
