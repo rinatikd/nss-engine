@@ -178,18 +178,22 @@ export function projectEvents(events) {
     const p = event.payload;
     switch (event.type) {
       case 'session.started':
+        if (!['owner', 'operator'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_CO_OPERATOR');
         if (!['IDLE', 'STOPPED'].includes(state.session.status)) throw Error('SESSION_ALREADY_ACTIVE');
         state.session = { status: 'RUNNING', id: p.sessionId, title: p.title, epoch: state.session.epoch + 1 };
         break;
       case 'session.paused':
+        if (!['owner', 'operator'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_CO_OPERATOR');
         if (state.session.status !== 'RUNNING') throw Error('SESSION_NOT_RUNNING');
         state.session.status = 'PAUSED';
         break;
       case 'session.resumed':
+        if (!['owner', 'operator'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_CO_OPERATOR');
         if (state.session.status !== 'PAUSED') throw Error('SESSION_NOT_PAUSED');
         state.session.status = 'RUNNING';
         break;
       case 'session.stop_requested':
+        if (!['owner', 'operator'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_CO_OPERATOR');
         if (!['RUNNING', 'PAUSED'].includes(state.session.status)) throw Error('SESSION_NOT_ACTIVE');
         state.session.status = 'STOP_REQUESTED';
         state.session.epoch++;
