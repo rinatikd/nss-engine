@@ -1,5 +1,5 @@
-import crypto from 'node:crypto';
 import { ProviderTransport, PROVIDER_TRANSPORT_V1 } from './provider-transport-v1.mjs';
+import { deriveProviderJournalKey, verifyQuiescence } from '../../server/provider-transport-crypto.mjs';
 
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{2,80}$/;
@@ -53,34 +53,9 @@ function rpcResult(payload) {
   catch { throw new ChromeBridgeAdapterError('BRIDGE_TOOL_RESPONSE_INVALID', { ambiguous: true }); }
 }
 
-function canonicalQuiescence(proof, identity) {
-  return JSON.stringify({
-    purpose: 'chrome-bridge/provider-quiescence/v1',
-    requestId: identity.requestId,
-    taskId: identity.taskId,
-    providerId: identity.providerId,
-    tabId: identity.tabId,
-    origin: identity.origin,
-    conversationId: identity.conversationId,
-    epoch: proof.epoch,
-    nextEpoch: proof.nextEpoch,
-    unresolved: proof.unresolved,
-    outstandingPrepared: proof.outstandingPrepared,
-    attestationId: proof.attestationId
-  });
-}
-
 export function createQuiescenceVerifier(agentToken) {
-  const token = requiredToken(agentToken);
-  const key = crypto.createHmac('sha256', 'chrome-bridge/provider-journal/v1')
-    .update(token, 'utf8').digest();
-  return async (proof, identity) => {
-    if (!proof || typeof proof.signature !== 'string' || !/^[a-f0-9]{64}$/.test(proof.signature)) return false;
-    const expected = crypto.createHmac('sha256', key)
-      .update(canonicalQuiescence(proof, identity), 'utf8').digest();
-    const supplied = Buffer.from(proof.signature, 'hex');
-    return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
-  };
+  const key = deriveProviderJournalKey(requiredToken(agentToken));
+  return async (proof, identity) => verifyQuiescence(proof, identity, key);
 }
 
 /**
