@@ -1,9 +1,10 @@
+import crypto from 'node:crypto';
 import { CONTROL_ORIGINS } from '../../extension/permissions.js';
 
 export const PROVIDER_TRANSPORT_V1 = 'consilium.provider-transport/v1';
 export const SEND_STATES = Object.freeze([
   'ACCEPTED', 'PREPARED', 'DISPATCHED', 'SENT', 'DELIVERED', 'REPLIED', 'VERIFIED',
-  'UNKNOWN', 'NOT_PERFORMED', 'BLOCKED', 'STOP_REQUESTED', 'STOPPED_CLEAN', 'STOP_AFTER_COMMIT'
+  'UNKNOWN', 'NOT_PERFORMED', 'BLOCKED', 'STOP_REQUESTED', 'STOPPED_CLEAN', 'STOP_AFTER_COMMIT', 'REVOKED'
 ]);
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -40,6 +41,7 @@ export function validateTransportIdentity(input) {
 function validateState(result, expected, allowed) {
   if (!result || typeof result !== 'object' || !allowed.includes(result.state)) throw new TransportContractError('TRANSPORT_STATE_INVALID');
   if (!result.identity || !equalIdentity(result.identity, expected)) throw new TransportContractError('TRANSPORT_IDENTITY_MISMATCH');
+  if (result.state === 'UNKNOWN') requiredString(result.quarantineId, 'UNKNOWN_QUARANTINE_ID_REQUIRED', 128);
   return result;
 }
 
@@ -48,7 +50,7 @@ export class ProviderTransport {
     if (!adapter || adapter.version !== PROVIDER_TRANSPORT_V1) throw new TransportContractError('TRANSPORT_VERSION_UNSUPPORTED');
     if (typeof verifyQuiescence !== 'function') throw new TransportContractError('QUIESCENCE_VERIFIER_REQUIRED');
     this.verifyQuiescence = verifyQuiescence;
-    for (const method of ['prepare', 'commit', 'status', 'stop', 'events']) {
+    for (const method of ['prepare', 'commit', 'status', 'stop', 'revoke', 'events']) {
       if (typeof adapter[method] !== 'function') throw new TransportContractError('TRANSPORT_METHOD_MISSING_' + method.toUpperCase());
     }
     this.adapter = adapter;
@@ -59,11 +61,14 @@ export class ProviderTransport {
     requiredString(input.message, 'MESSAGE_REQUIRED', 100000);
     const payloadHash = requiredString(input.payloadHash, 'PAYLOAD_HASH_REQUIRED', 64);
     if (!SHA256.test(payloadHash)) throw new TransportContractError('PAYLOAD_HASH_INVALID');
+    if (crypto.createHash('sha256').update(input.message, 'utf8').digest('hex') !== payloadHash) throw new TransportContractError('PAYLOAD_HASH_MISMATCH');
     const result = await this.adapter.prepare({ ...identity, message: input.message, payloadHash });
     validateState(result, identity, ['PREPARED', 'BLOCKED', 'NOT_PERFORMED', 'UNKNOWN']);
     if (result.state === 'PREPARED') {
       requiredString(result.preparedId, 'PREPARED_ID_REQUIRED', 128);
       requiredString(result.fencingToken, 'FENCING_TOKEN_REQUIRED', 512);
+      const expiresAt = Date.parse(result.expiresAt || '');
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new TransportContractError('PREPARE_EXPIRY_INVALID');
       if (result.sideEffect !== 'composer-filled-no-send') throw new TransportContractError('PREPARE_SIDE_EFFECT_INVALID');
       if (result.clickedSend === true) throw new TransportContractError('PREPARE_MUST_NOT_CLICK_SEND');
     }
@@ -103,6 +108,16 @@ export class ProviderTransport {
           await this.verifyQuiescence(proof, identity) !== true) {
         throw new TransportContractError('STOP_QUIESCENCE_ATTESTATION_INVALID');
       }
+    }
+    return result;
+  }
+
+  async revoke(input) {
+    const identity = validateTransportIdentity(input);
+    const result = await this.adapter.revoke(identity);
+    if (!result || result.state !== 'REVOKED' || !result.identity || !equalIdentity(result.identity, identity) ||
+        !Number.isSafeInteger(result.nextEpoch) || result.nextEpoch <= identity.epoch) {
+      throw new TransportContractError('FENCING_REVOKE_ATTESTATION_INVALID');
     }
     return result;
   }
