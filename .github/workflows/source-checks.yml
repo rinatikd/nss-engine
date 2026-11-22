@@ -13,3 +13,9 @@ jobs:
       - run: python -m pip install -r requirements-test.txt
       - run: python tools/repo_guard.py --tree HEAD
       - run: python tools/run_portable_checks.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tools/free-ai-workbench/tests/ledger.test.mjs tools/free-ai-workbench/tests/viewer.test.mjs
+      - run: node --check tools/free-ai-workbench/ui/viewer.mjs
+      - run: node --check tools/free-ai-workbench/ui/app.mjs

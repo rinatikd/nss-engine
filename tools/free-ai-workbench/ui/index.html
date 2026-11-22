@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Free AI Workbench — Offline Viewer</title>
+  <link rel="stylesheet" href="./viewer.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">FREE AI WORKBENCH · P0.1</p>
+        <h1>Журнал инженерных задач</h1>
+        <p class="subtitle">Офлайн-просмотр. Без отправки агентам и без исполнения операций.</p>
+      </div>
+      <div class="status" id="integrity" data-state="empty">Журнал не загружен</div>
+    </header>
+
+    <section class="import-panel" aria-labelledby="import-title">
+      <div>
+        <h2 id="import-title">Открыть журнал</h2>
+        <p>Выбери локальный JSONL-файл. Максимум 4 МБ. Файл читается только в этой вкладке.</p>
+      </div>
+      <label class="file-button">
+        <input id="ledgerFile" type="file" accept=".jsonl,.json,.txt,application/json,text/plain">
+        <span>Выбрать JSONL</span>
+      </label>
+      <div class="file-meta" id="fileMeta">Файл не выбран</div>
+      <div class="error" id="error" role="alert" hidden></div>
+    </section>
+
+    <section class="stats" aria-label="Сводка">
+      <article><span>Всего задач</span><strong id="statTotal">—</strong></article>
+      <article><span>В работе</span><strong id="statActive">—</strong></article>
+      <article><span>На проверке</span><strong id="statReview">—</strong></article>
+      <article><span>Принято</span><strong id="statAccepted">—</strong></article>
+      <article><span>Отклонено</span><strong id="statRejected">—</strong></article>
+    </section>
+
+    <section class="task-panel">
+      <div class="toolbar">
+        <div>
+          <h2>Задачи</h2>
+          <p id="eventSummary">Загрузи журнал, чтобы увидеть его содержимое.</p>
+        </div>
+        <div class="filters">
+          <input id="search" type="search" placeholder="Поиск по задаче…" aria-label="Поиск по задаче" disabled>
+          <select id="stateFilter" aria-label="Фильтр по статусу" disabled>
+            <option value="ALL">Все статусы</option>
+            <option value="QUEUED">В очереди</option>
+            <option value="ASSIGNED">Назначено</option>
+            <option value="IN_REVIEW">На проверке</option>
+            <option value="ACCEPTED">Принято</option>
+            <option value="REJECTED">Отклонено</option>
+          </select>
+        </div>
+      </div>
+      <div class="empty" id="empty">Нет загруженного журнала.</div>
+      <div class="task-list" id="taskList"></div>
+    </section>
+
+    <footer>
+      <span>Offline Viewer · read-only</span>
+      <span>Роли и авторство событий не аутентифицированы</span>
+    </footer>
+  </main>
+</body>
+</html>
