@@ -862,7 +862,7 @@ No Grok message was sent, no site grant was changed, and no local approval was r
 
 | Направление | Артефакт / текущий результат | Подтверждено | Блокирует следующий уровень |
 |---|---|---|---|
-| Consilium / Control Room | NSS Engine PR #131, head 7e4c8f7f0c87578ba9c63ca6a52dbde141318657 | Source checks #45052131433 и RC1 Control Gates #45052131455 — SUCCESS; Windows Lab package: 20 files, 41/41 tests, loopback API/role smoke PASS; manifest 692a20e2…; ZIP e7139bee… | Visual RC #45052131480 ещё IN_PROGRESS; пакет не установлен в пользовательский Lab; нет реального раунда, provider receipt или доставки сообщений |
+| Consilium / Control Room | NSS Engine PR #131, head 7e4c8f7f0c87578ba9c63ca6a52dbde141318657 | Source checks #45052131433 и RC1 Control Gates #45052131455 — SUCCESS; Windows Lab package: 20 files, 41/41 tests, loopback API/role smoke PASS; manifest 692a20e2…; ZIP e7139bee… | Visual RC #45052131480 — SUCCESS; пакет не установлен в пользовательский Lab; нет реального раунда, provider receipt или доставки сообщений |
 | Chrome Bridge | NSS Engine PR #132, head 8cfb86d4e21aae9e77406041435b35f0a3561e92 | Source checks #45050999238, RC1 Control Gates #45050999279 и Visual RC #45050999227 — SUCCESS (все три workflow exact-head завершены) | Активный Lab tool registry не показывает session API; active agent_send требует local approval; Gemini/Grok и response selectors не готовы; live Lab deployment не выполнен |
 | EDRP | NSS Engine PR #134, head 575daf7717453948baae26e693b07471708add0c | Source checks #45051028215 — SUCCESS; добавлена единая R4-REL release matrix и Bridge Lab staging remediation | Только архитектурный документ; нет сервиса, SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
 | Free AI Workbench | NSS Engine PR #111, head 9ee6e02fbc6a0796985bc3756cfda5e4e3823323 | Source #45046307182 и CCTV guards #45046307226 — SUCCESS; 17/17 Node tests | Не установлен в целевую папку; Windows/browser E2E и authenticated actor identity отсутствуют; журнал не является EDRP source of truth |
@@ -1002,7 +1002,7 @@ PR #131 current head: 7e4c8f7f0c87578ba9c63ca6a52dbde141318657.
 Exact workflow state:
 - Source checks #45052131433 — SUCCESS, including portable job and Windows consilium-lab-package job.
 - Chrome Bridge RC1 Control Gates #45052131455 — SUCCESS.
-- Chrome Bridge Visual RC #45052131480 — IN_PROGRESS at the latest check.
+- Chrome Bridge Visual RC #45052131480 — SUCCESS; node-unit and windows-powershell51 jobs both passed.
 
 The Windows package job used PR merge checkout SHA 0870e95e7b95bcc5c53e1014f663023f00187c22 (not the branch head) and staged 20 files while preserving the source-relative layout for Control Room, extension/permissions.js and server/provider-transport-crypto.mjs.
 
