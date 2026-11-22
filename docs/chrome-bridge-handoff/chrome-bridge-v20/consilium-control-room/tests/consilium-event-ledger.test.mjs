@@ -101,3 +101,22 @@ test('operator can revise a NEEDS_EVIDENCE verdict with a linked immutable revie
  assert.equal(decision.reviewHistory[0].verdict,'NEEDS_EVIDENCE');
  ledger.close();
 });
+
+test('any additional operator objection or evidence gap blocks the dual-review gate until revised',()=>{
+ const ledger=new EventLedger(temp());
+ ledger.append({type:'decision.proposed',actor:chatgpt,payload:{decisionId:'decision_blockers_01',title:'Transport contract',rationale:'Require independent evidence',risk:'consequential'}});
+ ledger.append({type:'decision.reviewed',actor:chatgpt,payload:{decisionId:'decision_blockers_01',verdict:'SUPPORT',rationale:'Core operator one supports'}});
+ ledger.append({type:'decision.reviewed',actor:claude,payload:{decisionId:'decision_blockers_01',verdict:'SUPPORT',rationale:'Core operator two supports'}});
+ assert.equal(ledger.snapshot().state.decisions[0].status,'READY_FOR_OWNER');
+ const objection=ledger.append({type:'decision.reviewed',actor:kimi,payload:{decisionId:'decision_blockers_01',verdict:'OBJECT',rationale:'The evidence does not establish safe stop semantics'}});
+ assert.equal(ledger.snapshot().state.decisions[0].status,'DISPUTED');
+ assert.throws(()=>ledger.append({type:'decision.owner_approved',actor:owner,payload:{decisionId:'decision_blockers_01'}}),/DECISION_NOT_READY_FOR_OWNER/);
+ const evidenceGap=ledger.append({type:'decision.reviewed',actor:kimi,payload:{decisionId:'decision_blockers_01',verdict:'NEEDS_EVIDENCE',rationale:'Need a reproducible stop-race trace',revisionOf:objection.id}});
+ assert.equal(ledger.snapshot().state.decisions[0].status,'NEEDS_EVIDENCE');
+ const support=ledger.append({type:'decision.reviewed',actor:kimi,payload:{decisionId:'decision_blockers_01',verdict:'SUPPORT',rationale:'The trace resolves the objection',evidence:['artifact:stop-race-trace'],revisionOf:evidenceGap.id}});
+ assert.equal(ledger.snapshot().state.decisions[0].status,'READY_FOR_OWNER');
+ ledger.append({type:'decision.owner_approved',actor:owner,payload:{decisionId:'decision_blockers_01'}});
+ assert.equal(ledger.snapshot().state.decisions[0].status,'ACCEPTED');
+ assert.equal(ledger.snapshot().state.decisions[0].reviewHistory.length,2);
+ ledger.close();
+});
