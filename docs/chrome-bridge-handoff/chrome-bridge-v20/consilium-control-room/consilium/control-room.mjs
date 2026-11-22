@@ -11,11 +11,11 @@ const ACTOR_TOKENS = [
   ['CONSILIUM_OWNER_TOKEN', { id: 'owner', role: 'owner' }],
   ['CONSILIUM_CHATGPT_TOKEN', { id: 'chatgpt', role: 'operator' }],
   ['CONSILIUM_CLAUDE_TOKEN', { id: 'claude', role: 'operator' }],
-  ['CONSILIUM_DEEPSEEK_TOKEN', { id: 'deepseek', role: 'participant' }],
-  ['CONSILIUM_QWEN_TOKEN', { id: 'qwen', role: 'participant' }],
-  ['CONSILIUM_KIMI_TOKEN', { id: 'kimi', role: 'participant' }],
-  ['CONSILIUM_GROK_TOKEN', { id: 'grok', role: 'participant' }],
-  ['CONSILIUM_GEMINI_TOKEN', { id: 'gemini', role: 'participant' }]
+  ['CONSILIUM_DEEPSEEK_TOKEN', { id: 'deepseek', role: 'operator' }],
+  ['CONSILIUM_QWEN_TOKEN', { id: 'qwen', role: 'operator' }],
+  ['CONSILIUM_KIMI_TOKEN', { id: 'kimi', role: 'operator' }],
+  ['CONSILIUM_GROK_TOKEN', { id: 'grok', role: 'operator' }],
+  ['CONSILIUM_GEMINI_TOKEN', { id: 'gemini', role: 'operator' }]
 ];
 const TOKEN_MIN = 32;
 const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'operator', qwen: 'operator', kimi: 'operator', grok: 'operator', gemini: 'operator' };
