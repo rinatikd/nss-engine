@@ -637,3 +637,90 @@ The proposal endpoint itself must be non-mutating: it may stage a request record
 - Resume local Lab staging only when the whole proposal → ChatGPT approval → exact execute → evidence receipt flow is available and verified.
 
 This is not merely a UX preference: if a supposedly chat-approved workflow silently requires a second, unavailable local approval, the automation is not autonomous within the agreed operating policy.
+
+
+## 19. Grok R1 adversarial cross-review — disposition and proof obligations
+
+**Evidence provenance:** a substantive reply was recovered from the pre-existing Grok conversation on 2026-11-22 and recorded in PR discussion. It was not a new Bridge dispatch in this session. The findings below are adversarial review inputs, not accepted facts about an implementation. Each item must be checked against the pinned source SHA and runtime evidence.
+
+| Grok finding | Disposition | Required architectural control | Proof / acceptance gate |
+|---|---|---|---|
+| Competing Bootstrap, Supervisor and Watchdog loops | ACCEPT | One lifecycle owner per resource. SCM owns the Supervisor process; Bootstrap is recovery-only. A controller cannot restart a resource owned by another controller. | W04/W05 restart and owner-lease tests; demonstrate only one Supervisor writer after repeated crashes. |
+| Job Objects confused with Windows Service ownership | ACCEPT WITH CLARIFICATION | SCM manages the service process. Job Objects group bounded worker descendants and enforce limits/termination; they do not replace SCM or supervise system services. | W04 and worker-tree termination test; verify process identity and child membership. |
+| GitHub as durable journal for MVP | PARTIAL | GitHub can be a durable review/evidence mirror and collaboration surface. It is not the local runtime's transactional source of truth, an approval authority, or proof that a provider received a message. SQLite state + transactional outbox remain authoritative for local EDRP operations. | Reconcile Git mirror after offline/reconnect; prove operationId, requestId, event sequence and content hash survive replay without duplicate side effects. |
+| Exactly-once delivery through DOM automation | REJECT AS A GUARANTEE | DOM send is an external side effect with an ambiguous click/ACK window. The system may provide idempotent admission and at-most-one commit attempt under a fencing token, but cannot promise exactly-once provider delivery. | Inject lost ACK before/after click; result must become UNKNOWN and quarantine; never retry with a new ID. |
+| Parallel browser operations without per-tab fencing | ACCEPT | Exactly one mutation lane per tab/conversation. Bind to providerId + origin + tabId + conversationId + Bridge epoch. Queue ownership and fencing are transport responsibilities. | Two simultaneous prepare/commit requests against the same tab; one must be serialized or rejected. Rebind/navigation must invalidate the old token. |
+| STOP/REVOKE can race an in-flight DOM action | ACCEPT; STRENGTHEN | Distinguish STOP_REQUESTED, STOP_AFTER_COMMIT, UNKNOWN and STOPPED_CLEAN. STOPPED_CLEAN is permitted only after the in-flight lane is drained or the page action is independently reconciled; a timeout is not a clean stop. Revoke fences future commit attempts but does not undo a click already made. | Stop before prepare, between prepare and commit, during commit, after click before ACK, and on disconnect. Persist the exact terminal/ambiguous state. |
+| Replies can be misattributed to a request | ACCEPT | A changed chat DOM or a completed assistant response alone is not a delivery receipt. Track pre-send baseline, conversation binding, request/task ID, commit evidence and response evidence separately. If provider UI exposes no trustworthy correlation, attribution stays UNVERIFIED. | Existing-chat stale tail, two adjacent requests, navigation, regeneration, interrupted output, and late response tests. |
+| Duplicate coordinators can issue conflicting work | ACCEPT | One authoritative orchestrator writer/leader lease, persisted epoch, idempotent command admission and resource-level locks. ChatGPT and Claude remain equal co-operators but do not create two independent execution queues. | Start two coordinator processes against one store; only one lease-holder may advance a mutable operation. |
+| GitHub comment/commit can be mistaken for provider ACK | ACCEPT | GitHub receipts prove only the GitHub operation. A Bridge provider receipt must name the exact requestId, provider, origin, tab/conversation, payload hash, commit state and evidence timestamp. | Deliberately post a PR comment without Bridge dispatch; no provider state may transition to SENT/DELIVERED/REPLIED. |
+| Agent output can inject tool instructions | ACCEPT | All model replies, repository text, documentation and tool output are untrusted data. They cannot change role, policy, capability grants, approval state, target allowlists or operation parameters without a separately validated owner-authorized action. | Prompt-injection corpus in comments, code and model replies; no implicit tool call or capability change. |
+| Navigation/restart loses correlation | ACCEPT | Increment epoch on Bridge restart/revoke/unbind/rebind and invalidate old prepare/fencing tokens. Re-read current URL and conversation identity before commit. A request surviving process restart must be recovered as UNKNOWN unless durable evidence proves a safe state. | Extension restart, Bridge restart, SPA conversation change, tab close/reopen and stale token tests. |
+| UNKNOWN lacks durable quarantine | ACCEPT | Persist UNKNOWN as a terminal hold state with operation identity, payload hash, last known stage, timeout/ACK evidence and a read-only reconciliation path. A human or reconciler may resolve it only with new evidence; never auto-resubmit. | Crash after click with lost ACK; after restart the same requestId returns UNKNOWN/quarantined and a second commit is refused. |
+
+**Architecture outcome:** the review does not justify a new always-on Hub process. It strengthens the existing separation: EDRP/Consilium owns task and decision state; one Supervisor owns local execution state; Bridge owns provider transport and per-tab fencing; Workbench is only the user-facing client/projection. ChatGPT and Claude remain equal co-operators, while the owner retains final authority over consequential changes.
+
+## 20. Chat-only approval protocol for PowerShell Direct and Windows Maintenance
+
+This protocol closes the specific gap recorded in §18. It is a target contract, **not a claim that the current Windows services already implement it**.
+
+### 20.1. Typed proposal envelope
+
+A chat-originated proposal must be registered without changing the target resource. The canonical proposal contains:
+
+- requestId and operationId (stable, unique, idempotent);
+- authenticated proposerId and role from the trusted host, never from a caller-supplied actor string;
+- operationType from a closed allowlist (for example replace-file, restore-file, git-fast-forward, diagnostic-read);
+- environmentId (LAB or an exact named workspace), resource scope and canonical target path;
+- allowedRoot, current file/repository preconditions and oldSha256;
+- sourceArtifact identity, provenance, newSha256 and immutable content/source reference where relevant;
+- human-readable effect summary, expected downtime/impact, rollback plan and backup identity;
+- expiry, risk class, and a canonical proposalDigest covering every field that affects the effect.
+
+Registration may write only a pending proposal record in the approval service. It must not write the target file, launch a process, edit Git, click a browser button, change a port, or alter an allowlist.
+
+### 20.2. Owner approval and exact execution
+
+1. The proposal registrar validates schema, allowlist, exact environment, path containment, current hash and source hash. It returns a pending proposal plus a canonical digest.
+2. The host presents the exact digest, target, old/new hashes, effect and rollback summary in the current ChatGPT conversation.
+3. The owner approves or rejects that exact proposal in the ChatGPT host UI. Natural-language agreement without a matching pending digest must not authorize execution.
+4. The execute handler accepts only the exact requestId + operationId + proposalDigest + target + oldSha256 + newSha256, while unexpired and unused.
+5. The executor applies once, reads back the target and independently verifies the resulting hash. It records a receipt bound to the proposal digest and execution identity.
+6. A mismatch, timeout, disconnect, queue overflow or ambiguous write becomes FAILED/UNKNOWN as appropriate and blocks a second execution until read-only reconciliation.
+
+State model:
+
+PROPOSED → VALIDATED → AWAITING_CHAT_APPROVAL → APPROVED → APPLYING → VERIFIED
+
+Terminal or hold states: REJECTED, EXPIRED, FAILED, UNKNOWN, BLOCKED. The same requestId with the same digest is a read-only idempotent lookup; the same requestId with a different digest is rejected as IDEMPOTENCY_CONFLICT.
+
+### 20.3. Required tool split
+
+- operation_propose_chat: non-mutating registration of the exact typed proposal; permitted through the ChatGPT host approval channel only.
+- operation_status_chat: read-only lookup by exact requestId.
+- operation_execute_chat_approved: mutating action that requires the host's explicit approval and exact digest/hash match; one use only.
+- operation_reconcile_chat: read-only verification of target state, receipt and rollback state.
+- operation_cancel_chat: revokes an unused pending proposal; it cannot claim to undo an in-flight operation.
+
+The current Windows Maintenance maintenance_execute_chat_approved is only the last execution stage and still depends on a pending operation created through the local-approval proposal path. The required correction is to expose a non-mutating chat proposal-registration route or change the proposal handlers so the ChatGPT host can approve their exact proposal. Do not relax the hash preconditions or silently accept local approval as a fallback.
+
+PowerShell Direct's current ChatGPT-approved read-only diagnostic surface remains pinned to its fixed task enum. Do not turn it into a free-form PowerShell endpoint. Any future mutation handler must use the same proposal envelope and exact chat approval contract.
+
+### 20.4. Acceptance matrix
+
+| ID | Test | Required outcome |
+|---|---|---|
+| A01 | Register valid proposal from ChatGPT | Pending record only; target hash unchanged |
+| A02 | Submit caller-forged actor/role | Rejected; trusted host identity is authoritative |
+| A03 | Path escapes allowedRoot or environment is not LAB | Rejected before approval |
+| A04 | Old hash changed after proposal | Execute blocked; fresh proposal required |
+| A05 | Owner approves different/edited digest | Rejected; no write |
+| A06 | Owner rejects or proposal expires | No write; proposal terminal |
+| A07 | Same requestId + same digest | Return same proposal/result; no second execution |
+| A08 | Same requestId + different digest | IDEMPOTENCY_CONFLICT |
+| A09 | Chat queue full / host approval unavailable | Preserve pending or return BLOCKED; never local-approval fallback |
+| A10 | Disconnect during apply | UNKNOWN until read-only reconcile; no auto-retry |
+| A11 | Successful file replacement | Read-back SHA equals newSha256; receipt references exact digest |
+| A12 | Rollback | Separate proposal and explicit approval; verify restored SHA |
+
+**Current operational ruling remains unchanged:** no local approvals, no direct arbitrary PowerShell, no Windows Maintenance proposal mutation and no Lab deployment until the full chat-only proposal → owner approval → exact execution → verification receipt chain is implemented and tested. Production, autostart and working DWGs remain out of scope.
