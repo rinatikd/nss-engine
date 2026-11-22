@@ -29,7 +29,7 @@ test('provider journal validates identity and persists prepare/commit transition
     assert.equal(j.beginPrepare(identity,payloadHash).duplicate,true);
     assert.equal(j.beginPrepare(identity,payloadHash).fencingToken,prepared.fencingToken);
     assert.throws(()=>j.beginPrepare(identity,'b'.repeat(64)),/PROVIDER_REQUEST_ID_CONFLICT/);
-    assert.throws(()=>j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:'0'.repeat(64)}),/PROVIDER_FENCING_TOKEN_INVALID/);
+    assert.throws(()=>j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:'0'.repeat(64),payloadHash}),/PROVIDER_FENCING_TOKEN_INVALID/);
     j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash});
     const sent=j.completeCommit(identity,{clickedAt:new Date().toISOString(),clickedSend:true});
     assert.equal(sent.state,'SENT');
