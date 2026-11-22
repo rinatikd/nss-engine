@@ -123,6 +123,7 @@ test('any additional operator objection or evidence gap blocks the dual-review g
 
 test('participant may propose a round but only ChatGPT or Claude may start it',()=>{
  const ledger=new EventLedger(temp());
+ assert.throws(()=>ledger.append({type:'session.started',actor:kimi,payload:{sessionId:'session_round_bad',title:'Unauthorized start'}}),/SESSION_CONTROL_REQUIRES_CO_OPERATOR/);
  ledger.append({type:'session.started',actor:chatgpt,payload:{sessionId:'session_round_01',title:'Round authority test'}});
  ledger.append({type:'round.proposed',actor:kimi,payload:{roundId:'round_proposal_01',objective:'Review transport fencing',participants:['chatgpt','claude','kimi']}});
  assert.equal(ledger.snapshot().state.rounds[0].status,'PROPOSED');
