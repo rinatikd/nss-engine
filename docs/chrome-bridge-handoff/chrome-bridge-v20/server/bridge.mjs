@@ -8,6 +8,8 @@ import { validateArgs } from './schema.mjs';
 import { findSecret } from './secrets.mjs';
 import { SendJournal, conversationFingerprint, legacyRequestFingerprint, requestFingerprint } from './send-journal.mjs';
 import { classifySend, SendState } from './send-outcome.mjs';
+import { ProviderJournal, validateProviderIdentity } from './provider-journal.mjs';
+import { deriveProviderJournalKey } from './provider-transport-crypto.mjs';
 
 export { tools };
 export const VERSION = '0.2.0';
@@ -39,6 +41,9 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
   const journalKey = crypto.createHmac('sha256', 'chrome-bridge/send-journal/v1')
     .update(String(config.agentToken || ''), 'utf8').digest();
   const sendJournal = stateDir ? new SendJournal(path.resolve(stateDir), { hmacKey: journalKey }) : null;
+  const providerJournal = stateDir && typeof config.agentToken === 'string'
+    ? new ProviderJournal(path.resolve(stateDir), { hmacKey: deriveProviderJournalKey(config.agentToken), bridgeEpoch: epoch })
+    : null;
   const queue = [];
   const pending = new Map();
   const waiters = []; // РїСЂРёРїР°СЂРєРѕРІР°РЅРЅС‹Рµ long-poll Р·Р°РїСЂРѕСЃС‹ СЂР°СЃС€РёСЂРµРЅРёСЏ
@@ -218,6 +223,80 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       return { count: p.count, generating: p.generating, composerFound: p.composerFound, chars: p.text.length, tail: p.text.slice(-maxChars), url: p.url };
     },
     async agent_selftest({ name }) { return enqueue('agent_selftest', { tabId: agent(name).tabId }); },
+    async provider_prepare(args) {
+      const identity=validateProviderIdentity(args);
+      if(!providerJournal)return {state:'BLOCKED',identity,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+      const bound=[...agents.values()].some(entry=>entry.tabId===identity.tabId);
+      if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
+      if(typeof args.message!=='string'||!args.message.trim()||findSecret(args.message))
+        return providerJournal.outcome(identity,'BLOCKED','PROVIDER_MESSAGE_REJECTED');
+      const actualHash=crypto.createHash('sha256').update(args.message,'utf8').digest('hex');
+      if(actualHash!==args.payloadHash)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_PAYLOAD_HASH_MISMATCH');
+      let begun;
+      try { begun=providerJournal.beginPrepare(identity,args.payloadHash); }
+      catch(error) { return providerJournal.outcome(identity,'BLOCKED',error.message); }
+      if(begun.duplicate)return begun.transaction;
+      try {
+        const context=await enqueue('agent_context',{tabId:identity.tabId});
+        if(!context?.verified||context.origin!==identity.origin||context.conversationId!==identity.conversationId)
+          return providerJournal.outcome(identity,'NOT_PERFORMED','PROVIDER_CONTEXT_MISMATCH');
+        const preparedId=crypto.randomUUID();
+        const expiresAt=new Date(Date.now()+90000).toISOString();
+        const result=await enqueue('provider_prepare',{...identity,message:args.message,
+          payloadHash:args.payloadHash,preparedId,expiresAt});
+        if(result?.prepared!==true||result.clickedSend!==false||
+          result.sideEffect!=='composer-filled-no-send'||result.preparedId!==preparedId||
+          result.payloadHash!==args.payloadHash) {
+          return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_PREPARE_RECEIPT_INVALID');
+        }
+        return providerJournal.completePrepare(identity,{preparedId,expiresAt});
+      } catch(error) {
+        const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
+          error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
+        return providerJournal.outcome(identity,state,
+          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_PREPARE_FAILED');
+      }
+    },
+    async provider_commit(args) {
+      const identity=validateProviderIdentity(args);
+      if(!providerJournal)return {state:'BLOCKED',identity,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+      const bound=[...agents.values()].some(entry=>entry.tabId===identity.tabId);
+      if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
+      let tx;
+      try { tx=providerJournal.beginCommit(identity,{preparedId:args.preparedId,fencingToken:args.fencingToken}); }
+      catch(error) { return providerJournal.outcome(identity,'BLOCKED',error.message); }
+      try {
+        const result=await enqueue('provider_commit',{...identity,preparedId:args.preparedId,
+          fencingToken:args.fencingToken,payloadHash:tx.payloadHash});
+        if(result?.clickedSend!==true||!Number.isFinite(Date.parse(result.clickedAt||'')))
+          return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_COMMIT_RECEIPT_INVALID');
+        return providerJournal.completeCommit(identity,{clickedAt:result.clickedAt,clickedSend:true});
+      } catch(error) {
+        const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
+          error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
+        return providerJournal.outcome(identity,state,
+          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_FAILED');
+      }
+    },
+    async provider_status(args) {
+      const identity=validateProviderIdentity(args);
+      return providerJournal?providerJournal.status(identity):
+        {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+    },
+    async provider_stop(args) {
+      const identity=validateProviderIdentity(args);
+      return providerJournal?providerJournal.stop(identity):
+        {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+    },
+    async provider_revoke(args) {
+      const identity=validateProviderIdentity(args);
+      return providerJournal?providerJournal.revoke(identity):
+        {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+    },
+    async provider_events(args) {
+      if(!providerJournal)throw Error('PROVIDER_JOURNAL_UNAVAILABLE');
+      return providerJournal.events(args);
+    },
   };
   const agent_peekRaw = (name) => enqueue('agent_peek', { tabId: agent(name).tabId });
 
