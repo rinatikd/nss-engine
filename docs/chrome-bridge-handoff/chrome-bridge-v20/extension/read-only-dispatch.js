@@ -20,18 +20,44 @@ export async function permittedTab(chromeApi, tabId) {
   if (!allowed) throw Error('HOST_PERMISSION_MISSING');
   return {tab,origin:url.origin,site:sites[url.origin]};
 }
-export async function dispatchReadOnly(command, chromeApi) {
+export async function dispatchReadOnly(command, chromeApi, {getBackgroundControlStatus} = {}) {
   if (!command || typeof command !== 'object' || typeof command.name !== 'string')
     throw Error('INVALID_COMMAND');
   if (MUTATING.has(command.name)) throw Error('CONTROL_REQUIRES_APPROVAL_UI');
   if (!ALLOWED.has(command.name)) throw Error('BACKGROUND_COMMAND_NOT_MIGRATED');
 
-  if (command.name === 'control_status') return {
-    connected:true,
-    globalEnabled:false,
-    approvalPending:0,
-    origins:[]
-  };
+  if (command.name === 'control_status') {
+    let backgroundControl;
+    try {
+      backgroundControl=typeof getBackgroundControlStatus==='function'
+        ? await getBackgroundControlStatus() : null;
+    } catch { backgroundControl=null; }
+    const available=backgroundControl?.available===true;
+    const byOrigin=new Map();
+    for (const grant of (available && Array.isArray(backgroundControl.grants)
+      ? backgroundControl.grants : [])) {
+      if (!grant || !Object.hasOwn(CONTROL_ORIGINS,grant.origin) ||
+          !Number.isSafeInteger(grant.tabId) || !Number.isFinite(grant.expiresAt)) continue;
+      let item=byOrigin.get(grant.origin);
+      if (!item) {
+        item={origin:grant.origin,effective:true,expiresAt:grant.expiresAt,tabs:[]};
+        byOrigin.set(grant.origin,item);
+      }
+      item.expiresAt=Math.max(item.expiresAt,grant.expiresAt);
+      item.tabs.push({tabId:grant.tabId,expiresAt:grant.expiresAt});
+    }
+    return {
+      connected:available && backgroundControl.connected===true,
+      globalEnabled:false,
+      approvalPending:available ? backgroundControl.approvalPending : 0,
+      origins:[...byOrigin.values()],
+      controlMode:'background',
+      backgroundControl:available ? backgroundControl : {
+        available:false,grantsKnown:false,activeCount:null,grants:[],
+        error:'BACKGROUND_STATUS_UNAVAILABLE'
+      }
+    };
+  }
   if (command.name === 'browser_tabs') {
     const tabs = await chromeApi.tabs.query({});
     const out=[];

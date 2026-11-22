@@ -25,6 +25,27 @@ export const currentStatus = () => ({...status,
   connected: status.connected && (Date.now() - status.updatedAt < 45000)
 });
 
+async function readBackgroundControlStatus(chromeApi) {
+  const settings=await chromeApi.storage.local.get([
+    'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
+  ]);
+  const connection=currentStatus();
+  const grants=await new BackgroundControlGrants(chromeApi).activeGrants();
+  return {
+    available:true,
+    backgroundMode:settings.bridgeBackgroundMode===true,
+    mutationEnabled:settings.bridgeMutationLabMode===true,
+    connectionDesired:settings.bridgeConnectionDesired===true,
+    connected:connection.connected===true,
+    connectionState:connection.connected===true ? connection.state :
+      connection.state==='connected' ? 'stale' : connection.state,
+    grantsKnown:true,
+    activeCount:grants.length,
+    grants,
+    approvalPending:approvals.list().length
+  };
+}
+
 async function ensureHost(chromeApi) {
   if (!chromeApi.offscreen?.createDocument || !chromeApi.runtime?.getContexts)
     throw Error('OFFSCREEN_UNAVAILABLE');
@@ -115,7 +136,9 @@ export function installBackgroundCoordinator(chromeApi) {
             }
           });
         }
-        return dispatchReadOnly(msg.command,chromeApi);
+        return dispatchReadOnly(msg.command,chromeApi,{
+          getBackgroundControlStatus:()=>readBackgroundControlStatus(chromeApi)
+        });
       };
       void run().then(result=>respond({result}),e=>respond({
         error:e.message,
@@ -129,8 +152,12 @@ export function installBackgroundCoordinator(chromeApi) {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
       }
-      void new BackgroundControlGrants(chromeApi).activeCount()
-        .then(activeCount=>respond({activeCount}),e=>respond({error:e.message}));
+      void readBackgroundControlStatus(chromeApi)
+        .then(respond,e=>respond({
+          available:false,grantsKnown:false,activeCount:null,grants:[],
+          error:/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message || '')
+            ? e.message : 'BACKGROUND_CONTROL_STATUS_FAILED'
+        }));
       return true;
     }
     if (msg.type === 'clear-background-controls') {

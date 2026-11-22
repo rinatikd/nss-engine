@@ -234,15 +234,41 @@ async function execute(cmd) {
   if (name === 'control_status') {
     const sites = await getSites();
     const globalEnabled = running && $('actions').checked;
+    let backgroundControl={
+      available:false,grantsKnown:false,activeCount:null,grants:[],
+      error:'BACKGROUND_STATUS_UNAVAILABLE'
+    };
+    try {
+      const response=await chrome.runtime.sendMessage({
+        target:'bridge-coordinator',type:'background-control-status'
+      });
+      if (response?.available===true) backgroundControl=response;
+      else if (response?.error) backgroundControl={...backgroundControl,error:response.error};
+    } catch { /* preserve explicit unavailable status without exposing details */ }
+    const legacyOrigins=Object.keys(sites).filter(origin=>CONTROL_ORIGINS[origin]).map(origin=>({
+      origin,effective:grants.status(origin,globalEnabled).allowed,
+      expiresAt:grants.status(origin,globalEnabled).expiresAt
+    }));
+    const byOrigin=new Map();
+    for (const grant of (Array.isArray(backgroundControl.grants) ? backgroundControl.grants : [])) {
+      if (!grant || !Object.hasOwn(CONTROL_ORIGINS,grant.origin) ||
+          !Number.isSafeInteger(grant.tabId) || !Number.isFinite(grant.expiresAt)) continue;
+      let item=byOrigin.get(grant.origin);
+      if (!item) {
+        item={origin:grant.origin,effective:true,expiresAt:grant.expiresAt,tabs:[]};
+        byOrigin.set(grant.origin,item);
+      }
+      item.expiresAt=Math.max(item.expiresAt,grant.expiresAt);
+      item.tabs.push({tabId:grant.tabId,expiresAt:grant.expiresAt});
+    }
+    const backgroundActive=backgroundControl.backgroundMode===true;
     return {
-      connected: running,
+      connected:backgroundActive ? backgroundControl.connected===true : running,
       globalEnabled,
-      approvalPending: approvals.size,
-      origins: Object.keys(sites).filter(origin => CONTROL_ORIGINS[origin]).map(origin => ({
-        origin,
-        effective: grants.status(origin, globalEnabled).allowed,
-        expiresAt: grants.status(origin, globalEnabled).expiresAt
-      })),
+      approvalPending:backgroundActive ? backgroundControl.approvalPending : approvals.size,
+      origins:backgroundActive ? [...byOrigin.values()] : legacyOrigins,
+      controlMode:backgroundActive ? 'background' : 'legacy',
+      backgroundControl,
       // No token, prompt text, screenshot bytes or approval details.
     };
   }
@@ -633,6 +659,35 @@ $('backgroundMode').addEventListener('change', async event => {
     setStatus('Не удалось переключить режим: ' + error.message);
   } finally { $('backgroundMode').disabled = false; }
 });
+// Keep every open control.html window aligned with profile-scoped settings.
+chrome.storage.onChanged.addListener((changes,areaName)=>{
+  if (areaName!=='local' ||
+      (!changes.bridgeBackgroundMode && !changes.bridgeMutationLabMode)) return;
+  if (changes.bridgeMutationLabMode)
+    $('mutationLab').checked=changes.bridgeMutationLabMode.newValue===true;
+  if (changes.bridgeBackgroundMode) {
+    const enabled=changes.bridgeBackgroundMode.newValue===true;
+    $('backgroundMode').checked=enabled;
+    if (enabled!==backgroundMode) {
+      if (running && pollAbort) stop();
+      backgroundMode=enabled;
+      $('actions').disabled=enabled;
+      if (enabled) {
+        $('actions').checked=false;
+        if (!backgroundTimer) backgroundTimer=setInterval(updateBackgroundStatus,2500);
+        void updateBackgroundStatus();
+      } else {
+        if (backgroundTimer) clearInterval(backgroundTimer);
+        backgroundTimer=null;
+        running=false;
+        setStatus('Фоновый режим отключён в другом окне. Для обычного подключения нажмите «Подключить».');
+      }
+    }
+  }
+  refreshGrantLabels();
+  window.dispatchEvent(new Event('bridge-background-grants-changed'));
+});
+
 let reconnectTimer = null;
 let reconnectAllowed = true;
 const cancelReconnect = () => { if (reconnectTimer) clearTimeout(reconnectTimer); reconnectTimer = null; };

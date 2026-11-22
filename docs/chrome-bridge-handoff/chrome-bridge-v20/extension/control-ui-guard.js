@@ -11,6 +11,18 @@ let generation=0;
 // The grant coordinator is authoritative; never infer a successful revoke from a click.
 export async function refreshBackgroundControlButtons() { await refresh(); }
 window.addEventListener('bridge-background-grants-changed',()=>{void refresh();});
+chrome.storage?.onChanged?.addListener((changes,areaName)=>{
+  if (areaName==='local') {
+    if (changes.bridgeBackgroundMode)
+      mode.checked=changes.bridgeBackgroundMode.newValue===true;
+    if (changes.bridgeMutationLabMode)
+      lab.checked=changes.bridgeMutationLabMode.newValue===true;
+  }
+  if ((areaName==='local' &&
+       (changes.bridgeBackgroundMode || changes.bridgeMutationLabMode ||
+        changes.bridgeConnectionDesired)) ||
+      (areaName==='session' && changes.bridgeBackgroundControlGrants)) void refresh();
+});
 
 async function refresh() {
   const current=++generation;
@@ -23,8 +35,12 @@ async function refresh() {
         chrome.runtime.sendMessage({target:'bridge-coordinator',type:'status'}),
         chrome.runtime.sendMessage({target:'bridge-coordinator',type:'background-control-status'})
       ]);
-      connected=!!(status && status.connected===true && status.state==='connected');
-      if (Number.isSafeInteger(grants?.activeCount) && grants.activeCount>=0) {
+      if (typeof grants?.backgroundMode==='boolean') mode.checked=grants.backgroundMode;
+      if (typeof grants?.mutationEnabled==='boolean') lab.checked=grants.mutationEnabled;
+      connected=!!(status && status.connected===true && status.state==='connected' &&
+        grants?.connected===true);
+      if (Number.isSafeInteger(grants?.activeCount) && grants.activeCount>=0 &&
+          grants?.grantsKnown!==false) {
         activeCount=grants.activeCount;
         grantsKnown=true;
       }
