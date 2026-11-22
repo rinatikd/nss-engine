@@ -58,7 +58,7 @@ try{
   const memberLaunch=await request('/api/rounds/start',{
     actor:'deepseek',method:'POST',body:{requestId:'smoke-round-member-0001',roundId:'smoke-round-0001'}
   });
-  assert.equal(participantLaunch.status,202);
+  assert.equal(memberLaunch.status,202);
 
   const secondProposal=await request('/api/rounds/propose',{
     actor:'kimi',method:'POST',
@@ -74,7 +74,7 @@ try{
   const memberControl=await request('/api/session/pause',{
     actor:'gemini',method:'POST',body:{requestId:'smoke-session-member-0001',reason:'equal-member-control-test'}
   });
-  assert.equal(participantControl.status,200);
+  assert.equal(memberControl.status,200);
 
   const cooperatorControl=await request('/api/session/resume',{
     actor:'claude',method:'POST',body:{requestId:'smoke-session-resume-0001',reason:'co-operator-parity-test'}
