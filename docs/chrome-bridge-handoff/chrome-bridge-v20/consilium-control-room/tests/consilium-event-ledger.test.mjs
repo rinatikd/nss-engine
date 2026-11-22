@@ -71,7 +71,7 @@ test('task verification requires commit and evidence',()=>{
  ledger.append({type:'task.created',actor:chatgpt,payload:{taskId:'task_000001',decisionId:'decision_01',title:'Test',assignee:'claude'}});
  ledger.append({type:'task.state_changed',actor:claude,payload:{taskId:'task_000001',status:'IN_PROGRESS'}});
  ledger.append({type:'task.state_changed',actor:chatgpt,payload:{taskId:'task_000001',status:'IN_REVIEW'}});
- assert.throws(()=>projectEvents([...ledger.list(),{seq:7,type:'task.state_changed',payload:{taskId:'task_000001',status:'VERIFIED'}}]),/VERIFICATION_EVIDENCE_REQUIRED/);
+ assert.throws(()=>projectEvents([...ledger.list(),{seq:7,type:'task.state_changed',actor:owner,payload:{taskId:'task_000001',status:'VERIFIED'}}]),/VERIFICATION_EVIDENCE_REQUIRED/);
  ledger.append({type:'task.state_changed',actor:owner,payload:{taskId:'task_000001',status:'VERIFIED',commitSha:'a'.repeat(40),evidence:['run:123','review:abc']}});
  assert.equal(projectEvents(ledger.list()).tasks[0].status,'VERIFIED');ledger.close();
 });
