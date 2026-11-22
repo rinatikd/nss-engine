@@ -69,6 +69,55 @@ test('session scope grants only selected providers and fails closed for missing 
 });
 
 
+test('session_request binds the owner challenge to the exact selected provider subset', async () => {
+  const s = await setup();
+  try {
+    // An idle extension poll updates lastSeen; session_request intentionally
+    // refuses to create a challenge before Bridge connectivity is established.
+    await s.poll();
+    const tabs = [
+      { tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' },
+      { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' },
+      { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' }
+    ];
+    const pollPromise = s.poll();
+    const request = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
+    const command = await pollPromise;
+    assert.ok(command, 'session_request must enqueue a fresh browser_tabs discovery');
+    assert.equal(command.name, 'browser_tabs');
+    const ack = await s.post('/bridge/result', { id: command.id, result: tabs }, 'b'.repeat(64));
+    assert.equal(ack.status, 200);
+    const response = await request;
+    assert.notEqual(response.result.isError, true);
+    const challenge = JSON.parse(response.result.content[0].text);
+    assert.equal(challenge.ready, true);
+    assert.equal(challenge.approvalRequired, true);
+    assert.equal(challenge.changedNothing, true);
+    assert.deepEqual(challenge.providers, ['claude', 'grok']);
+    assert.deepEqual(challenge.origins, ['https://claude.ai', 'https://grok.com']);
+
+    const noClaude = await s.rpc('session_request', { durationMinutes: 60, providers: ['grok'] });
+    assert.equal(noClaude.result.isError, true);
+    assert.match(noClaude.result.content[0].text, /SESSION_CLAUDE_REQUIRED/);
+
+    const missingPoll = s.poll();
+    const missing = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
+    const missingCommand = await missingPoll;
+    assert.ok(missingCommand);
+    assert.equal(missingCommand.name, 'browser_tabs');
+    const missingAck = await s.post('/bridge/result', {
+      id: missingCommand.id,
+      result: [{ tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' }]
+    }, 'b'.repeat(64));
+    assert.equal(missingAck.status, 200);
+    const missingResponse = await missing;
+    const missingChallenge = JSON.parse(missingResponse.result.content[0].text);
+    assert.equal(missingChallenge.ready, false);
+    assert.equal(missingChallenge.changedNothing, true);
+    assert.deepEqual(missingChallenge.missingProviders, ['grok']);
+  } finally { await s.close(); }
+});
+
 test('loadConfig pins only a validated explicit extension ID in temporary config', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-bridge-extid-'));
   const old = process.env.CHROME_BRIDGE_EXTENSION_ID;
