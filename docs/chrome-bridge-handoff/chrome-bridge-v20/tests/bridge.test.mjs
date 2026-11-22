@@ -48,15 +48,20 @@ test('auth, origin, host and tool validation', async () => {
 test('session_request binds the owner challenge to the exact selected provider subset', async () => {
   const s = await setup();
   try {
-    await s.poll();
-    const request = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
-    const command = await s.poll();
-    assert.equal(command.name, 'browser_tabs');
     const tabs = [
       { tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' },
       { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' },
       { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' }
     ];
+    const connect = s.rpc('browser_tabs');
+    const connectCommand = await s.poll();
+    assert.equal(connectCommand.name, 'browser_tabs');
+    const connectAck = await s.post('/bridge/result', { id: connectCommand.id, result: tabs }, 'b'.repeat(64));
+    assert.equal(connectAck.status, 200);
+    await connect;
+    const request = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
+    const command = await s.poll();
+    assert.equal(command.name, 'browser_tabs');
     const ack = await s.post('/bridge/result', { id: command.id, result: tabs }, 'b'.repeat(64));
     assert.equal(ack.status, 200);
     const response = await request;
