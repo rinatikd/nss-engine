@@ -70,7 +70,7 @@ export class ProviderTransport {
       const expiresAt = Date.parse(result.expiresAt || '');
       if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new TransportContractError('PREPARE_EXPIRY_INVALID');
       if (result.sideEffect !== 'composer-filled-no-send') throw new TransportContractError('PREPARE_SIDE_EFFECT_INVALID');
-      if (result.clickedSend === true) throw new TransportContractError('PREPARE_MUST_NOT_CLICK_SEND');
+      if (result.clickedSend !== false) throw new TransportContractError('PREPARE_MUST_NOT_CLICK_SEND');
     }
     return result;
   }
