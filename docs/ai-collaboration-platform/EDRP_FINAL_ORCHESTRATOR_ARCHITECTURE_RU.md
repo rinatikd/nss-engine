@@ -789,3 +789,15 @@ A single new fixed, read-only git-status request was submitted for C:\Engineerin
 The queue rejected the request before a durable job was created. No status result, file read or local mutation is claimed. A follow-up lookup is not treated as a completed request. Stop after this queue-full result; do not retry with a new ID and do not fall back to local approval or engineering-submit.
 
 This confirms the current blocker is not only write authorization: even the narrow ChatGPT-approved read-only channel is capacity-blocked for the Workbench baseline. TARGET_FOLDER_VERIFIED therefore remains NOT VERIFIED. The required recovery is a bounded/isolated read-only queue or an explicit capacity/dispatch receipt that prevents ambiguous no-job submissions.
+
+
+### 20.9. Existing-agent read-only peek — 2026-11-22
+
+A read-only agent_peek check did not reveal a completed task response:
+
+- DeepSeek: count=0, generating=false, composerFound=true, chars=0, empty tail; bound URL is the generic root https://chat.deepseek.com/, not an identified conversation. This is not a usable task session.
+- Claude: agent_peek returned UNKNOWN_TOOL; completion state cannot be established.
+- Gemini: agent_peek returned UNKNOWN_TOOL; completion state cannot be established.
+- Grok: its stored bound tab ID no longer exists (No tab with id 1867452532), although a separate Grok conversation tab is visible in agent_list. Rebinding it is a separate controlled action, not performed here.
+
+This confirms the current Lab cannot be described as a functioning multi-agent council. A visible tab, composer selector, empty root page or stale bound ID is not a task assignment, delivery receipt or completed review. No new provider task was sent and no reply was attributed to the current work.
