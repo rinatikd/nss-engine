@@ -34,7 +34,7 @@ test('each allowed origin has its own complete adapter', () => {
  }
 });
 test('Grok, Qwen, Cursor remain read-only candidates without Control grants or send selectors', () => {
- for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai'], ['cursor','https://cursor.com']]) {
+ for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai'], ['kimi','https://www.kimi.ai'], ['cursor','https://cursor.com']]) {
   const adapter = DEFAULT_ADAPTERS[key];
   assert.equal(adapter.origin, origin);
   assert.equal(Object.hasOwn(CONTROL_ORIGINS, origin), false);
@@ -73,7 +73,7 @@ test('global off is denied even with per-origin grant; explicit revoke removes o
 });
 
 test('candidate origins are exact and cannot be escalated through lookalike hosts', () => {
- for (const value of ['https://grok.com.evil.test', 'http://cursor.com', 'https://chat.qwen.ai.evil.test'])
+ for (const value of ['https://grok.com.evil.test', 'http://cursor.com', 'https://chat.qwen.ai.evil.test', 'https://www.kimi.ai.evil.test'])
    assert.equal(providerForOrigin(new URL(value).origin), null);
  for (const origin of Object.keys(DISCOVERY_ONLY_ORIGINS))
    assert.equal(new ControlGrants().status(origin, true).allowed, false);
