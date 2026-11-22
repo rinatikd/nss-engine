@@ -177,6 +177,12 @@ export class ProviderJournal {
       }
       throw Error('PROVIDER_REQUEST_IN_PROGRESS');
     }
+    for(const existing of this.transactions.values()) {
+      if(existing.identity.tabId===identity.tabId&&
+         ['PREPARING','PREPARED','COMMITTING','UNKNOWN','STOP_REQUESTED'].includes(existing.state)) {
+        throw Error('PROVIDER_TAB_QUARANTINED');
+      }
+    }
     this.#append('prepare.started',identity,{payloadHash,bridgeEpoch:this.bridgeEpoch,at:new Date(this.now()).toISOString()});
     return {duplicate:false};
   }
