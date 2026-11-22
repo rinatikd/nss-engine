@@ -23,6 +23,29 @@ const COUNCIL_ORIGINS = Object.freeze({
 const CHAT_ORIGINS = new Set(Object.keys(COUNCIL_ORIGINS));
 const SESSION_DURATIONS = new Set([60,180,240]);
 const SESSION_CHALLENGE_TTL_MS = 120000;
+export function resolveSessionScope(providers, tabs) {
+  if (!Array.isArray(providers) || providers.length < 1 || providers.length > 6)
+    throw Error('SESSION_PROVIDERS_INVALID');
+  const allowedProviders = new Set(Object.values(COUNCIL_ORIGINS));
+  const selectedProviders = [...new Set(providers)];
+  if (selectedProviders.length !== providers.length) throw Error('SESSION_PROVIDERS_DUPLICATE');
+  if (selectedProviders.some(provider => !allowedProviders.has(provider)))
+    throw Error('SESSION_PROVIDER_DENIED');
+  if (!selectedProviders.includes('claude')) throw Error('SESSION_CLAUDE_REQUIRED');
+  const origins = Object.entries(COUNCIL_ORIGINS)
+    .filter(([,provider]) => selectedProviders.includes(provider))
+    .map(([origin]) => origin).sort();
+  const availableOrigins = new Set((Array.isArray(tabs) ? tabs : []).flatMap(tab => {
+    try {
+      const origin = new URL(tab.url).origin;
+      return tab.mode === 'chat' && COUNCIL_ORIGINS[origin] === tab.adapter ? [origin] : [];
+    } catch { return []; }
+  }));
+  const missingProviders = origins.filter(origin => !availableOrigins.has(origin))
+    .map(origin => COUNCIL_ORIGINS[origin]);
+  return { providers: selectedProviders, origins, missingProviders, ready: missingProviders.length === 0 };
+}
+
 const EXTENSION_ID = /^[a-p]{32}$/;
 const DEFAULT_STATE = process.env.CHROME_BRIDGE_HOME || path.join(os.homedir(), '.chrome-bridge');
 
@@ -333,39 +356,24 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
   const sessionChallenges = new Map();
   async function sessionRequest({durationMinutes=240,providers}={}) {
     if (!SESSION_DURATIONS.has(durationMinutes)) throw Error('SESSION_DURATION_INVALID');
-    if (!Array.isArray(providers) || providers.length < 1 || providers.length > 6)
-      throw Error('SESSION_PROVIDERS_INVALID');
-    const allowedProviders = new Set(Object.values(COUNCIL_ORIGINS));
-    const selectedProviders = [...new Set(providers)];
-    if (selectedProviders.length !== providers.length) throw Error('SESSION_PROVIDERS_DUPLICATE');
-    if (selectedProviders.some(provider => !allowedProviders.has(provider)))
-      throw Error('SESSION_PROVIDER_DENIED');
-    if (!selectedProviders.includes('claude')) throw Error('SESSION_CLAUDE_REQUIRED');
+    const scope = resolveSessionScope(providers, []);
     if (!isConnected()) throw Error('CHROME_NOT_CONNECTED');
-    const requestedOrigins = Object.entries(COUNCIL_ORIGINS)
-      .filter(([,provider]) => selectedProviders.includes(provider))
-      .map(([origin]) => origin).sort();
     const tabs = await enqueue('browser_tabs', {});
-    const availableOrigins = new Set(tabs
-      .filter(tab => tab.mode==='chat' && COUNCIL_ORIGINS[new URL(tab.url).origin]===tab.adapter)
-      .map(tab => new URL(tab.url).origin));
-    const missingProviders = requestedOrigins
-      .filter(origin => !availableOrigins.has(origin))
-      .map(origin => COUNCIL_ORIGINS[origin]);
-    if (missingProviders.length) {
+    const currentScope = resolveSessionScope(scope.providers, tabs);
+    if (!currentScope.ready) {
       sessionChallenges.clear();
       return {ready:false,approvalRequired:false,changedNothing:true,
-        providers:selectedProviders,missingProviders,
+        providers:currentScope.providers,missingProviders:currentScope.missingProviders,
         reasonCode:'SESSION_PROVIDERS_NOT_READY'};
     }
     const challengeId = crypto.randomBytes(16).toString('hex');
     const sessionId = crypto.randomUUID();
     const expiresAt = Date.now() + SESSION_CHALLENGE_TTL_MS;
     sessionChallenges.clear();
-    sessionChallenges.set(challengeId,{sessionId,durationMinutes,origins:requestedOrigins,
-      providers:selectedProviders,bridgeEpoch:epoch,expiresAt});
+    sessionChallenges.set(challengeId,{sessionId,durationMinutes,origins:currentScope.origins,
+      providers:currentScope.providers,bridgeEpoch:epoch,expiresAt});
     return {ready:true,challengeId,sessionId,durationMinutes,expiresAt,bridgeEpoch:epoch,
-      origins:requestedOrigins,providers:selectedProviders,missingProviders:[],
+      origins:currentScope.origins,providers:currentScope.providers,missingProviders:[],
       capabilities:['agent_send','provider_prepare','provider_commit'],
       approvalRequired:true,changedNothing:true};
   }
