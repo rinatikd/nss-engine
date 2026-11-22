@@ -65,17 +65,17 @@ test('all seven AI members share session and round control while owner retains c
   const launchChatGPT=await request(base,tokens[1].token,'/api/rounds/start',{roundId:'round_proposal_02',requestId:'round_start_chatgpt'});assert.equal(launchChatGPT.status,202);
   const pauseAgain=await request(base,tokens[1].token,'/api/session/pause',{requestId:'pause_equal_ops_02'});assert.equal(pauseAgain.status,200);
   const resumeAgain=await request(base,tokens[2].token,'/api/session/resume',{requestId:'resume_equal_ops_02'});assert.equal(resumeAgain.status,200);
-  for(const operator of tokens.slice(1)){
-   const comment=await request(base,operator.token,'/api/comments',{text:`Comment from ${operator.actor.id}`,requestId:`comment_${operator.actor.id}_01`});
-   assert.equal(comment.status,201,`comment failed for ${operator.actor.id}`);
+  for(const member of tokens.slice(1)){
+   const comment=await request(base,member.token,'/api/comments',{text:`Comment from ${member.actor.id}`,requestId:`comment_${member.actor.id}_01`});
+   assert.equal(comment.status,201,`comment failed for ${member.actor.id}`);
   }
   const proposal=await request(base,tokens[5].token,'/api/decisions',{title:'Equal expert participation',rationale:'All seven AI members can submit independent findings and reviews',risk:'consequential',requestId:'decision_equal_ops'});assert.equal(proposal.status,201);
   const decision=await proposal.json(), decisionId=decision.event.payload.decisionId;
   const reviewOrder=[tokens[5],tokens[4],tokens[3],tokens[6],tokens[7],tokens[1],tokens[2]];
   for(let i=0;i<reviewOrder.length;i++){
    const member=reviewOrder[i];
-   const review=await request(base,operator.token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:`Independent review from ${member.actor.id}`,requestId:`review_equal_${operator.actor.id}`});
-   assert.equal(review.status,201,`review failed for ${operator.actor.id}`);
+   const review=await request(base,member.token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:`Independent review from ${member.actor.id}`,requestId:`review_equal_${member.actor.id}`});
+   assert.equal(review.status,201,`review failed for ${member.actor.id}`);
    if(i<reviewOrder.length-1){
     const snapshot=await (await request(base,tokens[0].token,'/api/snapshot')).json();
     assert.equal(snapshot.state.decisions[0].status,'UNDER_REVIEW');
