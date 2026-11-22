@@ -7,7 +7,6 @@ import crypto from 'node:crypto';
 import { createBridge, loadConfig } from '../server/bridge.mjs';
 import { tools as registeredTools } from '../server/tools.mjs';
 import { createChromeBridgeProviderTransport } from '../consilium-control-room/consilium/chrome-bridge-provider-adapter.mjs';
-import { extractVerdict, extractFiles, deepRender } from '../hub/lib.mjs';
 
 async function setup(opts = {}) {
   const { stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-bridge-test-')), cleanupStateDir = true, extensionId = 'a'.repeat(32), ...bridgeOpts } = opts;
