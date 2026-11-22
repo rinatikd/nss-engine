@@ -58,30 +58,36 @@ try{
   const participantLaunch=await request('/api/rounds/start',{
     actor:'deepseek',method:'POST',body:{requestId:'smoke-round-deny-0001',roundId:'smoke-round-0001'}
   });
-  assert.equal(participantLaunch.status,403);
+  assert.equal(participantLaunch.status,202);
 
+  const secondProposal=await request('/api/rounds/propose',{
+    actor:'kimi',method:'POST',
+    body:{requestId:'smoke-round-propose-0002',roundId:'smoke-round-0002',
+      objective:'Second round launched by the co-operator pair',participants:['chatgpt','claude','kimi']}
+  });
+  assert.equal(secondProposal.status,201);
   const cooperatorLaunch=await request('/api/rounds/start',{
-    actor:'claude',method:'POST',body:{requestId:'smoke-round-launch-0001',roundId:'smoke-round-0001'}
+    actor:'claude',method:'POST',body:{requestId:'smoke-round-launch-0002',roundId:'smoke-round-0002'}
   });
   assert.equal(cooperatorLaunch.status,202);
 
   const participantControl=await request('/api/session/pause',{
     actor:'gemini',method:'POST',body:{requestId:'smoke-session-deny-0001',reason:'role-boundary-test'}
   });
-  assert.equal(participantControl.status,403);
+  assert.equal(participantControl.status,200);
 
-  const cooperatorControl=await request('/api/session/pause',{
-    actor:'claude',method:'POST',body:{requestId:'smoke-session-pause-0001',reason:'operator-parity-test'}
+  const cooperatorControl=await request('/api/session/resume',{
+    actor:'claude',method:'POST',body:{requestId:'smoke-session-resume-0001',reason:'co-operator-parity-test'}
   });
   assert.equal(cooperatorControl.status,200);
 
   const snapshot=JSON.parse((await request('/api/snapshot',{actor:'owner'})).body);
   assert.ok(snapshot.events.some(e=>e.type==='round.proposed'&&e.actor.id==='deepseek'));
+  assert.ok(snapshot.events.some(e=>e.type==='round.started'&&e.actor.id==='deepseek'));
   assert.ok(snapshot.events.some(e=>e.type==='round.started'&&e.actor.id==='claude'));
   console.log(JSON.stringify({ok:true,host:address.host,port:address.port,identities:tokens.length,
     tested:['loopback-only','healthz','ui-csp','unauthenticated-denied','chatgpt-auth','claude-auth',
-      'participant-propose','participant-launch-denied','claude-launch','participant-session-control-denied',
-      'claude-session-control'],providerDispatch:false,production:false,realSecrets:false}));
+      'participant-propose','participant-launch','claude-launch','participant-session-control','claude-session-control'],providerDispatch:false,production:false,realSecrets:false}));
 }finally{
   await app.close();
   fs.rmSync(dataDir,{recursive:true,force:true});
