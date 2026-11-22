@@ -44,8 +44,10 @@ function validateState(result, expected, allowed) {
 }
 
 export class ProviderTransport {
-  constructor(adapter) {
+  constructor(adapter, { verifyQuiescence = async () => false } = {}) {
     if (!adapter || adapter.version !== PROVIDER_TRANSPORT_V1) throw new TransportContractError('TRANSPORT_VERSION_UNSUPPORTED');
+    if (typeof verifyQuiescence !== 'function') throw new TransportContractError('QUIESCENCE_VERIFIER_REQUIRED');
+    this.verifyQuiescence = verifyQuiescence;
     for (const method of ['prepare', 'commit', 'status', 'stop', 'events']) {
       if (typeof adapter[method] !== 'function') throw new TransportContractError('TRANSPORT_METHOD_MISSING_' + method.toUpperCase());
     }
@@ -97,7 +99,8 @@ export class ProviderTransport {
       const proof = result.quiescence;
       if (!proof || proof.verified !== true || proof.signatureValid !== true ||
           proof.epoch !== identity.epoch || proof.unresolved !== 0 || proof.outstandingPrepared !== 0 ||
-          !ID.test(proof.attestationId || '') || typeof proof.signature !== 'string' || proof.signature.length < 32) {
+          !ID.test(proof.attestationId || '') || typeof proof.signature !== 'string' || proof.signature.length < 32 ||
+          await this.verifyQuiescence(proof, identity) !== true) {
         throw new TransportContractError('STOP_QUIESCENCE_ATTESTATION_INVALID');
       }
     }
