@@ -11,7 +11,7 @@ This folder contains a standalone, loopback-only control room for the Chrome Bri
 - ChatGPT and Claude are the mandatory core review pair: both must independently SUPPORT a decision. Any AI member's OBJECT or NEEDS_EVIDENCE verdict blocks progression until that same member submits a linked revision; the complete review history remains visible.
 - Actor identity and role are derived from the authenticated token, never from a request-body field.
 
-All seven AI identities use one authorization role, `ai_member`; there is no operator/participant permission tier. ChatGPT and Claude are identified separately only for the mandatory dual-review rule. Technical availability is reported separately from authorization.
+All seven AI identities use one authorization role, `ai_member`; there is a single AI-member permission tier. ChatGPT and Claude are identified separately only for the mandatory dual-review rule. Technical availability is reported separately from authorization.
 
 ## Run locally
 
