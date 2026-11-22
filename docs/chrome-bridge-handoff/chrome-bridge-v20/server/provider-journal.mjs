@@ -198,17 +198,18 @@ export class ProviderJournal {
     const token=this.#fencingToken({...tx,preparedId,expiresAt});
     this.#append('prepare.completed',identity,{preparedId,expiresAt,payloadHash:tx.payloadHash,
       bridgeEpoch:this.bridgeEpoch,tokenHash:tokenHash(token)});
-    return {state:'PREPARED',identity,preparedId,expiresAt,fencingToken:token,
+    return {state:'PREPARED',identity,requestId:identity.requestId,payloadHash:tx.payloadHash,preparedId,expiresAt,fencingToken:token,
       sideEffect:'composer-filled-no-send',clickedSend:false};
   }
 
-  beginCommit(input,{preparedId,fencingToken}) {
+  beginCommit(input,{preparedId,fencingToken,payloadHash}) {
     const identity=validateProviderIdentity(input);
     this.#ensureEpoch(identity);
     const tx=this.transactions.get(identity.requestId);
     if(!tx||!identityEqual(tx.identity,identity)||tx.state!=='PREPARED')throw Error('PROVIDER_PREPARE_NOT_COMMITTABLE');
     if(tx.bridgeEpoch!==this.bridgeEpoch||Date.parse(tx.expiresAt)<=this.now())throw Error('PROVIDER_PREPARE_EXPIRED_OR_RESTARTED');
     if(tx.preparedId!==preparedId)throw Error('PROVIDER_PREPARED_ID_MISMATCH');
+    if(payloadHash!==tx.payloadHash)throw Error('PROVIDER_PAYLOAD_HASH_MISMATCH');
     const expectedToken=this.#fencingToken(tx);
     if(tx.tokenHash!==tokenHash(expectedToken))throw Error('PROVIDER_JOURNAL_TOKEN_CORRUPT');
     const expected=Buffer.from(expectedToken,'hex');
@@ -224,7 +225,7 @@ export class ProviderJournal {
     if(!tx||tx.state!=='COMMITTING'||!identityEqual(tx.identity,identity)||
       clickedSend!==true||!Number.isFinite(Date.parse(clickedAt||'')))throw Error('PROVIDER_COMMIT_RECEIPT_INVALID');
     this.#append('commit.completed',identity,{clickedAt,clickedSend:true});
-    return {state:'SENT',identity,clickedAt,clickedSend:true};
+    return {state:'SENT',identity,requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt,clickedSend:true};
   }
 
   outcome(input,state,reasonCode='',extra={}) {
@@ -244,7 +245,7 @@ export class ProviderJournal {
     const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
       ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
       ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
-      ...(tx.state==='PREPARED'?{fencingToken:this.#fencingToken(tx),sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
+      ...(tx.state==='PREPARED'?{fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
       ...(tx.clickedAt?{clickedAt:tx.clickedAt,clickedSend:true}:{}),
       ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{})};
     return out;
