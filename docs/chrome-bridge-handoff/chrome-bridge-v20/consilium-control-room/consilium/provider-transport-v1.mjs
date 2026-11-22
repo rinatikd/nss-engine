@@ -100,6 +100,10 @@ export class ProviderTransport {
     const identity = validateTransportIdentity(input);
     const result = await this.adapter.stop(identity);
     validateState(result, identity, ['STOP_REQUESTED', 'STOPPED_CLEAN', 'STOP_AFTER_COMMIT', 'UNKNOWN']);
+    if (['STOP_REQUESTED', 'STOP_AFTER_COMMIT'].includes(result.state) &&
+        (!Number.isSafeInteger(result.nextEpoch) || result.nextEpoch <= identity.epoch)) {
+      throw new TransportContractError('STOP_FENCING_EPOCH_INVALID');
+    }
     if (result.state === 'STOPPED_CLEAN') {
       const proof = result.quiescence;
       if (!proof || proof.verified !== true || proof.signatureValid !== true ||
