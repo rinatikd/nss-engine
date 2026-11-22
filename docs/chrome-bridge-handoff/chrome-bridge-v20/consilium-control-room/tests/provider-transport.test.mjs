@@ -50,7 +50,7 @@ test('prepare validates payload hash, fencing token, expiry and no-send side eff
   await assert.rejects(()=>t.prepare({...identity,message,payloadHash:'0'.repeat(64)}),e=>e.code==='PAYLOAD_HASH_MISMATCH');
   const clicked=transport(baseAdapter({async prepare(input){return {state:'PREPARED',identity,requestId:input.requestId,payloadHash:input.payloadHash,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:expiresAt(),sideEffect:'composer-filled-no-send',clickedSend:true}}}));
   await assert.rejects(()=>clicked.prepare({...identity,message,payloadHash}),e=>e.code==='PREPARE_MUST_NOT_CLICK_SEND');
-  const noClickProof=transport(baseAdapter({async prepare(){return {state:'PREPARED',identity,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:expiresAt(),sideEffect:'composer-filled-no-send'}}}));
+  const noClickProof=transport(baseAdapter({async prepare(input){return {state:'PREPARED',identity,requestId:input.requestId,payloadHash:input.payloadHash,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:expiresAt(),sideEffect:'composer-filled-no-send'}}}));
   await assert.rejects(()=>noClickProof.prepare({...identity,message,payloadHash}),e=>e.code==='PREPARE_MUST_NOT_CLICK_SEND');
   const expired=transport(baseAdapter({async prepare(input){return {state:'PREPARED',identity,requestId:input.requestId,payloadHash:input.payloadHash,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:'2000-01-01T00:00:00.000Z',sideEffect:'composer-filled-no-send',clickedSend:false}}}));
   await assert.rejects(()=>expired.prepare({...identity,message,payloadHash}),e=>e.code==='PREPARE_EXPIRY_INVALID');
@@ -61,7 +61,7 @@ test('commit requires fencing proof and explicit click evidence for SENT',async(
   const result=await t.commit({...identity,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',payloadHash:'a'.repeat(64)});
   assert.equal(result.state,'SENT');
   const noClick=transport(baseAdapter({async commit(input){return {state:'SENT',identity,requestId:input.requestId,preparedId:input.preparedId,payloadHash:input.payloadHash,clickedSend:false}}}));
-  await assert.rejects(()=>noClick.commit({...identity,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef'}),e=>e.code==='COMMIT_CLICK_EVIDENCE_REQUIRED');
+  await assert.rejects(()=>noClick.commit({...identity,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',payloadHash:'a'.repeat(64)}),e=>e.code==='COMMIT_CLICK_EVIDENCE_REQUIRED');
 });
 
 test('UNKNOWN states require quarantine identity and are never auto-retried',async()=>{
