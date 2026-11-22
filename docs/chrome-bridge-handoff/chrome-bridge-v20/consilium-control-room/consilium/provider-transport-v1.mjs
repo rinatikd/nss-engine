@@ -103,7 +103,8 @@ export class ProviderTransport {
     if (result.state === 'STOPPED_CLEAN') {
       const proof = result.quiescence;
       if (!proof || proof.verified !== true || proof.signatureValid !== true ||
-          proof.epoch !== identity.epoch || proof.unresolved !== 0 || proof.outstandingPrepared !== 0 ||
+          proof.epoch !== identity.epoch || !Number.isSafeInteger(proof.nextEpoch) || proof.nextEpoch <= identity.epoch ||
+          proof.unresolved !== 0 || proof.outstandingPrepared !== 0 ||
           !ID.test(proof.attestationId || '') || typeof proof.signature !== 'string' || proof.signature.length < 32 ||
           await this.verifyQuiescence(proof, identity) !== true) {
         throw new TransportContractError('STOP_QUIESCENCE_ATTESTATION_INVALID');
@@ -135,6 +136,11 @@ export class ProviderTransport {
           !SEND_STATES.includes(event.state) || !PROVIDERS.has(event.providerId)) {
         throw new TransportContractError('TRANSPORT_EVENT_INVALID');
       }
+      const eventIdentity = validateTransportIdentity(event.identity);
+      if (eventIdentity.requestId !== event.requestId || eventIdentity.providerId !== event.providerId) {
+        throw new TransportContractError('TRANSPORT_EVENT_IDENTITY_MISMATCH');
+      }
+      if (event.state === 'UNKNOWN') requiredString(event.quarantineId, 'UNKNOWN_QUARANTINE_ID_REQUIRED', 128);
       sequence = event.seq;
     }
     if (result.length > limit) throw new TransportContractError('EVENT_LIMIT_EXCEEDED');
