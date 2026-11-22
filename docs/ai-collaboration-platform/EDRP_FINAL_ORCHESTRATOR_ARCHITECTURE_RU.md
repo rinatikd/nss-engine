@@ -544,7 +544,7 @@ R4 нельзя считать пройденным, пока не провер�
 
 ### 17.1. Current verified baseline
 
-PR #111 (Free AI Workbench P0 — architecture and offline task ledger, head ca53b2e458853f251d372280b9d21283ece85661) is a **design + hardened offline prototype**, not an installed multi-agent Workbench. It remains a local append-only task ledger only; it does not implement a chat UI, live LLM calls, browser control, Bridge delivery, Git workspace operations, PowerShell Direct, shell execution or project builds.
+PR #111 (Free AI Workbench P0 — offline task ledger + static viewer, head 4fcfdedfea800632bbcded3568f96aa77c69afb3) is a **design + offline prototype with a read-only UI projection**, not an installed multi-agent Workbench. It contains a local append-only task ledger and a static JSONL viewer. It still does not implement multi-agent chat, live LLM calls, browser control, Bridge delivery, Git workspace operations, PowerShell Direct, shell execution or project builds.
 
 The README test path was corrected to C:/Engineering/Free-AI-Workbench. This is documentation and CI evidence only; no successful installation or E2E test in the target local folder is proven. The last chat-approved read-only target-folder request returned QUEUE_FULL, and no local fallback was used.
 
@@ -557,12 +557,12 @@ The current PR #111 branch has addressed several original P0 weaknesses. The lat
 3. **Durable append barrier — IMPROVED.** New v2 append writes loop until the full record is written and fsync the journal file before acknowledgement. Directory fsync is best-effort and platform-dependent; power-loss recovery on the target Windows filesystem is not yet demonstrated.
 4. **Torn tail / tamper detection — IMPROVED.** New v2 records include payload fingerprints and a SHA-256 hash chain. Torn final records and hash mismatches fail closed; no automatic truncation/repair occurs. This is unkeyed tamper evidence, not protection against an administrator rewriting the complete journal and recomputing the chain.
 5. **Idempotent request admission — IMPLEMENTED FOR THE OFFLINE LEDGER.** Stable requestId + payload fingerprint make identical retries idempotent; conflicting reuse is rejected. This does not yet propagate through a UI, EDRP API, Bridge adapter or worker because those integrations are not implemented.
-6. **Regression coverage — EXPANDED, STILL INCOMPLETE.** The Node suite is 11/11 PASS and includes same-request idempotency, conflicting reuse, hash-chain verification, tamper rejection, torn-tail fail-closed behavior, lock refusal, legacy-to-v2 continuation, rejected-transition byte stability and no-execution scope. Concurrent-process stress, stale-lock recovery, disk-full/fsync fault injection, backup/restore and Windows filesystem durability remain untested.
+6. **Regression coverage — EXPANDED, STILL INCOMPLETE.** The Node suite is now 15/15 PASS: 11 ledger tests plus 4 viewer tests. Coverage includes same-request idempotency, conflicting reuse, hash-chain verification, tamper rejection, torn-tail fail-closed behavior, lock refusal, legacy-to-v2 continuation, rejected-transition byte stability, no-execution scope, viewer projection, legacy-only unchained labeling and viewer rejection of tamper/torn/invalid histories. Concurrent-process stress, stale-lock recovery, disk-full/fsync fault injection, backup/restore, real browser UI behavior and Windows filesystem durability remain untested.
 7. **No deployment evidence — OPEN.** No verified Git remote/worktree/commit in C:/Engineering/Free-AI-Workbench and no local Windows execution result are available.
 
-Latest CI evidence at head ca53b2e:
-- Source checks run 45044451943 — PASS (includes repository portable tests and 11/11 Workbench Node tests).
-- CCTV CLI input/output guards run 45044451944 — PASS.
+Latest CI evidence at head 4fcfded:
+- Source checks run 45045535521 — PASS (includes repository portable tests, 15/15 Workbench ledger+viewer Node tests, and node --check for both UI modules).
+- CCTV CLI input/output guards run 45045535530 — PASS.
 
 These changes make the offline prototype safer, but do not change its scope or trust level. Keep it offline and do not use it to authorize or dispatch operations.
 
