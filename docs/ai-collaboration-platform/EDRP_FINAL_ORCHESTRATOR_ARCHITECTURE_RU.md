@@ -1036,7 +1036,7 @@ Do not enable calculation UI, redirect either legacy command, or modify DWG outp
 
 AGPT_Plugin PR #4: `feat(agpt): add M1 provenance-aware calculation gate`  
 Branch: `feat/agpt-m1-provenance-gate-20261122`  
-Exact head: `8fca47ee9297d29c0e53a5100a491b861feed896`  
+Exact head: `5297fec7a1016e619d460ce45ccde92c638019e1`  
 State: Draft/open; not merged.
 
 Implemented M1a:
@@ -1048,14 +1048,14 @@ Implemented M1a:
 - Positive Vтр requires imported-verified absolute residual pressure; evidence without an actual pressure value is also rejected before GasCalc.
 - Existing numeric GasCalc validation runs only after provenance validation.
 - Any engine warning or unresolved engineer module choice prevents release readiness.
-- Eleven provenance regression scenarios are included in the existing .NET 8 test runner, including stale field-value evidence rejection.
+- Thirteen provenance regression scenarios are included in the existing .NET 8 test runner: stale room-value and catalogue-value fingerprint rejection, plus a positive path where verified absolute residual pressure contributes positive Mтр.
 
-Exact-head CI at `8fca47ee9297d29c0e53a5100a491b861feed896`:
-- AGPT M1 provenance gate, push run #45054154863 — SUCCESS.
-- AGPT M1 provenance gate, pull_request run #45054159515 — SUCCESS.
-- AGPT GasCalc input validation, pull_request run #45054159527 — SUCCESS.
-- All 11 provenance scenarios, the existing normative golden cases and 17 numerical input-validation scenarios pass; logs end with `ИТОГО: все проверки пройдены`.
-- An intermediate head `a1302fc` failed because fixtures had not regenerated field hashes after legitimate input mutations; fixtures were corrected and the production hash check was kept strict.
+Exact-head CI at `5297fec7a1016e619d460ce45ccde92c638019e1`:
+- AGPT M1 provenance gate, push run #45054515949 — SUCCESS.
+- AGPT M1 provenance gate, pull_request run #45054521022 — SUCCESS.
+- AGPT GasCalc input validation, pull_request run #45054521036 — SUCCESS.
+- All 13 provenance scenarios, existing normative golden cases and 17 numerical input-validation scenarios pass; logs end with `ИТОГО: все проверки пройдены`.
+- The extended tests prove both fail-closed stale-hash paths and a positive verified-pressure/Mтр path.
 
 **Gate interpretation:** M1a source/test gate = PASS for this exact commit. Full AGPT M1 remains BLOCKED: no AutoCAD XData provenance adapter, no main `AGPT.csproj` inclusion, legacy commands/formulas and demo fallback remain unchanged, manufacturer module catalog evidence is still outstanding, and no AutoCAD 2026 disposable-DWG E2E has been performed. Calculation UI remains hidden. No local PC or DWG changes.
 
