@@ -29,6 +29,11 @@ Example PowerShell session:
 $env:CONSILIUM_OWNER_TOKEN = '<unique random secret>'
 $env:CONSILIUM_CHATGPT_TOKEN = '<different unique random secret>'
 $env:CONSILIUM_CLAUDE_TOKEN = '<different unique random secret>'
+$env:CONSILIUM_DEEPSEEK_TOKEN = '<different unique random secret>'
+$env:CONSILIUM_QWEN_TOKEN = '<different unique random secret>'
+$env:CONSILIUM_KIMI_TOKEN = '<different unique random secret>'
+$env:CONSILIUM_GROK_TOKEN = '<different unique random secret>'
+$env:CONSILIUM_GEMINI_TOKEN = '<different unique random secret>'
 $env:CONSILIUM_DATA_DIR = 'C:\Engineering\Consilium-Control-Room-Lab\data'
 node consilium/control-room.mjs
 ```
