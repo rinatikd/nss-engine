@@ -20,11 +20,11 @@ $oldStdoutTask = $null
 $oldStderrTask = $null
 $testError = $null
 $cleanupError = $null
-function WaitPort([int]$Pid) {
+function WaitPort([int]$ProcessId) {
   $deadline = [DateTime]::UtcNow.AddSeconds(12)
   do {
     $items = @([BridgeNativeMetadata]::Listeners(17484))
-    if ($items.Count -eq 1 -and $items[0] -eq ('127.0.0.1|' + $Pid)) { return }
+    if ($items.Count -eq 1 -and $items[0] -eq ('127.0.0.1|' + $ProcessId)) { return }
     if ([DateTime]::UtcNow -ge $deadline) { throw 'Server listener did not become ready' }
     Start-Sleep -Milliseconds 150
   } while ($true)
