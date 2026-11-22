@@ -7,9 +7,9 @@ import { EventLedger, projectEvents } from '../consilium/event-ledger.mjs';
 
 function temp(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-ledger-'));}
 const owner={id:'owner',role:'owner'};
-const chatgpt={id:'chatgpt',role:'operator'};
-const claude={id:'claude',role:'operator'};
-const kimi={id:'kimi',role:'participant'};
+const chatgpt={id:'chatgpt',role:'ai_member'};
+const claude={id:'claude',role:'ai_member'};
+const kimi={id:'kimi',role:'ai_member'};
 
 test('ledger persists a hash-chained sequence and replays identical request IDs',()=>{
  const dir=temp();let ledger=new EventLedger(dir,{now:()=> '2026-11-22T12:00:00.000Z'});
@@ -88,7 +88,7 @@ test('snapshot projection includes state beyond the event page limit',()=>{
  ledger.close();
 });
 
-test('operator can revise a NEEDS_EVIDENCE verdict with a linked immutable review event',()=>{
+test('AI member can revise a NEEDS_EVIDENCE verdict with a linked immutable review event',()=>{
  const ledger=new EventLedger(temp());
  ledger.append({type:'decision.proposed',actor:chatgpt,payload:{decisionId:'decision_revision_01',title:'Test protocol',rationale:'Initial proposal',risk:'consequential'}});
  const first=ledger.append({type:'decision.reviewed',actor:chatgpt,payload:{decisionId:'decision_revision_01',verdict:'NEEDS_EVIDENCE',rationale:'Need a real browser trace'}});
@@ -96,17 +96,17 @@ test('operator can revise a NEEDS_EVIDENCE verdict with a linked immutable revie
  const revised=ledger.append({type:'decision.reviewed',actor:chatgpt,payload:{decisionId:'decision_revision_01',verdict:'SUPPORT',rationale:'Trace supplied and verified',evidence:['artifact:trace-01'],revisionOf:first.id}});
  const decision=ledger.snapshot().state.decisions[0];
  assert.equal(decision.status,'READY_FOR_OWNER');
- assert.equal(decision.reviews.find(x=>x.operator==='chatgpt').eventId,revised.id);
+ assert.equal(decision.reviews.find(x=>x.reviewerId==='chatgpt').eventId,revised.id);
  assert.equal(decision.reviewHistory.length,1);
  assert.equal(decision.reviewHistory[0].verdict,'NEEDS_EVIDENCE');
  ledger.close();
 });
 
-test('any additional operator objection or evidence gap blocks the dual-review gate until revised',()=>{
+test('any additional AI-member objection or evidence gap blocks the dual-review gate until revised',()=>{
  const ledger=new EventLedger(temp());
  ledger.append({type:'decision.proposed',actor:chatgpt,payload:{decisionId:'decision_blockers_01',title:'Transport contract',rationale:'Require independent evidence',risk:'consequential'}});
- ledger.append({type:'decision.reviewed',actor:chatgpt,payload:{decisionId:'decision_blockers_01',verdict:'SUPPORT',rationale:'Core operator one supports'}});
- ledger.append({type:'decision.reviewed',actor:claude,payload:{decisionId:'decision_blockers_01',verdict:'SUPPORT',rationale:'Core operator two supports'}});
+ ledger.append({type:'decision.reviewed',actor:chatgpt,payload:{decisionId:'decision_blockers_01',verdict:'SUPPORT',rationale:'ChatGPT supports'}});
+ ledger.append({type:'decision.reviewed',actor:claude,payload:{decisionId:'decision_blockers_01',verdict:'SUPPORT',rationale:'Claude supports'}});
  assert.equal(ledger.snapshot().state.decisions[0].status,'READY_FOR_OWNER');
  const objection=ledger.append({type:'decision.reviewed',actor:kimi,payload:{decisionId:'decision_blockers_01',verdict:'OBJECT',rationale:'The evidence does not establish safe stop semantics'}});
  assert.equal(ledger.snapshot().state.decisions[0].status,'DISPUTED');
