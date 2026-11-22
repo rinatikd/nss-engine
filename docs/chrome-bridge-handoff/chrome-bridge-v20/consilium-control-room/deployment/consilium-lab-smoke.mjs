@@ -18,7 +18,7 @@ const dataDir=fs.mkdtempSync(path.join(os.tmpdir(),'consilium-lab-smoke-'));
 const app=createControlRoom({dataDir,tokens,port:0,host:'127.0.0.1'});
 let address;
 const request=async (route,{actor,method='GET',body,headers={}}={})=>{
-  const h={Connection:'close',...headers};
+  const h={...headers};
   if(actor)h.Authorization='Bearer '+tokenFor(actor);
   if(body!==undefined){
     h['Content-Type']='application/json';
