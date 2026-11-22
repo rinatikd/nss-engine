@@ -29,8 +29,8 @@ function WaitPort([int]$ProcessId) {
     Start-Sleep -Milliseconds 150
   } while ($true)
 }
-function RunUpdater([string[]]$ArgsList) {
-  $result = @(& $updater @ArgsList 2>&1)
+function RunUpdater([hashtable]$NamedArgs) {
+  $result = @(& $updater @NamedArgs 2>&1)
   if ($LASTEXITCODE -ne 0) { throw ('Updater failed: ' + ($result -join ' ')) }
   return $result
 }
@@ -76,17 +76,26 @@ try {
   $activePid = $old.Id
   $activeStart = $oldMeta.created
 
-  $args = @('-LabRoot',$root,'-StateRoot',$state,'-ExpectedPid',[string]$activePid,
-    '-ExpectedStartUtc',$activeStart,'-CandidateRoot',$packageRoot,
-    '-ExpectedSourceSha',$sourceSha,'-TestFixture')
+  $updaterArgs = @{
+    LabRoot = $root
+    StateRoot = $state
+    ExpectedPid = [int]$activePid
+    ExpectedStartUtc = $activeStart
+    CandidateRoot = $packageRoot
+    ExpectedSourceSha = $sourceSha
+    TestFixture = $true
+  }
   $before = (Get-FileHash (Join-Path $server 'bridge.mjs') -Algorithm SHA256).Hash
-  $dry = RunUpdater $args
+  $dry = RunUpdater $updaterArgs
   if (($dry -join ' ') -notmatch '\[DRY_RUN\]') { throw 'Server dry-run marker missing' }
   if ((Get-FileHash $configPath -Algorithm SHA256).Hash -ne $configHash) { throw 'Dry-run changed config' }
   if ((Get-FileHash (Join-Path $server 'bridge.mjs') -Algorithm SHA256).Hash -ne $before) { throw 'Dry-run changed server source' }
   WaitPort $activePid
 
-  $applied = RunUpdater ($args + @('-Apply'))
+  $applyArgs = @{}
+  foreach ($key in $updaterArgs.Keys) { $applyArgs[$key] = $updaterArgs[$key] }
+  $applyArgs['Apply'] = $true
+  $applied = RunUpdater $applyArgs
   if (($applied -join ' ') -notmatch '\[UPGRADED\]') { throw 'Upgrade marker missing' }
   if ((Get-FileHash $configPath -Algorithm SHA256).Hash -ne $configHash) { throw 'Upgrade changed config/tokens' }
   $activePid = CurrentOwner
@@ -111,12 +120,22 @@ try {
     if ($newNames -notcontains $n) { throw ('New registry missing ' + $n) }
   }
 
-  $rbArgs = @('-LabRoot',$root,'-StateRoot',$state,'-ExpectedPid',[string]$activePid,
-    '-ExpectedStartUtc',$activeStart,'-CandidateRoot',$packageRoot,
-    '-ExpectedSourceSha',$sourceSha,'-RollbackFrom',$backup,'-TestFixture')
-  $rbDry = RunUpdater $rbArgs
+  $rollbackArgs = @{
+    LabRoot = $root
+    StateRoot = $state
+    ExpectedPid = [int]$activePid
+    ExpectedStartUtc = $activeStart
+    CandidateRoot = $packageRoot
+    ExpectedSourceSha = $sourceSha
+    RollbackFrom = $backup
+    TestFixture = $true
+  }
+  $rbDry = RunUpdater $rollbackArgs
   if (($rbDry -join ' ') -notmatch '\[DRY_RUN\]') { throw 'Rollback dry-run marker missing' }
-  $rb = RunUpdater ($rbArgs + @('-Apply'))
+  $rollbackApplyArgs = @{}
+  foreach ($key in $rollbackArgs.Keys) { $rollbackApplyArgs[$key] = $rollbackArgs[$key] }
+  $rollbackApplyArgs['Apply'] = $true
+  $rb = RunUpdater $rollbackApplyArgs
   if (($rb -join ' ') -notmatch '\[ROLLED_BACK\]') { throw 'Rollback marker missing' }
   $activePid = CurrentOwner
   $p = [Diagnostics.Process]::GetProcessById($activePid)
