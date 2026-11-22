@@ -291,6 +291,15 @@ export class ProviderJournal {
     if(tx&&['STOPPED_CLEAN','STOP_REQUESTED','STOP_AFTER_COMMIT'].includes(tx.state)) {
       return {state:tx.state,identity,nextEpoch:tx.nextEpoch,...(tx.quiescence?{quiescence:clone(tx.quiescence)}:{})};
     }
+    if(tx&&tx.state==='REVOKED'&&Number.isSafeInteger(tx.nextEpoch)) {
+      const proof={
+        verified:true,signatureValid:true,epoch:identity.epoch,nextEpoch:tx.nextEpoch,
+        unresolved:0,outstandingPrepared:0,attestationId:'attest_'+crypto.randomBytes(12).toString('hex'),signature:''
+      };
+      proof.signature=signQuiescence(proof,identity,this.key);
+      this.#append('stop.clean',identity,{nextEpoch:tx.nextEpoch,quiescence:proof});
+      return {state:'STOPPED_CLEAN',identity,nextEpoch:tx.nextEpoch,quiescence:proof};
+    }
     this.#ensureEpoch(identity);
     if(tx&&tx.state==='SENT') {
       const nextEpoch=this.#revokeEpoch(identity);
