@@ -62,7 +62,9 @@ test('viewer fails closed on tamper, torn tail and invalid transitions',async()=
   const original=readFileSync(f.file,'utf8');
   await assert.rejects(projectLedger(original.replace('Read-only viewer verification','changed')),/LEDGER_PAYLOAD_HASH_MISMATCH/);
   await assert.rejects(projectLedger(original.slice(0,-1)),/LEDGER_TORN_TAIL/);
-  const bad=JSON.stringify({...assign,requestId:'invalid_assign_02',action:'accept'})+'\n';
-  await assert.rejects(projectLedger(original+bad),/INVALID_TRANSITION/);
+  const oldCreate={id,action:'create',actor:'coordinator',role:'planner',title:'Legacy invalid transition',project:'Workbench'};
+  const badAccept={id,action:'accept',actor:'reviewer_a',role:'reviewer',comment:'Cannot accept before submit'};
+  const invalidHistory=JSON.stringify(oldCreate)+'\n'+JSON.stringify(badAccept)+'\n';
+  await assert.rejects(projectLedger(invalidHistory),/INVALID_TRANSITION/);
  }finally{f.cleanup();}
 });
