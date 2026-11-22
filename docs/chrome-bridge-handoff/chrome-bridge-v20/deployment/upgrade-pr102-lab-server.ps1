@@ -260,7 +260,7 @@ try {
     }
   }
   WriteExpectedTools $root $oldExpectedTools $script:NodeExe
-  Probe (Join-Path $stageRoot 'cutover-health.mjs') $stageRoot $state $expectedTools $run 'isolated'
+  Probe $healthScript $stageRoot $state $expectedTools $run 'isolated'
 
   $stageHash = TreeHash $stageServer
   Require ($stageHash.Length -gt 0) 'Candidate server tree hash is empty'
