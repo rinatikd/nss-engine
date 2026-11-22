@@ -215,7 +215,7 @@ export class ProviderJournal {
 
   outcome(input,state,reasonCode='',extra={}) {
     const identity=validateProviderIdentity(input);
-    if(!['UNKNOWN','NOT_PERFORMED','BLOCKED','REVOKED'].includes(state))throw Error('PROVIDER_OUTCOME_STATE_INVALID');
+    if(!['UNKNOWN','NOT_PERFORMED','BLOCKED','REVOKED','STOP_AFTER_COMMIT'].includes(state))throw Error('PROVIDER_OUTCOME_STATE_INVALID');
     const quarantineId=state==='UNKNOWN'?'quarantine-'+identity.requestId:null;
     this.#append('transaction.outcome',identity,{state,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(reasonCode)?reasonCode:'',quarantineId,...extra});
     return {state,identity,...(quarantineId?{quarantineId}:{}),...(reasonCode?{reasonCode}:{})};
@@ -249,7 +249,7 @@ export class ProviderJournal {
     if(tx&&['COMMITTING','UNKNOWN','PREPARING'].includes(tx.state)) {
       return this.outcome(identity,'UNKNOWN','REVOKED_DURING_UNCERTAIN_COMMIT');
     }
-    this.outcome(identity,'REVOKED','FENCING_EPOCH_REVOKED');
+    this.outcome(identity,'REVOKED','FENCING_EPOCH_REVOKED',{nextEpoch});
     return {state:'REVOKED',identity,nextEpoch};
   }
 
@@ -277,7 +277,7 @@ export class ProviderJournal {
     const stateFor=record=>({
       'epoch.initialized':'ACCEPTED','epoch.revoked':'REVOKED','prepare.started':'ACCEPTED',
       'prepare.completed':'PREPARED','commit.started':'DISPATCHED','commit.completed':'SENT',
-      'transaction.outcome':record.data.state,'stop.requested':'STOP_REQUESTED','stop.clean':'STOPPED_CLEAN'
+      'transaction.outcome':record.data.state,'stop.requested':'STOP_REQUESTED','stop.clean':'STOPPED_CLEAN','stop.after_commit':'STOP_AFTER_COMMIT'
     })[record.type]||'UNKNOWN';
     return this.records.filter(e=>e.seq>after).slice(0,limit).map(e=>({
       seq:e.seq,eventId:e.eventId,requestId:e.identity.requestId,providerId:e.identity.providerId,
