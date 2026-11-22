@@ -82,7 +82,7 @@ The required tests include pre-commit stop, post-commit hazard, revoke-before-co
 
 ## 6. MVP implementation status
 
-A local Node.js MVP prototype was implemented separately and tested with 22 automated tests (12 Control Room API/UI tests and 10 event-ledger tests, including regressions for all-seven operator token loading and additional-operator objection/evidence-gap blocking). It contains:
+A local Node.js MVP prototype was implemented separately and tested with 22 automated tests (12 Control Room API/UI tests and 10 event-ledger tests, including regressions for all-seven operator token loading and additional-operator objection/evidence-gap blocking even after the core pair reaches READY_FOR_OWNER). It contains:
 
 - loopback-only Control Room HTTP server and browser UI;
 - distinct owner credential and seven independently authenticated, equal AI operator credentials;
