@@ -54,6 +54,11 @@ export const DEFAULT_ADAPTERS = {
     composer: 'textarea, [contenteditable="true"][role="textbox"]',
     send: '', stop: '', reply: '',
   },
+  kimi: {
+    label: 'Kimi (candidate, read-only)', origin: 'https://www.kimi.ai', newChatUrl: 'https://www.kimi.ai/',
+    composer: 'textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"]',
+    send: '', stop: '', reply: '',
+  },
   aistudio: {
     label: 'Google AI Studio (candidate)', origin: 'https://aistudio.google.com', newChatUrl: 'https://aistudio.google.com/',
     composer: 'textarea, [contenteditable="true"][role="textbox"]',
