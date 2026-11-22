@@ -110,3 +110,4 @@ $('export-events').onclick=async()=>{
     toast('Полный журнал экспортирован.');
   }catch(e){toast(`Экспорт не выполнен: ${e.message}`)}
 };
+syncPermissions();
