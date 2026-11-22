@@ -265,8 +265,10 @@ export class ProviderJournal {
     const identity=validateProviderIdentity(input);
     const tx=this.transactions.get(identity.requestId);
     if(tx&&!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
-    if(tx&&tx.state==='REVOKED')return {state:'REVOKED',identity,nextEpoch:tx.nextEpoch};
-    if(tx&&tx.state==='UNKNOWN'&&tx.nextEpoch)return {state:'UNKNOWN',identity,quarantineId:tx.quarantineId,nextEpoch:tx.nextEpoch};
+    if(tx&&['REVOKED','STOPPED_CLEAN','STOP_AFTER_COMMIT'].includes(tx.state))
+      return {state:'REVOKED',identity,nextEpoch:tx.nextEpoch};
+    if(tx&&['UNKNOWN','STOP_REQUESTED'].includes(tx.state)&&tx.nextEpoch)
+      return {state:'UNKNOWN',identity,quarantineId:tx.quarantineId,nextEpoch:tx.nextEpoch};
     this.#ensureEpoch(identity);
     const nextEpoch=this.#revokeEpoch(identity);
     const updated=this.transactions.get(identity.requestId);
