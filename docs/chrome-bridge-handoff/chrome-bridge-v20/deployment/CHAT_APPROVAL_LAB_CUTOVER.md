@@ -36,6 +36,23 @@ Required health state before proceeding:
 
 Do not kill a process by port alone. Do not modify or restart Production components.
 
+## 1A. Stage the MCP server source separately from the Chrome extension
+
+The browser-extension upgrade scripts do not install server-side MCP modules:
+- upgrade-windows.ps1 and stage-background-lab.ps1 stage extension files only.
+- controlled-cutover.ps1 copies and switches server trees, but its non-rehearsal path is a separately controlled process cutover with local interactive confirmation; it is not the chat-approved Lab staging path.
+
+For PR #132, create a disposable server package from the exact source checkout:
+
+```powershell
+$sha = (git rev-parse HEAD).Trim()
+.\deployment\stage-server-lab.ps1 -CandidateRoot (Get-Location).Path -OutputRoot 'C:\Engineering\ChromeBridge-PR132-Server-Lab-Package' -CommitSha $sha
+```
+
+The script copies only the server source and the isolated health probe; excludes config, credentials, server state and Chrome profile data; checks Node syntax; verifies that the source registry contains all session and provider transaction tools; starts an in-process Bridge on an ephemeral loopback port with synthetic tokens; runs exact tools/list, initialize and browser_status checks; and writes a SHA-256 file manifest. It does not stop, replace or retarget the installed Bridge, persistent Lab server, extension, connector or tunnel.
+
+**Important:** package staging is not live deployment. Do not treat it as satisfying tool discovery on the active ChatGPT connector. The connected Lab endpoint must independently report the same full registry after a separately authorized Lab deployment. The existing Production/interactive controlled-cutover script is not a substitute for this chat-approved gate.
+
 ## 2. Prove tool discovery before consent
 
 Query MCP tools/list from the Lab endpoint. The active registry must include:
