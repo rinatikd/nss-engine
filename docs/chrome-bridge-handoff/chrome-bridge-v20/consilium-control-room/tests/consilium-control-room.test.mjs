@@ -32,7 +32,7 @@ test('Control Room binds to loopback and authenticates both co-operators indepen
  }finally{await app.close()}
 });
 
-test('co-operators can pause and request stop; owner alone approves decisions',async()=>{
+test('AI members can pause and request stop; owner alone approves decisions',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const start=await request(base,tokens[1].token,'/api/session/start',{title:'Root-cause analysis',requestId:'start_req_0001'});assert.equal(start.status,201);
@@ -52,9 +52,9 @@ test('co-operators can pause and request stop; owner alone approves decisions',a
 test('all seven AI members share session and round control while owner retains consequential approval',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
-  for(const operator of tokens.slice(1)){
-   const snapshot=await request(base,operator.token,'/api/snapshot');
-   assert.equal(snapshot.status,200,`snapshot read failed for ${operator.actor.id}`);
+  for(const member of tokens.slice(1)){
+   const snapshot=await request(base,member.token,'/api/snapshot');
+   assert.equal(snapshot.status,200,`snapshot read failed for ${member.actor.id}`);
   }
   const start=await request(base,tokens[5].token,'/api/session/start',{title:'Seven-member equal control pilot',requestId:'start_equal_members_01'});assert.equal(start.status,201);
   const pause=await request(base,tokens[2].token,'/api/session/pause',{requestId:'pause_equal_ops_01'});assert.equal(pause.status,200);
@@ -73,8 +73,8 @@ test('all seven AI members share session and round control while owner retains c
   const decision=await proposal.json(), decisionId=decision.event.payload.decisionId;
   const reviewOrder=[tokens[5],tokens[4],tokens[3],tokens[6],tokens[7],tokens[1],tokens[2]];
   for(let i=0;i<reviewOrder.length;i++){
-   const operator=reviewOrder[i];
-   const review=await request(base,operator.token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:`Independent review from ${operator.actor.id}`,requestId:`review_equal_${operator.actor.id}`});
+   const member=reviewOrder[i];
+   const review=await request(base,operator.token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:`Independent review from ${member.actor.id}`,requestId:`review_equal_${operator.actor.id}`});
    assert.equal(review.status,201,`review failed for ${operator.actor.id}`);
    if(i<reviewOrder.length-1){
     const snapshot=await (await request(base,tokens[0].token,'/api/snapshot')).json();
@@ -182,7 +182,7 @@ test('loadActorTokens requires seven equal AI-member identities plus the owner',
  const loaded=loadActorTokens(env);
  assert.equal(loaded.length,8);
  assert.deepEqual(loaded.filter(x=>x.actor.role==='ai_member').map(x=>x.actor.id).sort(),['chatgpt','claude','deepseek','gemini','grok','kimi','qwen']);
-  assert.deepEqual(loaded.filter(x=>x.actor.role==='participant').map(x=>x.actor.id).sort(),[]);
+  assert.deepEqual(loaded.every(x=>x.actor.role===(x.actor.id==='owner'?'owner':'ai_member')),true);
  assert.equal(loaded.find(x=>x.actor.id==='owner').actor.role,'owner');
  const incomplete={...env};delete incomplete.CONSILIUM_GROK_TOKEN;
  assert.throws(()=>loadActorTokens(incomplete),/REQUIRED_IDENTITY_TOKEN_MISSING_GROK/);
