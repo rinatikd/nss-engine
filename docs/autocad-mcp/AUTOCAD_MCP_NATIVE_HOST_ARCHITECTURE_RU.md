@@ -47,6 +47,8 @@ MCP transport и модельный оркестратор не должны в�
 
 Не копировать как основу CAD execution: COM остаётся межпроцессным слоем, а rollback в COM имеет более слабую гарантию, чем реальная Database.Transaction. U-C4N сам фиксирует native .NET worker как отдельное решение, зависящее от измерений.
 
+В чате Claude зафиксирована локальная установка `autocad-mcp-pro 1.7.0` в `C:\\Work\\AGPT_Plugin\\AGPT_Plugin\\Autocad-MCP` и успешный отдельный Python COM probe `GetActiveObject('AutoCAD.Application')`. Но Claude Desktop config в видимом логе не был сохранён/проверен: открытие файла конфигурации через %APPDATA% завершилось ошибкой отсутствующей папки; далее нет подтверждения `Settings → Developer → Edit Config`, статуса сервера RUNNING, MCP `tools/list` или вызова `system_about`. Запрос `system_about` был отправлен в браузерный `claude.ai` чат, у которого нет локальных MCP tools. Следовательно, доказана только COM attach, не end-to-end MCP интеграция. Upstream main U-C4N сейчас содержит более новую версию 1.8.0; локально подтверждена только 1.7.0.
+
 ### Qwen: FastMCP + pywin32 prototype
 
 Полезные идеи: typed geometry tools, ограничение числовых параметров, health/doctor, сценарии приёмки, разделение Planner и Executor.
@@ -58,7 +60,7 @@ MCP transport и модельный оркестратор не должны в�
 - нет durable request journal и безопасного разрешения unknown write outcomes;
 - COM initialization не балансируется вызовом CoUninitialize.
 
-Этот код не является безопасной основой для исполнения на рабочем DWG.
+Этот код не является безопасной основой для исполнения на рабочем DWG. В Qwen transcript PowerShell installer и server.py показаны как сгенерированный текст; нет захваченного результата запуска installer, успешных unit tests или live AutoCAD tests. В прототипе также есть `save_document()`, сохраняющий активный документ напрямую, и `delete_entity()` без отдельного write approval, no-overwrite/copy-only guard или durable outcome journal; `list_entities()` возвращает только limit/truncated без cursor/revision-bound pagination. Поэтому даже после исправления Undo API и COM threading его нельзя подключать к пользовательскому DWG.
 
 ### Native .NET precedent: codesknight/AutoCAD-MCP
 
