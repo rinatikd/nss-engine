@@ -45,7 +45,7 @@ function AssertListener([int]$ProcessId) {
   Require ($listeners.Count -eq 1) ('Expected one listener on 17484, found ' + $listeners.Count)
   Require ($listeners[0] -eq ('127.0.0.1|' + $ProcessId)) ('17484 listener does not belong to expected PID; owner=' + $listeners[0])
 }
-function PinProcess([int]$ProcessId,[string]$ExpectedStart,[string]$Root) {
+function PinProcess([int]$ProcessId,[string]$ExpectedStart,[string]$Root,[string]$State,[string]$ConfigHash) {
   $p = [Diagnostics.Process]::GetProcessById($ProcessId)
   $null = $p.Handle
   try {
@@ -56,16 +56,49 @@ function PinProcess([int]$ProcessId,[string]$ExpectedStart,[string]$Root) {
     Require ([Math]::Abs(($actualStart-$expected).TotalMilliseconds) -le 2) 'PID start-time mismatch; refusing PID reuse'
     $actualCommand = ([string]$identity.command).Replace('/','\')
     $expectedEntry = (Join-Path $Root 'server\bridge.mjs').Replace('/','\')
-    if ($actualCommand.IndexOf($expectedEntry,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
-      $diagnostic = 'expectedEntry=' + $expectedEntry + '; root=' + $Root +
-        '; commandLength=' + $actualCommand.Length +
-        '; containsRoot=' + ($actualCommand.IndexOf($Root,[StringComparison]::OrdinalIgnoreCase) -ge 0) +
-        '; containsBridgeFileName=' + ($actualCommand.IndexOf('bridge.mjs',[StringComparison]::OrdinalIgnoreCase) -ge 0)
-      if ($TestFixture) { $diagnostic += '; syntheticCommand=' + $actualCommand }
-      throw ('Listener command line does not point to the pinned PR102 Lab server; ' + $diagnostic)
+    $directServer = $actualCommand.IndexOf($expectedEntry,[StringComparison]::OrdinalIgnoreCase) -ge 0
+    $transactionLauncher = $false
+
+    if (-not $directServer) {
+      # A transaction-launched server is accepted only when the exact launcher
+      # and sibling job prove this Lab root, state root, port and config hash.
+      $argumentMatch = [regex]::Match(
+        $actualCommand,
+        '^"(?<exe>[^"]+)"\s+"(?<script>[^"]+\\cutover-start\.mjs)"\s+"(?<job>[^"]+\\start-[0-9a-f]{32}\.json)"$',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase
+      )
+      if ($argumentMatch.Success) {
+        $exePath = FullPath $argumentMatch.Groups['exe'].Value
+        $scriptPath = FullPath $argumentMatch.Groups['script'].Value
+        $jobPath = FullPath $argumentMatch.Groups['job'].Value
+        $scriptDir = FullPath (Split-Path -Parent $scriptPath)
+        $jobDir = FullPath (Split-Path -Parent $jobPath)
+        $runName = Split-Path -Leaf $scriptDir
+        $sameTransaction = $scriptDir -ieq $jobDir
+        $insideLab = (Inside $scriptPath $Root) -and (Inside $jobPath $Root)
+        $validRunName = $runName -match '^\.server-upgrade-[0-9a-f]{32}$'
+        $pinnedNames = ((Split-Path -Leaf $scriptPath) -ieq 'cutover-start.mjs') -and
+          ((Split-Path -Leaf $jobPath) -match '(?i)^start-[0-9a-f]{32}\.json$')
+        $sameNode = $exePath -ieq (FullPath $script:NodeExe)
+        if ($sameTransaction -and $insideLab -and $validRunName -and $pinnedNames -and $sameNode -and
+            (Test-Path -LiteralPath $scriptPath -PathType Leaf) -and
+            (Test-Path -LiteralPath $jobPath -PathType Leaf)) {
+          $startJob = ReadJson $jobPath
+          $jobSource = FullPath ([string]$startJob.source)
+          $jobState = FullPath ([string]$startJob.state)
+          $jobHash = [string]$startJob.configHash
+          $currentHash = HashFile (Join-Path $State 'config.json')
+          $transactionLauncher = ($jobSource -ieq (FullPath $Root)) -and
+            ($jobState -ieq (FullPath $State)) -and
+            ([int]$startJob.port -eq 17484) -and
+            ($jobHash -eq $ConfigHash) -and ($jobHash -eq $currentHash)
+        }
+      }
     }
+
+    Require ($directServer -or $transactionLauncher) 'Lab listener command line is neither pinned bridge.mjs nor a verified PR102 Lab transaction launcher'
     AssertListener $ProcessId
-    return @{process=$p;identity=$identity}
+    return @{process=$p;identity=$identity;kind=$(if ($directServer) {'bridge'} else {'transaction-launcher'})}
   } catch {
     $p.Dispose()
     throw
@@ -223,7 +256,7 @@ $script:NodeExe = (Get-Command node.exe -ErrorAction Stop).Source
 $nodeVersion = (& $script:NodeExe --version).Trim()
 Require ($LASTEXITCODE -eq 0) 'Node version probe failed'
 
-$identity = PinProcess $ExpectedPid $ExpectedStartUtc $root
+$identity = PinProcess $ExpectedPid $ExpectedStartUtc $root $state $configHashBefore
 $oldProc = $identity.process
 $oldIdentity = $identity.identity
 $oldTreeHash = TreeHash $serverRoot
@@ -300,7 +333,7 @@ try {
     $backupRoot = CreateBackup $serverRoot $root $state $configHashBefore $oldTreeHash $actualSha $run
   }
   Require ((HashFile $configPath) -eq $configHashBefore) 'Lab config changed after preflight'
-  $fresh = PinProcess $ExpectedPid $ExpectedStartUtc $root
+  $fresh = PinProcess $ExpectedPid $ExpectedStartUtc $root $state $configHashBefore
   try {
     Require ($fresh.identity.command -ceq $oldIdentity.command) 'Lab listener command line changed during preflight'
     Require ((TreeHash $serverRoot) -eq $oldTreeHash) 'Installed Lab server changed during preflight'
