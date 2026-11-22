@@ -4,7 +4,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$LabRoot,
   [Parameter(Mandatory=$true)][string]$OutputPath,
-  [string]$CommitSha = ''
+  [string]$CommitSha = '',
+  [ValidateRange(1024,65535)][int]$LabPort = 17481
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -21,7 +22,8 @@ if ($m.manifest_version -ne 3 -or $m.background.service_worker -ne 'background.j
   throw 'MV3 module background manifest required'
 }
 $hosts=@($m.host_permissions)
-if ($hosts -notcontains 'http://127.0.0.1:17481/*') { throw 'Missing lab endpoint permission' }
+$labHost = 'http://127.0.0.1:{0}/*' -f $LabPort
+if ($hosts -notcontains $labHost) { throw ('Missing lab endpoint permission: ' + $labHost) }
 foreach($bad in @('http://127.0.0.1:17381/*','http://127.0.0.1/*','https://*/*','<all_urls>')) {
   if ($hosts -contains $bad) { throw ('Forbidden host permission: '+$bad) }
 }
@@ -44,7 +46,7 @@ $report=[ordered]@{
   schema='chrome-bridge-rc1-lab-evidence-v1'
   commit=$CommitSha
   target='DISPOSABLE_LAB_ONLY'
-  endpoint='http://127.0.0.1:17481'
+  endpoint=('http://127.0.0.1:{0}' -f $LabPort)
   mv3Background='background.js'
   sourceFileCount=$entries.Count
   files=$entries
