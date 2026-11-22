@@ -49,20 +49,18 @@ test('co-operators can pause and request stop; owner alone approves decisions',a
  }finally{await app.close()}
 });
 
-test('two co-operators control execution while five participants retain expert rights',async()=>{
+test('all seven AI members share session and round control while owner retains consequential approval',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   for(const operator of tokens.slice(1)){
    const snapshot=await request(base,operator.token,'/api/snapshot');
    assert.equal(snapshot.status,200,`snapshot read failed for ${operator.actor.id}`);
   }
-  const startDenied=await request(base,tokens[5].token,'/api/session/start',{title:'Participant cannot start session',requestId:'start_participant_denied'});assert.equal(startDenied.status,403);
-  const start=await request(base,tokens[1].token,'/api/session/start',{title:'Two co-operator control pilot',requestId:'start_equal_ops_01'});assert.equal(start.status,201);
+  const start=await request(base,tokens[5].token,'/api/session/start',{title:'Seven-member equal control pilot',requestId:'start_equal_members_01'});assert.equal(start.status,201);
   const pause=await request(base,tokens[2].token,'/api/session/pause',{requestId:'pause_equal_ops_01'});assert.equal(pause.status,200);
   const resume=await request(base,tokens[1].token,'/api/session/resume',{requestId:'resume_equal_ops_01'});assert.equal(resume.status,200);
   const roundProposal=await request(base,tokens[5].token,'/api/rounds/propose',{roundId:'round_proposal_01',objective:'Independent review of the transport race',participants:['chatgpt','claude','kimi','deepseek'],requestId:'round_proposal_req'});assert.equal(roundProposal.status,201);
-  const launchDenied=await request(base,tokens[5].token,'/api/rounds/start',{roundId:'round_proposal_01',requestId:'round_start_denied'});assert.equal(launchDenied.status,403);
-  const launch=await request(base,tokens[2].token,'/api/rounds/start',{roundId:'round_proposal_01',requestId:'round_start_claude'});assert.equal(launch.status,202);
+  const launch=await request(base,tokens[5].token,'/api/rounds/start',{roundId:'round_proposal_01',requestId:'round_start_deepseek'});assert.equal(launch.status,202);
   const roundProposal2=await request(base,tokens[4].token,'/api/rounds/propose',{roundId:'round_proposal_02',objective:'Second independent review round',participants:['chatgpt','claude','qwen'],requestId:'round_proposal_req_02'});assert.equal(roundProposal2.status,201);
   const launchChatGPT=await request(base,tokens[1].token,'/api/rounds/start',{roundId:'round_proposal_02',requestId:'round_start_chatgpt'});assert.equal(launchChatGPT.status,202);
   const pauseAgain=await request(base,tokens[1].token,'/api/session/pause',{requestId:'pause_equal_ops_02'});assert.equal(pauseAgain.status,200);
@@ -86,8 +84,7 @@ test('two co-operators control execution while five participants retain expert r
   const ready=await (await request(base,tokens[0].token,'/api/snapshot')).json();
   assert.equal(ready.state.decisions[0].status,'READY_FOR_OWNER');
   const approved=await request(base,tokens[0].token,'/api/decisions/approve',{decisionId,requestId:'approve_equal_owner'});assert.equal(approved.status,200);
-  const stopDenied=await request(base,tokens[4].token,'/api/session/stop',{requestId:'stop_participant_denied'});assert.equal(stopDenied.status,403);
-  const stop=await request(base,tokens[1].token,'/api/session/stop',{requestId:'stop_equal_ops_01'});assert.equal(stop.status,202);
+  const stop=await request(base,tokens[4].token,'/api/session/stop',{requestId:'stop_equal_members_01'});assert.equal(stop.status,202);
  }finally{await app.close()}
 });
 
@@ -114,7 +111,7 @@ test('static UI is served with restrictive CSP and without exposing data before 
  try{
   const page=await fetch(base+'/');assert.equal(page.status,200);const html=await page.text();assert.match(html,/Consilium Control Room/);assert.match(page.headers.get('content-security-policy'),/script-src 'self'/);
   const js=await fetch(base+'/app.js');assert.equal(js.status,200);const jsText=await js.text();assert.ok(jsText.includes('/api/decisions/review'));assert.ok(jsText.includes('/api/rounds/propose'));assert.ok(jsText.includes('/api/rounds/start'));assert.match(jsText,/RESPONSE_UNCERTAIN_RETRY_SAME_REQUEST/);
-  assert.match(html,/два равноправных со-оператора/i);assert.match(html,/пять равноправных экспертных участников/i);
+  assert.match(html,/Все семь ИИ имеют равные права/i);assert.match(html,/ChatGPT и Claude — обязательная пара/i);
   const api=await fetch(base+'/api/snapshot');assert.equal(api.status,401);
  }finally{await app.close()}
 });
@@ -171,7 +168,7 @@ test('authenticated export returns a newline-delimited, hash-chained journal',as
  }finally{await app.close()}
 });
 
-test('loadActorTokens configures two co-operators and five expert participants',()=>{
+test('loadActorTokens configures seven independently authenticated equal AI members plus owner',()=>{
  const env={
   CONSILIUM_OWNER_TOKEN:'owner-token-abcdefghijklmnopqrstuvwxyz-123456',
   CONSILIUM_CHATGPT_TOKEN:'chatgpt-token-abcdefghijklmnopqrstuvwxyz-123456',
