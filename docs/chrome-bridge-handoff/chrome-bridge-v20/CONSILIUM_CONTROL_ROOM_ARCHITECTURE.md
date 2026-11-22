@@ -100,13 +100,26 @@ A local Node.js MVP prototype is implemented in this branch and tested with 31 a
 
 The MVP source code is included in this PR branch; it has **not** been deployed to the Windows Lab or Production and is not yet wired into live Bridge dispatch. The prototype does not prove that a provider received a message.
 
-## 7. Explicit stop guarantee
+## 7. Chrome Bridge ProviderTransport v1 adapter
+
+The Bridge side now has a concrete, loopback-only adapter path rather than a contract-only placeholder:
+
+- `consilium/chrome-bridge-provider-adapter.mjs` is the Control Room/Orchestrator-side MCP client. It accepts only `http://127.0.0.1:<port>/mcp`, uses the configured Bridge bearer token, exposes prepare / commit / status / stop / revoke / events, and never retries a mutation. A lost or ambiguous acknowledgement becomes `UNKNOWN` with a quarantine ID.
+- `server/provider-journal.mjs` persists an HMAC-chained JSONL transaction journal with an exclusive writer lock, request-ID idempotency, payload-hash binding, expiring fencing tokens, per-tab epochs and fail-closed restart recovery. In-flight or prepared work recovered after restart becomes `UNKNOWN`; unresolved work quarantines the tab against new sends.
+- `server/bridge.mjs` exposes the six provider transaction MCP tools and routes prepare / commit through the existing single-writer queue. A dispatched command timeout keeps its active slot reserved until a late ACK arrives; it does not release the lane and risk overlapping a still-running DOM action.
+- `extension/mutation-dispatch.js` requires the explicit per-origin Control grant and local approval for both stages, then revalidates the exact tab and conversation after approval.
+- `extension/page.js` prepares the exact composer payload without clicking Send. The page-side receipt binds request ID, prepared ID, payload hash, origin, conversation and epoch. Commit rechecks that binding and the live composer hash, consumes the receipt before the single Send click, and returns correlated click evidence. A per-tab page mutation lock prevents overlapping injections in the same page context.
+- A clean stop is attested only when the tab has zero unresolved transactions and zero outstanding prepared work. A stop request during an uncertain/in-flight action advances the epoch but remains `STOP_REQUESTED`; it is never reported as clean.
+
+The adapter and server integration are covered by synthetic MCP/HTTP tests. This is not yet proof of a real provider send: the provider-specific page actions still require a disposable Windows/Chrome Lab E2E with real extension permissions, visible local approval, prepare-no-send inspection, commit click evidence, timeout/late-ACK and restart/quarantine cases. No provider has been contacted by this implementation.
+
+## 8. Explicit stop guarantee
 
 Pause closes the council dispatch gate; it does not claim to cancel committed provider actions.
 
 Stop closes future dispatch and increments the orchestration epoch. The UI reports STOP_REQUESTED until Bridge confirms that no prepared pre-commit operation can click and every in-flight action has a terminal status or UNKNOWN quarantine. The current Bridge send path still needs Kimi's prepare/commit + fencing integration. Do not label the existing prototype STOPPED or promise that it can recall a message already sent.
 
-## 8. Acceptance gates before local Lab rollout
+## 9. Acceptance gates before local Lab rollout
 
 - [ ] ChatGPT and Claude independently authenticate as equal co-operators; the other five authenticate as equal expert participants; owner identity is separate.
 - [ ] Any participant can propose a round; only ChatGPT or Claude can launch it, with both actions recorded.
