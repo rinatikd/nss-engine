@@ -139,10 +139,10 @@ export class ChromeBridgeProviderAdapter {
       { message, payloadHash });
   }
 
-  commit({ requestId, taskId, providerId, tabId, origin, conversationId, epoch, preparedId, fencingToken }) {
+  commit({ requestId, taskId, providerId, tabId, origin, conversationId, epoch, preparedId, fencingToken, payloadHash }) {
     return this.mutation('provider_commit',
       { requestId, taskId, providerId, tabId, origin, conversationId, epoch },
-      { preparedId, fencingToken });
+      { preparedId, fencingToken, payloadHash });
   }
 
   async status(identity) {
