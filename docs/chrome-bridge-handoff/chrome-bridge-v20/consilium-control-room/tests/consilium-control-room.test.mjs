@@ -11,6 +11,9 @@ const tokens=[
  {token:'claude-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'claude',role:'operator'}},
  {token:'kimi-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'kimi',role:'operator'}},
  {token:'qwen-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'qwen',role:'operator'}}
+ ,{token:'deepseek-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'deepseek',role:'operator'}}
+ ,{token:'grok-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'grok',role:'operator'}}
+ ,{token:'gemini-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'gemini',role:'operator'}}
 ];
 function dir(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-room-'));}
 async function request(base, token, route, body, {origin=base,host}={}){
@@ -49,16 +52,33 @@ test('co-operators can pause and request stop; owner alone approves decisions',a
 test('all seven AI accounts have equal operator rights',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
-  const start=await request(base,tokens[3].token,'/api/session/start',{title:'Equal operator pilot',requestId:'start_equal_ops_01'});assert.equal(start.status,201);
+  for(const operator of tokens.slice(1)){
+   const snapshot=await request(base,operator.token,'/api/snapshot');
+   assert.equal(snapshot.status,200,`snapshot read failed for ${operator.actor.id}`);
+  }
+  const start=await request(base,tokens[5].token,'/api/session/start',{title:'Equal operator pilot',requestId:'start_equal_ops_01'});assert.equal(start.status,201);
   const pause=await request(base,tokens[4].token,'/api/session/pause',{requestId:'pause_equal_ops_01'});assert.equal(pause.status,200);
   const resume=await request(base,tokens[3].token,'/api/session/resume',{requestId:'resume_equal_ops_01'});assert.equal(resume.status,200);
-  const proposal=await request(base,tokens[3].token,'/api/decisions',{title:'Equal rights',rationale:'All seven assistants are independently authenticated operators',risk:'consequential',requestId:'decision_equal_ops'});assert.equal(proposal.status,201);
+  const pauseAgain=await request(base,tokens[6].token,'/api/session/pause',{requestId:'pause_equal_ops_02'});assert.equal(pauseAgain.status,200);
+  const resumeAgain=await request(base,tokens[7].token,'/api/session/resume',{requestId:'resume_equal_ops_02'});assert.equal(resumeAgain.status,200);
+  for(const operator of tokens.slice(1)){
+   const comment=await request(base,operator.token,'/api/comments',{text:`Comment from ${operator.actor.id}`,requestId:`comment_${operator.actor.id}_01`});
+   assert.equal(comment.status,201,`comment failed for ${operator.actor.id}`);
+  }
+  const proposal=await request(base,tokens[5].token,'/api/decisions',{title:'Equal rights',rationale:'All seven assistants are independently authenticated operators',risk:'consequential',requestId:'decision_equal_ops'});assert.equal(proposal.status,201);
   const decision=await proposal.json(), decisionId=decision.event.payload.decisionId;
-  const extra=await request(base,tokens[4].token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:'Qwen independent review',requestId:'review_equal_qwen'});assert.equal(extra.status,201);
-  const coreOne=await request(base,tokens[1].token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:'ChatGPT review',requestId:'review_equal_chatgpt'});assert.equal(coreOne.status,201);
-  const snapBefore=await (await request(base,tokens[0].token,'/api/snapshot')).json();
-  assert.equal(snapBefore.state.decisions[0].status,'UNDER_REVIEW');
-  const coreTwo=await request(base,tokens[2].token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:'Claude review',requestId:'review_equal_claude'});assert.equal(coreTwo.status,201);
+  const reviewOrder=[tokens[5],tokens[4],tokens[3],tokens[6],tokens[7],tokens[1],tokens[2]];
+  for(let i=0;i<reviewOrder.length;i++){
+   const operator=reviewOrder[i];
+   const review=await request(base,operator.token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:`Independent review from ${operator.actor.id}`,requestId:`review_equal_${operator.actor.id}`});
+   assert.equal(review.status,201,`review failed for ${operator.actor.id}`);
+   if(i<reviewOrder.length-1){
+    const snapshot=await (await request(base,tokens[0].token,'/api/snapshot')).json();
+    assert.equal(snapshot.state.decisions[0].status,'UNDER_REVIEW');
+   }
+  }
+  const ready=await (await request(base,tokens[0].token,'/api/snapshot')).json();
+  assert.equal(ready.state.decisions[0].status,'READY_FOR_OWNER');
   const approved=await request(base,tokens[0].token,'/api/decisions/approve',{decisionId,requestId:'approve_equal_owner'});assert.equal(approved.status,200);
   const stop=await request(base,tokens[4].token,'/api/session/stop',{requestId:'stop_equal_ops_01'});assert.equal(stop.status,202);
  }finally{await app.close()}
