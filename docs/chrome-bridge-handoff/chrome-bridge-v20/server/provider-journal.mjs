@@ -241,7 +241,7 @@ export class ProviderJournal {
     const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
       ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
       ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
-      ...(tx.state==='PREPARED'?{fencingToken:this.#fencingToken(tx)}:{}),
+      ...(tx.state==='PREPARED'?{fencingToken:this.#fencingToken(tx),sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
       ...(tx.clickedAt?{clickedAt:tx.clickedAt,clickedSend:true}:{}),
       ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{})};
     return out;
