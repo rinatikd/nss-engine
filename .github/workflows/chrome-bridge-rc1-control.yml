@@ -24,6 +24,9 @@ jobs:
           node --check extension/control-ui-guard.js
           node --check extension/background-control-ui-state.js
           node --check extension/control.js
+          node --check extension/background-coordinator.js
+          node --check extension/background-control-grants.js
+          node --check extension/read-only-dispatch.js
           node --check tests/control-tab-url-guard.test.mjs
           node --check extension/coordinator-ack.js
           node --check extension/background-mode-reconnect.js
@@ -42,4 +45,4 @@ jobs:
           node --test tests/control-tab-url-guard.test.mjs
           node --test tests/mutation-dispatch.test.mjs
           node --test tests/approval-session.test.mjs
-          node --test tests/control-ui-single-entry.test.mjs tests/background-mode-reconnect.test.mjs tests/coordinator-ack.test.mjs tests/control-targets.test.mjs tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/background-control-grants.test.mjs tests/background-readonly-security.test.mjs tests/transport-recovery-security.test.mjs
+          node --test tests/control-ui-single-entry.test.mjs tests/background-mode-reconnect.test.mjs tests/coordinator-ack.test.mjs tests/control-targets.test.mjs tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/background-control-grants.test.mjs tests/background-coordinator.test.mjs tests/read-only-dispatch.test.mjs tests/background-readonly-security.test.mjs tests/transport-recovery-security.test.mjs
