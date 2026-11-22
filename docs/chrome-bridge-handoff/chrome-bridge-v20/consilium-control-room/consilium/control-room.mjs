@@ -151,15 +151,15 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
         return json(res, 201, { event });
       }
       if (url.pathname === '/api/session/pause') {
-        requireRole(actor, ['owner', 'operator']);
+        requireRole(actor, ['owner', 'operator', 'participant']);
         return json(res, 200, { event: append('session.paused', { reason: body.reason || 'operator_pause' }) });
       }
       if (url.pathname === '/api/session/resume') {
-        requireRole(actor, ['owner', 'operator']);
+        requireRole(actor, ['owner', 'operator', 'participant']);
         return json(res, 200, { event: append('session.resumed', { reason: body.reason || 'operator_resume' }) });
       }
       if (url.pathname === '/api/session/stop') {
-        requireRole(actor, ['owner', 'operator']);
+        requireRole(actor, ['owner', 'operator', 'participant']);
         return json(res, 202, { event: append('session.stop_requested', { reason: body.reason || 'operator_stop', guarantee: 'new orchestrator dispatch is blocked; Bridge in-flight cancellation requires the fencing adapter' }) });
       }
       if (url.pathname === '/api/session/stop-confirmed') {
