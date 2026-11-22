@@ -23,7 +23,7 @@ function baseAdapter(overrides={}) {
     async status(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001'}},
     async stop(){return {state:'STOP_REQUESTED',identity}},
     async revoke(){return {state:'REVOKED',identity,nextEpoch:8}},
-    async events(){return [{seq:1,eventId:'event_0001',requestId:identity.requestId,state:'UNKNOWN',providerId:'claude'}]},
+    async events(){return [{seq:1,eventId:'event_0001',requestId:identity.requestId,state:'UNKNOWN',providerId:'claude',identity,quarantineId:'quarantine_001'}]},
     ...overrides
   };
 }
@@ -77,12 +77,12 @@ test('status and events preserve correlation and reject malformed event sequence
   const t=transport();
   assert.equal((await t.status(identity)).state,'UNKNOWN');
   assert.equal((await t.events({after:0,limit:10}))[0].seq,1);
-  const bad=transport(baseAdapter({async events(){return [{seq:2,eventId:'event_0001',requestId:identity.requestId,state:'SENT',providerId:'claude'},{seq:1,eventId:'event_0002',requestId:identity.requestId,state:'SENT',providerId:'claude'}]}}));
+  const bad=transport(baseAdapter({async events(){return [{seq:2,eventId:'event_0001',requestId:identity.requestId,state:'SENT',providerId:'claude',identity},{seq:1,eventId:'event_0002',requestId:identity.requestId,state:'SENT',providerId:'claude',identity}]}}));
   await assert.rejects(()=>bad.events(),e=>e.code==='TRANSPORT_EVENT_INVALID');
 });
 
 test('STOPPED_CLEAN requires independently verified epoch-bound quiescence',async()=>{
-  const proof={verified:true,signatureValid:true,epoch:7,unresolved:0,outstandingPrepared:0,attestationId:'attest_0001',signature:'s'.repeat(64)};
+  const proof={verified:true,signatureValid:true,epoch:7,nextEpoch:8,unresolved:0,outstandingPrepared:0,attestationId:'attest_0001',signature:'s'.repeat(64)};
   const t=transport(baseAdapter({async stop(){return {state:'STOPPED_CLEAN',identity,quiescence:proof}}}),async()=>true);
   assert.equal((await t.stop(identity)).state,'STOPPED_CLEAN');
   const unverified=transport(baseAdapter({async stop(){return {state:'STOPPED_CLEAN',identity,quiescence:proof}}}),async()=>false);
