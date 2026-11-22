@@ -52,12 +52,13 @@ test('prepare calls the Bridge MCP tool with exact identity and payload correlat
 
 test('commit uses a distinct tool and preserves prepared ID plus fencing token',async()=>{
   let request;
-  const a=adapter(async(url,init)=>{request=JSON.parse(init.body);return response({state:'SENT',identity,clickedAt:new Date().toISOString(),clickedSend:true},{id:'provider-provider_commit-request_0001'});});
-  const result=await a.commit({...identity,preparedId:'prepared_001',fencingToken:'f'.repeat(40)});
+  const a=adapter(async(url,init)=>{request=JSON.parse(init.body);return response({state:'SENT',identity,requestId:identity.requestId,preparedId:'prepared_001',payloadHash:'b'.repeat(64),clickedAt:new Date().toISOString(),clickedSend:true},{id:'provider-provider_commit-request_0001'});});
+  const result=await a.commit({...identity,preparedId:'prepared_001',fencingToken:'f'.repeat(40),payloadHash:'b'.repeat(64)});
   assert.equal(result.state,'SENT');
   assert.equal(request.params.name,'provider_commit');
   assert.equal(request.params.arguments.preparedId,'prepared_001');
   assert.equal(request.params.arguments.fencingToken,'f'.repeat(40));
+  assert.equal(request.params.arguments.payloadHash,'b'.repeat(64));
 });
 
 test('ambiguous prepare acknowledgement is quarantined and never retried',async()=>{
