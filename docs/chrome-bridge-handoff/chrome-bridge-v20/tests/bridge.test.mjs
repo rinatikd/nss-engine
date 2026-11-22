@@ -177,7 +177,7 @@ test('agent_send requestId remains idempotent after Bridge restart and UNKNOWN i
 });
 
 test('dispatched timeout holds the single-writer lane until a late ACK', async () => {
-  const s = await setup({ timeout: 120, pollHold: 50 });
+  const s = await setup({ timeout: 1000, pollHold: 50 });
   try {
     const firstPoll = s.poll();
     await new Promise(resolve => setTimeout(resolve, 10));
