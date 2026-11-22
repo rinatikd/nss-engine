@@ -251,6 +251,15 @@ export class ProviderJournal {
     return out;
   }
 
+  #tabOutstanding(tabId) {
+    const unresolved=[...this.transactions.values()].filter(tx=>
+      tx.identity.tabId===tabId&&['PREPARING','PREPARED','COMMITTING','UNKNOWN','STOP_REQUESTED'].includes(tx.state));
+    return {
+      unresolved:unresolved.length,
+      outstandingPrepared:unresolved.filter(tx=>tx.state==='PREPARED').length
+    };
+  }
+
   #revokeEpoch(identity) {
     const nextEpoch=identity.epoch+1;
     this.#append('epoch.revoked',identity,{previousEpoch:identity.epoch,nextEpoch});
@@ -292,9 +301,14 @@ export class ProviderJournal {
       return {state:tx.state,identity,nextEpoch:tx.nextEpoch,...(tx.quiescence?{quiescence:clone(tx.quiescence)}:{})};
     }
     if(tx&&tx.state==='REVOKED'&&Number.isSafeInteger(tx.nextEpoch)) {
+      const counts=this.#tabOutstanding(identity.tabId);
+      if(counts.unresolved>0) {
+        this.#append('stop.requested',identity,{reason:'UNRESOLVED_TRANSACTIONS',nextEpoch:tx.nextEpoch,...counts});
+        return {state:'STOP_REQUESTED',identity,nextEpoch:tx.nextEpoch};
+      }
       const proof={
         verified:true,signatureValid:true,epoch:identity.epoch,nextEpoch:tx.nextEpoch,
-        unresolved:0,outstandingPrepared:0,attestationId:'attest_'+crypto.randomBytes(12).toString('hex'),signature:''
+        ...counts,attestationId:'attest_'+crypto.randomBytes(12).toString('hex'),signature:''
       };
       proof.signature=signQuiescence(proof,identity,this.key);
       this.#append('stop.clean',identity,{nextEpoch:tx.nextEpoch,quiescence:proof});
@@ -312,9 +326,14 @@ export class ProviderJournal {
       return {state:'STOP_REQUESTED',identity,nextEpoch};
     }
     const nextEpoch=this.#revokeEpoch(identity);
+    const counts=this.#tabOutstanding(identity.tabId);
+    if(counts.unresolved>0) {
+      this.#append('stop.requested',identity,{reason:'UNRESOLVED_TRANSACTIONS',nextEpoch,...counts});
+      return {state:'STOP_REQUESTED',identity,nextEpoch};
+    }
     const proof={
       verified:true,signatureValid:true,epoch:identity.epoch,nextEpoch,
-      unresolved:0,outstandingPrepared:0,attestationId:'attest_'+crypto.randomBytes(12).toString('hex'),signature:''
+      ...counts,attestationId:'attest_'+crypto.randomBytes(12).toString('hex'),signature:''
     };
     proof.signature=signQuiescence(proof,identity,this.key);
     this.#append('stop.clean',identity,{nextEpoch,quiescence:proof});
