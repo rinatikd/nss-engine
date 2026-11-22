@@ -8,7 +8,7 @@ const requestId='request_0001';
 const contentText='Review the immutable source packet.';
 const contentSha256=crypto.createHash('sha256').update(contentText,'utf8').digest('hex');
 function prepared(overrides={}) {
-  return {apiVersion:PROVIDER_TRANSPORT_API_VERSION,status:'PREPARED',requestId,binding,prepareId:'prepare_0001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:'2026-11-22T20:00:00.000Z',...overrides};
+  return {apiVersion:PROVIDER_TRANSPORT_API_VERSION,status:'PREPARED',requestId,binding,prepareId:'prepare_0001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:new Date(Date.now()+60_000).toISOString(),...overrides};
 }
 function adapter(overrides={}) {
   return {
