@@ -126,3 +126,18 @@ test('stop after a confirmed commit advances the epoch without claiming cancella
     assert.equal(j.status(identity).state,'STOP_AFTER_COMMIT');
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
+
+test('stop cannot attest clean while another request on the same tab remains unknown',()=>{
+  const dir=tmp();
+  try {
+    const j=journal(dir);
+    j.beginPrepare(identity,payloadHash);
+    j.completePrepare(identity,{preparedId:'prepared_0007',expiresAt:new Date(Date.now()+60000).toISOString()});
+    const other={...identity,requestId:'request_0002',taskId:'task_000002'};
+    j.outcome(other,'UNKNOWN','SIMULATED_AMBIGUOUS_ACTION');
+    const stopped=j.stop(identity);
+    assert.equal(stopped.state,'STOP_REQUESTED');
+    assert.equal(stopped.nextEpoch,8);
+    assert.equal(j.status(other).state,'UNKNOWN');
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
