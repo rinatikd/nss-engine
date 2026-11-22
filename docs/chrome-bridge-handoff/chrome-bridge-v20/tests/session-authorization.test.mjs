@@ -72,6 +72,8 @@ test('session authorization is bound to exact Bridge epoch and expiry', async ()
     sessionId, durationMinutes: 60, origins: allOrigins, bridgeEpoch: epoch
   });
   assert.equal((await f.auth.status(epoch)).active, true);
+  // Control-page status has no Bridge command envelope; it may inspect but must not revoke.
+  assert.equal((await f.auth.status()).active, true);
   assert.equal((await f.auth.status('epoch-2026-11-23-0002')).reason, 'SESSION_EPOCH_MISMATCH');
   assert.equal((await f.auth.status(epoch)).active, false);
 

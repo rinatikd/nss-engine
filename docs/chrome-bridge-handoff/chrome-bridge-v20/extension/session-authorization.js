@@ -94,7 +94,8 @@ export class SessionAuthorization {
         lease.approvalMode !== 'chat-owner-approved' || lease.status !== 'active')
       return inactive('SESSION_STATE_INVALID');
     if (lease.expiresAt <= this.now()) return inactive('SESSION_EXPIRED');
-    if (lease.bridgeEpoch !== bridgeEpoch) return inactive('SESSION_EPOCH_MISMATCH');
+    if (bridgeEpoch !== undefined && bridgeEpoch !== null && lease.bridgeEpoch !== bridgeEpoch)
+      return inactive('SESSION_EPOCH_MISMATCH');
     return {
       active: true,
       sessionId: lease.sessionId,
