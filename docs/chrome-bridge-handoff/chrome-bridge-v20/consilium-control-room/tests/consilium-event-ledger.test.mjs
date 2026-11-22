@@ -77,7 +77,7 @@ test('returned events and snapshots cannot mutate the in-memory ledger',()=>{
 
 test('snapshot projection includes state beyond the event page limit',()=>{
  const ledger=new EventLedger(temp());
- for(let i=0;i<2005;i++) ledger.append({type:'comment.added',actor:chatgpt,payload:{text:\`event-\${i}\`}});
+ for(let i=0;i<2005;i++) ledger.append({type:'comment.added',actor:chatgpt,payload:{text:`event-${i}`}});
  const snapshot=ledger.snapshot({after:0,limit:2000});
  assert.equal(snapshot.events.length,2000);
  assert.equal(snapshot.state.comments.length,2005);
