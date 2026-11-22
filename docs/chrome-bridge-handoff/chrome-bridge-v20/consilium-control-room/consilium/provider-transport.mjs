@@ -92,7 +92,7 @@ export function createProviderTransportV1(adapter) {
       const binding = validateBinding(request.binding);
       requireString(request.quarantineId, 'QUARANTINE_ID_REQUIRED', 128);
       const result = await adapter.query(clone({ ...request, requestId, binding }));
-      return validateResult(result, { requestId, binding, states: QUERY_STATES,  });
+      return validateResult(result, { requestId, binding, states: QUERY_STATES });
     },
 
     async revoke(request) {
