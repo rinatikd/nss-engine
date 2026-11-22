@@ -756,3 +756,19 @@ A fresh read-only check of the current Lab adapter surface returned:
 **Operational effect:** Gemini is NOT_READY for dispatch despite its visible composer. Do not include it in a provider session until a disposable-browser test or an updated adapter establishes one unambiguous send control and a trustworthy response selector on the current UI. Claude and DeepSeek remain unverified by this fresh selftest because their calls were unavailable. No provider was sent a message and no adapter settings were changed.
 
 The PR132 disposable-Chrome CI pass verifies the pinned adapter against its test fixture/browser environment; it does not override this live-profile preflight result. Runtime and CI evidence are separate gates.
+
+
+### 20.7. PR102 Lab provider adapter self-test update — 2026-11-22
+
+A further read-only self-test produced these results:
+
+| Provider | Composer | Send selector | Reply selector | Stop selector | Interpretation |
+|---|---:|---:|---:|---:|---|
+| Claude | 1 visible | 1 visible (disabled while composer is empty) | 19 matches | 0 | DOM anchors exist; reply matches may include previous messages; not yet a send test |
+| DeepSeek | 1 visible | 1 visible/enabled | 0 | 0 | Composer and send candidate exist; no verified reply/stop selector |
+| Gemini | unavailable on this call (UNKNOWN_TOOL) | — | — | — | retain previous NOT_READY result (composer 1, send 0, reply 0) |
+| Grok | not bound to live agent slot | — | — | — | visible chat tab only, no dispatch readiness claim |
+
+The effective Control/session status call remains UNKNOWN_TOOL. The exposed agent_send contract still states that Claude/Gemini/DeepSeek require explicit local approval for 1/3/4 hours; this is incompatible with the owner's chat-only approval requirement. The new PR132 session authorization code and CI are not proven deployed in this Lab tool runtime.
+
+**Result:** no provider may be dispatched yet. Claude is the best candidate for the first controlled Lab test after the chat-approval path is surfaced. DeepSeek requires reply/stop selector calibration. Gemini requires send/reply selector repair. Grok needs an approved binding and adapter self-test before any consideration. Do not use a local approval fallback. No provider messages were sent in this check.
