@@ -54,12 +54,14 @@ test('session_request binds the owner challenge to the exact selected provider s
       { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' }
     ];
     const connect = s.rpc('browser_tabs');
+    await new Promise(resolve => setTimeout(resolve, 10));
     const connectCommand = await s.poll();
     assert.equal(connectCommand.name, 'browser_tabs');
     const connectAck = await s.post('/bridge/result', { id: connectCommand.id, result: tabs }, 'b'.repeat(64));
     assert.equal(connectAck.status, 200);
     await connect;
     const request = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
+    await new Promise(resolve => setTimeout(resolve, 10));
     const command = await s.poll();
     assert.equal(command.name, 'browser_tabs');
     const ack = await s.post('/bridge/result', { id: command.id, result: tabs }, 'b'.repeat(64));
@@ -78,6 +80,7 @@ test('session_request binds the owner challenge to the exact selected provider s
     assert.match(noClaude.result.content[0].text, /SESSION_CLAUDE_REQUIRED/);
 
     const missing = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
+    await new Promise(resolve => setTimeout(resolve, 10));
     const missingCommand = await s.poll();
     assert.equal(missingCommand.name, 'browser_tabs');
     const missingAck = await s.post('/bridge/result', {
