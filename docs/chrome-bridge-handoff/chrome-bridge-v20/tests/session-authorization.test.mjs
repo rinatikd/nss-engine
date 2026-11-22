@@ -4,6 +4,7 @@ import { SessionAuthorization, SESSION_CAPABILITIES } from '../extension/session
 import { CONTROL_ORIGINS } from '../extension/permissions.js';
 
 const allOrigins = Object.keys(CONTROL_ORIGINS);
+const selectedOrigins = ['https://claude.ai', 'https://grok.com'];
 const epoch = 'epoch-2026-11-22-0001';
 const sessionId = 'session-2026-11-22-0001';
 
@@ -38,18 +39,18 @@ function fixture({ now = 1700000000000, origins = allOrigins } = {}) {
   return { auth, chromeApi, session, tabs, setNow: value => { clock = value; } };
 }
 
-test('one chat-approved session grants only the six configured, permissioned council origins', async () => {
+test('one chat-approved session grants only the explicitly selected, permissioned council origins', async () => {
   const f = fixture();
   const result = await f.auth.authorize({
-    sessionId, durationMinutes: 60, origins: allOrigins, bridgeEpoch: epoch
+    sessionId, durationMinutes: 60, origins: selectedOrigins, bridgeEpoch: epoch
   });
   assert.equal(result.active, true);
-  assert.deepEqual(result.origins, [...allOrigins].sort());
+  assert.deepEqual(result.origins, [...selectedOrigins].sort());
   assert.deepEqual(result.capabilities, [...SESSION_CAPABILITIES]);
   assert.equal(result.approvalMode, 'chat-owner-approved');
 });
 
-test('authorization rejects unknown, duplicate, partial, unconfigured and unavailable origins', async () => {
+test('authorization rejects unknown, duplicate, Claude-less, unconfigured and unavailable origins', async () => {
   const f = fixture();
   await assert.rejects(f.auth.authorize({
     sessionId, durationMinutes: 60, origins: ['https://evil.example'], bridgeEpoch: epoch
@@ -58,11 +59,11 @@ test('authorization rejects unknown, duplicate, partial, unconfigured and unavai
     sessionId, durationMinutes: 60, origins: ['https://claude.ai', 'https://claude.ai'], bridgeEpoch: epoch
   }), /SESSION_ORIGINS_DUPLICATE/);
   await assert.rejects(f.auth.authorize({
-    sessionId, durationMinutes: 60, origins: allOrigins.slice(0, 5), bridgeEpoch: epoch
-  }), /SESSION_ORIGINS_INCOMPLETE/);
-  const missingProviders = fixture({ origins: ['https://gemini.google.com'] });
+    sessionId, durationMinutes: 60, origins: ['https://grok.com'], bridgeEpoch: epoch
+  }), /SESSION_CLAUDE_REQUIRED/);
+  const missingProviders = fixture({ origins: ['https://claude.ai'] });
   await assert.rejects(missingProviders.auth.authorize({
-    sessionId, durationMinutes: 60, origins: allOrigins, bridgeEpoch: epoch
+    sessionId, durationMinutes: 60, origins: selectedOrigins, bridgeEpoch: epoch
   }), /SESSION_SITE_NOT_CONFIGURED|SESSION_ORIGIN_NOT_READY/);
 });
 
