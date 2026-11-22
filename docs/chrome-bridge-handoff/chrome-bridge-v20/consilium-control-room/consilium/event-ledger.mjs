@@ -12,7 +12,7 @@ const TYPES = new Set([
 const MAX_EVENT_BYTES = 128 * 1024;
 const MAX_LEDGER_BYTES = 64 * 1024 * 1024;
 const ZERO_HASH = '0'.repeat(64);
-const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'participant', qwen: 'participant', kimi: 'participant', grok: 'participant', gemini: 'participant' };
+const ACTOR_ROLES = { owner: 'owner', chatgpt: 'ai_member', claude: 'ai_member', deepseek: 'ai_member', qwen: 'ai_member', kimi: 'ai_member', grok: 'ai_member', gemini: 'ai_member' };
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -178,22 +178,22 @@ export function projectEvents(events) {
     const p = event.payload;
     switch (event.type) {
       case 'session.started':
-        if (!['owner', 'operator', 'participant'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
+        if (!['owner', 'ai_member'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
         if (!['IDLE', 'STOPPED'].includes(state.session.status)) throw Error('SESSION_ALREADY_ACTIVE');
         state.session = { status: 'RUNNING', id: p.sessionId, title: p.title, epoch: state.session.epoch + 1 };
         break;
       case 'session.paused':
-        if (!['owner', 'operator', 'participant'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
+        if (!['owner', 'ai_member'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
         if (state.session.status !== 'RUNNING') throw Error('SESSION_NOT_RUNNING');
         state.session.status = 'PAUSED';
         break;
       case 'session.resumed':
-        if (!['owner', 'operator', 'participant'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
+        if (!['owner', 'ai_member'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
         if (state.session.status !== 'PAUSED') throw Error('SESSION_NOT_PAUSED');
         state.session.status = 'RUNNING';
         break;
       case 'session.stop_requested':
-        if (!['owner', 'operator', 'participant'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
+        if (!['owner', 'ai_member'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
         if (!['RUNNING', 'PAUSED'].includes(state.session.status)) throw Error('SESSION_NOT_ACTIVE');
         state.session.status = 'STOP_REQUESTED';
         state.session.epoch++;
@@ -205,7 +205,7 @@ export function projectEvents(events) {
       case 'round.proposed': {
         if (state.session.status !== 'RUNNING' && state.session.status !== 'PAUSED') throw Error('ROUND_PROPOSAL_REQUIRES_ACTIVE_SESSION');
         if (state.rounds.some(r => r.id === p.roundId)) throw Error('DUPLICATE_ROUND_ID');
-        if (!['operator', 'participant'].includes(event.actor.role)) throw Error('ROUND_PROPOSAL_REQUIRES_AI_ACTOR');
+        if (!['ai_member'].includes(event.actor.role)) throw Error('ROUND_PROPOSAL_REQUIRES_AI_MEMBER');
         state.rounds.push({ id: p.roundId, objective: p.objective, participants: p.participants, proposedBy: event.actor.id, status: 'PROPOSED' });
         break;
       }
@@ -213,7 +213,7 @@ export function projectEvents(events) {
         const round = state.rounds.find(r => r.id === p.roundId);
         if (!round || round.status !== 'PROPOSED') throw Error('ROUND_NOT_PROPOSED');
         if (state.session.status !== 'RUNNING') throw Error('ROUND_START_REQUIRES_RUNNING_SESSION');
-        if (!['operator', 'participant'].includes(event.actor.role)) throw Error('ROUND_START_REQUIRES_AI_MEMBER');
+        if (!['ai_member'].includes(event.actor.role)) throw Error('ROUND_START_REQUIRES_AI_MEMBER');
         round.status = 'STARTED'; round.startedBy = event.actor.id; round.startedAt = event.at;
         break;
       }
@@ -228,19 +228,19 @@ export function projectEvents(events) {
       case 'decision.reviewed': {
         const d = decisionById.get(p.decisionId);
         if (!d || !['PROPOSED', 'UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE', 'READY_FOR_OWNER'].includes(d.status)) throw Error('DECISION_NOT_REVIEWABLE');
-        if (!['operator', 'participant'].includes(event.actor.role)) throw Error('AI_REVIEW_REQUIRED');
+        if (!['ai_member'].includes(event.actor.role)) throw Error('AI_REVIEW_REQUIRED');
         if (!['SUPPORT', 'OBJECT', 'NEEDS_EVIDENCE'].includes(p.verdict)) throw Error('INVALID_REVIEW_VERDICT');
-        const prior = d.reviews.find(r => r.operator === event.actor.id);
+        const prior = d.reviews.find(r => r.reviewerId === event.actor.id);
         if (prior) {
           if (!['UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE', 'READY_FOR_OWNER'].includes(d.status) || p.revisionOf !== prior.eventId) throw Error('REVIEW_REVISION_REQUIRES_PRIOR_EVENT');
           d.reviewHistory.push(prior);
-          d.reviews = d.reviews.filter(r => r.operator !== event.actor.id);
+          d.reviews = d.reviews.filter(r => r.reviewerId !== event.actor.id);
         } else if (p.revisionOf) throw Error('REVIEW_REVISION_TARGET_NOT_FOUND');
-        d.reviews.push({ eventId: event.id, operator: event.actor.id, verdict: p.verdict, rationale: p.rationale || '', evidence: p.evidence || [], at: event.at });
+        d.reviews.push({ eventId: event.id, reviewerId: event.actor.id, verdict: p.verdict, rationale: p.rationale || '', evidence: p.evidence || [], at: event.at });
         const objection = d.reviews.some(r => r.verdict === 'OBJECT');
         const evidenceGap = d.reviews.some(r => r.verdict === 'NEEDS_EVIDENCE');
         const corePairSupported = ['chatgpt', 'claude'].every(id =>
-          d.reviews.some(r => r.operator === id && r.verdict === 'SUPPORT')
+          d.reviews.some(r => r.reviewerId === id && r.verdict === 'SUPPORT')
         );
         if (objection) d.status = 'DISPUTED';
         else if (evidenceGap) d.status = 'NEEDS_EVIDENCE';
