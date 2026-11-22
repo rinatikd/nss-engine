@@ -38,6 +38,15 @@ test('tampered event is rejected on reopen',()=>{
  assert.throws(()=>new EventLedger(dir),/LEDGER_CHAIN_INVALID_FAIL_CLOSED/);
 });
 
+test('owner cannot submit an AI decision proposal into the event journal',()=>{
+ const ledger=new EventLedger(temp());
+ assert.throws(()=>ledger.append({type:'decision.proposed',actor:owner,payload:{
+  decisionId:'owner_decision_01',title:'Owner bypass',rationale:'Must be an AI proposal',risk:'consequential'
+ }}),/AI_DECISION_PROPOSAL_REQUIRED/);
+ assert.equal(ledger.list().length,0);
+ ledger.close();
+});
+
 test('decision must be owner-approved before a task may be created',()=>{
  const dir=temp();const ledger=new EventLedger(dir);
  ledger.append({type:'session.started',actor:chatgpt,payload:{sessionId:'session_0001',title:'Architecture review'}});
