@@ -269,9 +269,11 @@ export class ProviderJournal {
     if(tx&&tx.state==='UNKNOWN'&&tx.nextEpoch)return {state:'UNKNOWN',identity,quarantineId:tx.quarantineId,nextEpoch:tx.nextEpoch};
     this.#ensureEpoch(identity);
     const nextEpoch=this.#revokeEpoch(identity);
-    if(tx&&['COMMITTING','UNKNOWN','PREPARING'].includes(tx.state)) {
-      return {...this.outcome(identity,'UNKNOWN','REVOKED_DURING_UNCERTAIN_COMMIT',{nextEpoch}),nextEpoch};
+    const updated=this.transactions.get(identity.requestId);
+    if(updated&&updated.state==='UNKNOWN') {
+      return {state:'UNKNOWN',identity,quarantineId:updated.quarantineId,nextEpoch};
     }
+    if(updated&&updated.state==='REVOKED')return {state:'REVOKED',identity,nextEpoch};
     this.outcome(identity,'REVOKED','FENCING_EPOCH_REVOKED',{nextEpoch});
     return {state:'REVOKED',identity,nextEpoch};
   }
