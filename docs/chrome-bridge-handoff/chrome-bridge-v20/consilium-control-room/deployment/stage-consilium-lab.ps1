@@ -20,12 +20,20 @@ $actual=(& $git.Source -C $candidate rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $actual -ne $CommitSha.ToLowerInvariant()) {
   throw ('Source SHA mismatch: expected '+$CommitSha+', actual '+$actual)
 }
-$critical=@('consilium','tests','scripts','deployment')
-& $git.Source -C $candidate diff --quiet HEAD -- $critical
+$repoRoot=(& $git.Source -C $candidate rev-parse --show-toplevel).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $repoRoot) { throw 'Could not resolve repository root' }
+$candidateRelative=$candidate.Substring($repoRoot.Length).TrimStart('\').Replace('\','/')
+$permissionSource=Join-Path (Split-Path $candidate -Parent) 'extension\permissions.js'
+if (-not (Test-Path -LiteralPath $permissionSource -PathType Leaf)) { throw 'ProviderTransport dependency extension/permissions.js missing' }
+$critical=@(
+  ($candidateRelative+'/consilium'),($candidateRelative+'/tests'),($candidateRelative+'/scripts'),
+  ($candidateRelative+'/deployment'),'docs/chrome-bridge-handoff/chrome-bridge-v20/extension/permissions.js'
+)
+& $git.Source -C $repoRoot diff --quiet HEAD -- $critical
 if ($LASTEXITCODE -ne 0) { throw 'Consilium package source differs from committed content' }
-& $git.Source -C $candidate diff --cached --quiet HEAD -- $critical
+& $git.Source -C $repoRoot diff --cached --quiet HEAD -- $critical
 if ($LASTEXITCODE -ne 0) { throw 'Staged changes detected in Consilium package source' }
-$untracked=@(& $git.Source -C $candidate ls-files --others --exclude-standard -- $critical)
+$untracked=@(& $git.Source -C $repoRoot ls-files --others --exclude-standard -- $critical)
 if ($LASTEXITCODE -ne 0 -or @($untracked | Where-Object {$_}).Count -gt 0) {
   throw 'Untracked Consilium package input detected'
 }
@@ -43,6 +51,9 @@ try {
   foreach($dir in @('consilium','tests','scripts','deployment')) {
     Copy-Item -LiteralPath (Join-Path $candidate $dir) -Destination $temp -Recurse -Force
   }
+  $extensionDir=Join-Path $temp 'extension'
+  New-Item -ItemType Directory -Path $extensionDir -Force | Out-Null
+  Copy-Item -LiteralPath $permissionSource -Destination (Join-Path $extensionDir 'permissions.js') -Force
   $files=@(Get-ChildItem -LiteralPath $temp -Recurse -File | Sort-Object FullName)
   if ($files.Count -lt 15) { throw 'Consilium Lab package appears incomplete' }
   foreach($file in $files) {
