@@ -6,6 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createBridge, loadConfig, resolveSessionScope } from '../server/bridge.mjs';
 import { tools as registeredTools } from '../server/tools.mjs';
+import { validateArgs } from '../server/schema.mjs';
 import { createChromeBridgeProviderTransport } from '../consilium-control-room/consilium/chrome-bridge-provider-adapter.mjs';
 
 async function setup(opts = {}) {
@@ -43,6 +44,16 @@ test('auth, origin, host and tool validation', async () => {
       assert.ok(list.result.tools.some((tool) => tool.name === name), `missing ${name}`);
     assert.equal((await s.post('/mcp', [])).status, 200);
   } finally { await s.close(); }
+});
+
+test('MCP schema validator accepts only bounded arrays of allowed session providers', () => {
+  const tool = registeredTools.find(({ name }) => name === 'session_request');
+  assert.ok(tool);
+  assert.doesNotThrow(() => validateArgs(tool, { durationMinutes: 60, providers: ['claude', 'grok'] }));
+  assert.throws(() => validateArgs(tool, { durationMinutes: 60 }), /Missing argument: providers/);
+  assert.throws(() => validateArgs(tool, { durationMinutes: 60, providers: [] }), /Invalid argument: providers/);
+  assert.throws(() => validateArgs(tool, { durationMinutes: 60, providers: ['claude', 'unknown'] }), /Invalid argument: providers\[1\]/);
+  assert.throws(() => validateArgs(tool, { durationMinutes: 60, providers: ['claude', 'grok', 'deepseek', 'gemini', 'qwen', 'kimi', 'extra'] }), /Invalid argument: providers/);
 });
 
 test('session scope grants only selected providers and fails closed for missing or mismatched tabs', () => {
