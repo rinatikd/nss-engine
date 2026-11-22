@@ -147,6 +147,11 @@ export class EventLedger {
     return { state: clone(this.state), events: clone(this.events.filter(event => event.seq > after).slice(0, limit)) };
   }
 
+  exportNdjson() {
+    if (this.closed) throw Error('LEDGER_CLOSED');
+    return this.events.map(event => JSON.stringify(event)).join('\\n') + (this.events.length ? '\\n' : '');
+  }
+
   close() {
     if (this.closed) return;
     this.closed = true;
