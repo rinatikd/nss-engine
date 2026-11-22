@@ -9,7 +9,7 @@ test('tool descriptions match the preserved Control allowlist and durations', ()
  const description = toolByName('agent_send').description;
  for (const origin of Object.keys(CONTROL_ORIGINS)) assert.ok(description.includes(origin));
  assert.match(description, /explicit local approval \(1, 3 or 4 hours\)/);
- assert.doesNotMatch(description, /chatgpt\.com|grok\.com|chat\.qwen\.ai/);
+  assert.doesNotMatch(description, /chatgpt\\.com|grok\\.com|chat\\.qwen\\.ai|www\\.kimi\\.ai/);
 });
 test('control requires local approval, exact allowed origin and a live epoch; expires and resets', () => {
  let now = 100; const g = new ControlGrants(() => now);
@@ -33,7 +33,7 @@ test('each allowed origin has its own complete adapter', () => {
   for (const k of ['composer','send','reply','stop']) assert.ok(a[k]);
  }
 });
-test('Grok, Qwen, Cursor remain read-only candidates without Control grants or send selectors', () => {
+test('Grok, Qwen, Kimi and Cursor remain read-only candidates without Control grants or send selectors', () => {
  for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai'], ['kimi','https://www.kimi.ai'], ['cursor','https://cursor.com']]) {
   const adapter = DEFAULT_ADAPTERS[key];
   assert.equal(adapter.origin, origin);
