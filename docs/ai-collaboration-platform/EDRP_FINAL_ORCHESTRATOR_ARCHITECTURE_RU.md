@@ -835,3 +835,120 @@ A controlled attempt was made to repair the stale Grok agent binding without sen
 The binding was not changed. This indicates that the active Lab site-approval/registration scope does not currently permit the Grok origin for agent control, even though Grok is included in the intended PR132 source-level CONTROL_ORIGINS model. The active Lab tool descriptions still restrict control to Claude, Gemini and DeepSeek. Treat this as a runtime-version/configuration mismatch to resolve during the isolated deployment gate, not as a reason to expand permissions ad hoc.
 
 No Grok message was sent, no site grant was changed, and no local approval was requested or used.
+
+---
+
+## 22. R4 — единая программа доведения до релиза
+
+**Назначение:** объединить параллельные разработки в один проверяемый релизный контур с общей последовательностью зависимостей, едиными доказательствами и приёмкой.  
+**Терминология:** далее **R4-REL** означает программу «R4 — доведение до релиза» из отдельного рабочего потока. Это **не** уровень восстановления **EDRP R4 — Rebuild** из §10. Эти две маркировки не взаимозаменяемы.  
+**Дата среза:** 22.11.2026.  
+**Статус:** план интеграции и release gates; не означает развёртывание, приёмку Windows или Production approval.
+
+### 22.1. Единая цель и границы
+
+Цель R4-REL — получить один согласованный, воспроизводимый Lab-релиз платформы инженерной автоматизации, в котором:
+
+1. Consilium отвечает за постановку, распределение и независимую проверку задач.
+2. Chrome Bridge отвечает только за транспорт к AI-провайдерам и за подтверждённые transport receipts.
+3. EDRP — единственный системный оркестратор Windows, владелец Desired/Observed reconciliation, operation journal, leases и recovery.
+4. Workbench — пользовательский Control Room / viewer и безопасная проекция состояния; он не создаёт второй источник истины и не заменяет EDRP.
+5. PowerShell Direct / WM43 — специализированные capability-limited шлюзы для диагностики и строго согласованных операций; они не обходят EDRP policy или owner approval.
+6. NSS Engine, APS Expert и AGPT Plugin остаются отдельными инженерными продуктами и workers/adapters, подключаемыми к платформе по версионированным контрактам.
+
+**Не объединять всё в один бинарный проект.** Объединяются release manifest, ownership, contracts, acceptance matrix, evidence chain и порядок выпуска. Код и сборки модулей остаются раздельными.
+
+### 22.2. Общая модель состояния на 22.11.2026
+
+| Направление | Артефакт / текущий результат | Подтверждено | Блокирует следующий уровень |
+|---|---|---|---|
+| Consilium / Control Room | NSS Engine PR #131, head ad897fc059defa4d7ac5d16727dcc4cee5b31a7a | Текущие exact-head workflow: Source checks #45031281539, RC1 Control Gates #45031281456, Visual RC #45031281415 — SUCCESS; описаны роли двух операторов и пяти участников | Не развёрнут в Lab; нет подтверждённого runtime раунда, доставки/ответов и receipt correlation |
+| Chrome Bridge | NSS Engine PR #132, head e9fed5f6bfcc376cf18d9a469091cff34cd804dc | Source #45043436325, RC1 #45043436465, Visual RC #45043436322 — SUCCESS | Lab не показывает session API; active agent_send требует local approval; Gemini/Grok и response selectors не готовы; сообщения не отправлялись |
+| EDRP | NSS Engine PR #134, head d66fcd3d5e2c0fff8dba331f2a86b5db4f096ea2 | Source checks #45046968546 — SUCCESS; архитектура Supervisor/User Agent/SQLite/Outbox/UNKNOWN/R0–R4 описана | Только архитектурный документ; нет сервиса, SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
+| Free AI Workbench | NSS Engine PR #111, head 9ee6e02fbc6a0796985bc3756cfda5e4e3823323 | Source #45046307182 и CCTV guards #45046307226 — SUCCESS; 17/17 Node tests | Не установлен в целевую папку; Windows/browser E2E и authenticated actor identity отсутствуют; журнал не является EDRP source of truth |
+| PowerShell Direct / WM43 | §20 данного документа и read-only runtime observations | Были отдельные read-only probes; точные неуспехи сохранены ниже | QUEUE_FULL до durable job, APPROVAL_EXPIRED для request 18086, WM43 service/runtime execution mismatch; нет безопасного chat-only proposal-to-execution path |
+| AGPT Palette | AGPT_Plugin PR #1, head da687d2148d23f28b053a3955d76b57b7e2e5d28 | Portable GasCalc workflow #45044651876 — SUCCESS; palette source audit | Нет AutoCAD 2026/ObjectARX build и NETLOAD smoke test; расчётные действия намеренно отключены |
+| AGPT GasCalc | AGPT_Plugin PR #2, head aa2cd4a0293c1f3a8f1bd43f8625b50df4eb30e1 | .NET 8 workflow #45046706704 и #45046804152 — SUCCESS; 7 normative golden cases и 17 validation checks | Не включён в основной AGPT.csproj; legacy/demo calculation paths не удалены; каталог Mб требует данных производителя |
+
+Все перечисленные PR на дату среза остаются Draft/open. Успешный CI относится только к указанному commit и workflow; он не заменяет target-PC E2E, deployment или owner acceptance.
+
+### 22.3. Зависимости и порядок выпуска
+
+R4-REL release manifest + acceptance matrix
+→ EDRP policy / contracts
+→ Consilium PR #131
+→ Chrome Bridge PR #132
+→ Workbench projection
+→ PowerShell / WM43 safe gateway
+→ NSS Engine and AGPT engineering integration
+→ APS Expert adoption
+→ Integrated Lab + Recovery
+→ Release Candidate / R4-REL.
+
+Зависимости обязательны, но не требуют смешивать исходники:
+- PR #132 зависит от согласованного authority/transport contract PR #131.
+- Workbench может показывать задачи раньше, но не должен выдавать SENT/DELIVERED/VERIFIED без Bridge receipt и не становится authoritative event store.
+- PowerShell/WM43 не подключается к автоматическому исполнению до сверки effective capability state, chat-approval receipt и exact operation digest.
+- AGPT M1 зависит от подтверждённого GasCalc API/input contract и manufacturer-backed catalogue; palette UI подключается только после unified calculation path.
+- APS Expert подключается после стабилизации общих EDRP/Bridge/Workbench contracts и отдельной продуктовой приёмки.
+- Production cutover — отдельный change request и отдельное owner approval; R4-REL Lab acceptance его не подразумевает.
+
+### 22.4. Release gates (обязательная последовательность)
+
+| Gate | Что должно быть сделано | Приёмочное доказательство | Статус на 22.11 |
+|---|---|---|---|
+| G0 — Baseline & governance | Единый release manifest: repo, PR, branch, exact SHA, owner, dependency, rollback, evidence IDs; два co-operators ChatGPT/Claude; owner остаётся финальным authority | Зафиксированный manifest; нет неявных ролей или неподтверждённых статусов | PARTIAL — роли описаны, общий manifest ещё не реализован |
+| G1 — Consilium source readiness | Exact-head CI, role/permission regression, immutable round/task journal, proposal-vs-launch separation | Exact-head CI + API/UI role tests; независимая проверка журнала | PARTIAL — PR #131 exact-head CI PASS; Windows Lab E2E отсутствует |
+| G2 — Provider transport readiness | Развернуть PR #132 строго в изолированном Lab; обнаружить session_request/authorize/status/revoke и provider prepare/commit/status/stop/revoke/events; exact provider/tab/conversation/epoch binding | tools/list snapshot, site grants, provider readiness, one controlled Claude send only after explicit chat approval, correlated Bridge receipt, revoke receipt | BLOCKED — runtime UNKNOWN_TOOL/local approval conflict; никаких сообщений не отправлено |
+| G3 — Windows approval/control readiness | Единый chat-only proposal API; status tuple включает service instance, process identity, effective mode, allowlist, epoch, timestamp; queue capacity/dispatch receipt; WM43 service/runtime state reconciliation | Один exact-digest Lab operation: proposal → owner approval in ChatGPT → execute once → independent hash/evidence verify; UNKNOWN never auto-retried | BLOCKED — QUEUE_FULL/APPROVAL_EXPIRED и execution-mode mismatch |
+| G4 — EDRP durable runtime | Реализовать single Supervisor, User Agent, SQLite WAL/FULL, transactional outbox, operation states, leases, resource ownership, recovery hooks | Migration/replay, duplicate request, crash between Intent/Apply/Verify/Commit, disk-full, stale lease, process restart tests | NOT STARTED as runtime; architecture only |
+| G5 — Workbench integration | Подключить viewer/control UI как projection к authenticated EDRP read API; retain offline import as forensic mode; actor identity server-authenticated | Browser E2E, read-only API policy, actor/role auth, tamper/torn-tail/stale-lock tests, correct state projection | PARTIAL — standalone ledger/viewer tests 17/17; no install or Windows E2E |
+| G6 — Engineering product integration | NSS Engine smoke path; AGPT unified GasCalc service in main DLL; validated XData mapping, FireKind/OpeningPosition/altitude/pipe volume/residual pressure; remove duplicate legacy and demo fallbacks; verify manufacturer catalogue | AutoCAD 2026/.NET 8 build, NETLOAD on disposable DWG, golden inputs, invalid inputs fail-closed, deterministic output and no unapproved DWG writes | PARTIAL — standalone GasCalc/palette source CI only; no DLL integration or AutoCAD E2E |
+| G7 — Integrated Lab acceptance | End-to-end task flow through Consilium → Bridge or local worker → EDRP → product adapter → evidence → Workbench projection; inject failures at each handoff | Correlated taskId/operationId/requestId, exact SHA, before/after hashes, transport/execution receipts, UNKNOWN quarantine, STOP/REVOKE test | NOT STARTED |
+| G8 — Recovery and release candidate | Run R0, R1, R2, R3 and EDRP R4 Rebuild tests on isolated Windows VM; verify rollback and restore envelope; create immutable RC manifest | Offline rebuild on separate VM without internet/GitHub/old user profile; external secret/license limitations recorded; independent review | NOT STARTED |
+| G9 — Owner acceptance | Review complete evidence pack and approve exact Lab release digest; Production remains a separate decision | Owner acceptance record tied to exact commit/artifact hashes and explicit environment | NOT STARTED |
+
+Gate statuses use only: PASS, PARTIAL, BLOCKED, NOT STARTED. A green source workflow cannot promote a runtime gate to PASS.
+
+### 22.5. Cross-project invariants
+
+1. **One authority for operation state:** EDRP SQLite is the future runtime source of truth. Workbench JSONL remains standalone/offline forensic journal until migrated through an explicit import protocol; never dual-write as two authoritative ledgers.
+2. **One lifecycle owner per resource:** SCM → Supervisor; Task Scheduler → User Agent; Supervisor → workers; User Agent/Bridge → provider tabs. No mutual watchdogs or competing restart loops.
+3. **One approval authority:** consequential Windows/Production/credential/permission/merge/release actions require exact owner approval. AI operator status does not grant owner authority.
+4. **Transport truth is evidence-backed:** REQUESTED, PREPARED, COMMITTED, SENT, DELIVERED, REPLIED, VERIFIED are separate states. No UI or agent-authored text may manufacture a transport receipt.
+5. **UNKNOWN is terminal for blind retry:** reconcile/query evidence first; never resend a message, repeat a non-idempotent operation or infer success after timeout.
+6. **Lab and Production are separate security domains:** Lab profile, origins, ports, credentials, services and working files cannot silently inherit Production authority.
+7. **One product calculation service:** AGPT UI cannot contain formulas or duplicate legacy calculation paths. Input provenance and missing engineering values must remain explicit.
+8. **No working DWG mutation in a smoke test:** use a disposable drawing and NETLOAD-only test unless a separate exact-scope approval is recorded.
+9. **Every release artifact is traceable:** repository, branch, commit, build environment, dependency lock, test run IDs, artifact hashes, operator and approval receipt are captured.
+10. **No false completion:** visible tab ≠ active agent; CI pass ≠ deployment; TCP reachable ≠ healthy; queued request ≠ executed operation; local approval ≠ chat owner approval.
+
+### 22.6. Consolidated blocker register and next actions
+
+| ID | Blocker | Next bounded action | Exit condition |
+|---|---|---|---|
+| R4-B01 | Live Consilium runtime is not established | Restore exact Lab tools/registry and Control Room deployment without provider sends; inspect authenticated operator and participant identity | tools/list and health receipts prove Control Room API; test one non-external round proposal/launch in disposable Lab |
+| R4-B02 | Bridge session tools absent in active Lab; local-approval contract conflict | Reconcile deployed extension/host versions against PR #132, site allowlist and capabilities; do not widen origins ad hoc | Chat-approved session tools visible; exact Claude preflight and correlated receipt; revoke proven |
+| R4-B03 | Grok binding stale and site approval denied | Fix versioned Lab site registration only after origin policy review | Exact Grok origin approved in Lab, new tab binding and adapter selftest; no provider send before approved |
+| R4-B04 | Workbench target install/browser E2E unknown | Recover bounded read-only status path; do not retry after QUEUE_FULL until queue receipt/capacity is fixed | Target-folder baseline and browser E2E evidence; authenticated actor identity before multi-agent integration |
+| R4-B05 | PowerShell Direct approval queue and WM43 state inconsistent | Read-only reconcile effective service/runtime capability tuple and queue lifecycle | Contradiction removed; chat-only proposal/approval path tested with exact digest |
+| R4-B06 | EDRP is design-only | Implement minimal Supervisor/SQLite schema/outbox after contract freeze; no general shell | Crash/fault-injection and rollback tests on disposable Lab VM |
+| R4-B07 | AGPT GasCalc not integrated into DLL | Deliver M1 mapping contract and one unified calculation path; remove demo fallback/legacy duplicates | AutoCAD 2026 build + NETLOAD + golden/negative tests on disposable DWG |
+| R4-B08 | Manufacturer catalogue has placeholder residual values | Obtain manufacturer-backed data and source/provenance; reject unknown values | Catalogue reviewed and all Mб values traceable to approved datasheet |
+| R4-B09 | Integrated recovery not proven | Prepare isolated offline Windows VM and immutable recovery bundle | R0–R4 acceptance evidence, including cold R4 rebuild |
+| R4-B10 | Shared-chat R4 source criteria not yet reconciled into this document | Import exact outstanding acceptance criteria when accessible; keep this plan as current integration baseline, not a claim that the linked chat was fully read | Crosswalk signed off; no duplicate or conflicting release gates |
+
+### 22.7. Immediate execution order
+
+1. Закрепить release manifest и gate matrix на EDRP branch.
+2. Поддерживать exact-head CI и source/contract review PR #131–#134 и PR #111.
+3. Выполнить read-only Lab inventory и capability/version reconciliation.
+4. Восстановить недостающую chat-approved Bridge session surface в Lab, не отправляя сообщения.
+5. Разрешить PowerShell/WM43 effective-state и queue contract на read-only пути.
+6. Завершить Workbench identity/read-only projection tests.
+7. Продолжить AGPT M1 только с явным input mapping и provenance каталога.
+8. Выполнить integrated disposable Lab E2E и recovery fault injection.
+9. Подготовить RC evidence pack и запросить owner approval на точный digest.
+
+Не сливать Draft PR, не переводить его в Ready, не устанавливать в Production, не менять сервисы/порты/credentials/allowlists и не изменять рабочие DWG в результате этого плана. Для каждого такого действия требуется отдельное явное согласование и проверяемое доказательство.
+
