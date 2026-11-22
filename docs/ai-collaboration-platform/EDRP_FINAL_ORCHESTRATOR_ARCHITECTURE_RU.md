@@ -975,3 +975,18 @@ Gate statuses use only: PASS, PARTIAL, BLOCKED, NOT STARTED. A green source work
 
 Ни один provider message не отправлен; binding/site grants, Production, локальная конфигурация и рабочие DWG не менялись.
 
+### 22.9. Chrome Bridge server-side Lab package — source-side mitigation in progress
+
+PR #132 now contains a separate disposable server package builder:
+- deployment/stage-server-lab.ps1 stages the server source separately from the extension.
+- It pins the exact checkout SHA, refuses dirty/untracked critical inputs, excludes config/credentials/state, checks every server .mjs file, verifies the required session/provider tool names, and runs the existing isolated cutover-health probe with synthetic tokens on an ephemeral loopback port.
+- It writes per-file SHA-256 evidence and a server-release manifest.
+- The Chrome Bridge RC1 Control Gates workflow was extended to parse and execute this builder on Windows.
+- deployment/CHAT_APPROVAL_LAB_CUTOVER.md now distinguishes the server package from extension-only staging and from the separately interactive controlled-cutover routine.
+
+**Current head at this change:** 8cfb86d4e21aae9e77406041435b35f0a3561e92. The workflow-run query has not yet returned an exact-head CI result; therefore this change is **CI PENDING / NOT VERIFIED**, not PASS.
+
+The package builder does not start a persistent Lab server, touch the active connector, read the existing Bridge token, alter port/credentials/tunnel, replace a process, or change Production. It reduces the source-to-package gap but does not itself deploy the server or make the live Lab tools appear.
+
+**Next G2 work:** get the new exact-head Windows workflow result; then capture read-only identity of the actual Lab server/endpoint and stage the package in a separate isolated Lab server profile. Only after that can the ChatGPT MCP connector be pointed at that Lab endpoint under a separately approved, exact-scope action. Verify the live tools/list before any session challenge; no provider message until the exact challenge is presented and owner-approved in this conversation.
+
