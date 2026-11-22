@@ -85,15 +85,15 @@ The required tests include pre-commit stop, post-commit hazard, revoke-before-co
 
 ## 6. MVP implementation status
 
-A local Node.js MVP prototype is implemented in this branch and tested with 31 automated tests (12 Control Room API/UI tests, 11 event-ledger tests and 8 ProviderTransport v1 contract tests). Coverage includes the seven independently authenticated AI member identities with equal council permissions, participant-proposed rounds with co-operator-only launch, participant objection/evidence-gap blocking after the core pair reaches READY_FOR_OWNER, and transport correlation, binding, fencing, UNKNOWN quarantine and epoch revocation. It contains:
+A local Node.js MVP prototype is implemented in this branch and tested with 31 automated tests (12 Control Room API/UI tests, 11 event-ledger tests and 8 ProviderTransport v1 contract tests). Coverage includes the seven independently authenticated AI member identities with equal council permissions, member-proposed and member-launched rounds, participant objection/evidence-gap blocking after the core pair reaches READY_FOR_OWNER, and transport correlation, binding, fencing, UNKNOWN quarantine and epoch revocation. It contains:
 
 - loopback-only Control Room HTTP server and browser UI;
 - distinct owner credential, two independently authenticated co-operator credentials and five independently authenticated expert-participant credentials;
-- participant-proposed rounds with launch restricted to ChatGPT or Claude;
+- round proposal and launch permissions shared by all seven AI members;
 - versioned ProviderTransport v1 contract defining prepare / commit / status / stop / revoke / events, provider-origin-tab-conversation-epoch binding, no-send preparation, fencing tokens, click evidence, UNKNOWN quarantine and independently verified STOPPED_CLEAN attestation (contract only; no live Bridge adapter is attached);
 - append-only JSONL event ledger, fsync, single-writer lock, hash chain and idempotent request IDs;
 - comments and attributed message records;
-- mandatory ChatGPT + Claude dual review, with equal review/objection rights for all five expert participants, and owner approval for consequential decisions;
+- mandatory ChatGPT + Claude dual review, with equal review/objection rights for all seven AI members, and owner approval for consequential decisions;
 - task state model and verified-evidence requirement;
 - artifact manifest plus per-recipient receipt events;
 - explicit STOP_REQUESTED semantics.
@@ -122,8 +122,8 @@ Stop closes future dispatch and increments the orchestration epoch. The UI repor
 ## 9. Acceptance gates before local Lab rollout
 
 - [ ] ChatGPT and Claude independently authenticate as equal co-operators; the other five authenticate as equal expert participants; owner identity is separate.
-- [ ] Any participant can propose a round; only ChatGPT or Claude can launch it, with both actions recorded.
-- [ ] ChatGPT and Claude both record mandatory independent reviews; all five participants can submit independent reviews and objections that block progression until explicitly resolved.
+- [ ] Any of the seven AI members can propose and launch a round, with both actions recorded.
+- [ ] ChatGPT and Claude both record mandatory independent reviews; all seven AI members can submit independent reviews and objections that block progression until explicitly resolved.
 - [ ] No single AI operator can accept a decision alone; consequential decisions require owner approval.
 - [ ] Owner approval is required for consequential decisions.
 - [ ] All discussion events, source commits, artifact hashes, recipient receipts and task transitions are queryable and exportable.
