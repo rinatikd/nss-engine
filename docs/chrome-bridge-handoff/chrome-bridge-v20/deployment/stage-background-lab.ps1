@@ -17,6 +17,7 @@ $names = @(
   'connection-check.js', 'browser-key-store.js', 'permissions.js',
   'approval-broker.js', 'approval-session.js',
   'mutation-dispatch.js', 'background-control-grants.js',
+  'session-authorization.js',
   'adapters.js', 'visual-snapshot.js', 'page.js', 'secrets.js',
   'control-targets.js', 'coordinator-ack.js', 'background-mode-reconnect.js',
   'control-ui-guard.js', 'background-control-ui-state.js'
