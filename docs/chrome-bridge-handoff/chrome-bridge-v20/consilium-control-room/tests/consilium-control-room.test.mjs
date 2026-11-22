@@ -7,13 +7,13 @@ import { createControlRoom, loadActorTokens } from '../consilium/control-room.mj
 
 const tokens=[
  {token:'owner-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'owner',role:'owner'}},
- {token:'chatgpt-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'chatgpt',role:'operator'}},
- {token:'claude-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'claude',role:'operator'}},
- {token:'kimi-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'kimi',role:'participant'}},
- {token:'qwen-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'qwen',role:'participant'}}
- ,{token:'deepseek-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'deepseek',role:'participant'}}
- ,{token:'grok-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'grok',role:'participant'}}
- ,{token:'gemini-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'gemini',role:'participant'}}
+ {token:'chatgpt-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'chatgpt',role:'ai_member'}},
+ {token:'claude-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'claude',role:'ai_member'}},
+ {token:'kimi-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'kimi',role:'ai_member'}},
+ {token:'qwen-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'qwen',role:'ai_member'}}
+ ,{token:'deepseek-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'deepseek',role:'ai_member'}}
+ ,{token:'grok-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'grok',role:'ai_member'}}
+ ,{token:'gemini-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'gemini',role:'ai_member'}}
 ];
 function dir(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-room-'));}
 async function request(base, token, route, body, {origin=base,host}={}){
@@ -69,7 +69,7 @@ test('all seven AI members share session and round control while owner retains c
    const comment=await request(base,operator.token,'/api/comments',{text:`Comment from ${operator.actor.id}`,requestId:`comment_${operator.actor.id}_01`});
    assert.equal(comment.status,201,`comment failed for ${operator.actor.id}`);
   }
-  const proposal=await request(base,tokens[5].token,'/api/decisions',{title:'Equal expert participation',rationale:'All five participants can submit independent findings and reviews',risk:'consequential',requestId:'decision_equal_ops'});assert.equal(proposal.status,201);
+  const proposal=await request(base,tokens[5].token,'/api/decisions',{title:'Equal expert participation',rationale:'All seven AI members can submit independent findings and reviews',risk:'consequential',requestId:'decision_equal_ops'});assert.equal(proposal.status,201);
   const decision=await proposal.json(), decisionId=decision.event.payload.decisionId;
   const reviewOrder=[tokens[5],tokens[4],tokens[3],tokens[6],tokens[7],tokens[1],tokens[2]];
   for(let i=0;i<reviewOrder.length;i++){
@@ -133,14 +133,14 @@ test('stop cannot be marked complete by caller-supplied quiescence strings',asyn
  }finally{await app.close()}
 });
 
-test('all authenticated AI participants may update a task assigned to another participant',async()=>{
+test('all authenticated AI members may update a task assigned to another member',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   await request(base,tokens[1].token,'/api/decisions',{decisionId:'decision_task_0001',title:'Routine choice',rationale:'Reversible',risk:'routine',requestId:'decision_task_req'});
   await request(base,tokens[1].token,'/api/decisions/review',{decisionId:'decision_task_0001',verdict:'SUPPORT',rationale:'ChatGPT supports',requestId:'review_task_cgpt'});
   await request(base,tokens[2].token,'/api/decisions/review',{decisionId:'decision_task_0001',verdict:'SUPPORT',rationale:'Claude supports',requestId:'review_task_claude'});
   await request(base,tokens[2].token,'/api/tasks',{taskId:'task_kimi_0001',decisionId:'decision_task_0001',title:'Inspect evidence',assignee:'kimi',requestId:'create_task_kimi'});
-  const accepted=await request(base,tokens[4].token,'/api/tasks/state',{taskId:'task_kimi_0001',status:'IN_PROGRESS',requestId:'qwen_operator_update'});
+  const accepted=await request(base,tokens[4].token,'/api/tasks/state',{taskId:'task_kimi_0001',status:'IN_PROGRESS',requestId:'qwen_member_update'});
   assert.equal(accepted.status,200);
  }finally{await app.close()}
 });
@@ -168,7 +168,7 @@ test('authenticated export returns a newline-delimited, hash-chained journal',as
  }finally{await app.close()}
 });
 
-test('loadActorTokens configures seven independently authenticated equal AI members plus owner',()=>{
+test('loadActorTokens requires seven equal AI-member identities plus the owner',()=>{
  const env={
   CONSILIUM_OWNER_TOKEN:'owner-token-abcdefghijklmnopqrstuvwxyz-123456',
   CONSILIUM_CHATGPT_TOKEN:'chatgpt-token-abcdefghijklmnopqrstuvwxyz-123456',
@@ -181,9 +181,11 @@ test('loadActorTokens configures seven independently authenticated equal AI memb
  };
  const loaded=loadActorTokens(env);
  assert.equal(loaded.length,8);
- assert.deepEqual(loaded.filter(x=>x.actor.role==='operator').map(x=>x.actor.id).sort(),['chatgpt','claude']);
-  assert.deepEqual(loaded.filter(x=>x.actor.role==='participant').map(x=>x.actor.id).sort(),['deepseek','gemini','grok','kimi','qwen']);
+ assert.deepEqual(loaded.filter(x=>x.actor.role==='ai_member').map(x=>x.actor.id).sort(),['chatgpt','claude','deepseek','gemini','grok','kimi','qwen']);
+  assert.deepEqual(loaded.filter(x=>x.actor.role==='participant').map(x=>x.actor.id).sort(),[]);
  assert.equal(loaded.find(x=>x.actor.id==='owner').actor.role,'owner');
+ const incomplete={...env};delete incomplete.CONSILIUM_GROK_TOKEN;
+ assert.throws(()=>loadActorTokens(incomplete),/REQUIRED_IDENTITY_TOKEN_MISSING_GROK/);
  const app=createControlRoom({dataDir:dir(),tokens:loaded});
  app.ledger.close();
 });
