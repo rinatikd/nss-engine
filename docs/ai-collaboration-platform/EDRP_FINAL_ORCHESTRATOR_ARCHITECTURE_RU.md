@@ -1084,22 +1084,22 @@ AGPT_Plugin PR #5: https://github.com/rinatikd/AGPT_Plugin/pull/5
 Branch: `feat/agpt-m1b-xdata-adapter-20261122`  
 Base: M1a PR #4 branch `feat/agpt-m1-provenance-gate-20261122` at
 `5297fec7a1016e619d460ce45ccde92c638019e1`.  
-Exact head: `607e3fcc8a643febb3ef4025a3d18e940f558419`.  
+Latest exact head: `ada59ef1a8a58e2d9bc8a3aa943b4825adffaec5`.  
 State: Draft/open; not merged.
 
-Implemented in M1b:
+Implemented:
 - `src/Calc/GasCalculationXDataAdapter.cs` — AutoCAD-independent, fail-closed adapter from host-extracted XData key/value pairs into `GasCalculationRequest`.
-- Requires explicit `AGPT_CALC_SCHEMA=2`; unversioned legacy XData and unknown schema versions are rejected. No migration, inferred defaults or demo/sample fallback.
-- Parses calculation inputs with invariant numeric parsing, explicit enum validation and bounded catalogue counts.
-- Reads per-field evidence metadata under `EVIDENCE.<field>.*`; then delegates to the existing M1a provenance gate. Only the provenance service invokes GasCalc.
-- Includes adapter, provenance service and GasCalc source files in `AGPT.csproj`; extends the console runner and adds a dedicated .NET 8 workflow.
-- Seven adapter regression cases cover legacy schema rejection, unsupported schema, non-finite input, invalid enum, successful fully evidenced calculation, stale value fingerprint and missing catalogue data.
+- Requires explicit `AGPT_CALC_SCHEMA=2`; unversioned legacy XData and unknown schema versions are rejected. No inferred defaults, migration or demo/sample fallback.
+- Parses inputs with invariant numeric parsing, explicit enum validation and bounded catalogue/selection sizes (maximum 20).
+- Reads per-field evidence metadata under `EVIDENCE.<field>.*`; delegates to the M1a provenance gate; only the provenance service invokes GasCalc.
+- Calculation sources are included in `AGPT.csproj`; the console runner includes adapter regressions and a dedicated .NET 8 workflow.
+- Eight adapter regression scenarios cover legacy schema rejection, unsupported schema, non-finite input, invalid enum, complete evidenced calculation, stale value fingerprint, oversized catalogue and missing catalogue value.
 
-Exact-head push CI at `607e3fcc8a643febb3ef4025a3d18e940f558419`:
-- M1b push run #45055579745 — SUCCESS.
-- Job #137309944839 — SUCCESS; log confirms normative golden cases, 17 numeric checks, 13 provenance scenarios and all 7 XData adapter scenarios. Log ends `ИТОГО: все проверки пройдены`.
-- Pull-request run #45055623141 was observed IN_PROGRESS at the time of this update; it is not claimed as passed here.
+Exact-head CI at `ada59ef1a8a58e2d9bc8a3aa943b4825adffaec5`:
+- M1b push run #45055747936 — SUCCESS.
+- M1b pull_request run #45055750120 — SUCCESS.
+- Push job #137310460414 log confirms all normative golden cases, 17 numeric validation checks, 13 provenance scenarios and all 8 XData adapter scenarios passed; log ends `ИТОГО: все проверки пройдены`.
 
-**Critical boundary / remaining M1b work:** the adapter currently consumes a dictionary supplied by a host; it does not itself open an AutoCAD Entity or extract XData from a DWG. It does not write or migrate XData, does not replace legacy `AGPT_CALC` or `AGPT_CALC_DRAW`, and does not enable release output. Although calculation sources are now listed in `AGPT.csproj` on this branch, no AutoCAD 2026 plugin build or disposable-DWG E2E has yet been claimed. The next integration gate is a read-only AutoCAD entity/XData bridge, explicit field mapping against real AGPT entities, and a controlled command cutover only after compile + disposable-DWG regression.
+**Critical boundary / remaining M1b work:** the adapter consumes a dictionary supplied by a host; it does not itself open an AutoCAD Entity or extract XData from a DWG. It does not write/migrate XData, replace legacy `AGPT_CALC` or `AGPT_CALC_DRAW`, or enable release output. Although calculation sources are now listed in `AGPT.csproj` on this branch, no AutoCAD 2026 plugin build or disposable-DWG E2E is claimed. Next gate: read-only AutoCAD entity/XData bridge, explicit mapping against real AGPT entities, and controlled command cutover only after AutoCAD compile + disposable-DWG regression.
 
-**Gate interpretation:** M1a remains source/test PASS at its own exact head. M1b schema adapter source/test push gate is PASS at the exact head above; M1b pull-request CI and AutoCAD host integration remain pending. Overall AGPT release remains BLOCKED. No Production, local Windows configuration, AutoCAD session or user DWG was modified.
+**Gate interpretation:** M1a source/test PASS at its own exact head; M1b schema adapter source/test push and PR gates PASS at the exact head above. AutoCAD host integration remains pending. Overall AGPT release remains BLOCKED. No Production, local Windows configuration, AutoCAD session or user DWG was modified.
