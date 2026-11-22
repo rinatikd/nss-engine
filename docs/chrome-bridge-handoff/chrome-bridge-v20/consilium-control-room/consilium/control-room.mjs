@@ -76,7 +76,7 @@ export function loadActorTokens(env = process.env) {
   for (const [key, actor] of ACTOR_TOKENS) {
     const token = env[key];
     if (!token) continue;
-    if (token.length < TOKEN_MIN || seen.has(token)) throw Error('OPERATOR_TOKEN_INVALID_OR_REUSED');
+    if (token.length < TOKEN_MIN || seen.has(token)) throw Error('ACTOR_TOKEN_INVALID_OR_REUSED');
     seen.add(token); result.push({ token, actor });
   }
   for (const id of ['owner', 'chatgpt', 'claude', 'deepseek', 'qwen', 'kimi', 'grok', 'gemini']) {
@@ -90,7 +90,7 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
   if (!Array.isArray(tokens) || !['owner', 'chatgpt', 'claude', 'deepseek', 'qwen', 'kimi', 'grok', 'gemini'].every(id => tokens.some(x => x.actor?.id === id))) throw Error('FULL_COUNCIL_IDENTITIES_REQUIRED');
   const identities = new Set(), secrets = new Set();
   for (const x of tokens) {
-    if (typeof x.token !== 'string' || x.token.length < TOKEN_MIN || secrets.has(x.token)) throw Error('OPERATOR_TOKEN_INVALID_OR_REUSED');
+    if (typeof x.token !== 'string' || x.token.length < TOKEN_MIN || secrets.has(x.token)) throw Error('ACTOR_TOKEN_INVALID_OR_REUSED');
     if (!x.actor || identities.has(x.actor.id)) throw Error('ACTOR_IDENTITY_DUPLICATE');
     const requiredRole = ACTOR_ROLES[x.actor?.id];
     if (!requiredRole || x.actor.role !== requiredRole) throw Error('ACTOR_ROLE_MISMATCH');
