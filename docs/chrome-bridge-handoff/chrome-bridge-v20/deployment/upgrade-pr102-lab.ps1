@@ -102,7 +102,9 @@ if (-not [string]::IsNullOrWhiteSpace($RollbackFrom)) {
   Require ((FullPath ([string]$marker.labRoot)) -ieq $root) 'Backup belongs to a different Lab root'
   $backupExtension = Join-Path $backupRoot 'extension'
   Require (Test-Path -LiteralPath $backupExtension -PathType Container) 'Backup extension tree missing'
-  ReadManifest (Join-Path $backupExtension 'manifest.json') | Out-Null
+  $backupManifestPath = Join-Path $backupExtension 'manifest.json'
+  Require ((Get-FileHash -LiteralPath $backupManifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -eq [string]$marker.manifestSha256) 'Lab backup manifest hash mismatch'
+  ReadManifest $backupManifestPath | Out-Null
   if (-not $Apply) {
     Write-Output '[RESTORE_DRY_RUN] Lab backup identity verified; no files changed.'
     return
