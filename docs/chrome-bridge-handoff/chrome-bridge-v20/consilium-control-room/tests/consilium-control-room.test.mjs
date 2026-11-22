@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createControlRoom } from '../consilium/control-room.mjs';
+import { createControlRoom, loadActorTokens } from '../consilium/control-room.mjs';
 
 const tokens=[
  {token:'owner-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'owner',role:'owner'}},
@@ -161,4 +161,23 @@ test('authenticated export returns a newline-delimited, hash-chained journal',as
   const events=body.trimEnd().split(newline).map(line=>JSON.parse(line));
   assert.equal(events.length,2);assert.equal(events[1].previousHash,events[0].hash);
  }finally{await app.close()}
+});
+
+test('loadActorTokens configures all seven AI identities as equal operators',()=>{
+ const env={
+  CONSILIUM_OWNER_TOKEN:'owner-token-abcdefghijklmnopqrstuvwxyz-123456',
+  CONSILIUM_CHATGPT_TOKEN:'chatgpt-token-abcdefghijklmnopqrstuvwxyz-123456',
+  CONSILIUM_CLAUDE_TOKEN:'claude-token-abcdefghijklmnopqrstuvwxyz-123456',
+  CONSILIUM_DEEPSEEK_TOKEN:'deepseek-token-abcdefghijklmnopqrstuvwxyz-123456',
+  CONSILIUM_QWEN_TOKEN:'qwen-token-abcdefghijklmnopqrstuvwxyz-123456',
+  CONSILIUM_KIMI_TOKEN:'kimi-token-abcdefghijklmnopqrstuvwxyz-123456',
+  CONSILIUM_GROK_TOKEN:'grok-token-abcdefghijklmnopqrstuvwxyz-123456',
+  CONSILIUM_GEMINI_TOKEN:'gemini-token-abcdefghijklmnopqrstuvwxyz-123456'
+ };
+ const loaded=loadActorTokens(env);
+ assert.equal(loaded.length,8);
+ assert.deepEqual(loaded.filter(x=>x.actor.role==='operator').map(x=>x.actor.id).sort(),
+  ['chatgpt','claude','deepseek','gemini','grok','kimi','qwen']);
+ assert.equal(loaded.find(x=>x.actor.id==='owner').actor.role,'owner');
+ assert.doesNotThrow(()=>createControlRoom({dataDir:dir(),tokens:loaded}));
 });
