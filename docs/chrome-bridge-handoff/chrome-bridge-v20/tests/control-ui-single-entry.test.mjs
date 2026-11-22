@@ -39,18 +39,28 @@ test('isolated staging packages RC1 modules without cloning installed extension'
   assert.match(stage,/Unsafe manifest icon asset path/);
 });
 
-test('lab staging remaps only the isolated fixture to 17481',()=>{
+test('lab staging parameterizes the isolated endpoint and preserves the safe default',()=>{
   const stage=readFileSync(new URL('../deployment/stage-background-lab.ps1',import.meta.url),'utf8');
-  assert.match(stage,/\$prodEndpoint\s*=\s*'http:\/\/127\.0\.0\.1:17381'/);
-  assert.match(stage,/\$labEndpoint\s*=\s*'http:\/\/127\.0\.0\.1:17481'/);
-  assert.match(stage,/\$prodHost\s*=\s*'http:\/\/127\.0\.0\.1:17381\/\*'/);
-  assert.match(stage,/\$labHost\s*=\s*'http:\/\/127\.0\.0\.1:17481\/\*'/);
-  assert.match(stage,/\$m\.host_permissions\s*=\s*\$hosts/);
-  assert.match(stage,/\$loopbackWildcard\s*=\s*'http:\/\/127\.0\.0\.1\/\*'/);
-  assert.match(stage,/\$_\s*-ne\s*\$loopbackWildcard/);
-  assert.match(stage,/\$original\.Replace\(\$prodEndpoint,\s*\$labEndpoint\)/);
+  const verify=readFileSync(new URL('../deployment/verify-adapter-lab.ps1',import.meta.url),'utf8');
+  const manifest=readFileSync(new URL('../deployment/write-lab-release-manifest.ps1',import.meta.url),'utf8');
+  const workflow=readFileSync(new URL('../../../../.github/workflows/chrome-bridge-visual-rc.yml',import.meta.url),'utf8');
+  assert.match(stage,/[int]\\$LabPort\\s*=\\s*17481/);
+  assert.match(stage,/\\$labEndpoint\\s*=\\s*\\('http:\\/\\/127\\.0\\.0\\.1:\\{0\\}'\\s*-f\\s*\\$LabPort\\)/);
+  assert.match(stage,/\\$labHost\\s*=\\s*\\('http:\\/\\/127\\.0\\.0\\.1:\\{0\\}\\/\\*'\\s*-f\\s*\\$LabPort\\)/);
+  assert.match(stage,/\\$prodEndpoint\\s*=\\s*'http:\\/\\/127\\.0\\.0\\.1:17381'/);
+  assert.match(stage,/\\$prodHost\\s*=\\s*'http:\\/\\/127\\.0\\.0\\.1:17381\\/\\*'/);
+  assert.match(stage,/\\$m\\.host_permissions\\s*=\\s*\\$hosts/);
+  assert.match(stage,/\\$loopbackWildcard\\s*=\\s*'http:\\/\\/127\\.0\\.0\\.1\\/\\*'/);
+  assert.match(stage,/\\$original\\.Replace\\(\\$prodEndpoint,\\s*\\$labEndpoint\\)/);
   assert.match(stage,/Production Bridge endpoint retained in lab JS/);
-  assert.match(stage,/if \(-not \$Apply\)/);
+  assert.match(stage,/if \\(-not \\$Apply\\)/);
+  assert.match(verify,/[int]\\$LabPort\\s*=\\s*17481/);
+  assert.match(verify,/\\$labHost\\s*=\\s*'http:\\/\\/127\\.0\\.0\\.1:\\{0\\}\\/\\*'\\s*-f\\s*\\$LabPort/);
+  assert.match(manifest,/[int]\\$LabPort\\s*=\\s*17481/);
+  assert.match(manifest,/endpoint=\\('http:\\/\\/127\\.0\\.0\\.1:\\{0\\}'\\s*-f\\s*\\$LabPort\\)/);
+  assert.match(workflow,/stage-background-lab\\.ps1[^\\n]*-LabPort 17484/);
+  assert.match(workflow,/verify-adapter-lab\\.ps1[^\\n]*-LabPort 17484/);
+  assert.match(workflow,/write-lab-release-manifest\\.ps1[^\\n]*-LabPort 17484/);
 });
 
 
