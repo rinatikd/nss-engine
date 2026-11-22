@@ -72,9 +72,18 @@ test('session scope grants only selected providers and fails closed for missing 
 test('session_request binds the owner challenge to the exact selected provider subset', async () => {
   const s = await setup();
   try {
-    // An idle extension poll updates lastSeen; session_request intentionally
-    // refuses to create a challenge before Bridge connectivity is established.
-    await s.poll();
+    // Perform a real read-only discovery handshake first. This updates the
+    // Bridge's lastSeen state exactly as the extension does after Connect.
+    const connect = s.rpc('browser_tabs');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const connectCommand = await s.poll();
+    assert.ok(connectCommand);
+    assert.equal(connectCommand.name, 'browser_tabs');
+    const connectAck = await s.post('/bridge/result', {
+      id: connectCommand.id, result: []
+    }, 'b'.repeat(64));
+    assert.equal(connectAck.status, 200);
+    assert.notEqual((await connect).result.isError, true);
     const tabs = [
       { tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' },
       { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' },
