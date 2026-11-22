@@ -863,7 +863,7 @@ No Grok message was sent, no site grant was changed, and no local approval was r
 | Направление | Артефакт / текущий результат | Подтверждено | Блокирует следующий уровень |
 |---|---|---|---|
 | Consilium / Control Room | NSS Engine PR #131, head ad897fc059defa4d7ac5d16727dcc4cee5b31a7a | Текущие exact-head workflow: Source checks #45031281539, RC1 Control Gates #45031281456, Visual RC #45031281415 — SUCCESS; описаны роли двух операторов и пяти участников | Не развёрнут в Lab; нет подтверждённого runtime раунда, доставки/ответов и receipt correlation |
-| Chrome Bridge | NSS Engine PR #132, head 8cfb86d4e21aae9e77406041435b35f0a3561e92 | Source checks #45050999238 и RC1 Control Gates #45050999279 — SUCCESS; Visual RC #45050999227 — IN_PROGRESS (последняя проверка) | Активный Lab tool registry не показывает session API; active agent_send требует local approval; Gemini/Grok и response selectors не готовы; live Lab deployment не выполнен |
+| Chrome Bridge | NSS Engine PR #132, head 8cfb86d4e21aae9e77406041435b35f0a3561e92 | Source checks #45050999238, RC1 Control Gates #45050999279 и Visual RC #45050999227 — SUCCESS (все три workflow exact-head завершены) | Активный Lab tool registry не показывает session API; active agent_send требует local approval; Gemini/Grok и response selectors не готовы; live Lab deployment не выполнен |
 | EDRP | NSS Engine PR #134, head 575daf7717453948baae26e693b07471708add0c | Source checks #45051028215 — SUCCESS; добавлена единая R4-REL release matrix и Bridge Lab staging remediation | Только архитектурный документ; нет сервиса, SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
 | Free AI Workbench | NSS Engine PR #111, head 9ee6e02fbc6a0796985bc3756cfda5e4e3823323 | Source #45046307182 и CCTV guards #45046307226 — SUCCESS; 17/17 Node tests | Не установлен в целевую папку; Windows/browser E2E и authenticated actor identity отсутствуют; журнал не является EDRP source of truth |
 | PowerShell Direct / WM43 | §20 данного документа и read-only runtime observations | Были отдельные read-only probes; точные неуспехи сохранены ниже | QUEUE_FULL до durable job, APPROVAL_EXPIRED для request 18086, WM43 service/runtime execution mismatch; нет безопасного chat-only proposal-to-execution path |
@@ -989,7 +989,7 @@ PR #132 now contains a separate disposable server package builder:
 - Chrome Bridge RC1 Control Gates #45050999279 — SUCCESS.
 - Windows staging step verified 14 server source files, 29 MCP tools and full schemas through a temporary loopback Bridge on port 33093; queue=0. Package manifest SHA-256: 1e7ba94fe8b931d3fab680ff1d97eadf7f76bf71f75039b81d203212a2333e05.
 - The Windows package check ran against PR merge checkout commit a09b0f88f15f9af093b9a2a2337fa2f8b1c57ab5; this is distinct from the PR head SHA.
-- Chrome Bridge Visual RC #45050999227 remained IN_PROGRESS at the latest status check.
+- Chrome Bridge Visual RC #45050999227 completed SUCCESS; disposable Chromium/MV3 and Windows PowerShell 5.1 jobs both passed.
 
 The package builder does not start a persistent Lab server, touch the active connector, read the existing Bridge token, alter port/credentials/tunnel, replace a process, or change Production. It proves reproducible source-side package assembly and the MCP registry in an isolated temporary server; it does not deploy the server or make the live Lab tools appear.
 
