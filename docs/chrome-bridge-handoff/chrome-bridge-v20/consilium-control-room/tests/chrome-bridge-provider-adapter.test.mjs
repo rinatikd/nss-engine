@@ -14,9 +14,9 @@ const identity={
   requestId:'request_0001',taskId:'task_000001',providerId:'claude',
   tabId:42,origin:'https://claude.ai',conversationId:'conversation_001',epoch:7
 };
-function response(data,{status=200,isError=false}={}) {
+function response(data,{status=200,isError=false,id='provider-provider_prepare-request_0001'}={}) {
   return {ok:status>=200&&status<300,status,json:async()=>({
-    jsonrpc:'2.0',id:'provider-provider_prepare-request_0001',
+    jsonrpc:'2.0',id,
     result:{isError,content:[{type:'text',text:isError?String(data):JSON.stringify(data)}]}
   })};
 }
@@ -52,7 +52,7 @@ test('prepare calls the Bridge MCP tool with exact identity and payload correlat
 
 test('commit uses a distinct tool and preserves prepared ID plus fencing token',async()=>{
   let request;
-  const a=adapter(async(url,init)=>{request=JSON.parse(init.body);return response({state:'SENT',identity,clickedAt:new Date().toISOString(),clickedSend:true});});
+  const a=adapter(async(url,init)=>{request=JSON.parse(init.body);return response({state:'SENT',identity,clickedAt:new Date().toISOString(),clickedSend:true},{id:'provider-provider_commit-request_0001'});});
   const result=await a.commit({...identity,preparedId:'prepared_001',fencingToken:'f'.repeat(40)});
   assert.equal(result.state,'SENT');
   assert.equal(request.params.name,'provider_commit');
@@ -87,7 +87,7 @@ test('definite authorization denial is BLOCKED, not UNKNOWN',async()=>{
 
 test('status is read-only and degrades to UNKNOWN when Bridge is unreachable',async()=>{
   let request;
-  const a=adapter(async(url,init)=>{request=JSON.parse(init.body);return response({state:'PREPARED',identity,preparedId:'prepared_001'});});
+  const a=adapter(async(url,init)=>{request=JSON.parse(init.body);return response({state:'PREPARED',identity,preparedId:'prepared_001'},{id:'provider-provider_status-request_0001'});});
   assert.equal((await a.status(identity)).state,'PREPARED');
   assert.equal(request.params.name,'provider_status');
   const down=adapter(async()=>{throw Error('offline');});
