@@ -110,3 +110,19 @@ test('one unresolved or prepared transaction quarantines the tab against a new r
     assert.deepEqual(j.beginPrepare({...next,epoch:8},'c'.repeat(64)),{duplicate:false});
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
+
+test('stop after a confirmed commit advances the epoch without claiming cancellation',()=>{
+  const dir=tmp();
+  try {
+    const j=journal(dir);
+    j.beginPrepare(identity,payloadHash);
+    const prepared=j.completePrepare(identity,{preparedId:'prepared_0006',expiresAt:new Date(Date.now()+60000).toISOString()});
+    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken});
+    j.completeCommit(identity,{clickedAt:new Date().toISOString(),clickedSend:true});
+    const stopped=j.stop(identity);
+    assert.equal(stopped.state,'STOP_AFTER_COMMIT');
+    assert.equal(stopped.nextEpoch,8);
+    assert.equal(j.stop(identity).state,'STOP_AFTER_COMMIT');
+    assert.equal(j.status(identity).state,'STOP_AFTER_COMMIT');
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
