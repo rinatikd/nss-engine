@@ -8,6 +8,8 @@ const PATH = 'transport-host.html';
 let creating = null;
 let status = {state:'disconnected',connected:false,error:null,updatedAt:0};
 let starting = null;
+// Lifecycle generation fences a delayed START against a newer manual STOP.
+let lifecycleGeneration = 0;
 const approvals = new ApprovalSession();
 // Extension control.html opened via chrome.windows.create is still a tab.
 // Reject web content scripts by requiring the exact extension page URL, not
@@ -68,11 +70,15 @@ async function ensureHost(chromeApi) {
   await creating;
 }
 export async function startBackgroundTransport(chromeApi) {
-  if (starting) return starting;
-  starting = startBackgroundTransportOnce(chromeApi).finally(() => { starting = null; });
-  return starting;
+  const generation = lifecycleGeneration;
+  if (starting?.generation === generation) return starting.promise;
+  const promise = startBackgroundTransportOnce(chromeApi, generation).finally(() => {
+    if (starting?.promise === promise) starting = null;
+  });
+  starting = {generation, promise};
+  return promise;
 }
-async function startBackgroundTransportOnce(chromeApi) {
+async function startBackgroundTransportOnce(chromeApi, generation) {
   // Restrict access before reading secrets, not after obtaining the key.
   await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   const {bridgeConnectionDesired, browserToken} = await chromeApi.storage.local.get(
@@ -84,10 +90,27 @@ async function startBackgroundTransportOnce(chromeApi) {
   if (typeof browserToken !== 'string' || !browserToken)
     return {ok:false,reason:'NO_STORED_CREDENTIAL'};
   await ensureHost(chromeApi);
+  // The panel may be reopened while a manual Stop is pending. Never let an
+  // earlier automatic start overtake that Stop after offscreen creation.
+  if (generation !== lifecycleGeneration) return {ok:false,reason:'START_SUPERSEDED'};
+  const latest = await chromeApi.storage.local.get([
+    'bridgeBackgroundMode','bridgeConnectionDesired','browserToken'
+  ]);
+  if (latest.bridgeBackgroundMode !== true || latest.bridgeConnectionDesired !== true ||
+      latest.browserToken !== browserToken || generation !== lifecycleGeneration)
+    return {ok:false,reason:'MANUAL_DISCONNECT'};
   await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'start',token:browserToken});
+  // If Stop raced the message delivery, issue a final stop so queue ordering
+  // cannot leave a late transport running.
+  if (generation !== lifecycleGeneration) {
+    try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
+    return {ok:false,reason:'START_SUPERSEDED'};
+  }
   return {ok:true};
 }
 export async function stopBackgroundTransport(chromeApi) {
+  lifecycleGeneration++;
+  starting = null;
   approvals.stop();
   await new BackgroundControlGrants(chromeApi).clear();
   await new SessionAuthorization(chromeApi).revoke();
