@@ -178,7 +178,7 @@ export function projectEvents(events) {
     const p = event.payload;
     switch (event.type) {
       case 'session.started':
-        if (!['owner', 'operator'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_CO_OPERATOR');
+        if (!['owner', 'operator', 'participant'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
         if (!['IDLE', 'STOPPED'].includes(state.session.status)) throw Error('SESSION_ALREADY_ACTIVE');
         state.session = { status: 'RUNNING', id: p.sessionId, title: p.title, epoch: state.session.epoch + 1 };
         break;
@@ -213,7 +213,7 @@ export function projectEvents(events) {
         const round = state.rounds.find(r => r.id === p.roundId);
         if (!round || round.status !== 'PROPOSED') throw Error('ROUND_NOT_PROPOSED');
         if (state.session.status !== 'RUNNING') throw Error('ROUND_START_REQUIRES_RUNNING_SESSION');
-        if (event.actor.role !== 'operator') throw Error('ROUND_START_REQUIRES_CO_OPERATOR');
+        if (!['operator', 'participant'].includes(event.actor.role)) throw Error('ROUND_START_REQUIRES_AI_MEMBER');
         round.status = 'STARTED'; round.startedBy = event.actor.id; round.startedAt = event.at;
         break;
       }
