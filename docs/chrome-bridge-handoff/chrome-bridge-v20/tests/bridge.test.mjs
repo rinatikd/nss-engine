@@ -181,3 +181,36 @@ test('hub: verdict, files, templates', () => {
   assert.deepEqual(deepRender({ a: ['{{x}}'], b: 1 }, { x: 'q"\n' }), { a: ['q"\n'], b: 1 });
 });
 
+
+
+test('dispatched timeout holds the single-writer lane until a late ACK', async () => {
+  const s = await setup({ timeout: 120, pollHold: 50 });
+  try {
+    const firstPoll = s.poll();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const firstPromise = s.rpc('browser_tabs');
+    const firstCommand = await firstPoll;
+    assert.equal(firstCommand.name, 'browser_tabs');
+    const first = await firstPromise;
+    assert.equal(first.result.isError, true);
+    assert.match(first.result.content[0].text, /expired after dispatch/);
+
+    const secondPromise = s.rpc('browser_read', { tabId: 7 });
+    const secondPoll = s.poll();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const lateAck = await s.post('/bridge/result', {
+      id: firstCommand.id, result: [{ tabId: 7 }]
+    }, 'b'.repeat(64));
+    assert.equal(lateAck.status, 200);
+    assert.deepEqual(await lateAck.json(), { ok: true, late: true });
+
+    const secondCommand = await secondPoll;
+    assert.equal(secondCommand.name, 'browser_read');
+    await s.post('/bridge/result', {
+      id: secondCommand.id, result: { text: 'read-only result', links: [] }
+    }, 'b'.repeat(64));
+    const second = await secondPromise;
+    assert.equal(second.result.isError, false);
+    assert.deepEqual(JSON.parse(second.result.content[0].text), { text: 'read-only result', links: [] });
+  } finally { await s.close(); }
+});
