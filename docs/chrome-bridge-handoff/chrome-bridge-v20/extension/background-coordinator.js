@@ -127,6 +127,8 @@ export function installBackgroundCoordinator(chromeApi) {
         const sessionAuthorization=new SessionAuthorization(chromeApi);
         if (name==='session_authorize') {
           if (currentStatus().connected!==true) throw Error('BRIDGE_NOT_CONNECTED');
+          // Session Authorization must not inherit any stale per-tab grants.
+          await new BackgroundControlGrants(chromeApi).clear();
           const lease=await sessionAuthorization.authorize({
             ...msg.command.args,bridgeEpoch:msg.command.bridgeEpoch
           });
@@ -136,6 +138,7 @@ export function installBackgroundCoordinator(chromeApi) {
         }
         if (name==='session_revoke') {
           await sessionAuthorization.revoke();
+          await new BackgroundControlGrants(chromeApi).clear();
           await chromeApi.storage.local.set({bridgeMutationLabMode:false});
           return {revoked:true};
         }

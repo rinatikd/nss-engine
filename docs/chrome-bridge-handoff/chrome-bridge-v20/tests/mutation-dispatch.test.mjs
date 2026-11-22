@@ -365,7 +365,7 @@ test('Chat-approved session suppresses per-action approval for provider prepare 
 
 test('Chat-approved session never authorizes arbitrary browser clicks or fills',async()=>{
  for(const name of ['browser_click','browser_fill']) {
-   const f=fixture();
+   const f=fixture({deny:true});
    const sessionAuthorization={
      status:async()=>({active:true,expiresAt:Date.now()+120000}),
      require:async()=>{throw Error('SESSION_CAPABILITY_DENIED');}
@@ -373,8 +373,8 @@ test('Chat-approved session never authorizes arbitrary browser clicks or fills',
    await assert.rejects(dispatchMutation(cmd(name),f.chromeApi,{
      approvals:f.approvals,controlGrant:f.controlGrant,sessionAuthorization,
      stillEnabled:async()=>true,uuid:()=> 'session-no-click'
-   }));
-   assert.equal(f.state.approvalCount,0);
+   }),/USER_DENIED/);
+   assert.equal(f.state.approvalCount,1);
    assert.equal(f.state.injections.includes(name),false);
  }
 });

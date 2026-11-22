@@ -1,5 +1,6 @@
 import { CONTROL_ORIGINS } from './permissions.js';
 import { eligibleBackgroundControlTabs } from './control-targets.js';
+import { permittedTab } from './read-only-dispatch.js';
 
 const STORAGE_KEY = 'bridgeSessionAuthorization';
 const ALLOWED_DURATIONS = new Set([60, 180, 240]);
@@ -107,7 +108,6 @@ export class SessionAuthorization {
     if (!current.origins.includes(origin) || !Object.hasOwn(CONTROL_ORIGINS, origin))
       throw Error('SESSION_ORIGIN_DENIED');
 
-    const { permittedTab } = await import('./read-only-dispatch.js');
     const { origin: actualOrigin, site } = await permittedTab(this.api, tabId);
     if (actualOrigin !== origin || site.mode !== 'chat' ||
         site.adapter !== CONTROL_ORIGINS[origin])

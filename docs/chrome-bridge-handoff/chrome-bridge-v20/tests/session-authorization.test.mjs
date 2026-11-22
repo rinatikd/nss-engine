@@ -117,3 +117,9 @@ test('invalid IDs, duration, epoch and unavailable secure session storage fail c
     sessionId, durationMinutes: 60, origins: ['https://claude.ai'], bridgeEpoch: 'short'
   }), /BRIDGE_EPOCH_INVALID/);
 });
+
+test('session authorization refuses an unavailable secure session store', async () => {
+ const f=fixture();
+ delete f.chromeApi.storage.session.setAccessLevel;
+ await assert.rejects(f.auth.status(epoch),/SECURE_SESSION_STORAGE_REQUIRED/);
+});
