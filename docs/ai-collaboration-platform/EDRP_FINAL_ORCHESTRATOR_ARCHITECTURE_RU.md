@@ -952,3 +952,26 @@ Gate statuses use only: PASS, PARTIAL, BLOCKED, NOT STARTED. A green source work
 
 Не сливать Draft PR, не переводить его в Ready, не устанавливать в Production, не менять сервисы/порты/credentials/allowlists и не изменять рабочие DWG в результате этого плана. Для каждого такого действия требуется отдельное явное согласование и проверяемое доказательство.
 
+### 22.8. Свежая проверка фактического Lab tool registry — 22.11.2026
+
+Проведена повторная read-only проверка работающего контура PR102 Lab и сопоставление с исходниками PR #132.
+
+**Наблюдения активного runtime:**
+- Доступный Lab namespace содержит browser_status, control_status, browser_tabs, agent_list, agent_bind, agent_send, agent_wait, agent_ask, agent_peek и agent_selftest.
+- В доступном runtime tool registry отсутствуют session_request, session_authorize, session_status, session_revoke и provider_prepare/commit/status/stop/revoke/events.
+- Вызов control_status возвращает UNKNOWN_TOOL.
+- agent_list подтверждает живые tab bindings: Claude 1864257582, Gemini 1864257597, DeepSeek 1864257552. Grok binding остаётся на несуществующем tabId 1867452532, несмотря на наличие отдельных видимых Grok вкладок.
+- Claude selftest: composer=1, send=1 visible but disabled, reply selector=19 matches, stop=0. Наличие 19 reply nodes не доказывает новый ответ.
+- Gemini selftest: composer=1, send=0, reply=0, stop=0.
+- DeepSeek selftest и Grok peek возвращают UNKNOWN_TOOL.
+- Lab browser_status также возвращает UNKNOWN_TOOL. Production Bridge status — NOT_FOUND: tunnel-client не наблюдался 300 секунд.
+
+**Сопоставление с исходниками PR #132:**
+- server/tools.mjs содержит объявления session_request, session_authorize, session_revoke, session_status и provider transaction tools.
+- server/bridge.mjs экспортирует этот registry в tools/list и маршрутизирует hub tools/call через hub handlers.
+- Поэтому наблюдаемое расхождение локализовано между source branch PR #132 и фактически зарегистрированным MCP runtime. Текущий Lab registry не доказывает, что PR #132 code deployed; вероятнее всего, активен прежний host/runtime или другой endpoint/build. Точную причину можно подтвердить только process/build/endpoint snapshot на Lab host.
+
+**Решение:** G2 остаётся BLOCKED. Следующий допустимый шаг — read-only подтверждение endpoint, process identity, build commit и extension ID/version, затем отдельное изолированное staging-развёртывание PR #132 строго по deployment/CHAT_APPROVAL_LAB_CUTOVER.md. После staging сначала проверить полный tools/list и browser_status; не выполнять session_authorize и не отправлять сообщений до того, как точная область будет показана владельцу и явно одобрена в ChatGPT.
+
+Ни один provider message не отправлен; binding/site grants, Production, локальная конфигурация и рабочие DWG не менялись.
+
