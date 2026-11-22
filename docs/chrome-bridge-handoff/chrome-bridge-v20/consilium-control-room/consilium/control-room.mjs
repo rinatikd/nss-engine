@@ -145,7 +145,7 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
       const id = requestId(body);
       const append = (type, payload) => ledger.append({ type, actor, payload, requestId: id });
       if (url.pathname === '/api/session/start') {
-        requireRole(actor, ['owner', 'operator']);
+        requireRole(actor, ['owner', 'operator', 'participant']);
         if (!validString(body.title, 180)) throw Error('INVALID_TITLE');
         const event = append('session.started', { sessionId: crypto.randomUUID(), title: body.title.trim() });
         return json(res, 201, { event });
@@ -179,7 +179,7 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
         return json(res, 201, { event: append('round.proposed', { roundId: body.roundId, objective: body.objective.trim(), participants: body.participants.slice(), proposedBy: actor.id }) });
       }
       if (url.pathname === '/api/rounds/start') {
-        requireRole(actor, ['operator']);
+        requireRole(actor, ['operator', 'participant']);
         if (!validId(body.roundId)) throw Error('INVALID_ROUND_ID');
         return json(res, 202, { event: append('round.started', { roundId: body.roundId, startedBy: actor.id }) });
       }
