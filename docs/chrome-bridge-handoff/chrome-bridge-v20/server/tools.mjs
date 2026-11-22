@@ -35,7 +35,7 @@ export const tools = [
 
 for (const tool of tools) {
   if (['browser_open', 'browser_click', 'browser_fill', 'agent_send', 'agent_ask', 'agent_new_chat'].includes(tool.name))
-    tool.description += ' Control only on https://claude.ai, https://gemini.google.com, https://chat.deepseek.com with explicit local approval (1, 3 or 4 hours). Re-grant after expiry, origin change, disconnect or restart. Other origins remain read-only. Never retry unverified submission automatically.';
+    tool.description += ' Control only on the six exact council origins https://claude.ai, https://gemini.google.com, https://chat.deepseek.com, https://grok.com, https://chat.qwen.ai and https://www.kimi.ai, with the same explicit local approval (1, 3 or 4 hours) on each. Re-grant after expiry, origin change, disconnect or restart. Other origins remain read-only. Never retry unverified submission automatically.';
 }
 export const toolByName = (n) => tools.find((t) => t.name === n);
 
