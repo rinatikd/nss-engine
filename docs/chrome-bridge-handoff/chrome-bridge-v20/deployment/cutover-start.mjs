@@ -8,7 +8,7 @@ try {
   const job = JSON.parse(fs.readFileSync(process.argv[2], 'utf8').replace(/^\uFEFF/, ''));
   if (process.env.CHROME_BRIDGE_CODEX_POLICY) throw Error('Execution policy forbidden');
   const bytes = fs.readFileSync(path.join(job.state, 'config.json'));
-  if (crypto.createHash('sha256').update(bytes).digest('hex').toUpperCase() !== job.configHash) throw Error('Config changed');
+  if (crypto.createHash('sha256').update(bytes).digest('hex').toLowerCase() !== String(job.configHash).toLowerCase()) throw Error('Config changed');
   const config = JSON.parse(bytes);
   redactions = [config.agentToken, config.browserToken].filter(value => typeof value === 'string' && value.length > 0);
   if (typeof config.agentToken !== 'string' || typeof config.browserToken !== 'string') throw Error('Invalid config');
