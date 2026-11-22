@@ -7,12 +7,12 @@ const $ = id => document.getElementById(id);
 const actorLabels = { owner:'Владелец', chatgpt:'ChatGPT · со-оператор', claude:'Claude · со-оператор', deepseek:'DeepSeek', qwen:'Qwen', kimi:'Kimi', grok:'Grok', gemini:'Gemini' };
 function toast(message){const el=$('toast');el.textContent=message;el.style.display='block';setTimeout(()=>{el.style.display='none'},3500)}
 async function api(path, body){
-  const options={method:body?'POST':'GET',headers:{Authorization:\`Bearer \${bearer}\`} };
+  const options={method:body?'POST':'GET',headers:{Authorization:`Bearer ${bearer}`} };
   let pendingKey=null;
   if(body){
     const actor=currentActor?.id||'unbound';
     const stableBody={...body};delete stableBody.requestId;
-    pendingKey=\`\${actor}:\${path}:\${JSON.stringify(stableBody)}\`;
+    pendingKey=`${actor}:${path}:${JSON.stringify(stableBody)}`;
     const requestId=body.requestId||pendingRequestIds.get(pendingKey)||crypto.randomUUID();
     pendingRequestIds.set(pendingKey,requestId);
     options.headers['Content-Type']='application/json';options.body=JSON.stringify({...body,requestId});
@@ -20,7 +20,7 @@ async function api(path, body){
   const response=await fetch(path,options);
   let result;
   try{result=await response.json()}catch{throw Error('RESPONSE_UNCERTAIN_RETRY_SAME_REQUEST')}
-  if(!response.ok){if(response.status>=400&&response.status<500&&pendingKey)pendingRequestIds.delete(pendingKey);throw Error(result.error||\`HTTP_\${response.status}\`)}
+  if(!response.ok){if(response.status>=400&&response.status<500&&pendingKey)pendingRequestIds.delete(pendingKey);throw Error(result.error||`HTTP_${response.status}`)}
   if(pendingKey)pendingRequestIds.delete(pendingKey);
   return result;
 }
@@ -29,13 +29,13 @@ function addEvent(event){
   const card=document.createElement('article');card.className='event';
   const head=document.createElement('div');head.className='event-head';
   const who=document.createElement('span');who.textContent=actorLabels[event.actor.id]||event.actor.id;
-  const when=document.createElement('span');when.textContent=\`#\${event.seq} · \${new Date(event.at).toLocaleString()}\`;
+  const when=document.createElement('span');when.textContent=`#${event.seq} · ${new Date(event.at).toLocaleString()}`;
   head.append(who,when);
   const kind=document.createElement('div');kind.className='event-type';kind.textContent=event.type;
   const content=document.createElement('div');content.className='event-body';
   const p=event.payload||{};
   if(event.type==='comment.added')content.textContent=p.text||'';
-  else if(event.type==='message.recorded')content.textContent=\`\${p.provider} · \${p.deliveryStatus}\n\${p.text||''}\`;
+  else if(event.type==='message.recorded')content.textContent=`${p.provider} · ${p.deliveryStatus}\n${p.text||''}`;
   else content.textContent=JSON.stringify(p,null,2);
   card.append(head,kind,content);$('timeline').append(card);
 }
@@ -44,21 +44,21 @@ function renderDecisions(items){
   const taskDecision=$('task-decision');if(taskDecision){taskDecision.replaceChildren();const empty=document.createElement('option');empty.value='';empty.textContent='Выбери принятое решение';taskDecision.append(empty);for(const d of items.filter(x=>x.status==='ACCEPTED')){const opt=document.createElement('option');opt.value=d.id;opt.textContent=d.title;taskDecision.append(opt)}}
   if(!items.length){box.className='empty';box.textContent='Пока нет предложенных решений.';return}
   box.className='';
-  for(const d of items){const item=document.createElement('div');item.className='decision';const title=document.createElement('b');title.textContent=d.title;const meta=document.createElement('span');meta.className='pill '+(d.status==='ACCEPTED'?'success-pill':d.status==='PROPOSED'?'warning-pill':'');meta.textContent=\`\${d.status} · \${d.proposer}\`;const body=document.createElement('p');body.textContent=d.rationale;item.append(title,meta,body);
-    const reviews=document.createElement('p');reviews.className='muted';reviews.textContent='Текущие ревью: '+(d.reviews||[]).map(r=>\`\${r.operator}: \${r.verdict}\`).join(' · ')+(d.reviewHistory?.length?\` · История заменённых ревью: \${d.reviewHistory.length}\`:'');item.append(reviews);
-    if(currentActor?.role==='operator'&&['PROPOSED','UNDER_REVIEW','DISPUTED','NEEDS_EVIDENCE'].includes(d.status)){const prior=(d.reviews||[]).find(r=>r.operator===currentActor.id);const actions=document.createElement('div');actions.className='review-actions';for(const verdict of ['SUPPORT','OBJECT','NEEDS_EVIDENCE']){const btn=document.createElement('button');btn.className='secondary';btn.textContent=prior?\`Изменить на \${verdict}\`:verdict;btn.onclick=async()=>{const rationale=prompt('Обоснование ревью');if(!rationale)return;try{await api('/api/decisions/review',{decisionId:d.id,verdict,rationale,revisionOf:prior?.eventId||undefined});await refresh()}catch(e){toast(e.message)}};actions.append(btn)}item.append(actions)}
+  for(const d of items){const item=document.createElement('div');item.className='decision';const title=document.createElement('b');title.textContent=d.title;const meta=document.createElement('span');meta.className='pill '+(d.status==='ACCEPTED'?'success-pill':d.status==='PROPOSED'?'warning-pill':'');meta.textContent=`${d.status} · ${d.proposer}`;const body=document.createElement('p');body.textContent=d.rationale;item.append(title,meta,body);
+    const reviews=document.createElement('p');reviews.className='muted';reviews.textContent='Текущие ревью: '+(d.reviews||[]).map(r=>`${r.operator}: ${r.verdict}`).join(' · ')+(d.reviewHistory?.length?` · История заменённых ревью: ${d.reviewHistory.length}`:'');item.append(reviews);
+    if(currentActor?.role==='operator'&&['PROPOSED','UNDER_REVIEW','DISPUTED','NEEDS_EVIDENCE'].includes(d.status)){const prior=(d.reviews||[]).find(r=>r.operator===currentActor.id);const actions=document.createElement('div');actions.className='review-actions';for(const verdict of ['SUPPORT','OBJECT','NEEDS_EVIDENCE']){const btn=document.createElement('button');btn.className='secondary';btn.textContent=prior?`Изменить на ${verdict}`:verdict;btn.onclick=async()=>{const rationale=prompt('Обоснование ревью');if(!rationale)return;try{await api('/api/decisions/review',{decisionId:d.id,verdict,rationale,revisionOf:prior?.eventId||undefined});await refresh()}catch(e){toast(e.message)}};actions.append(btn)}item.append(actions)}
     if(currentActor?.role==='owner'&&d.status==='READY_FOR_OWNER'){const accept=document.createElement('button');accept.textContent='Утвердить';accept.onclick=async()=>{try{await api('/api/decisions/approve',{decisionId:d.id});await refresh()}catch(e){toast(e.message)}};item.append(accept)}
     box.append(item)}
 }
-function renderTasks(items){const box=$('tasks');box.replaceChildren();if(!items.length){box.className='empty';box.textContent='Пока нет задач.';return}box.className='';for(const task of items){const row=document.createElement('div');row.className='task-row';const info=document.createElement('div');const title=document.createElement('b');title.textContent=task.title;const meta=document.createElement('p');meta.className='muted';meta.textContent=\`\${task.id} · \${task.assignee} · \${task.status} · decision \${task.decisionId}\`;info.append(title,meta);row.append(info);if(task.commitSha){const sha=document.createElement('code');sha.textContent=task.commitSha;row.append(sha)}box.append(row)}}
+function renderTasks(items){const box=$('tasks');box.replaceChildren();if(!items.length){box.className='empty';box.textContent='Пока нет задач.';return}box.className='';for(const task of items){const row=document.createElement('div');row.className='task-row';const info=document.createElement('div');const title=document.createElement('b');title.textContent=task.title;const meta=document.createElement('p');meta.className='muted';meta.textContent=`${task.id} · ${task.assignee} · ${task.status} · decision ${task.decisionId}`;info.append(title,meta);row.append(info);if(task.commitSha){const sha=document.createElement('code');sha.textContent=task.commitSha;row.append(sha)}box.append(row)}}
 async function refresh(){
   if(!bearer)return;
-  try{const data=await api(\`/api/snapshot?after=\${lastSeq}\`);currentActor=data.actor;$('session-status').textContent=data.state.session.status;$('session-title').textContent=data.state.session.title||'Сессия не запущена';renderDecisions(data.state.decisions);renderTasks(data.state.tasks);
+  try{const data=await api(`/api/snapshot?after=${lastSeq}`);currentActor=data.actor;$('session-status').textContent=data.state.session.status;$('session-title').textContent=data.state.session.title||'Сессия не запущена';renderDecisions(data.state.decisions);renderTasks(data.state.tasks);
     if(lastSeq===0&&data.events.length===0)$('timeline').innerHTML='<div class="empty">Журнал пока пуст.</div>';
     for(const event of data.events)addEvent(event);
-  }catch(e){toast(\`Ошибка обновления: \${e.message}\`)}
+  }catch(e){toast(`Ошибка обновления: ${e.message}`)}
 }
-$('connect').onclick=async()=>{bearer=$('token').value.trim();try{const data=await api('/api/snapshot');currentActor=data.actor;$('identity').textContent=\`Подключены как \${actorLabels[currentActor.id]||currentActor.id}.\`; $('session-status').textContent=data.state.session.status;$('token').value='';lastSeq=0;$('timeline').replaceChildren();renderDecisions(data.state.decisions);renderTasks(data.state.tasks);for(const event of data.events)addEvent(event);if(refreshHandle)clearInterval(refreshHandle);refreshHandle=setInterval(refresh,2500)}catch(e){bearer='';currentActor=null;toast(\`Не удалось подключиться: \${e.message}\`)}};
+$('connect').onclick=async()=>{bearer=$('token').value.trim();try{const data=await api('/api/snapshot');currentActor=data.actor;$('identity').textContent=`Подключены как ${actorLabels[currentActor.id]||currentActor.id}.`; $('session-status').textContent=data.state.session.status;$('token').value='';lastSeq=0;$('timeline').replaceChildren();renderDecisions(data.state.decisions);renderTasks(data.state.tasks);for(const event of data.events)addEvent(event);if(refreshHandle)clearInterval(refreshHandle);refreshHandle=setInterval(refresh,2500)}catch(e){bearer='';currentActor=null;toast(`Не удалось подключиться: ${e.message}`)}};
 $('start').onclick=async()=>{const title=prompt('Название сессии');if(!title)return;try{await api('/api/session/start',{title});await refresh()}catch(e){toast(e.message)}};
 $('pause').onclick=async()=>{try{await api('/api/session/pause',{});await refresh()}catch(e){toast(e.message)}};
 $('resume').onclick=async()=>{try{await api('/api/session/resume',{});await refresh()}catch(e){toast(e.message)}};
