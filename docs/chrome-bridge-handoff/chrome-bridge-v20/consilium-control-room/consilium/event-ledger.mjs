@@ -208,12 +208,12 @@ export function projectEvents(events) {
       }
       case 'decision.reviewed': {
         const d = decisionById.get(p.decisionId);
-        if (!d || !['PROPOSED', 'UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE'].includes(d.status)) throw Error('DECISION_NOT_REVIEWABLE');
+        if (!d || !['PROPOSED', 'UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE', 'READY_FOR_OWNER'].includes(d.status)) throw Error('DECISION_NOT_REVIEWABLE');
         if (event.actor.role !== 'operator') throw Error('CO_OPERATOR_REVIEW_REQUIRED');
         if (!['SUPPORT', 'OBJECT', 'NEEDS_EVIDENCE'].includes(p.verdict)) throw Error('INVALID_REVIEW_VERDICT');
         const prior = d.reviews.find(r => r.operator === event.actor.id);
         if (prior) {
-          if (!['UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE'].includes(d.status) || p.revisionOf !== prior.eventId) throw Error('REVIEW_REVISION_REQUIRES_PRIOR_EVENT');
+          if (!['UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE', 'READY_FOR_OWNER'].includes(d.status) || p.revisionOf !== prior.eventId) throw Error('REVIEW_REVISION_REQUIRES_PRIOR_EVENT');
           d.reviewHistory.push(prior);
           d.reviews = d.reviews.filter(r => r.operator !== event.actor.id);
         } else if (p.revisionOf) throw Error('REVIEW_REVISION_TARGET_NOT_FOUND');
