@@ -776,3 +776,16 @@ A further read-only self-test produced these results:
 The effective Control/session status call remains UNKNOWN_TOOL. The exposed agent_send contract still states that Claude/Gemini/DeepSeek require explicit local approval for 1/3/4 hours; this is incompatible with the owner's chat-only approval requirement. The new PR132 session authorization code and CI are not proven deployed in this Lab tool runtime.
 
 **Result:** no provider may be dispatched yet. Claude is the best candidate for the first controlled Lab test after the chat-approval path is surfaced. DeepSeek requires reply/stop selector calibration. Gemini requires send/reply selector repair. Grok needs an approved binding and adapter self-test before any consideration. Do not use a local approval fallback. No provider messages were sent in this check.
+
+
+### 20.8. PowerShell Direct chat-approved queue recheck — 2026-11-22
+
+A single new fixed, read-only git-status request was submitted for C:\Engineering\Free-AI-Workbench through the ChatGPT-host-approved endpoint:
+
+- requestId: workbench_readonly_status_chat_approval_20261122_1641
+- task: git-status
+- response: QUEUE_FULL
+
+The queue rejected the request before a durable job was created. No status result, file read or local mutation is claimed. A follow-up lookup is not treated as a completed request. Stop after this queue-full result; do not retry with a new ID and do not fall back to local approval or engineering-submit.
+
+This confirms the current blocker is not only write authorization: even the narrow ChatGPT-approved read-only channel is capacity-blocked for the Workbench baseline. TARGET_FOLDER_VERIFIED therefore remains NOT VERIFIED. The required recovery is a bounded/isolated read-only queue or an explicit capacity/dispatch receipt that prevents ambiguous no-job submissions.
