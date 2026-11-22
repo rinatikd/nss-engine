@@ -48,8 +48,11 @@ $temp=$output+'-tmp-'+[guid]::NewGuid().ToString('N')
 $done=$false
 try {
   New-Item -ItemType Directory -Path $temp -ErrorAction Stop | Out-Null
+  # Preserve the original chrome-bridge-v20 layout: extension/ is a sibling of consilium-control-room/.
+  $projectRoot=Join-Path $temp 'consilium-control-room'
+  New-Item -ItemType Directory -Path $projectRoot -Force | Out-Null
   foreach($dir in @('consilium','tests','scripts','deployment')) {
-    Copy-Item -LiteralPath (Join-Path $candidate $dir) -Destination $temp -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $candidate $dir) -Destination $projectRoot -Recurse -Force
   }
   $extensionDir=Join-Path $temp 'extension'
   New-Item -ItemType Directory -Path $extensionDir -Force | Out-Null
@@ -67,11 +70,11 @@ try {
       if ($LASTEXITCODE -ne 0) { throw ('Node syntax check failed: '+$file.FullName) }
     }
   }
-  $testFiles=@(Get-ChildItem -LiteralPath (Join-Path $temp 'tests') -Filter '*.test.mjs' -File | ForEach-Object {$_.FullName})
+  $testFiles=@(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'tests') -Filter '*.test.mjs' -File | ForEach-Object {$_.FullName})
   if ($testFiles.Count -lt 4) { throw 'Expected Control Room regression suite missing' }
   & $node.Source --test $testFiles
   if ($LASTEXITCODE -ne 0) { throw 'Consilium Node regression suite failed' }
-  & $node.Source (Join-Path $temp 'deployment/consilium-lab-smoke.mjs')
+  & $node.Source (Join-Path $projectRoot 'deployment/consilium-lab-smoke.mjs')
   if ($LASTEXITCODE -ne 0) { throw 'Consilium disposable Lab API/role smoke failed' }
 
   $entries=@(foreach($file in $files) {
