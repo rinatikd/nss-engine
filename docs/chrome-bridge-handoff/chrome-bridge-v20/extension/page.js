@@ -240,10 +240,10 @@ export async function pageAction(name, args, expectedOrigin) {
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) {
         throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_COMMIT');
       }
-      const clickedAt = new Date().toISOString();
       // Consume the page-side prepare receipt before the irreversible click.
       delete window.__chromeBridgePreparedDraft;
       sendButtons[0].click();
+      const clickedAt = new Date().toISOString();
       await sleep(1200);
       const confirmed = qa(A.stop).some(vis) || replies().length > baseline;
       return { clickedSend:true, clickedAt, baseline, confirmed, requestId:args.requestId,
