@@ -30,21 +30,17 @@ async function refresh() {
   let activeCount=0;
   let grantsKnown=false;
   try {
-    if (mode.checked) {
-      const [status, grants]=await Promise.all([
-        chrome.runtime.sendMessage({target:'bridge-coordinator',type:'status'}),
-        chrome.runtime.sendMessage({target:'bridge-coordinator',type:'background-control-status'})
-      ]);
-      if (typeof grants?.backgroundMode==='boolean') mode.checked=grants.backgroundMode;
-      if (typeof grants?.mutationEnabled==='boolean') lab.checked=grants.mutationEnabled;
-      connected=!!(status && status.connected===true && status.state==='connected' &&
-        grants?.connected===true);
-      if (Number.isSafeInteger(grants?.activeCount) && grants.activeCount>=0 &&
-          grants?.grantsKnown!==false) {
-        activeCount=grants.activeCount;
-        grantsKnown=true;
-      }
-    } else {
+    const [status, grants]=await Promise.all([
+      chrome.runtime.sendMessage({target:'bridge-coordinator',type:'status'}),
+      chrome.runtime.sendMessage({target:'bridge-coordinator',type:'background-control-status'})
+    ]);
+    if (typeof grants?.backgroundMode==='boolean') mode.checked=grants.backgroundMode;
+    if (typeof grants?.mutationEnabled==='boolean') lab.checked=grants.mutationEnabled;
+    connected=!!(status && status.connected===true && status.state==='connected' &&
+      grants?.connected===true);
+    if (Number.isSafeInteger(grants?.activeCount) && grants.activeCount>=0 &&
+        grants?.grantsKnown!==false) {
+      activeCount=grants.activeCount;
       grantsKnown=true;
     }
   } catch { connected=false; }
