@@ -243,11 +243,14 @@ export class ProviderJournal {
 
   revoke(input) {
     const identity=validateProviderIdentity(input);
-    this.#ensureEpoch(identity);
     const tx=this.transactions.get(identity.requestId);
+    if(tx&&!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
+    if(tx&&tx.state==='REVOKED')return {state:'REVOKED',identity,nextEpoch:tx.nextEpoch};
+    if(tx&&tx.state==='UNKNOWN'&&tx.nextEpoch)return {state:'UNKNOWN',identity,quarantineId:tx.quarantineId,nextEpoch:tx.nextEpoch};
+    this.#ensureEpoch(identity);
     const nextEpoch=this.#revokeEpoch(identity);
     if(tx&&['COMMITTING','UNKNOWN','PREPARING'].includes(tx.state)) {
-      return this.outcome(identity,'UNKNOWN','REVOKED_DURING_UNCERTAIN_COMMIT');
+      return {...this.outcome(identity,'UNKNOWN','REVOKED_DURING_UNCERTAIN_COMMIT',{nextEpoch}),nextEpoch};
     }
     this.outcome(identity,'REVOKED','FENCING_EPOCH_REVOKED',{nextEpoch});
     return {state:'REVOKED',identity,nextEpoch};
@@ -255,12 +258,21 @@ export class ProviderJournal {
 
   stop(input) {
     const identity=validateProviderIdentity(input);
-    this.#ensureEpoch(identity);
     const tx=this.transactions.get(identity.requestId);
-    if(tx&&tx.state==='SENT')return {state:'STOP_AFTER_COMMIT',identity};
+    if(tx&&!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
+    if(tx&&['STOPPED_CLEAN','STOP_REQUESTED','STOP_AFTER_COMMIT'].includes(tx.state)) {
+      return {state:tx.state,identity,nextEpoch:tx.nextEpoch,...(tx.quiescence?{quiescence:clone(tx.quiescence)}:{})};
+    }
+    this.#ensureEpoch(identity);
+    if(tx&&tx.state==='SENT') {
+      const nextEpoch=this.#revokeEpoch(identity);
+      this.#append('stop.after_commit',identity,{nextEpoch});
+      return {state:'STOP_AFTER_COMMIT',identity,nextEpoch};
+    }
     if(tx&&['COMMITTING','UNKNOWN','PREPARING'].includes(tx.state)) {
-      this.#append('stop.requested',identity,{reason:'IN_FLIGHT_OR_AMBIGUOUS'});
-      return {state:'STOP_REQUESTED',identity};
+      const nextEpoch=this.#revokeEpoch(identity);
+      this.#append('stop.requested',identity,{reason:'IN_FLIGHT_OR_AMBIGUOUS',nextEpoch});
+      return {state:'STOP_REQUESTED',identity,nextEpoch};
     }
     const nextEpoch=this.#revokeEpoch(identity);
     const proof={
