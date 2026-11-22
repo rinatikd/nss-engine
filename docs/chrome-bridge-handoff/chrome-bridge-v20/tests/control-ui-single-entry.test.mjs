@@ -71,3 +71,23 @@ test('background UI describes the opt-in mutation lab accurately',()=>{
   assert.match(js,/Каждая команда потребует отдельного подтверждения/);
   assert.doesNotMatch(js,/Отправка сообщений Claude, Gemini и DeepSeek будет недоступна/);
 });
+
+test('existing PR102 Lab updater pins port 17484 and preserves the installed extension identity',()=>{
+  const updater=readFileSync(new URL('../deployment/upgrade-pr102-lab.ps1',import.meta.url),'utf8');
+  assert.match(updater,/\[ValidateSet\(17484\)\]\[int\]\$LabPort\s*=\s*17484/);
+  assert.match(updater,/C:\\\\Engineering\\\\ChromeBridge-PR102-17484-Lab/);
+  assert.match(updater,/ChromeBridge-PR102-17484-Lab-TestFixture/);
+  assert.match(updater,/RUNNER_TEMP/);
+  assert.match(updater,/http:\/\/127\.0\.0\.1:17484\/\*/);
+  assert.match(updater,/127\.0\.0\.1:17381/);
+  assert.match(updater,/127\.0\.0\.1:17382/);
+  assert.match(updater,/host_permissions/);
+  assert.match(updater,/loopbackPattern/);
+  assert.match(updater,/PSObject\.Properties\['key'\]/);
+  assert.match(updater,/chrome-bridge-pr102-lab-backup-v1/);
+  assert.match(updater,/manifestSha256/);
+  assert.match(updater,/RollbackFrom/);
+  assert.match(updater,/No installed files changed/);
+  assert.match(updater,/Chrome reload required/);
+});
+
