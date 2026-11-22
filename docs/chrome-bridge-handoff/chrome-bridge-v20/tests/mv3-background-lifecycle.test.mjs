@@ -92,6 +92,10 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   browserCdp=await Cdp.connect(version.webSocketDebuggerUrl);
   workerCdp=await Cdp.connect(worker.webSocketDebuggerUrl);
   await workerCdp.call('Runtime.enable');
+  // A service-worker target may appear in /json/list before its JS execution
+  // context has installed extension APIs. Wait for the real worker context,
+  // matching the readiness gate used by mv3-offscreen-recovery.test.mjs.
+  await until(()=>workerCdp.eval('typeof chrome!=="undefined" && !!chrome.storage?.local && !!chrome.runtime?.id'),10000,'WORKER_API_READY');
   async function openPanel(){
    // Create the control tab from the extension itself. DevTools Target.createTarget
    // to a chrome-extension: URL may be blocked by Chrome security navigation.
