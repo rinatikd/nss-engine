@@ -75,7 +75,7 @@ test('background UI describes the opt-in mutation lab accurately',()=>{
 test('existing PR102 Lab updater pins port 17484 and preserves the installed extension identity',()=>{
   const updater=readFileSync(new URL('../deployment/upgrade-pr102-lab.ps1',import.meta.url),'utf8');
   assert.match(updater,/\[ValidateSet\(17484\)\]\[int\]\$LabPort\s*=\s*17484/);
-  assert.match(updater,/C:\\\\Engineering\\\\ChromeBridge-PR102-17484-Lab/);
+  assert.match(updater,/C:\\Engineering\\ChromeBridge-PR102-17484-Lab/);
   assert.match(updater,/ChromeBridge-PR102-17484-Lab-TestFixture/);
   assert.match(updater,/RUNNER_TEMP/);
   assert.match(updater,/http:\/\/127\.0\.0\.1:17484\/\*/);
