@@ -5,9 +5,9 @@ This folder contains a standalone, loopback-only control room for the Chrome Bri
 ## Identity and authority
 
 - `owner`: the user. Approves/rejects consequential decisions and retains final authority over Production, credentials, permissions, merge and release.
-- `chatgpt` and `claude`: the two equal AI co-operators. Both can start/pause/resume/request-stop a session and launch a proposed round. Neither is the other's manager or subordinate.
-- `deepseek`, `qwen`, `kimi`, `grok`, `gemini`: five equal expert participants. Each can propose a round, comment, submit findings/evidence, propose decisions, review decisions, record SUPPORT / OBJECT / NEEDS_EVIDENCE, create/update tasks and link artifacts. They cannot launch a round or control session execution.
-- Any of the five participants may propose/initiate a round; only ChatGPT or Claude can launch it. A proposal is not a dispatch command.
+- `chatgpt` and `claude`: the mandatory co-operator pair for coordination and independent dual review. They have the same council permissions as the other five AI members; neither is the other's manager or subordinate.
+- `deepseek`, `qwen`, `kimi`, `grok`, `gemini`: five equal AI members with the same session, round, review, task and evidence permissions.
+- Any of the seven AI members may propose and launch a round. A proposal and launch are separately journaled events.
 - ChatGPT and Claude are the mandatory core review pair: both must independently SUPPORT a decision. A participant OBJECT or NEEDS_EVIDENCE verdict blocks progression until that participant submits a linked revision; the complete review history remains visible.
 - Actor identity and role are derived from the authenticated token, never from a request-body field.
 
@@ -21,7 +21,7 @@ Requires Node.js 22 or newer and Windows PowerShell 5.1+. From this folder run `
 - `CONSILIUM_CHATGPT_TOKEN`
 - `CONSILIUM_CLAUDE_TOKEN`
 
-Five expert-participant tokens are optional: `CONSILIUM_DEEPSEEK_TOKEN`, `CONSILIUM_QWEN_TOKEN`, `CONSILIUM_KIMI_TOKEN`, `CONSILIUM_GROK_TOKEN`, `CONSILIUM_GEMINI_TOKEN`.
+Five additional AI-member tokens are optional: `CONSILIUM_DEEPSEEK_TOKEN`, `CONSILIUM_QWEN_TOKEN`, `CONSILIUM_KIMI_TOKEN`, `CONSILIUM_GROK_TOKEN`, `CONSILIUM_GEMINI_TOKEN`.
 
 Example PowerShell session:
 
@@ -41,10 +41,10 @@ Open the printed `http://127.0.0.1:18765/` address. Tokens remain in the current
 - Append-only JSONL event ledger with fsync, a single-writer lock, SHA-256 hash chain, stable request IDs and fail-closed corruption detection.
 - Human-readable timeline with sequence, timestamp, actor, event type and original payload.
 - Authenticated full journal export as newline-delimited JSON (`consilium-events.ndjson`) and paginated event API.
-- Session start/pause/resume/stop-request controls for the owner and the two co-operators; participants cannot control execution.
+- Session start/pause/resume/stop-request controls are available equally to all seven AI members; owner remains separate.
 - Discussion comments and attributed message records with explicit delivery state.
 - Decision proposals, independent ChatGPT/Claude verdicts, reviews by all five expert participants, visible disagreement, review revisions linked to prior events and owner approval of consequential decisions.
-- Round proposals by any AI participant or co-operator; round launch is restricted to ChatGPT/Claude.
+- Round proposals and launch are available equally to all seven AI members.
 - Tasks only from accepted decisions; all seven AI identities can update tasks regardless of assignee.
 - Artifact manifest with SHA-256 and explicit recipient receipt events. The MVP stores references and receipts; binary transfer itself belongs to a separately verified transport.
 - Task verification requires a commit SHA and evidence references.
