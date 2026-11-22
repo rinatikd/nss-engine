@@ -40,7 +40,7 @@ test('selftest reveals bounded metadata-only send census, never labels, input or
 });
 
 test('candidate-only provider adapters remain read-only', () => {
-  for (const name of ['grok','qwen','cursor','aistudio']) {
+  for (const name of ['grok','qwen','kimi','cursor','aistudio']) {
     assert.equal(DEFAULT_ADAPTERS[name].send, '');
     assert.equal(DEFAULT_ADAPTERS[name].stop, '');
   }
