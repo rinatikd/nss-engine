@@ -165,11 +165,11 @@ export class ProviderJournal {
   beginPrepare(input,payloadHash) {
     const identity=validateProviderIdentity(input);
     if(typeof payloadHash!=='string'||!/^[a-f0-9]{64}$/.test(payloadHash))throw Error('PROVIDER_PAYLOAD_HASH_INVALID');
-    this.#ensureEpoch(identity);
     const old=this.transactions.get(identity.requestId);
     if(old) {
       if(!identityEqual(old.identity,identity)||old.payloadHash!==payloadHash)throw Error('PROVIDER_REQUEST_ID_CONFLICT');
-      if(old.state==='PREPARED'&&old.bridgeEpoch===this.bridgeEpoch&&Date.parse(old.expiresAt)>this.now()) {
+      if(old.state==='PREPARED'&&old.bridgeEpoch===this.bridgeEpoch&&Date.parse(old.expiresAt)>this.now()&&
+         this.tabEpochs.get(identity.tabId)===identity.epoch) {
         return {duplicate:true,transaction:this.status(identity),fencingToken:this.#fencingToken(old)};
       }
       if(['PREPARING','COMMITTING','UNKNOWN','SENT','REVOKED','STOPPED_CLEAN',
@@ -178,6 +178,7 @@ export class ProviderJournal {
       }
       throw Error('PROVIDER_REQUEST_IN_PROGRESS');
     }
+    this.#ensureEpoch(identity);
     for(const existing of this.transactions.values()) {
       if(existing.identity.tabId===identity.tabId&&
          ['PREPARING','PREPARED','COMMITTING','UNKNOWN','STOP_REQUESTED'].includes(existing.state)) {
@@ -249,6 +250,14 @@ export class ProviderJournal {
   #revokeEpoch(identity) {
     const nextEpoch=identity.epoch+1;
     this.#append('epoch.revoked',identity,{previousEpoch:identity.epoch,nextEpoch});
+    for(const tx of [...this.transactions.values()]) {
+      if(tx.identity.tabId!==identity.tabId)continue;
+      if(tx.state==='PREPARED') {
+        this.outcome(tx.identity,'REVOKED','FENCING_EPOCH_REVOKED',{nextEpoch});
+      } else if(['PREPARING','COMMITTING','UNKNOWN','STOP_REQUESTED'].includes(tx.state)) {
+        this.outcome(tx.identity,'UNKNOWN','FENCING_EPOCH_REVOKED_DURING_UNCERTAIN_ACTION',{nextEpoch});
+      }
+    }
     return nextEpoch;
   }
 
