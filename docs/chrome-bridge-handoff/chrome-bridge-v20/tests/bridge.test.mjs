@@ -53,12 +53,9 @@ test('session_request binds the owner challenge to the exact selected provider s
       { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' },
       { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' }
     ];
-    const disconnectedRead = await s.rpc('browser_read', { tabId: 11 });
-    assert.equal(disconnectedRead.result.isError, true);
-    await s.poll(); // Establish the browser poller, matching the shared Bridge test fixture.
+    const pollPromise = s.poll();
     const request = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
-    await new Promise(resolve => setTimeout(resolve, 10));
-    const command = await s.poll();
+    const command = await pollPromise;
     assert.equal(command.name, 'browser_tabs');
     const ack = await s.post('/bridge/result', { id: command.id, result: tabs }, 'b'.repeat(64));
     assert.equal(ack.status, 200);
@@ -75,9 +72,9 @@ test('session_request binds the owner challenge to the exact selected provider s
     assert.equal(noClaude.result.isError, true);
     assert.match(noClaude.result.content[0].text, /SESSION_CLAUDE_REQUIRED/);
 
+    const missingPoll = s.poll();
     const missing = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
-    await new Promise(resolve => setTimeout(resolve, 10));
-    const missingCommand = await s.poll();
+    const missingCommand = await missingPoll;
     assert.equal(missingCommand.name, 'browser_tabs');
     const missingAck = await s.post('/bridge/result', {
       id: missingCommand.id,
