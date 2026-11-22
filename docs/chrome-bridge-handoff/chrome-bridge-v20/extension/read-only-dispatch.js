@@ -52,6 +52,7 @@ export async function dispatchReadOnly(command, chromeApi, {getBackgroundControl
       approvalPending:available ? backgroundControl.approvalPending : 0,
       origins:[...byOrigin.values()],
       controlMode:'background',
+      legacyControl:{globalEnabled:false,approvalPending:0,origins:[]},
       backgroundControl:available ? backgroundControl : {
         available:false,grantsKnown:false,activeCount:null,grants:[],
         error:'BACKGROUND_STATUS_UNAVAILABLE'

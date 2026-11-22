@@ -268,6 +268,7 @@ async function execute(cmd) {
       approvalPending:backgroundActive ? backgroundControl.approvalPending : approvals.size,
       origins:backgroundActive ? [...byOrigin.values()] : legacyOrigins,
       controlMode:backgroundActive ? 'background' : 'legacy',
+      legacyControl:{globalEnabled,approvalPending:approvals.size,origins:legacyOrigins},
       backgroundControl,
       // No token, prompt text, screenshot bytes or approval details.
     };

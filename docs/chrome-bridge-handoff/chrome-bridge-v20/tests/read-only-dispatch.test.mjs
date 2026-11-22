@@ -33,6 +33,7 @@ test('background control_status uses coordinator snapshot instead of a hard-code
  assert.equal(result.controlMode,'background');
  assert.equal(result.connected,true);
  assert.equal(result.globalEnabled,false);
+ assert.deepEqual(result.legacyControl,{globalEnabled:false,approvalPending:0,origins:[]});
  assert.equal(result.backgroundControl.mutationEnabled,true);
  assert.equal(result.backgroundControl.activeCount,1);
  assert.deepEqual(result.origins,[{
