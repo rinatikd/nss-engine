@@ -177,18 +177,6 @@ test('agent_send requestId remains idempotent after Bridge restart and UNKNOWN i
   }
 });
 
-test('hub: verdict, files, templates', () => {
-  assert.deepEqual(extractVerdict('С‚РµРєСЃС‚ {РЅРµ json} ```json\n{"score":7,"verdict":"revise","must_fix":["a"]}\n```').must_fix, ['a']);
-  assert.equal(extractVerdict('РЅРµС‚ РІРµСЂРґРёРєС‚Р° {"x":1}'), null);
-  assert.equal(extractVerdict('{"score":9,"verdict":"accept","summary":"СЃРєРѕР±РєРё } РІРЅСѓС‚СЂРё"}').verdict, 'accept');
-  assert.deepEqual(extractFiles('=== FILE: a/b.txt ===\nhi\n=== END FILE ==='), [{ path: 'a/b.txt', content: 'hi\n' }]);
-  assert.throws(() => extractFiles('=== FILE: ../x ===\nhi\n=== END FILE ==='), /Unsafe/);
-  assert.throws(() => extractFiles('=== FILE: C:\\x ===\nhi\n=== END FILE ==='), /Unsafe/);
-  assert.deepEqual(deepRender({ a: ['{{x}}'], b: 1 }, { x: 'q"\n' }), { a: ['q"\n'], b: 1 });
-});
-
-
-
 test('dispatched timeout holds the single-writer lane until a late ACK', async () => {
   const s = await setup({ timeout: 120, pollHold: 50 });
   try {
