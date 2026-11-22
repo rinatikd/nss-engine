@@ -34,6 +34,35 @@ function RunUpdater([hashtable]$NamedArgs) {
   if ($LASTEXITCODE -ne 0) { throw ('Updater failed: ' + ($result -join ' ')) }
   return $result
 }
+function InvokeNodeHealth([string]$ScriptPath,[string]$JobPath,[string]$WorkingDirectory) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $node
+  $psi.Arguments = '"' + $ScriptPath + '" "' + $JobPath + '"'
+  $psi.WorkingDirectory = $WorkingDirectory
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo = $psi
+  try {
+    if (-not $process.Start()) { throw 'Could not start test MCP health probe' }
+    $outTask = $process.StandardOutput.ReadToEndAsync()
+    $errTask = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit(12000)) { throw 'Test MCP health probe timed out' }
+    $stdout = [string]$outTask.GetAwaiter().GetResult()
+    $stderr = [string]$errTask.GetAwaiter().GetResult()
+    if ($process.ExitCode -ne 0) {
+      throw ('Test MCP health probe failed; exitCode=' + $process.ExitCode + '; stdout=' + $stdout + '; stderr=' + $stderr)
+    }
+    return $stdout
+  } finally {
+    if (-not $process.HasExited) {
+      try { $process.Kill(); $null = $process.WaitForExit(3000) } catch {}
+    }
+    $process.Dispose()
+  }
+}
 function CurrentOwner {
   $items = @([BridgeNativeMetadata]::Listeners(17484))
   if ($items.Count -ne 1 -or $items[0] -notmatch '^127\.0\.0\.1\|[0-9]+$') { throw 'Expected one Lab listener' }
@@ -113,8 +142,8 @@ try {
   $health = Join-Path $packageRoot 'deployment\cutover-health.mjs'
   $job = Join-Path $env:RUNNER_TEMP 'pr102-server-upgrade-health.json'
   [IO.File]::WriteAllText($job,(@{mode='live';source=$root;state=$state;port=17484;expected=$expectedNew} | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
-  & $node $health $job
-  if ($LASTEXITCODE -ne 0) { throw 'Upgraded server health failed' }
+  $healthOutput = InvokeNodeHealth $health $job $packageRoot
+  if ($healthOutput -notmatch '"ok":true') { throw ('Upgraded server health returned unexpected output: ' + $healthOutput) }
   $newNames = @((Get-Content $expectedNew -Raw | ConvertFrom-Json).result.tools | ForEach-Object { $_.name })
   foreach ($n in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events')) {
     if ($newNames -notcontains $n) { throw ('New registry missing ' + $n) }
@@ -146,8 +175,8 @@ try {
   try { & $node --input-type=module -e $oldCode $expectedOld; if ($LASTEXITCODE -ne 0) { throw 'Cannot build legacy registry' } } finally { Pop-Location }
   $job2 = Join-Path $env:RUNNER_TEMP 'pr102-server-rollback-health.json'
   [IO.File]::WriteAllText($job2,(@{mode='live';source=$root;state=$state;port=17484;expected=$expectedOld} | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
-  & $node $health $job2
-  if ($LASTEXITCODE -ne 0) { throw 'Rolled-back server health failed' }
+  $rollbackHealthOutput = InvokeNodeHealth $health $job2 $root
+  if ($rollbackHealthOutput -notmatch '"ok":true') { throw ('Rolled-back server health returned unexpected output: ' + $rollbackHealthOutput) }
   $oldNames = @((Get-Content $expectedOld -Raw | ConvertFrom-Json).result.tools | ForEach-Object { $_.name })
   if ($oldNames -contains 'session_request' -or $oldNames -contains 'provider_prepare') { throw 'Rollback did not restore legacy registry' }
   if ((Get-FileHash $configPath -Algorithm SHA256).Hash -ne $configHash) { throw 'Rollback changed config/tokens' }
