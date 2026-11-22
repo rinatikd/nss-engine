@@ -13,7 +13,7 @@ Provider brand does not define trust. Technical availability and task capabiliti
 
 ## Run locally
 
-Requires Node.js 22 or newer. From this folder run `npm test` for all tests, `npm run check` for syntax plus tests, or `npm start` after configuring the tokens below. Configure three unique random tokens, each at least 32 characters:
+Requires Node.js 22 or newer and Windows PowerShell 5.1+. From this folder run `powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test.ps1` to run syntax checks and all tests, or `powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\start.ps1` after configuring the tokens below. Configure three unique random tokens, each at least 32 characters:
 
 - `CONSILIUM_OWNER_TOKEN`
 - `CONSILIUM_CHATGPT_TOKEN`
