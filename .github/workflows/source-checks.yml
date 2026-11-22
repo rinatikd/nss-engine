@@ -11,8 +11,18 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements-test.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: python tools/repo_guard.py --tree HEAD
       - name: Verify Chrome Bridge adapter and origin permissions
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/permissions-adapters.test.mjs tests/claude-gemini-adapters.test.mjs
+      - name: Test Consilium Control Room MVP
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20/consilium-control-room
+        run: |
+          node --check consilium/event-ledger.mjs
+          node --check consilium/control-room.mjs
+          node --check consilium/web/app.js
+          node --test tests/*.test.mjs
       - run: python tools/run_portable_checks.py
