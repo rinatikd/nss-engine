@@ -9,8 +9,8 @@ const tokens=[
  {token:'owner-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'owner',role:'owner'}},
  {token:'chatgpt-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'chatgpt',role:'operator'}},
  {token:'claude-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'claude',role:'operator'}},
- {token:'kimi-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'kimi',role:'participant'}},
- {token:'qwen-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'qwen',role:'participant'}}
+ {token:'kimi-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'kimi',role:'operator'}},
+ {token:'qwen-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'qwen',role:'operator'}}
 ];
 function dir(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-room-'));}
 async function request(base, token, route, body, {origin=base,host}={}){
@@ -46,14 +46,21 @@ test('co-operators can pause and request stop; owner alone approves decisions',a
  }finally{await app.close()}
 });
 
-test('participant can comment and propose work but cannot control session or review as co-operator',async()=>{
+test('all seven AI accounts have equal operator rights',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
-  const comment=await request(base,tokens[3].token,'/api/comments',{text:'Independent challenge',requestId:'comment_req_0001'});assert.equal(comment.status,201);
-  const proposal=await request(base,tokens[3].token,'/api/decisions',{title:'Participant proposal',rationale:'Independent evidence suggests this should be discussed',risk:'routine',requestId:'decision_req_participant'});assert.equal(proposal.status,201);
-  const decision=await proposal.json();
-  const review=await request(base,tokens[3].token,'/api/decisions/review',{decisionId:decision.event.payload.decisionId,verdict:'SUPPORT',rationale:'Attempted co-operator review',requestId:'review_req_participant'});assert.equal(review.status,403);
-  const start=await request(base,tokens[3].token,'/api/session/start',{title:'Not permitted',requestId:'start_req_0002'});assert.equal(start.status,403);
+  const start=await request(base,tokens[3].token,'/api/session/start',{title:'Equal operator pilot',requestId:'start_equal_ops_01'});assert.equal(start.status,201);
+  const pause=await request(base,tokens[4].token,'/api/session/pause',{requestId:'pause_equal_ops_01'});assert.equal(pause.status,200);
+  const resume=await request(base,tokens[3].token,'/api/session/resume',{requestId:'resume_equal_ops_01'});assert.equal(resume.status,200);
+  const proposal=await request(base,tokens[3].token,'/api/decisions',{title:'Equal rights',rationale:'All seven assistants are independently authenticated operators',risk:'consequential',requestId:'decision_equal_ops'});assert.equal(proposal.status,201);
+  const decision=await proposal.json(), decisionId=decision.event.payload.decisionId;
+  const extra=await request(base,tokens[4].token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:'Qwen independent review',requestId:'review_equal_qwen'});assert.equal(extra.status,201);
+  const coreOne=await request(base,tokens[1].token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:'ChatGPT review',requestId:'review_equal_chatgpt'});assert.equal(coreOne.status,201);
+  const snapBefore=await (await request(base,tokens[0].token,'/api/snapshot')).json();
+  assert.equal(snapBefore.state.decisions[0].status,'UNDER_REVIEW');
+  const coreTwo=await request(base,tokens[2].token,'/api/decisions/review',{decisionId,verdict:'SUPPORT',rationale:'Claude review',requestId:'review_equal_claude'});assert.equal(coreTwo.status,201);
+  const approved=await request(base,tokens[0].token,'/api/decisions/approve',{decisionId,requestId:'approve_equal_owner'});assert.equal(approved.status,200);
+  const stop=await request(base,tokens[4].token,'/api/session/stop',{requestId:'stop_equal_ops_01'});assert.equal(stop.status,202);
  }finally{await app.close()}
 });
 
@@ -101,16 +108,14 @@ test('stop cannot be marked complete by caller-supplied quiescence strings',asyn
  }finally{await app.close()}
 });
 
-test('participant may update only the task assigned to that participant',async()=>{
+test('all co-equal operators may update a task assigned to another operator',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   await request(base,tokens[1].token,'/api/decisions',{decisionId:'decision_task_0001',title:'Routine choice',rationale:'Reversible',risk:'routine',requestId:'decision_task_req'});
   await request(base,tokens[1].token,'/api/decisions/review',{decisionId:'decision_task_0001',verdict:'SUPPORT',rationale:'ChatGPT supports',requestId:'review_task_cgpt'});
   await request(base,tokens[2].token,'/api/decisions/review',{decisionId:'decision_task_0001',verdict:'SUPPORT',rationale:'Claude supports',requestId:'review_task_claude'});
   await request(base,tokens[2].token,'/api/tasks',{taskId:'task_kimi_0001',decisionId:'decision_task_0001',title:'Inspect evidence',assignee:'kimi',requestId:'create_task_kimi'});
-  const forbidden=await request(base,tokens[4].token,'/api/tasks/state',{taskId:'task_kimi_0001',status:'IN_PROGRESS',requestId:'wrong_assignee'});
-  assert.equal(forbidden.status,403);
-  const accepted=await request(base,tokens[3].token,'/api/tasks/state',{taskId:'task_kimi_0001',status:'IN_PROGRESS',requestId:'right_assignee'});
+  const accepted=await request(base,tokens[4].token,'/api/tasks/state',{taskId:'task_kimi_0001',status:'IN_PROGRESS',requestId:'qwen_operator_update'});
   assert.equal(accepted.status,200);
  }finally{await app.close()}
 });
