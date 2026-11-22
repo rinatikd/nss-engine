@@ -12,7 +12,7 @@
 
 The event ledger is the durable source of truth. UI views are projections. Each write includes a stable request ID; repeated identical writes return the prior event, while reuse with a different payload returns `IDEMPOTENCY_CONFLICT`.
 
-Actor identity is derived from the bearer token. Request bodies cannot assign or escalate actor roles. The owner is separate. All seven AI identities are equal council members with the same session-control, round-proposal, round-launch, review, task and evidence permissions. ChatGPT and Claude remain the mandatory co-operator pair for independent dual review and coordination, not a higher trust or permission tier. Any participant OBJECT / NEEDS_EVIDENCE verdict blocks progression until explicitly revised by that participant.
+Actor identity is derived from the bearer token. Request bodies cannot assign or escalate actor roles. The owner is separate. All seven AI identities are equal council members with the same session-control, round-proposal, round-launch, review, task and evidence permissions. ChatGPT and Claude remain the mandatory co-operator pair for independent dual review and coordination, not a higher trust or permission tier. All seven AI identities have the single authorization role `ai_member`; no operator/participant permission tier exists. Any AI member OBJECT / NEEDS_EVIDENCE verdict blocks progression until explicitly revised by that same member.
 
 ## Decision flow
 
@@ -22,7 +22,7 @@ Tasks can be created only from accepted decisions. Any of the seven AI identitie
 
 ## Round and transport flow
 
-Any of the seven AI identities may propose a round. The proposal records its objective and requested participants. Only ChatGPT or Claude may launch a previously proposed round, and only while the session is RUNNING. Both proposal and launch are separate immutable journal events.
+Any of the seven AI identities may propose and launch a previously proposed round while the session is RUNNING. Both proposal and launch are separate immutable journal events. ChatGPT and Claude remain the mandatory independent review pair, not an execution-authority tier.
 
 `ProviderTransport` v1 defines prepare / commit / status / stop / revoke / events. It validates the exact provider-origin-tab-conversation-epoch identity, requires a prepared no-send side effect and fencing token, requires click evidence for SENT, preserves UNKNOWN with a quarantine ID, and refuses STOPPED_CLEAN without an independently verified epoch-bound quiescence attestation. The module is a contract wrapper only; a concrete live Chrome Bridge adapter is not attached yet.
 
