@@ -8,6 +8,7 @@ export const CONTROL_ORIGINS = Object.freeze({
 export const DISCOVERY_ONLY_ORIGINS = Object.freeze({
   'https://grok.com': 'grok',
   'https://chat.qwen.ai': 'qwen',
+  'https://www.kimi.ai': 'kimi',
   'https://cursor.com': 'cursor',
 });
 export const providerForOrigin = (origin) =>
