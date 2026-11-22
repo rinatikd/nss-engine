@@ -2,7 +2,8 @@
 # Does not access any live browser, server token, tunnel, or installed extension.
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory=$true)][string]$LabRoot
+  [Parameter(Mandatory=$true)][string]$LabRoot,
+  [ValidateRange(1024,65535)][int]$LabPort = 17481
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -18,7 +19,8 @@ $m=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($m.manifest_version -ne 3 -or $m.background.service_worker -ne 'background.js') { throw 'Unexpected MV3 background entry' }
 if ($m.background.type -ne 'module') { throw 'MV3 background must be module' }
 $hosts=@($m.host_permissions)
-if ($hosts -notcontains 'http://127.0.0.1:17481/*') { throw 'Lab host 17481 not permitted' }
+$labHost = 'http://127.0.0.1:{0}/*' -f $LabPort
+if ($hosts -notcontains $labHost) { throw ('Lab host not permitted: ' + $labHost) }
 foreach($hostPattern in @('http://127.0.0.1/*','http://127.0.0.1:17381/*','https://*/*','<all_urls>')) {
   if ($hosts -contains $hostPattern) { throw ('Broad/production host permission in lab: '+$hostPattern) }
 }
