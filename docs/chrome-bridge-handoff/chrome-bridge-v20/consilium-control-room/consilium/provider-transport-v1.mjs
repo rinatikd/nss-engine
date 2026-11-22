@@ -67,6 +67,9 @@ export class ProviderTransport {
     if (result.state === 'PREPARED') {
       requiredString(result.preparedId, 'PREPARED_ID_REQUIRED', 128);
       requiredString(result.fencingToken, 'FENCING_TOKEN_REQUIRED', 512);
+      if (result.requestId !== identity.requestId || result.payloadHash !== payloadHash) {
+        throw new TransportContractError('PREPARE_CORRELATION_INVALID');
+      }
       const expiresAt = Date.parse(result.expiresAt || '');
       if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new TransportContractError('PREPARE_EXPIRY_INVALID');
       if (result.sideEffect !== 'composer-filled-no-send') throw new TransportContractError('PREPARE_SIDE_EFFECT_INVALID');
@@ -79,12 +82,18 @@ export class ProviderTransport {
     const identity = validateTransportIdentity(input);
     requiredString(input.preparedId, 'PREPARED_ID_REQUIRED', 128);
     requiredString(input.fencingToken, 'FENCING_TOKEN_REQUIRED', 512);
+    const payloadHash = requiredString(input.payloadHash, 'PAYLOAD_HASH_REQUIRED', 64);
+    if (!SHA256.test(payloadHash)) throw new TransportContractError('PAYLOAD_HASH_INVALID');
     const result = await this.adapter.commit({
-      ...identity, preparedId: input.preparedId, fencingToken: input.fencingToken
+      ...identity, preparedId: input.preparedId, fencingToken: input.fencingToken, payloadHash
     });
     validateState(result, identity, ['SENT', 'BLOCKED', 'NOT_PERFORMED', 'UNKNOWN']);
-    if (result.state === 'SENT' && (!Number.isFinite(Date.parse(result.clickedAt || '')) || result.clickedSend !== true)) {
-      throw new TransportContractError('COMMIT_CLICK_EVIDENCE_REQUIRED');
+    if (result.state === 'SENT') {
+      if (!Number.isFinite(Date.parse(result.clickedAt || '')) || result.clickedSend !== true) {
+        throw new TransportContractError('COMMIT_CLICK_EVIDENCE_REQUIRED');
+      }
+      if (result.requestId !== identity.requestId || result.preparedId !== input.preparedId ||
+          result.payloadHash !== payloadHash) throw new TransportContractError('COMMIT_CORRELATION_INVALID');
     }
     return result;
   }
@@ -93,6 +102,20 @@ export class ProviderTransport {
     const identity = validateTransportIdentity(input);
     const result = await this.adapter.status(identity);
     validateState(result, identity, SEND_STATES);
+    if (result.state === 'PREPARED') {
+      requiredString(result.preparedId, 'PREPARED_ID_REQUIRED', 128);
+      requiredString(result.fencingToken, 'FENCING_TOKEN_REQUIRED', 512);
+      if (result.requestId !== identity.requestId || !SHA256.test(result.payloadHash || '') ||
+          result.sideEffect !== 'composer-filled-no-send' || result.clickedSend !== false ||
+          !Number.isFinite(Date.parse(result.expiresAt || '')) || Date.parse(result.expiresAt) <= Date.now()) {
+        throw new TransportContractError('PREPARED_STATUS_INVALID');
+      }
+    }
+    if (result.state === 'SENT' && (result.requestId !== identity.requestId ||
+        !Number.isFinite(Date.parse(result.clickedAt || '')) || result.clickedSend !== true ||
+        !ID.test(result.preparedId || '') || !SHA256.test(result.payloadHash || ''))) {
+      throw new TransportContractError('SENT_STATUS_INVALID');
+    }
     return result;
   }
 
