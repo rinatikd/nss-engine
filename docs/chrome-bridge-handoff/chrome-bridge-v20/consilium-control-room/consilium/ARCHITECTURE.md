@@ -12,7 +12,7 @@
 
 The event ledger is the durable source of truth. UI views are projections. Each write includes a stable request ID; repeated identical writes return the prior event, while reuse with a different payload returns `IDEMPOTENCY_CONFLICT`.
 
-Actor identity is derived from the bearer token. Request bodies cannot assign or escalate actor roles. The owner is separate. ChatGPT and Claude are the two equal co-operators with session-control and round-launch authority. DeepSeek, Qwen, Kimi, Grok and Gemini are five equal expert participants: they may propose rounds and decisions, comment, submit evidence and review/contest decisions, but cannot launch rounds or control session execution. Any participant OBJECT / NEEDS_EVIDENCE verdict blocks progression until explicitly revised by that participant.
+Actor identity is derived from the bearer token. Request bodies cannot assign or escalate actor roles. The owner is separate. All seven AI identities are equal council members with the same session-control, round-proposal, round-launch, review, task and evidence permissions. ChatGPT and Claude remain the mandatory co-operator pair for independent dual review and coordination, not a higher trust or permission tier. Any participant OBJECT / NEEDS_EVIDENCE verdict blocks progression until explicitly revised by that participant.
 
 ## Decision flow
 
