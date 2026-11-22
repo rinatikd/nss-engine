@@ -245,7 +245,13 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       let begun;
       try { begun=providerJournal.beginPrepare(identity,args.payloadHash); }
       catch(error) { return {state:'BLOCKED',identity,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_PREPARE_REJECTED'}; }
-      if(begun.duplicate)return begun.transaction;
+      if(begun.duplicate) {
+        const duplicate=begun.transaction;
+        if(['ACCEPTED','DISPATCHED','STOP_REQUESTED'].includes(duplicate.state))
+          return {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_REQUEST_IN_FLIGHT'};
+        if(['PREPARED','UNKNOWN','BLOCKED','NOT_PERFORMED'].includes(duplicate.state))return duplicate;
+        return {state:'BLOCKED',identity,reasonCode:'PROVIDER_REQUEST_ALREADY_TERMINAL'};
+      }
       try {
         const context=await enqueue('agent_context',{tabId:identity.tabId});
         if(!context?.verified||context.origin!==identity.origin||context.conversationId!==identity.conversationId)
