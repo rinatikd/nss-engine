@@ -5,6 +5,7 @@ param(
   [string]$BridgeRoot = 'C:\Engineering\chrome-bridge',
   [string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
   [string]$OutputRoot = 'C:\Engineering\ChromeBridge-Background-Lab',
+  [ValidateRange(1024,65535)][int]$LabPort = 17481,
   [switch]$Apply
 )
 Set-StrictMode -Version Latest
@@ -76,7 +77,7 @@ $m.background | Add-Member -MemberType NoteProperty -Name type -Value 'module' -
 # A lab package must never target the live Bridge endpoint. Replace only the
 # exact loopback production host, retaining any separately approved site origins.
 $prodHost = 'http://127.0.0.1:17381/*'
-$labHost = 'http://127.0.0.1:17481/*'
+$labHost = ('http://127.0.0.1:{0}/*' -f $LabPort)
 # Existing installations may use a port-agnostic loopback pattern.
 # Do not retain it in the lab manifest: it would also authorize port 17381.
 $loopbackWildcard = 'http://127.0.0.1/*'
@@ -88,7 +89,7 @@ if (@($m.host_permissions) -contains $prodHost -or @($m.host_permissions) -conta
 }
 Write-Output '[PLAN] Separate background lab candidate only; no installed files changed'
 Write-Output ('[PLAN] Output: ' + $out)
-Write-Output '[PLAN] Manifest adds offscreen + alarms, module background type; Bridge endpoint 17381 -> 17481'
+Write-Output ('[PLAN] Manifest adds offscreen + alarms, module background type; Bridge endpoint 17381 -> {0}' -f $LabPort)
 Write-Output '[PLAN] No credentials or server configuration are copied'
 if (-not $Apply) { Write-Output '[DRY-RUN] No output was created'; exit 0 }
 $temp = $out + '-tmp-' + [guid]::NewGuid().ToString('N')
@@ -102,7 +103,7 @@ try {
   # Rewrite only the known loopback Bridge endpoint in the isolated copy.
   # The candidate source and installed production extension are never edited.
   $prodEndpoint = 'http://127.0.0.1:17381'
-  $labEndpoint = 'http://127.0.0.1:17481'
+  $labEndpoint = ('http://127.0.0.1:{0}' -f $LabPort)
   foreach ($name in @('control.js', 'connection-check.js', 'transport-engine.js')) {
     $target = Join-Path $temp $name
     $original = [IO.File]::ReadAllText($target)
@@ -151,7 +152,7 @@ try {
   }
   Move-Item -LiteralPath $temp -Destination $out
   Write-Output ('[STAGED] ' + $out)
-  Write-Output '[CHECK] Lab JS and manifest use 17481; production 17381 endpoint excluded'
+  Write-Output ('[CHECK] Lab JS and manifest use {0}; production 17381 endpoint excluded' -f $LabPort)
   Write-Output '[NOTE] New unpacked extension may have a different Chrome ID. Do not change pinned server configuration for testing without a separate plan.'
 } finally {
   if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }

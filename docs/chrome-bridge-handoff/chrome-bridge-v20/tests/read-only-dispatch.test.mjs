@@ -20,6 +20,36 @@ test('only explicitly added HTTPS hosts with Chrome permissions appear in tabs',
  rows=await dispatchReadOnly({name:'browser_tabs'},mock({site:false}));
  assert.deepEqual(rows,[]);
 });
+test('background control_status uses coordinator snapshot instead of a hard-coded empty stub',async()=>{
+ const snapshot={
+  available:true,backgroundMode:true,mutationEnabled:true,connectionDesired:true,
+  connected:true,connectionState:'connected',grantsKnown:true,activeCount:1,
+  grants:[{tabId:42,origin:'https://claude.ai',expiresAt:1700000000000}],
+  approvalPending:0
+ };
+ const result=await dispatchReadOnly({name:'control_status'},mock(),{
+  getBackgroundControlStatus:async()=>snapshot
+ });
+ assert.equal(result.controlMode,'background');
+ assert.equal(result.connected,true);
+ assert.equal(result.globalEnabled,false);
+ assert.deepEqual(result.legacyControl,{globalEnabled:false,approvalPending:0,origins:[]});
+ assert.equal(result.backgroundControl.mutationEnabled,true);
+ assert.equal(result.backgroundControl.activeCount,1);
+ assert.deepEqual(result.origins,[{
+  origin:'https://claude.ai',effective:true,expiresAt:1700000000000,
+  tabs:[{tabId:42,expiresAt:1700000000000}]
+ }]);
+});
+
+test('background control_status fails closed when its coordinator snapshot is unavailable',async()=>{
+ const result=await dispatchReadOnly({name:'control_status'},mock());
+ assert.equal(result.connected,false);
+ assert.equal(result.backgroundControl.available,false);
+ assert.equal(result.backgroundControl.error,'BACKGROUND_STATUS_UNAVAILABLE');
+ assert.deepEqual(result.origins,[]);
+});
+
 test('background read requires approved host and revalidates tab identity',async()=>{
  const res=await dispatchReadOnly({name:'browser_read',args:{tabId:42}},mock());
  assert.equal(res.text,'sample text');

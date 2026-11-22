@@ -11,6 +11,13 @@ test('global Control buttons remain available',()=>{
   assert.match(js,/eligibleBackgroundControlTabs/);
   assert.match(js,/clear-background-controls/);
 });
+test('open control windows synchronize the background mode and mutation toggle from profile storage',()=>{
+  assert.match(js,/chrome\.storage\.onChanged\.addListener/);
+  assert.match(js,/changes\.bridgeBackgroundMode/);
+  assert.match(js,/changes\.bridgeMutationLabMode/);
+  assert.match(js,/Фоновый режим отключён в другом окне/);
+});
+
 test('duplicate per-tab Control controls and their handlers are absent',()=>{
   assert.doesNotMatch(html,/id="backgroundGrantTabId"|id="backgroundGrant"|id="backgroundRevoke"/);
   assert.doesNotMatch(js,/selectedBackgroundTab|\$\('backgroundGrant'\)|\$\('backgroundRevoke'\)/);
@@ -32,18 +39,29 @@ test('isolated staging packages RC1 modules without cloning installed extension'
   assert.match(stage,/Unsafe manifest icon asset path/);
 });
 
-test('lab staging remaps only the isolated fixture to 17481',()=>{
+test('lab staging parameterizes the isolated endpoint and preserves the safe default',()=>{
   const stage=readFileSync(new URL('../deployment/stage-background-lab.ps1',import.meta.url),'utf8');
-  assert.match(stage,/\$prodEndpoint\s*=\s*'http:\/\/127\.0\.0\.1:17381'/);
-  assert.match(stage,/\$labEndpoint\s*=\s*'http:\/\/127\.0\.0\.1:17481'/);
-  assert.match(stage,/\$prodHost\s*=\s*'http:\/\/127\.0\.0\.1:17381\/\*'/);
-  assert.match(stage,/\$labHost\s*=\s*'http:\/\/127\.0\.0\.1:17481\/\*'/);
-  assert.match(stage,/\$m\.host_permissions\s*=\s*\$hosts/);
-  assert.match(stage,/\$loopbackWildcard\s*=\s*'http:\/\/127\.0\.0\.1\/\*'/);
-  assert.match(stage,/\$_\s*-ne\s*\$loopbackWildcard/);
-  assert.match(stage,/\$original\.Replace\(\$prodEndpoint,\s*\$labEndpoint\)/);
-  assert.match(stage,/Production Bridge endpoint retained in lab JS/);
-  assert.match(stage,/if \(-not \$Apply\)/);
+  const verify=readFileSync(new URL('../deployment/verify-adapter-lab.ps1',import.meta.url),'utf8');
+  const manifest=readFileSync(new URL('../deployment/write-lab-release-manifest.ps1',import.meta.url),'utf8');
+  const workflow=readFileSync(new URL('../../../../.github/workflows/chrome-bridge-visual-rc.yml',import.meta.url),'utf8');
+  assert.ok(stage.includes('[ValidateRange(1024,65535)][int]$LabPort = 17481'));
+  assert.ok(stage.includes("$labEndpoint = ('http://127.0.0.1:{0}' -f $LabPort)"));
+  assert.ok(stage.includes("$labHost = ('http://127.0.0.1:{0}/*' -f $LabPort)"));
+  assert.ok(stage.includes("$prodEndpoint = 'http://127.0.0.1:17381'"));
+  assert.ok(stage.includes("$prodHost = 'http://127.0.0.1:17381/*'"));
+  assert.ok(stage.includes('$m.host_permissions = $hosts'));
+  assert.ok(stage.includes("$loopbackWildcard = 'http://127.0.0.1/*'"));
+  assert.ok(stage.includes('$original.Replace($prodEndpoint, $labEndpoint)'));
+  assert.ok(stage.includes('Production Bridge endpoint retained in lab JS'));
+  assert.ok(stage.includes('if (-not $Apply)'));
+  assert.ok(verify.includes('[ValidateRange(1024,65535)][int]$LabPort = 17481'));
+  assert.ok(verify.includes("$labHost = 'http://127.0.0.1:{0}/*' -f $LabPort"));
+  assert.ok(manifest.includes('[ValidateRange(1024,65535)][int]$LabPort = 17481'));
+  assert.ok(manifest.includes("endpoint=('http://127.0.0.1:{0}' -f $LabPort)"));
+  assert.ok(workflow.includes('stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out -LabPort 17484'));
+  assert.ok(workflow.includes('verify-adapter-lab.ps1 -LabRoot $out -LabPort 17484'));
+  assert.ok(workflow.includes('write-lab-release-manifest.ps1 -LabRoot $out'));
+  assert.ok(workflow.includes('-CommitSha $env:GITHUB_SHA -LabPort 17484'));
 });
 
 

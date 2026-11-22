@@ -25,12 +25,27 @@ export class BackgroundControlGrants {
     await this.api.storage.session.set({[KEY]:grants});
     return {tabId,origin,expires};
   }
-  async activeCount() {
+  async activeGrants() {
     const grants=await this.read();
     const now=this.now();
-    return Object.values(grants).filter(entry=>entry &&
-      typeof entry.origin==='string' && Object.hasOwn(CONTROL_ORIGINS,entry.origin) &&
-      Number.isFinite(entry.expires) && entry.expires>now).length;
+    const active=[];
+    for (const [rawTabId,entry] of Object.entries(grants)) {
+      const tabId=Number(rawTabId);
+      if (!Number.isSafeInteger(tabId) || tabId<=0 || !entry ||
+          typeof entry.origin!=='string' || !Object.hasOwn(CONTROL_ORIGINS,entry.origin) ||
+          !Number.isFinite(entry.expires) || entry.expires<=now) continue;
+      try {
+        // Report only grants that still resolve to the same permitted chat tab.
+        const {origin,site}=await permittedTab(this.api,tabId);
+        if (origin!==entry.origin || site.mode!=='chat' ||
+            site.adapter!==CONTROL_ORIGINS[origin]) continue;
+        active.push({tabId,origin,expiresAt:entry.expires});
+      } catch { /* stale/closed/revoked tabs are not effective grants */ }
+    }
+    return active.sort((a,b)=>a.tabId-b.tabId);
+  }
+  async activeCount() {
+    return (await this.activeGrants()).length;
   }
   async require(origin,tabId) {
     const grants=await this.read();
