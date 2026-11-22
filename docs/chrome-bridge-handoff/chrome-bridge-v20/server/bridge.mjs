@@ -260,7 +260,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         const expiresAt=new Date(Date.now()+90000).toISOString();
         const result=await enqueue('provider_prepare',{...identity,message:args.message,
           payloadHash:args.payloadHash,preparedId,expiresAt});
-        if(result?.prepared!==true||result.clickedSend!==false||
+        if(result?.prepared!==true||result.clickedSend!==false||result.requestId!==identity.requestId||
           result.sideEffect!=='composer-filled-no-send'||result.preparedId!==preparedId||
           result.payloadHash!==args.payloadHash) {
           return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_PREPARE_RECEIPT_INVALID');
@@ -279,12 +279,13 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       const bound=[...agents.values()].some(entry=>entry.tabId===identity.tabId);
       if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
       let tx;
-      try { tx=providerJournal.beginCommit(identity,{preparedId:args.preparedId,fencingToken:args.fencingToken}); }
+      try { tx=providerJournal.beginCommit(identity,{preparedId:args.preparedId,fencingToken:args.fencingToken,payloadHash:args.payloadHash}); }
       catch(error) { return {state:'BLOCKED',identity,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_REJECTED'}; }
       try {
         const result=await enqueue('provider_commit',{...identity,preparedId:args.preparedId,
           fencingToken:args.fencingToken,payloadHash:tx.payloadHash});
-        if(result?.clickedSend!==true||!Number.isFinite(Date.parse(result.clickedAt||'')))
+        if(result?.clickedSend!==true||result.requestId!==identity.requestId||result.preparedId!==args.preparedId||
+          result.payloadHash!==tx.payloadHash||!Number.isFinite(Date.parse(result.clickedAt||'')))
           return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_COMMIT_RECEIPT_INVALID');
         return providerJournal.completeCommit(identity,{clickedAt:result.clickedAt,clickedSend:true});
       } catch(error) {
