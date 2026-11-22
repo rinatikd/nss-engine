@@ -244,7 +244,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       if(actualHash!==args.payloadHash)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_PAYLOAD_HASH_MISMATCH');
       let begun;
       try { begun=providerJournal.beginPrepare(identity,args.payloadHash); }
-      catch(error) { return providerJournal.outcome(identity,'BLOCKED',error.message); }
+      catch(error) { return {state:'BLOCKED',identity,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_PREPARE_REJECTED'}; }
       if(begun.duplicate)return begun.transaction;
       try {
         const context=await enqueue('agent_context',{tabId:identity.tabId});
@@ -274,7 +274,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
       let tx;
       try { tx=providerJournal.beginCommit(identity,{preparedId:args.preparedId,fencingToken:args.fencingToken}); }
-      catch(error) { return providerJournal.outcome(identity,'BLOCKED',error.message); }
+      catch(error) { return {state:'BLOCKED',identity,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_REJECTED'}; }
       try {
         const result=await enqueue('provider_commit',{...identity,preparedId:args.preparedId,
           fencingToken:args.fencingToken,payloadHash:tx.payloadHash});
