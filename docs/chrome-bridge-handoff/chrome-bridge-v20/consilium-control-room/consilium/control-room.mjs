@@ -115,6 +115,23 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
       if (!url.pathname.startsWith('/api/')) return json(res, 404, { error: 'NOT_FOUND' });
       const actor = actorFor(req, tokens);
       if (!actor) return json(res, 401, { error: 'AUTH_REQUIRED' });
+      if (req.method === 'GET' && url.pathname === '/api/export') {
+        const payload = ledger.exportNdjson();
+        res.writeHead(200, {
+          'content-type': 'application/x-ndjson; charset=utf-8',
+          'content-disposition': 'attachment; filename="consilium-events.ndjson"',
+          'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+          'referrer-policy': 'no-referrer'
+        });
+        res.end(payload);
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/api/events') {
+        const after = Number(url.searchParams.get('after') || 0);
+        const limit = Number(url.searchParams.get('limit') || 1000);
+        const events = ledger.list({ after, limit });
+        return json(res, 200, { events, nextAfter: events.at(-1)?.seq || after, hasMore: events.length === limit });
+      }
       if (req.method === 'GET' && url.pathname === '/api/snapshot') {
         const snapshot = ledger.snapshot({ after: Number(url.searchParams.get('after') || 0), limit: 2000 });
         return json(res, 200, { actor, ...snapshot });
