@@ -68,3 +68,23 @@ test('viewer fails closed on tamper, torn tail and invalid transitions',async()=
   await assert.rejects(projectLedger(invalidHistory),/INVALID_TRANSITION/);
  }finally{f.cleanup();}
 });
+
+
+test('viewer UI stays local, read-only and resistant to imported HTML injection',()=>{
+ const uiDir=path.resolve(path.dirname(new URL(import.meta.url).pathname),'../ui');
+ const html=readFileSync(path.join(uiDir,'index.html'),'utf8');
+ const app=readFileSync(path.join(uiDir,'app.mjs'),'utf8');
+ const viewer=readFileSync(path.join(uiDir,'viewer.mjs'),'utf8');
+ assert.match(html,/connect-src 'none'/);
+ assert.match(html,/script-src 'self'/);
+ assert.match(html,/src="\.\.\/|src="\.\/app\.mjs"/);
+ assert.doesNotMatch(html,/(?:src|href)="https?:\/\//i);
+ assert.doesNotMatch(html,/\son(?:click|change|input)=/i);
+ for(const source of [app,viewer]){
+  assert.doesNotMatch(source,/\bfetch\s*\(/);
+  assert.doesNotMatch(source,/\bXMLHttpRequest\b/);
+  assert.doesNotMatch(source,/\blocalStorage\b|\bsessionStorage\b/);
+  assert.doesNotMatch(source,/\binnerHTML\b/);
+ }
+ assert.match(app,/\.textContent\s*=/);
+});
