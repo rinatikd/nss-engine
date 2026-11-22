@@ -98,10 +98,10 @@ async function dispatchProviderMutation(cmd, chromeApi, {
     if(!(await stillEnabled()))throw Error('BACKGROUND_CONTROL_STOPPED');
 
     const pageArgs=cmd.name==='provider_prepare'
-      ? {adapter,message:args.message,payloadHash:args.payloadHash,preparedId:args.preparedId,
+      ? {adapter,requestId,message:args.message,payloadHash:args.payloadHash,preparedId:args.preparedId,
           expiresAt:args.expiresAt,expectedOrigin:origin,expectedConversationId:conversationId,
           controlExpires:refreshedGrant}
-      : {adapter,payloadHash:args.payloadHash,preparedId:args.preparedId,fencingToken:args.fencingToken,
+      : {adapter,requestId,payloadHash:args.payloadHash,preparedId:args.preparedId,fencingToken:args.fencingToken,
           expectedOrigin:origin,expectedConversationId:conversationId,controlExpires:refreshedGrant};
     executionStarted=true;
     const result=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs);
