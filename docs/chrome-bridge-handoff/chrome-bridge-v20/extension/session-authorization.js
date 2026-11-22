@@ -43,9 +43,7 @@ export class SessionAuthorization {
     for (const origin of unique) {
       if (!Object.hasOwn(CONTROL_ORIGINS, origin)) throw Error('SESSION_ORIGIN_DENIED');
     }
-    const requiredOrigins = Object.keys(CONTROL_ORIGINS);
-    if (unique.length !== requiredOrigins.length || requiredOrigins.some(origin => !unique.includes(origin)))
-      throw Error('SESSION_ORIGINS_INCOMPLETE');
+    if (!unique.includes('https://claude.ai')) throw Error('SESSION_CLAUDE_REQUIRED');
 
     const { sites = {} } = await this.api.storage.local.get('sites');
     const eligible = await eligibleBackgroundControlTabs(this.api, sites, CONTROL_ORIGINS);
@@ -81,13 +79,17 @@ export class SessionAuthorization {
 
   publicStatus(lease, bridgeEpoch) {
     if (!lease) return inactive();
-    const requiredOrigins = Object.keys(CONTROL_ORIGINS).sort();
-    const leaseOrigins = Array.isArray(lease.origins) ? [...lease.origins].sort() : [];
+    const allowedOrigins = Object.keys(CONTROL_ORIGINS);
+    const leaseOrigins = Array.isArray(lease.origins) ? [...lease.origins] : [];
+    const uniqueLeaseOrigins = new Set(leaseOrigins);
     const capabilitiesMatch = Array.isArray(lease.capabilities) &&
       lease.capabilities.length === SESSION_CAPABILITIES.length &&
       SESSION_CAPABILITIES.every(capability => lease.capabilities.includes(capability));
-    const originsMatch = leaseOrigins.length === requiredOrigins.length &&
-      requiredOrigins.every((origin, index) => leaseOrigins[index] === origin);
+    const originsMatch = leaseOrigins.length >= 1 &&
+      leaseOrigins.length <= allowedOrigins.length &&
+      uniqueLeaseOrigins.size === leaseOrigins.length &&
+      leaseOrigins.includes('https://claude.ai') &&
+      leaseOrigins.every(origin => allowedOrigins.includes(origin));
     if (lease.schemaVersion !== 1 || !idPattern.test(lease.sessionId || '') ||
         !epochPattern.test(lease.bridgeEpoch || '') || !Number.isFinite(lease.issuedAt) ||
         !Number.isFinite(lease.expiresAt) || !originsMatch || !capabilitiesMatch ||
