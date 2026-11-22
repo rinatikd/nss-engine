@@ -9,6 +9,7 @@ function temp(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-ledger-')
 const owner={id:'owner',role:'owner'};
 const chatgpt={id:'chatgpt',role:'operator'};
 const claude={id:'claude',role:'operator'};
+const kimi={id:'kimi',role:'operator'};
 
 test('ledger persists a hash-chained sequence and replays identical request IDs',()=>{
  const dir=temp();let ledger=new EventLedger(dir,{now:()=> '2026-11-22T12:00:00.000Z'});
@@ -42,6 +43,8 @@ test('decision must be owner-approved before a task may be created',()=>{
  ledger.append({type:'session.started',actor:chatgpt,payload:{sessionId:'session_0001',title:'Architecture review'}});
  ledger.append({type:'decision.proposed',actor:claude,payload:{decisionId:'decision_01',title:'Use event journal',rationale:'Durable audit',evidence:[]}});
  assert.throws(()=>ledger.append({type:'task.created',actor:chatgpt,payload:{taskId:'task_000001',decisionId:'decision_01',title:'Implement',assignee:'claude'}}),/TASK_REQUIRES_ACCEPTED_DECISION/);
+ ledger.append({type:'decision.reviewed',actor:kimi,payload:{decisionId:'decision_01',verdict:'SUPPORT',rationale:'Kimi additional independent review'}});
+ assert.equal(projectEvents(ledger.list()).decisions[0].status,'UNDER_REVIEW');
  ledger.append({type:'decision.reviewed',actor:chatgpt,payload:{decisionId:'decision_01',verdict:'SUPPORT',rationale:'Matches requirements'}});
  ledger.append({type:'decision.reviewed',actor:claude,payload:{decisionId:'decision_01',verdict:'SUPPORT',rationale:'Independent review agrees'}});
  ledger.append({type:'decision.owner_approved',actor:owner,payload:{decisionId:'decision_01'}});
