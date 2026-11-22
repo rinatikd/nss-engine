@@ -2,6 +2,7 @@ import { dispatchReadOnly } from './read-only-dispatch.js';
 import { ApprovalSession } from './approval-session.js';
 import { dispatchMutation } from './mutation-dispatch.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
+import { SessionAuthorization } from './session-authorization.js';
 
 const PATH = 'transport-host.html';
 let creating = null;
@@ -25,12 +26,13 @@ export const currentStatus = () => ({...status,
   connected: status.connected && (Date.now() - status.updatedAt < 45000)
 });
 
-async function readBackgroundControlStatus(chromeApi) {
+async function readBackgroundControlStatus(chromeApi, bridgeEpoch) {
   const settings=await chromeApi.storage.local.get([
     'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
   ]);
   const connection=currentStatus();
   const grants=await new BackgroundControlGrants(chromeApi).activeGrants();
+  const sessionAuthorization=await new SessionAuthorization(chromeApi).status(bridgeEpoch);
   return {
     available:true,
     backgroundMode:settings.bridgeBackgroundMode===true,
@@ -42,6 +44,7 @@ async function readBackgroundControlStatus(chromeApi) {
     grantsKnown:true,
     activeCount:grants.length,
     grants,
+    sessionAuthorization,
     approvalPending:approvals.list().length
   };
 }
@@ -87,6 +90,7 @@ async function startBackgroundTransportOnce(chromeApi) {
 export async function stopBackgroundTransport(chromeApi) {
   approvals.stop();
   await new BackgroundControlGrants(chromeApi).clear();
+  await new SessionAuthorization(chromeApi).revoke();
   await chromeApi.storage.local.set({
     bridgeConnectionDesired:false,bridgeMutationLabMode:false
   });
@@ -120,11 +124,28 @@ export function installBackgroundCoordinator(chromeApi) {
         if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
           throw Error('BACKGROUND_TRANSPORT_DISABLED');
         const name=msg.command?.name;
+        const sessionAuthorization=new SessionAuthorization(chromeApi);
+        if (name==='session_authorize') {
+          if (currentStatus().connected!==true) throw Error('BRIDGE_NOT_CONNECTED');
+          const lease=await sessionAuthorization.authorize({
+            ...msg.command.args,bridgeEpoch:msg.command.bridgeEpoch
+          });
+          try { await chromeApi.storage.local.set({bridgeMutationLabMode:true}); }
+          catch (error) { await sessionAuthorization.revoke(); throw error; }
+          return lease;
+        }
+        if (name==='session_revoke') {
+          await sessionAuthorization.revoke();
+          await chromeApi.storage.local.set({bridgeMutationLabMode:false});
+          return {revoked:true};
+        }
+        if (name==='session_status') return sessionAuthorization.status(msg.command.bridgeEpoch);
         if (['browser_click','browser_fill','agent_send','provider_prepare','provider_commit'].includes(name)) {
           if (bridgeMutationLabMode!==true) throw Object.assign(Error('BACKGROUND_MUTATIONS_DISABLED'), {dispatchState:'BLOCKED'});
           const grants=new BackgroundControlGrants(chromeApi);
           return dispatchMutation(msg.command,chromeApi,{
             approvals,
+            sessionAuthorization,
             controlGrant:(origin,tabId)=>grants.require(origin,tabId),
             stillEnabled:async()=>{
               const settings=await chromeApi.storage.local.get([
@@ -137,7 +158,7 @@ export function installBackgroundCoordinator(chromeApi) {
           });
         }
         return dispatchReadOnly(msg.command,chromeApi,{
-          getBackgroundControlStatus:()=>readBackgroundControlStatus(chromeApi)
+          getBackgroundControlStatus:()=>readBackgroundControlStatus(chromeApi,msg.command?.bridgeEpoch)
         });
       };
       void run().then(result=>respond({result}),e=>respond({
@@ -164,8 +185,11 @@ export function installBackgroundCoordinator(chromeApi) {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
       }
-      void new BackgroundControlGrants(chromeApi).clear()
-        .then(()=>respond({ok:true}),e=>respond({error:e.message}));
+      void Promise.all([
+        new BackgroundControlGrants(chromeApi).clear(),
+        new SessionAuthorization(chromeApi).revoke(),
+        chromeApi.storage.local.set({bridgeMutationLabMode:false})
+      ]).then(()=>respond({ok:true}),e=>respond({error:e.message}));
       return true;
     }
     if (msg.type === 'grant-background-control' || msg.type === 'revoke-background-control') {

@@ -3,6 +3,7 @@
 // recovery have real-browser acceptance tests.
 import { permittedTab } from './read-only-dispatch.js';
 import { CONTROL_ORIGINS } from './permissions.js';
+import { SESSION_CAPABILITIES } from './session-authorization.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
@@ -35,7 +36,7 @@ async function boundTab(chromeApi, tabId, originalUrl, origin) {
 }
 
 async function dispatchProviderMutation(cmd, chromeApi, {
-  approvals, controlGrant, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
+  approvals, controlGrant, sessionAuthorization, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
   let executionStarted=false;
   let stage='PRECHECK';
@@ -47,13 +48,17 @@ async function dispatchProviderMutation(cmd, chromeApi, {
        !Number.isSafeInteger(epoch)||epoch<1 ||
        typeof conversationId!=='string'||!/^[A-Za-z0-9_-]{8,160}$/.test(conversationId) ||
        CONTROL_ORIGINS[origin]!==providerId) throw Error('PROVIDER_IDENTITY_INVALID');
-    if(!approvals?.request||typeof controlGrant!=='function')throw Error('BACKGROUND_CONTROL_NOT_CONFIGURED');
+    if(!approvals?.request || (typeof controlGrant!=='function' && !sessionAuthorization))throw Error('BACKGROUND_CONTROL_NOT_CONFIGURED');
     if(!(await stillEnabled()))throw Error('BACKGROUND_CONTROL_STOPPED');
     if(nowExpired(cmd,now))throw Error('COMMAND_EXPIRED');
     const {tab,origin:actualOrigin,site}=await permittedTab(chromeApi,tabId);
     if(actualOrigin!==origin||site.mode!=='chat'||site.adapter!==providerId)
       throw Error('PROVIDER_TAB_BINDING_MISMATCH');
-    const controlExpires=await controlGrant(origin,tabId);
+    const sessionState=sessionAuthorization ? await sessionAuthorization.status(cmd.bridgeEpoch) : {active:false};
+    const sessionMode=sessionState.active===true && SESSION_CAPABILITIES.includes(cmd.name);
+    const controlExpires=sessionMode
+      ? await sessionAuthorization.require({origin,tabId,command:cmd.name,bridgeEpoch:cmd.bridgeEpoch})
+      : await controlGrant(origin,tabId);
     if(!Number.isFinite(controlExpires)||controlExpires<=now())throw Error('EXPLICIT_CONTROL_GRANT_REQUIRED');
     const {adapters}=await chromeApi.storage.local.get('adapters');
     let overrides;
@@ -77,20 +82,24 @@ async function dispatchProviderMutation(cmd, chromeApi, {
 
     const expires=Math.min(cmd.expires,now()+MAX_APPROVAL_MS);
     if(expires<=now())throw Error('COMMAND_EXPIRED');
-    stage='APPROVAL';
-    await approvals.request({
-      id:'p-'+uuid(),command:cmd.name,origin,tabId,expires,
-      preview:cmd.name==='provider_prepare'
-        ? 'Prepare '+providerId+' message · request '+requestId
-        : 'Commit prepared '+providerId+' message · request '+requestId,
-      contentLength:cmd.name==='provider_prepare'?args.message.length:0
-    });
+    if(!sessionMode) {
+      stage='APPROVAL';
+      await approvals.request({
+        id:'p-'+uuid(),command:cmd.name,origin,tabId,expires,
+        preview:cmd.name==='provider_prepare'
+          ? 'Prepare '+providerId+' message · request '+requestId
+          : 'Commit prepared '+providerId+' message · request '+requestId,
+        contentLength:cmd.name==='provider_prepare'?args.message.length:0
+      });
+    }
 
     stage='REVALIDATION';
     if(!(await stillEnabled()))throw Error('BACKGROUND_CONTROL_STOPPED');
     if(nowExpired(cmd,now)||now()>=expires)throw Error('APPROVAL_EXPIRED');
     await boundTab(chromeApi,tab.id,tab.url,origin);
-    const refreshedGrant=await controlGrant(origin,tabId);
+    const refreshedGrant=sessionMode
+      ? await sessionAuthorization.require({origin,tabId,command:cmd.name,bridgeEpoch:cmd.bridgeEpoch})
+      : await controlGrant(origin,tabId);
     if(!Number.isFinite(refreshedGrant)||refreshedGrant<=now())throw Error('CONTROL_GRANT_EXPIRED');
     const current=await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
     if(!current.verified||current.origin!==origin||current.conversationId!==conversationId)
@@ -126,7 +135,7 @@ async function dispatchProviderMutation(cmd, chromeApi, {
   }
 }
 export async function dispatchMutation(cmd, chromeApi, {
-  approvals, controlGrant, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
+  approvals, controlGrant, sessionAuthorization, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
   let executionStarted=false;
   // Stage codes are safe metadata: never expose provider text, prompts, or DOM content.
@@ -134,16 +143,20 @@ export async function dispatchMutation(cmd, chromeApi, {
   try {
   exactCommand(cmd);
   if (cmd.name === 'provider_prepare' || cmd.name === 'provider_commit') {
-    return dispatchProviderMutation(cmd,chromeApi,{approvals,controlGrant,stillEnabled,now,uuid});
+    return dispatchProviderMutation(cmd,chromeApi,{approvals,controlGrant,sessionAuthorization,stillEnabled,now,uuid});
   }
-  if (!approvals?.request || typeof controlGrant !== 'function')
+  if (!approvals?.request || (typeof controlGrant !== 'function' && !sessionAuthorization))
     throw Error('BACKGROUND_CONTROL_NOT_CONFIGURED');
   if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
   if (nowExpired(cmd,now)) throw Error('COMMAND_EXPIRED');
   const {tab,origin} = await permittedTab(chromeApi,cmd.args.tabId);
   if (CONTROL_ORIGINS[origin] == null) throw Error('CONTROL_ORIGIN_DENIED');
   await boundTab(chromeApi,tab.id,tab.url,origin);
-  const controlExpires = await controlGrant(origin,tab.id);
+  const sessionState=sessionAuthorization ? await sessionAuthorization.status(cmd.bridgeEpoch) : {active:false};
+  const sessionMode=sessionState.active===true && SESSION_CAPABILITIES.includes(cmd.name);
+  const controlExpires=sessionMode
+    ? await sessionAuthorization.require({origin,tabId:tab.id,command:cmd.name,bridgeEpoch:cmd.bridgeEpoch})
+    : await controlGrant(origin,tab.id);
   if (!Number.isFinite(controlExpires) || controlExpires <= now())
     throw Error('EXPLICIT_CONTROL_GRANT_REQUIRED');
 
@@ -186,11 +199,13 @@ export async function dispatchMutation(cmd, chromeApi, {
     : cmd.name === 'browser_fill'
       ? 'Поле: ' + cmd.args.selector + ' · текст: ' + redact(cmd.args.text.slice(0,80))
       : 'Элемент: ' + String(preflight.text || cmd.args.selector).slice(0,160);
-  stage='APPROVAL';
-  await approvals.request({
-    id:approvalId,command:cmd.name,origin,tabId:tab.id,expires,
-    preview:preview.slice(0,240),contentLength:cmd.args.text?.length || 0
-  });
+  if(!sessionMode) {
+    stage='APPROVAL';
+    await approvals.request({
+      id:approvalId,command:cmd.name,origin,tabId:tab.id,expires,
+      preview:preview.slice(0,240),contentLength:cmd.args.text?.length || 0
+    });
+  }
 
   stage='REVALIDATION';
   if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
@@ -198,7 +213,9 @@ export async function dispatchMutation(cmd, chromeApi, {
   // action; a changed origin, URL, conversation or grant must fail closed.
   if (nowExpired(cmd,now) || now()>=expires) throw Error('APPROVAL_EXPIRED');
   await boundTab(chromeApi,tab.id,tab.url,origin);
-  const refreshedGrant = await controlGrant(origin,tab.id);
+  const refreshedGrant=sessionMode
+    ? await sessionAuthorization.require({origin,tabId:tab.id,command:cmd.name,bridgeEpoch:cmd.bridgeEpoch})
+    : await controlGrant(origin,tab.id);
   if (!Number.isFinite(refreshedGrant) || refreshedGrant<=now())
     throw Error('CONTROL_GRANT_EXPIRED');
 
