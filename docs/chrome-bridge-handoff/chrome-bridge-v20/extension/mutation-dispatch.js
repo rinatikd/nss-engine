@@ -98,18 +98,19 @@ async function dispatchProviderMutation(cmd, chromeApi, {
     if(!(await stillEnabled()))throw Error('BACKGROUND_CONTROL_STOPPED');
 
     const pageArgs=cmd.name==='provider_prepare'
-      ? {adapter,requestId,message:args.message,payloadHash:args.payloadHash,preparedId:args.preparedId,
+      ? {adapter,requestId,epoch,message:args.message,payloadHash:args.payloadHash,preparedId:args.preparedId,
           expiresAt:args.expiresAt,expectedOrigin:origin,expectedConversationId:conversationId,
           controlExpires:refreshedGrant}
-      : {adapter,requestId,payloadHash:args.payloadHash,preparedId:args.preparedId,fencingToken:args.fencingToken,
+      : {adapter,requestId,epoch,payloadHash:args.payloadHash,preparedId:args.preparedId,fencingToken:args.fencingToken,
           expectedOrigin:origin,expectedConversationId:conversationId,controlExpires:refreshedGrant};
     executionStarted=true;
     const result=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs);
     if(cmd.name==='provider_prepare') {
-      if(result?.prepared!==true||result.clickedSend!==false||
+      if(result?.prepared!==true||result.clickedSend!==false||result.requestId!==requestId||
          result.sideEffect!=='composer-filled-no-send'||result.preparedId!==args.preparedId||
          result.payloadHash!==args.payloadHash)throw Error('PROVIDER_PREPARE_RECEIPT_INVALID');
-    } else if(result?.clickedSend!==true||!Number.isFinite(Date.parse(result.clickedAt||''))) {
+    } else if(result?.clickedSend!==true||result.requestId!==requestId||result.preparedId!==args.preparedId||
+      result.payloadHash!==args.payloadHash||!Number.isFinite(Date.parse(result.clickedAt||''))) {
       throw Error('PROVIDER_COMMIT_RECEIPT_INVALID');
     }
     return result;
