@@ -308,6 +308,6 @@ test('provider stages fail closed on denial, conversation change and missing loc
       approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'fixedid'
     }));
     assert.equal(f.state.injections.includes('provider_prepare'),false);
-    assert.equal(f.state.approvalCount,opts.grant?1:0);
+    assert.equal(f.state.approvalCount,opts.grant===false?0:1);
   }
 });
