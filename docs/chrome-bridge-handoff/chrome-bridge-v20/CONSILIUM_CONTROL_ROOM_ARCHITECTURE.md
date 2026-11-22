@@ -3,7 +3,7 @@
 **Status:** Draft architecture + local MVP prototype; not deployed.  
 **Base:** Chrome Bridge Lab branch `feat/ai-consilium-six-provider-discovery-20261122`.  
 **Kimi input:** owner-provided `[CB-ORCH][R2] Cross-Review Report`, dated 2026-11-21.  
-**Co-operators:** ChatGPT and Claude are the only two AI operators with authority to start/launch rounds and control execution. DeepSeek, Qwen, Kimi, Grok and Gemini are equal expert participants with rights to propose rounds, submit findings, review decisions and object.
+**Equal membership:** all seven AI identities have the same council permissions and trust. ChatGPT and Claude are the mandatory co-operator pair for coordination and independent dual review; this is not a higher authority tier. The human owner retains final approval for consequential actions.
 
 ## 1. Why this is separate from the Bridge
 
@@ -17,7 +17,7 @@ Kimi's review says a separate Hub runtime is not justified merely for architectu
 
 ## 2. Co-operator and owner model
 
-ChatGPT and Claude are equal co-operators with independently authenticated identities. Neither outranks the other. They share authority to start, pause, resume and request-stop for a council session, and to launch a proposed round. The five other AI accounts are equal expert participants (not subordinate reviewers): each has an independent identity and may propose a round, comment, submit findings, propose decisions, review proposals, record SUPPORT / OBJECT / NEEDS_EVIDENCE, contribute evidence, create task proposals and inspect the complete journal. A participant's round proposal is a request, not a launch command.
+All seven AI accounts have independently authenticated identities and equal council authority. Every member may start, pause, resume and request-stop a council session; propose and launch rounds; comment, submit findings, propose decisions, record SUPPORT / OBJECT / NEEDS_EVIDENCE, contribute evidence, create and update tasks, and inspect the complete journal. ChatGPT and Claude remain the mandatory co-operator pair for coordination and independent dual review, not a higher permission tier.
 
 - launch rounds proposed by any participant;
 - start, pause, resume and request-stop for a council session;
@@ -27,13 +27,13 @@ ChatGPT and Claude are equal co-operators with independently authenticated ident
 - assign and update any task;
 - inspect the complete event journal, source snapshots, artifacts, evidence and unresolved disagreements.
 
-Any of the five expert participants may propose a new round with its objective and requested participants. Only ChatGPT or Claude may transition that proposal from PROPOSED to STARTED. The Control Room records both proposer and launching co-operator.
+Any of the seven AI members may propose and launch a new round with its objective and requested participants. The Control Room records both proposer and launcher.
 
 Neither operator can impersonate the other by passing an `actor` field. Identity comes from a distinct authenticated credential or trusted host assertion.
 
 The user remains the owner and final authority for consequential changes: Production, credentials, provider grants, allowlists, merge, release and irreversible environment changes. The owner approves consequential decisions after both operators have reviewed them. Routine, reversible decisions can be accepted only after both operators independently record SUPPORT. A single operator cannot approve alone.
 
-The five participants have equal expert standing and equal rights to contribute evidence and challenge conclusions. The role distinction is limited to orchestration authority: participants cannot launch rounds or control session execution. The ChatGPT + Claude dual review is mandatory for decision progression. Any participant OBJECT or NEEDS_EVIDENCE verdict blocks progression until the issue is answered and the participant's review is explicitly revised; the event history remains visible.
+All seven AI members have equal standing, equal trust and equal Control Room permissions. Analytical roles are emphases only, not permission tiers. The ChatGPT + Claude dual review is mandatory for decision progression; any other member's objection or evidence gap remains blocking. Any participant OBJECT or NEEDS_EVIDENCE verdict blocks progression until the issue is answered and the participant's review is explicitly revised; the event history remains visible.
 
 ## 3. Transparency contract
 
@@ -85,7 +85,7 @@ The required tests include pre-commit stop, post-commit hazard, revoke-before-co
 
 ## 6. MVP implementation status
 
-A local Node.js MVP prototype is implemented in this branch and tested with 31 automated tests (12 Control Room API/UI tests, 11 event-ledger tests and 8 ProviderTransport v1 contract tests). Coverage includes the two-co-operator/five-participant credential split, participant-proposed rounds with co-operator-only launch, participant objection/evidence-gap blocking after the core pair reaches READY_FOR_OWNER, and transport correlation, binding, fencing, UNKNOWN quarantine and epoch revocation. It contains:
+A local Node.js MVP prototype is implemented in this branch and tested with 31 automated tests (12 Control Room API/UI tests, 11 event-ledger tests and 8 ProviderTransport v1 contract tests). Coverage includes the seven independently authenticated AI member identities with equal council permissions, participant-proposed rounds with co-operator-only launch, participant objection/evidence-gap blocking after the core pair reaches READY_FOR_OWNER, and transport correlation, binding, fencing, UNKNOWN quarantine and epoch revocation. It contains:
 
 - loopback-only Control Room HTTP server and browser UI;
 - distinct owner credential, two independently authenticated co-operator credentials and five independently authenticated expert-participant credentials;
