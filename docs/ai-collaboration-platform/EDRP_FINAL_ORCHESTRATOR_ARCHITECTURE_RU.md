@@ -544,23 +544,27 @@ R4 нельзя считать пройденным, пока не провер�
 
 ### 17.1. Current verified baseline
 
-PR #111 (Free AI Workbench P0 — architecture and offline task ledger, head 52937cd64752bc5d9faadee13dedbd9cc300fc6b) is a **design + offline prototype**, not an installed multi-agent Workbench. Its declared scope is a local task ledger; it does not implement live LLM calls, browser control, Bridge delivery, Git workspace operations, PowerShell Direct, shell execution or project builds. This boundary is correct and should remain explicit.
+PR #111 (Free AI Workbench P0 — architecture and offline task ledger, head ca53b2e458853f251d372280b9d21283ece85661) is a **design + hardened offline prototype**, not an installed multi-agent Workbench. It remains a local append-only task ledger only; it does not implement a chat UI, live LLM calls, browser control, Bridge delivery, Git workspace operations, PowerShell Direct, shell execution or project builds.
 
-The README's local test example points to C:/Engineering/ChromeBridge-PowerShell-Direct-Validation, not the intended target C:/Engineering/Free-AI-Workbench. That path mismatch means no successful installation or E2E test in the target folder is proven.
+The README test path was corrected to C:/Engineering/Free-AI-Workbench. This is documentation and CI evidence only; no successful installation or E2E test in the target local folder is proven. The last chat-approved read-only target-folder request returned QUEUE_FULL, and no local fallback was used.
 
-### 17.2. Prototype findings
+### 17.2. Current prototype findings (updated 2026-11-22)
 
-The current tools/free-ai-workbench/ledger.mjs is useful for prototyping task transitions, but it must not become the long-term runtime ledger without hardening:
+The current PR #111 branch has addressed several original P0 weaknesses. The latest code and Source checks show:
 
-1. **Unauthenticated actor identity.** Actor and role are event fields supplied by the caller. A task record that says actor=claude is not cryptographic proof that Claude wrote it.
-2. **Stale lock after crash.** An O_EXCL lock is deleted in finally, but finally is not run after power loss or hard process termination. There is no safe owner identity (PID + process start time + process image + machine ID) or recovery state.
-3. **No durable append barrier.** appendFileSync without fsync does not demonstrate that an acknowledged event survives power loss.
-4. **Torn tail.** A partial last JSONL record can make the entire replay fail. No incomplete-tail quarantine, truncation to the last verified offset or recovery manifest exists.
-5. **No idempotent request admission.** Stable request IDs and payload fingerprints are needed to distinguish an identical retry from a conflicting action or a second execution.
-6. **Minimal regression coverage.** The current tests do not demonstrate concurrent writers, stale lock recovery, partial record recovery, disk-full/fsync failure, duplicate delivery, tamper evidence or backup restore.
-7. **No deployment evidence.** There is no verified Git remote/worktree/commit in the target local folder and no Node test result from C:\Engineering\Free-AI-Workbench.
+1. **Unauthenticated actor identity — OPEN.** Actor and role remain event fields supplied by the caller. A record saying actor=claude is not cryptographic proof that Claude wrote it. It remains unacceptable as an authorization authority.
+2. **Stale lock after crash — PARTIALLY MITIGATED, OPEN.** Lock metadata now records PID, host label, acquisition time and a random lock token. A pre-existing lock is deliberately not stolen. PID process-start identity, executable identity, safe stale-lock recovery and owner intervention workflow are still absent; a hard crash can leave a blocking lock.
+3. **Durable append barrier — IMPROVED.** New v2 append writes loop until the full record is written and fsync the journal file before acknowledgement. Directory fsync is best-effort and platform-dependent; power-loss recovery on the target Windows filesystem is not yet demonstrated.
+4. **Torn tail / tamper detection — IMPROVED.** New v2 records include payload fingerprints and a SHA-256 hash chain. Torn final records and hash mismatches fail closed; no automatic truncation/repair occurs. This is unkeyed tamper evidence, not protection against an administrator rewriting the complete journal and recomputing the chain.
+5. **Idempotent request admission — IMPLEMENTED FOR THE OFFLINE LEDGER.** Stable requestId + payload fingerprint make identical retries idempotent; conflicting reuse is rejected. This does not yet propagate through a UI, EDRP API, Bridge adapter or worker because those integrations are not implemented.
+6. **Regression coverage — EXPANDED, STILL INCOMPLETE.** The Node suite is 11/11 PASS and includes same-request idempotency, conflicting reuse, hash-chain verification, tamper rejection, torn-tail fail-closed behavior, lock refusal, legacy-to-v2 continuation, rejected-transition byte stability and no-execution scope. Concurrent-process stress, stale-lock recovery, disk-full/fsync fault injection, backup/restore and Windows filesystem durability remain untested.
+7. **No deployment evidence — OPEN.** No verified Git remote/worktree/commit in C:/Engineering/Free-AI-Workbench and no local Windows execution result are available.
 
-These are reasons to keep the prototype offline, not reasons to discard it.
+Latest CI evidence at head ca53b2e:
+- Source checks run 45044451943 — PASS (includes repository portable tests and 11/11 Workbench Node tests).
+- CCTV CLI input/output guards run 45044451944 — PASS.
+
+These changes make the offline prototype safer, but do not change its scope or trust level. Keep it offline and do not use it to authorize or dispatch operations.
 
 ### 17.3. Target relationship to EDRP
 
