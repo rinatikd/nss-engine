@@ -27,7 +27,7 @@ function validateRequestId(value) {
   if (typeof value !== 'string' || !REQUEST_ID.test(value)) throw Error('INVALID_TRANSPORT_REQUEST_ID');
   return value;
 }
-function validateResult(result, { requestId, binding, states, stage }) {
+function validateResult(result, { requestId, binding, states }) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) throw Error('INVALID_TRANSPORT_RESULT');
   if (result.apiVersion !== PROVIDER_TRANSPORT_API_VERSION) throw Error('TRANSPORT_RESULT_VERSION_MISMATCH');
   if (result.requestId !== requestId) throw Error('TRANSPORT_CORRELATION_MISMATCH');
@@ -73,7 +73,7 @@ export function createProviderTransportV1(adapter) {
         throw Error('TRANSPORT_CONTENT_HASH_MISMATCH');
       }
       const result = await adapter.prepare(clone({ ...request, requestId, binding, content }));
-      return validateResult(result, { requestId, binding, states: PREPARE_STATES, stage: 'prepare' });
+      return validateResult(result, { requestId, binding, states: PREPARE_STATES });
     },
 
     async commit(request) {
@@ -83,7 +83,7 @@ export function createProviderTransportV1(adapter) {
       requireString(request.prepareId, 'PREPARE_ID_REQUIRED', 128);
       requireString(request.fencingToken, 'FENCING_TOKEN_REQUIRED', 512);
       const result = await adapter.commit(clone({ ...request, requestId, binding }));
-      return validateResult(result, { requestId, binding, states: COMMIT_STATES, stage: 'commit' });
+      return validateResult(result, { requestId, binding, states: COMMIT_STATES });
     },
 
     async query(request) {
@@ -92,7 +92,7 @@ export function createProviderTransportV1(adapter) {
       const binding = validateBinding(request.binding);
       requireString(request.quarantineId, 'QUARANTINE_ID_REQUIRED', 128);
       const result = await adapter.query(clone({ ...request, requestId, binding }));
-      return validateResult(result, { requestId, binding, states: QUERY_STATES, stage: 'query' });
+      return validateResult(result, { requestId, binding, states: QUERY_STATES,  });
     },
 
     async revoke(request) {
