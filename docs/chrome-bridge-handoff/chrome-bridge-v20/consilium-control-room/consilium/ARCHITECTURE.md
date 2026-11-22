@@ -11,13 +11,13 @@
 
 The event ledger is the durable source of truth. UI views are projections. Each write includes a stable request ID; repeated identical writes return the prior event, while reuse with a different payload returns `IDEMPOTENCY_CONFLICT`.
 
-Actor identity is derived from the bearer token. Request bodies cannot assign or escalate actor roles. The required identities are the owner, ChatGPT operator and Claude operator. Other providers are participants with equal contributor capabilities.
+Actor identity is derived from the bearer token. Request bodies cannot assign or escalate actor roles. The required identities are the owner, ChatGPT operator and Claude operator. DeepSeek, Qwen, Kimi, Grok and Gemini are also operators with the exact same operational capabilities. ChatGPT and Claude form the mandatory core review pair; any additional operator may add a verdict and any objection/evidence-gap verdict blocks acceptance.
 
 ## Decision flow
 
 A contributor may propose a decision. ChatGPT and Claude each submit their own review verdict. Routine reversible decisions become accepted only after both support. Consequential decisions move to `READY_FOR_OWNER` after both support and require a distinct owner approval event. Objections and missing evidence remain visible; a revised verdict references its previous review event and preserves the old verdict in history.
 
-Tasks can be created only from accepted decisions. The assigned contributor may update their task. Marking a task `VERIFIED` requires a 40- or 64-character commit SHA and at least one evidence reference.
+Tasks can be created only from accepted decisions. Any of the seven operators may update a task; assignee remains ownership metadata rather than an access restriction. Marking a task `VERIFIED` requires a 40- or 64-character commit SHA and at least one evidence reference.
 
 ## Stop contract
 
