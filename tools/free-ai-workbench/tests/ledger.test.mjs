@@ -95,7 +95,7 @@ test('no task execution or model invocation, only local journal writes',()=>{
   for(const event of [create,assign,submit,accept])apply(f.file,event);
   assert.equal(getState(f.file)[id].state,'ACCEPTED');
   assert.equal(readFileSync(f.file,'utf8').trim().split('\n').length,4);
-  assert.throws(()=>apply(f.file,accept),/INVALID_TRANSITION/);
+  assert.throws(()=>apply(f.file,{...accept,requestId:'req_accept_second'}),/INVALID_TRANSITION/);
   assert.equal(readFileSync(f.file,'utf8').trim().split('\n').length,4);
  }finally{f.cleanup();}
 });
