@@ -245,8 +245,8 @@ export class ProviderJournal {
     const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
       ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
       ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
-      ...(tx.state==='PREPARED'?{fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
-      ...(tx.clickedAt?{clickedAt:tx.clickedAt,clickedSend:true}:{}),
+      ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
+      ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
       ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{})};
     return out;
   }
