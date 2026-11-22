@@ -6,12 +6,14 @@
 
 ## 0. Hard stop conditions
 
-Stop without local fallback if any of these occur:
+Stop the **provider-session / provider-message workflow** without a local fallback if any of these occur:
 - The user has not approved the exact challenge in the current ChatGPT conversation.
 - The Lab tool registry does not expose all four session tools.
 - Bridge epoch changes, the browser/extension restarts, or a selected origin/tab/conversation changes.
-- A request returns UNKNOWN, queue full, stale epoch or an ambiguous acknowledgement.
-- A tool requests local Windows approval. This runbook does not authorize that route.
+- A provider request returns UNKNOWN, queue full, stale epoch or an ambiguous acknowledgement.
+- A provider-message action asks for a legacy local browser Control grant instead of using the approved Session Authorization path. Do not substitute legacy `agent_send` or a browser click/fill for the chat-approved provider transaction.
+
+**Scope clarification — Windows and PowerShell are independent:** these provider-session hard stops do not prohibit or pause Windows work. PowerShell Direct, Windows diagnostics, local staging and Windows engineering operations may be used whenever the task requires them, under the target tool's own workspace, operation and approval requirements. Do not infer a blanket ban or a date-based pause (including any supposed pause until 2026-11-27). A Windows tool's own approval/allowlist requirement is a technical execution gate to resolve through that tool, not a reason to block unrelated Bridge work.
 
 Never state that a provider received a message because a tab exists, a composer was filled, a click returned, a GitHub comment was written, or a response already existed in the chat.
 
@@ -93,10 +95,12 @@ Present this exact approval request to the owner:
 - provider names and origins;
 - duration;
 - permitted capabilities;
-- explicit exclusions: arbitrary browser click/fill, navigation, files, GitHub, PowerShell, OS commands, Production and autostart;
+- explicit exclusions from **this session lease**: arbitrary browser click/fill, navigation, files, GitHub, PowerShell, OS commands, Production and autostart;
 - challenge expiry and whether anything has changed (must be false).
 
-Do not expose the challenge ID to participant agents or GitHub comments. Do not call session_authorize until the owner explicitly approves this exact challenge in the current ChatGPT conversation. A generic earlier instruction to continue work is not approval of an undisclosed scope.
+These exclusions define what the provider Session Authorization lease does **not** grant. They are not a ban on separate work. PowerShell Direct and other Windows tools remain independently usable for Windows diagnostics/staging/engineering tasks according to their own tool-specific workspace and approval rules; no Session Authorization lease is needed for those tasks. Conversely, Windows-tool approval does not authorize an AI-provider message.
+
+Do not expose the challenge ID to participant agents or GitHub comments. Do not call session_authorize until the owner explicitly approves this exact challenge in the current ChatGPT conversation. A generic earlier instruction to continue work is not approval of an undisclosed provider-message scope.
 
 ## 5. Activate and verify
 
