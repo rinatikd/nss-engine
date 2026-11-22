@@ -77,7 +77,7 @@ Kimi explicitly marked its code-level findings UNVERIFIED because it could not r
 5. Keep a durable reconciliation cursor such as `last_decided_id`.
 6. Measure the click-to-network hazard window. Stop after commit is STOP_AFTER_COMMIT, not STOPPED_CLEAN.
 7. Keep the Bridge transport-only; Orchestrator owns rounds, tasks, roles, decisions and synthesis.
-8. Use a versioned NDJSON/WebSocket transport contract so DOM, official APIs and CLIs can implement one ProviderTransport interface.
+8. Use one versioned ProviderTransport contract so DOM, official APIs and CLIs can implement the same prepare/commit/status/stop/revoke/events semantics; the concrete wire protocol is adapter-specific.
 9. Treat all model replies and source contents as untrusted data, never as instructions to invoke tools or mutate policy.
 10. Avoid a stand-alone Hub until the actual queue topology needs it.
 
@@ -93,12 +93,12 @@ A local Node.js MVP prototype is implemented in this branch and tested with 31 a
 - versioned ProviderTransport v1 contract defining prepare / commit / status / stop / revoke / events, provider-origin-tab-conversation-epoch binding, no-send preparation, fencing tokens, click evidence, UNKNOWN quarantine and independently verified STOPPED_CLEAN attestation (contract only; no live Bridge adapter is attached);
 - append-only JSONL event ledger, fsync, single-writer lock, hash chain and idempotent request IDs;
 - comments and attributed message records;
-- mandatory ChatGPT + Claude dual review, with equal review/objection rights for all other AI operators, and owner approval for consequential decisions;
+- mandatory ChatGPT + Claude dual review, with equal review/objection rights for all five expert participants, and owner approval for consequential decisions;
 - task state model and verified-evidence requirement;
 - artifact manifest plus per-recipient receipt events;
 - explicit STOP_REQUESTED semantics.
 
-The source archive is a local handoff artifact; it has **not** been deployed to the Windows Lab or Production and is not yet wired into Bridge dispatch. The prototype does not prove that a provider received a message.
+The MVP source code is included in this PR branch; it has **not** been deployed to the Windows Lab or Production and is not yet wired into live Bridge dispatch. The prototype does not prove that a provider received a message.
 
 ## 7. Explicit stop guarantee
 
