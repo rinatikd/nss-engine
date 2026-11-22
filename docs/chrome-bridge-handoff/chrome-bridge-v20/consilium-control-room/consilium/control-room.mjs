@@ -18,7 +18,7 @@ const ACTOR_TOKENS = [
   ['CONSILIUM_GEMINI_TOKEN', { id: 'gemini', role: 'participant' }]
 ];
 const TOKEN_MIN = 32;
-const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'participant', qwen: 'participant', kimi: 'participant', grok: 'participant', gemini: 'participant' };
+const ACTOR_ROLES = { owner: 'owner', chatgpt: 'operator', claude: 'operator', deepseek: 'operator', qwen: 'operator', kimi: 'operator', grok: 'operator', gemini: 'operator' };
 const MAX_BODY = 128 * 1024;
 const SECRET = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+\/-]{16,}|\b(?:sk|rk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{16,}/i;
 
@@ -213,7 +213,6 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
         if (!validId(body.taskId) || !validString(body.status, 32)) throw Error('INVALID_TASK_STATE');
         const task = ledger.snapshot().state.tasks.find(x => x.id === body.taskId);
         if (!task) throw Error('TASK_NOT_FOUND');
-        if (actor.role === 'participant' && task.assignee !== actor.id) throw Error('TASK_ASSIGNEE_REQUIRED');
         const commitSha = body.commitSha || null;
         const evidence = body.evidence || [];
         if (!Array.isArray(evidence) || evidence.length > 50 || evidence.some(x => !validString(x, 2000))) throw Error('INVALID_TASK_EVIDENCE');
