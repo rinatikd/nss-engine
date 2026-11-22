@@ -39,6 +39,13 @@ jobs:
             (Join-Path (Get-Location) 'deployment/build-rc-final-lab-package.ps1'),
             [ref]$null, [ref]$parseErrors)
           if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+      - name: Verify MCP registry, agent dispatch and Session Authorization
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          node --test tests/bridge.test.mjs tests/session-authorization.test.mjs tests/provider-journal.test.mjs tests/send-journal.test.mjs tests/send-outcome.test.mjs tests/agent-send-concurrency.test.mjs
+          node --check server/bridge.mjs
+          node --check server/tools.mjs
+          node --check extension/session-authorization.js
       - name: Independent RC1 regression matrix
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
