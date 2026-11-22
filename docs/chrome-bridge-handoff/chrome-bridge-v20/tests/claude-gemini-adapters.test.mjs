@@ -39,9 +39,15 @@ test('selftest reveals bounded metadata-only send census, never labels, input or
   assert.doesNotMatch(section, /innerText|textContent|\.value|aria-label'\)/);
 });
 
-test('candidate-only provider adapters remain read-only', () => {
-  for (const name of ['grok','qwen','cursor','aistudio']) {
+test('only non-council web tools remain candidate-only; council selector gaps fail closed', () => {
+  for (const name of ['cursor','aistudio']) {
     assert.equal(DEFAULT_ADAPTERS[name].send, '');
     assert.equal(DEFAULT_ADAPTERS[name].stop, '');
+  }
+  for (const name of ['grok','qwen','kimi']) {
+    assert.ok(DEFAULT_ADAPTERS[name].origin);
+    assert.equal(DEFAULT_ADAPTERS[name].send, '');
+    assert.equal(DEFAULT_ADAPTERS[name].stop, '');
+    assert.equal(DEFAULT_ADAPTERS[name].reply, '');
   }
 });

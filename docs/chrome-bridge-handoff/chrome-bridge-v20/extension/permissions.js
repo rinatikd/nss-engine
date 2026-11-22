@@ -2,12 +2,13 @@ export const CONTROL_ORIGINS = Object.freeze({
   'https://claude.ai': 'claude',
   'https://gemini.google.com': 'gemini',
   'https://chat.deepseek.com': 'deepseek',
-});
-// Candidate sites may be listed and calibrated, but are NOT allowed to send,
-// navigate or modify a page until separately reviewed and explicitly enabled.
-export const DISCOVERY_ONLY_ORIGINS = Object.freeze({
   'https://grok.com': 'grok',
   'https://chat.qwen.ai': 'qwen',
+  'https://www.kimi.ai': 'kimi',
+});
+// Cursor Cloud Agents is not part of the seven-account chat council.
+// All six provider origins use the same per-origin Control grant semantics.
+export const DISCOVERY_ONLY_ORIGINS = Object.freeze({
   'https://cursor.com': 'cursor',
 });
 export const providerForOrigin = (origin) =>

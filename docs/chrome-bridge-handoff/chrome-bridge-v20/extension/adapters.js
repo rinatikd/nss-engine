@@ -34,10 +34,9 @@ export const DEFAULT_ADAPTERS = {
     composer: 'textarea.ds-scroll-area', send: 'div[role="button"].ds-button--primary.ds-button--filled',
     stop: 'button[aria-label="Stop response"]', reply: '.ds-markdown',
   },
-  // Candidate-only adapters: no new CONTROL_ORIGINS are granted by this package.
-  // Their CSS selectors require live calibration before enabling write operations.
+  // Equal Control-origin status; provider DOM selectors still require calibration.
   grok: {
-    label: 'Grok (candidate, read-only)', origin: 'https://grok.com', newChatUrl: 'https://grok.com/',
+    label: 'Grok', origin: 'https://grok.com', newChatUrl: 'https://grok.com/',
     composer: 'textarea, [contenteditable="true"][role="textbox"]',
     send: '', stop: '', reply: '',
   },
@@ -50,8 +49,13 @@ export const DEFAULT_ADAPTERS = {
     send: '', stop: '', reply: '',
   },
   qwen: {
-    label: 'Qwen (candidate, read-only)', origin: 'https://chat.qwen.ai', newChatUrl: 'https://chat.qwen.ai/',
+    label: 'Qwen', origin: 'https://chat.qwen.ai', newChatUrl: 'https://chat.qwen.ai/',
     composer: 'textarea, [contenteditable="true"][role="textbox"]',
+    send: '', stop: '', reply: '',
+  },
+  kimi: {
+    label: 'Kimi', origin: 'https://www.kimi.ai', newChatUrl: 'https://www.kimi.ai/',
+    composer: 'textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"]',
     send: '', stop: '', reply: '',
   },
   aistudio: {
