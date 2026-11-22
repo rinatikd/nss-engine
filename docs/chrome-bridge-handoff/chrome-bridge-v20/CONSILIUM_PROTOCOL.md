@@ -1,7 +1,7 @@
 # Six-model AI consortium protocol
 
 **Status:** protocol draft for the Chrome Bridge Lab  
-**Priority roster:** Claude, DeepSeek, Qwen, Kimi, Grok, Gemini
+**Equal council participants:** Claude, DeepSeek, Qwen, Kimi, Grok, Gemini
 
 ## Goal
 
@@ -18,7 +18,7 @@ Use multiple independent assistants to review one bounded engineering task, chal
 | Grok | Adversarial counterexamples, assumptions challenge and independent second opinion |
 | Gemini | Independent verification, structured comparison and factual cross-check |
 
-Roles are defaults, not model capability guarantees. Assignments may be rotated to reduce anchoring.
+Roles are areas of emphasis only, not a hierarchy or permission tier. All six participants have equal status and the same Control-origin policy. Assignments may be rotated to reduce anchoring.
 
 ## Work item envelope
 
@@ -81,11 +81,13 @@ For text-only handoff, use explicit bounded blocks:
 
 For real files, transfer only an explicitly selected artifact through a verified file-transfer mechanism. Do not claim that a path, filename or link alone proves the recipient received the file. Binary attachments and large repositories need a separately verified transfer route.
 
-## Current activation tiers
+## Equal Control model and readiness
 
-- **Control-capable origin:** Claude, Gemini and DeepSeek are in the approved-origin map. Each still requires an active, unexpired local per-origin grant and per-action approval.
-- **Discovery-only candidate:** Qwen, Grok and Kimi. Their presence in the roster or browser does not enable binding, sending, navigation or mutation. Selectors stay blank until reviewed.
-- **Unavailable/stale participant:** a closed tab, stale tab ID, exhausted provider quota or non-responsive connector must be marked unavailable for that task rather than counted as a vote.
+All six council origins (Claude, Gemini, DeepSeek, Grok, Qwen and Kimi) use the same exact-origin `CONTROL_ORIGINS` policy. Each uses the same local per-origin grant, expiry, revocation and per-action approval rules. No participant is assigned a weaker permission tier because of provider brand or historical adapter maturity.
+
+Technical readiness remains separate from permission eligibility. A tab may exist while its composer/send/reply selectors are uncalibrated, a provider may be rate-limited, or the current bridge endpoint may not expose a requested operation. Those conditions must be reported as technical availability/readiness, not a lower trust class. Do not send until the exact selector path is validated and the normal local approval is active.
+
+A closed tab, stale tab ID, exhausted provider quota or non-responsive connector must be marked unavailable for that task rather than counted as a vote.
 
 ## Release gates
 
