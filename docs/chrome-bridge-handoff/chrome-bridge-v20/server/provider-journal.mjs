@@ -172,7 +172,8 @@ export class ProviderJournal {
       if(old.state==='PREPARED'&&old.bridgeEpoch===this.bridgeEpoch&&Date.parse(old.expiresAt)>this.now()) {
         return {duplicate:true,transaction:this.status(identity),fencingToken:this.#fencingToken(old)};
       }
-      if(old.state==='UNKNOWN'||old.state==='SENT'||old.state==='REVOKED'||old.state==='STOPPED_CLEAN') {
+      if(['PREPARING','COMMITTING','UNKNOWN','SENT','REVOKED','STOPPED_CLEAN',
+          'NOT_PERFORMED','BLOCKED','STOP_REQUESTED','STOP_AFTER_COMMIT'].includes(old.state)) {
         return {duplicate:true,transaction:this.status(identity)};
       }
       throw Error('PROVIDER_REQUEST_IN_PROGRESS');
