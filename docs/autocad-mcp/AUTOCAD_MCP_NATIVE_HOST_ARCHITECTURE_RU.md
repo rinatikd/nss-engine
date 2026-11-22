@@ -76,6 +76,42 @@ MCP transport и модельный оркестратор не должны в�
 
 Дополнительная важная оговорка: ADR U-C4N от 2026-11-03 откладывает native worker до 1.9.0 и разрешает строить его только при одном из двух заранее заданных условий: доказанное ускорение минимум 3× относительно COM bulk job на одинаковом 1,000-line workload либо доказанная невозможность обеспечить надёжный rollback через UNDO marks. Сам .NET spike в этом ADR не запускался, worker_spike.json и реальные timing evidence отсутствуют. Следовательно, этот ADR не доказывает ни преимущество .NET по скорости, ни успешность конкретной реализации. Он показывает правильный подход: заранее определить измеримые критерии, отдельно учитывать SECURELOAD/подпись/сборки под каждую AutoCAD release family и не объявлять native worker проверенным до реального AutoCAD E2E. Для нашего проекта главный аргумент за native host — не обещание скорости, а настоящая Database.Transaction, безопасная документная привязка и переиспользование C#/.NET инженерного кода APS/NSS; это тоже должно пройти измерения и fault tests.
 
+## 2.1. OmniBridge MCP — выводы из ролика Claude и аудита исходников
+
+Репозиторий: https://github.com/ayoubmep/omnibridge-mcp (MIT, ветка main; просмотрено 2026-11-23). Это не просто рекламный макет: README и `docs/status.md` описывают конкретные E2E проверки. При этом собственный статус проекта датирован 2026-11-15, версия 0.1.0, Python 3.12 / MCP SDK 2.3 — это заявление автора, не наша независимая репродукция.
+
+### Что действительно интересно и подтверждено опубликованным отчётом
+
+- Один MCP gateway публикует пять универсальных tools: `cad_apps`, `cad_skill`, `cad_read`, `cad_modify`, `cad_screenshot`. Вместо сотен жёстко заданных CAD-команд модель получает короткий скриптовый интерфейс и guide по API конкретной программы.
+- Три способа интеграции: in-process socket bridge на главном потоке приложения; внешний runner для COM/API; специальные каналы Revit pyRevit Routes и Unreal remote execution.
+- Общий core ставит работу в очередь и исполняет CAD/3D API на главном потоке приложения. Для in-app bridge есть localhost token, bounded text/request sizes, timeout и undo wrapper для modify.
+- По `docs/status.md` автор сообщает E2E: AutoCAD 2024; Revit 2026; Archicad 29; Blender 5.2.4; Unreal 5.8; SOLIDWORKS 2025. Описан межпрограммный пример: контур из AutoCAD использован для создания 76 уровней, 76 плит и 602 стен в Revit; аналогичная башня создана в Blender и Unreal. Это гораздо более содержательная проверка, чем просто список из «28 поддерживаемых приложений».
+- Важное ограничение: AutoCAD проверялся на версии 2024, не на нашей AutoCAD 2026. Остальные строки registry не означают E2E готовность: docs/status прямо перечисляет множество adapters как written but not run. HTTP transport также не проверен удалённым клиентом.
+
+### Что не следует копировать без изменений
+
+1. `cad_read` — не sandbox и не гарантия read-only. Он исполняет произвольный Python script в COM namespace; такой код технически способен менять чертёж. MCP annotation `readOnlyHint=True` — подсказка клиенту, а не enforcement на стороне сервера.
+2. `cad_modify` полагается на то, что MCP-клиент спросит пользователя об approval. В самом сервере нет обязательного approval token / operation scope / независимой policy gate. Скрипт может выполнять любые действия, доступные COM API.
+3. AutoCAD `wrap` только пытается вызвать `StartUndoMark/EndUndoMark`, проглатывая исключения. Это grouping для Undo, не транзакция и не гарантированный rollback. Если скрипт упал после частичных изменений, wrapper не выполняет компенсирующий UNDO.
+4. В AutoCAD flavour document берётся из `ActiveDocument` при подключении, но `command()` и undo wrapper повторно обращаются к текущему `ActiveDocument`. При переключении активного чертежа между операциями возможно расхождение document scope; нет opaque document ID/revision fence.
+5. COM runner вызывает `CoInitialize()` в отдельном helper process на каждый запрос; в показанном пути нет симметричного `CoUninitialize()`. COM message filter и retry полезны, но сами по себе не решают неизвестный результат после timeout/потери ответа.
+6. Сценарии Python не sandboxed — это прямо признано upstream. Localhost token защищает in-app socket bridge, но HTTP MCP transport в README прямо указан без собственной аутентификации. Выносить такой HTTP endpoint в tunnel без дополнительной identity/authentication нельзя.
+7. Один undo step — полезная UX-функция, но не atomic transaction. Undo mark не обеспечивает ACID и не возвращает побочные эффекты файлов, команд, xref или внешних приложений.
+
+### Архитектурное решение для нашего проекта
+
+**Перенять у OmniBridge универсальность orchestration layer и skill-driven scripting как исследовательский/экспертный режим; не перенимать unrestricted script execution как production security boundary.**
+
+Наш план:
+- Сохранить provider-neutral MCP gateway и единый registry capabilities для всех семи ИИ.
+- Ввести два разных API-профиля: `SAFE_TYPED` (основной, типизированные операции, серверная policy enforcement) и `EXPERT_SCRIPT` (ограниченный диагностический режим на disposable DWG/копиях, отключён по умолчанию, каждое выполнение требует явного approval).
+- Сохранить идею app-specific `cad_skill` как справочник API, единиц, рецептов и известных ограничений, но skills не дают разрешений и не заменяют валидацию.
+- Для AutoCAD 2026 оставить наш .NET host adapter: Document/Database binding, CAD main-thread dispatch, DocumentLock, настоящая Database.Transaction, read-back evidence и durable request journal. OmniBridge COM runner может служить сравнительным baseline и compatibility adapter, не production authority.
+- Для Revit/Blender/Unreal/Archicad позже добавить отдельные app adapters под единый межпрограммный workflow contract. Не обещать cross-app atomicity: каждый app operation получает собственный job/evidence; workflow engine управляет зависимостями, checkpoints и компенсационными действиями.
+- До любого установки/подключения провести отдельный security review и disposable test. Сейчас OmniBridge не устанавливаем и не меняем пользовательскую конфигурацию.
+
+Источники: https://github.com/ayoubmep/omnibridge-mcp/blob/main/README.md ; https://github.com/ayoubmep/omnibridge-mcp/blob/main/docs/status.md ; https://github.com/ayoubmep/omnibridge-mcp/blob/main/docs/protocol.md ; https://github.com/ayoubmep/omnibridge-mcp/blob/main/src/omnibridge/runners/com.py ; https://github.com/ayoubmep/omnibridge-mcp/blob/main/src/omnibridge/server.py
+
 ## 3. Контракты и идентичность
 
 Каждый запрос должен содержать:
