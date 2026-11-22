@@ -92,7 +92,7 @@ test('viewer UI stays local, read-only and resistant to imported HTML injection'
 
 
 test('committed synthetic sample ledger verifies as accepted without external dependencies',async()=>{
- const samplePath=path.join(path.dirname(fileURLToPath(import.meta.url)),'../examples/sample-ledger.jsonl');
+ const samplePath=path.join(path.dirname(fileURLToPath(import.meta.url)),'../examples/sample-ledger.txt');
  const raw=readFileSync(samplePath,'utf8');
  const result=await projectLedger(raw);
  assert.equal(result.integrity,'V2_CHAIN_VERIFIED');
