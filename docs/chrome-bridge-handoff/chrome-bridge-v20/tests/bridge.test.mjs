@@ -92,6 +92,90 @@ test('session_request rejects a Claude-less session before contacting the browse
 });
 
 
+test('session challenge authorizes only selected providers and round-trips status and revoke', async () => {
+  const s = await setup();
+  const tabs = [
+    { tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' },
+    { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' },
+    { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' }
+  ];
+  const browserKey = 'b'.repeat(64);
+  const pause = () => new Promise(resolve => setTimeout(resolve, 20));
+  const ack = async (command, result) => {
+    const response = await s.post('/bridge/result', {id:command.id,result}, browserKey);
+    assert.equal(response.status, 200);
+  };
+  try {
+    // Challenge request performs a real server queue round-trip for browser_tabs.
+    const challengePoll = s.poll();
+    await pause();
+    const challengeRequest = s.rpc('session_request', {
+      durationMinutes: 60, providers: ['claude', 'grok']
+    });
+    const discovery = await challengePoll;
+    assert.equal(discovery.name, 'browser_tabs');
+    await ack(discovery, tabs);
+    const challengeResponse = await challengeRequest;
+    assert.notEqual(challengeResponse.result.isError, true);
+    const challenge = JSON.parse(challengeResponse.result.content[0].text);
+    assert.equal(challenge.ready, true);
+    assert.equal(challenge.approvalRequired, true);
+    assert.equal(challenge.changedNothing, true);
+    assert.deepEqual(challenge.providers, ['claude', 'grok']);
+    assert.deepEqual(challenge.origins, ['https://claude.ai', 'https://grok.com']);
+    assert.deepEqual(challenge.capabilities, ['agent_send', 'provider_prepare', 'provider_commit']);
+
+    // Authorize rechecks the provider tab set before dispatching session_authorize.
+    const recheckPoll = s.poll();
+    await pause();
+    const authorizeRequest = s.rpc('session_authorize', {challengeId:challenge.challengeId});
+    const recheck = await recheckPoll;
+    assert.equal(recheck.name, 'browser_tabs');
+    await ack(recheck, tabs);
+    const authorizePoll = s.poll();
+    const authorizeCommand = await authorizePoll;
+    assert.equal(authorizeCommand.name, 'session_authorize');
+    assert.equal(authorizeCommand.args.sessionId, challenge.sessionId);
+    assert.equal(authorizeCommand.args.durationMinutes, 60);
+    assert.deepEqual(authorizeCommand.args.origins, challenge.origins);
+    await ack(authorizeCommand, {
+      active:true,
+      sessionId:challenge.sessionId,
+      bridgeEpoch:challenge.bridgeEpoch,
+      origins:challenge.origins,
+      capabilities:challenge.capabilities
+    });
+    const authorized = JSON.parse((await authorizeRequest).result.content[0].text);
+    assert.equal(authorized.active, true);
+    assert.equal(authorized.challengeId, challenge.challengeId);
+
+    const statusPoll = s.poll();
+    await pause();
+    const statusRequest = s.rpc('session_status');
+    const statusCommand = await statusPoll;
+    assert.equal(statusCommand.name, 'session_status');
+    await ack(statusCommand, {
+      active:true,
+      sessionId:challenge.sessionId,
+      bridgeEpoch:challenge.bridgeEpoch,
+      origins:challenge.origins,
+      capabilities:challenge.capabilities
+    });
+    const status = JSON.parse((await statusRequest).result.content[0].text);
+    assert.equal(status.active, true);
+    assert.deepEqual(status.origins, challenge.origins);
+
+    const revokePoll = s.poll();
+    await pause();
+    const revokeRequest = s.rpc('session_revoke');
+    const revokeCommand = await revokePoll;
+    assert.equal(revokeCommand.name, 'session_revoke');
+    await ack(revokeCommand, {revoked:true});
+    const revoked = JSON.parse((await revokeRequest).result.content[0].text);
+    assert.equal(revoked.revoked, true);
+  } finally { await s.close(); }
+});
+
 test('loadConfig pins only a validated explicit extension ID in temporary config', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-bridge-extid-'));
   const old = process.env.CHROME_BRIDGE_EXTENSION_ID;
