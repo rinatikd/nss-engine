@@ -31,6 +31,11 @@ try {
   // Exact schema equality above is the contract; a fixed tool-count gate would
   // reject legitimate additions such as Session Authorization and ProviderTransport.
   console.log(JSON.stringify({ ok: true, port, count: tools.length, fullSchemas: true, browserStatus }));
-} catch { console.error('HEALTH_FAILED: registry, queue, transport or execution gate'); process.exitCode = 1; }
+} catch (error) {
+  // Preserve actionable diagnostics from disposable CI/Lab probes without dumping request headers or credentials.
+  const detail = String(error?.stack || error?.message || error || 'unknown error').slice(0, 6000);
+  console.error('HEALTH_FAILED:', detail);
+  process.exitCode = 1;
+}
 finally { if (server) await new Promise(resolve => server.close(resolve)); }
 
