@@ -54,18 +54,30 @@ test('grant expires and does not automatically renew',async()=>{
  assert.equal(await g.require('https://claude.ai',9),null);
 });
 
-test('status count changes after grant, revoke, expiry and clear without exposing credentials',async()=>{
+test('status returns only unexpired grants whose tab still matches the approved origin',async()=>{
  const chrome=chromeMock();
  let now=1700000000000;
  const grants=new BackgroundControlGrants(chrome,{now:()=>now});
- assert.equal(await grants.activeCount(),0);
- await grants.grant({tabId:9,durationMinutes:15,localGesture:true});
+ assert.deepEqual(await grants.activeGrants(),[]);
  await grants.grant({tabId:10,durationMinutes:60,localGesture:true});
+ await grants.grant({tabId:9,durationMinutes:15,localGesture:true});
+ assert.deepEqual(await grants.activeGrants(),[
+  {tabId:9,origin:'https://claude.ai',expiresAt:now+15*60*1000},
+  {tabId:10,origin:'https://claude.ai',expiresAt:now+60*60*1000}
+ ]);
  assert.equal(await grants.activeCount(),2);
  await grants.revoke(9);
- assert.equal(await grants.activeCount(),1);
+ assert.equal((await grants.activeGrants()).length,1);
  now+=60*60*1000;
- assert.equal(await grants.activeCount(),0);
+ assert.deepEqual(await grants.activeGrants(),[]);
  await grants.clear();
  assert.equal(await grants.activeCount(),0);
+});
+
+test('status ignores stale grants for closed, changed or no-longer-permitted tabs',async()=>{
+ const chrome=chromeMock();
+ const grants=new BackgroundControlGrants(chrome);
+ await grants.grant({tabId:9,durationMinutes:15,localGesture:true});
+ chrome.tabs.get=async()=>({id:9,url:'https://example.com/'});
+ assert.deepEqual(await grants.activeGrants(),[]);
 });

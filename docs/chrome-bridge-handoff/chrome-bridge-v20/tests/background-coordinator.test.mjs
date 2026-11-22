@@ -5,13 +5,21 @@ import {startBackgroundTransport, installBackgroundCoordinator} from '../extensi
 function fakeChrome(data={}) {
   const listeners=[];
   const calls=[];
+  const session={};
   return {
     calls,listeners,
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
       get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
       set:async next=>{Object.assign(data,next);calls.push(['set',next]);}
+    },session:{
+      setAccessLevel:async opts=>calls.push(['session-restrict',opts.accessLevel]),
+      get:async key=>({[key]:session[key]}),
+      set:async next=>Object.assign(session,next),
+      remove:async key=>{delete session[key];}
     }},
+    tabs:{get:async id=>({id,url:'https://claude.ai/chat/test'})},
+    permissions:{contains:async()=>true},
     runtime:{
       id:'ext-mock-id',
       getURL:part=>'chrome-extension://ext-mock-id/'+part,
@@ -74,6 +82,43 @@ test('extension control window may have sender.tab and still receive coordinator
   c.listeners[0]({target:'bridge-coordinator',type:'approval-list'},sender,x=>response=x);
   assert.deepEqual(response,{pending:[]});
 });
+test('background-control-status returns profile flags and effective per-tab grants to control page only',async()=>{
+  const data={
+    bridgeBackgroundMode:true,
+    bridgeMutationLabMode:true,
+    bridgeConnectionDesired:true,
+    sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}
+  };
+  const c=fakeChrome(data);
+  await c.storage.session.set({bridgeBackgroundControlGrants:{
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  }});
+  installBackgroundCoordinator(c);
+  const sender={id:c.runtime.id,url:c.runtime.getURL('control.html'),tab:{id:456}};
+  const response=await new Promise(resolve=>{
+    const handled=c.listeners[0]({target:'bridge-coordinator',type:'background-control-status'},sender,resolve);
+    assert.equal(handled,true);
+  });
+  assert.equal(response.available,true);
+  assert.equal(response.backgroundMode,true);
+  assert.equal(response.mutationEnabled,true);
+  assert.equal(response.connectionDesired,true);
+  assert.equal(response.grantsKnown,true);
+  assert.equal(response.activeCount,1);
+  assert.deepEqual(response.grants.map(x=>({tabId:x.tabId,origin:x.origin})),[
+    {tabId:42,origin:'https://claude.ai'}
+  ]);
+
+  let deniedResponse;
+  const handled=c.listeners[0](
+    {target:'bridge-coordinator',type:'background-control-status'},
+    {id:c.runtime.id,url:'https://claude.ai/chat/test',tab:{id:42}},
+    value=>{deniedResponse=value;}
+  );
+  assert.equal(handled,false);
+  assert.equal(deniedResponse,undefined);
+});
+
 test('extension ID match alone does not authorize web content scripts or other extension pages',()=>{
   const c=fakeChrome();
   installBackgroundCoordinator(c);

@@ -11,6 +11,13 @@ test('global Control buttons remain available',()=>{
   assert.match(js,/eligibleBackgroundControlTabs/);
   assert.match(js,/clear-background-controls/);
 });
+test('open control windows synchronize the background mode and mutation toggle from profile storage',()=>{
+  assert.match(js,/chrome\.storage\.onChanged\.addListener/);
+  assert.match(js,/changes\.bridgeBackgroundMode/);
+  assert.match(js,/changes\.bridgeMutationLabMode/);
+  assert.match(js,/Фоновый режим отключён в другом окне/);
+});
+
 test('duplicate per-tab Control controls and their handlers are absent',()=>{
   assert.doesNotMatch(html,/id="backgroundGrantTabId"|id="backgroundGrant"|id="backgroundRevoke"/);
   assert.doesNotMatch(js,/selectedBackgroundTab|\$\('backgroundGrant'\)|\$\('backgroundRevoke'\)/);
