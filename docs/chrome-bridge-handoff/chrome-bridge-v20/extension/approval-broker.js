@@ -17,7 +17,7 @@ export class ApprovalBroker {
         new URL(origin).origin!==origin || !Object.hasOwn(CONTROL_ORIGINS,origin)) throw Error('INVALID_ORIGIN');
     if (!Number.isFinite(expires) || expires<=this.now() ||
         expires>this.now()+120000) throw Error('INVALID_APPROVAL_EXPIRY');
-    if (!['browser_open','browser_click','browser_fill','agent_send','agent_new_chat'].includes(command))
+    if (!['browser_open','browser_click','browser_fill','agent_send','provider_prepare','provider_commit','agent_new_chat'].includes(command))
       throw Error('COMMAND_NOT_APPROVABLE');
     if (typeof preview!=='string' || preview.length>240 ||
         !Number.isSafeInteger(contentLength) || contentLength<0 || contentLength>12000)
