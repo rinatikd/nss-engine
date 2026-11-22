@@ -63,6 +63,8 @@ test('two co-operators control execution while five participants retain expert r
   const roundProposal=await request(base,tokens[5].token,'/api/rounds/propose',{roundId:'round_proposal_01',objective:'Independent review of the transport race',participants:['chatgpt','claude','kimi','deepseek'],requestId:'round_proposal_req'});assert.equal(roundProposal.status,201);
   const launchDenied=await request(base,tokens[5].token,'/api/rounds/start',{roundId:'round_proposal_01',requestId:'round_start_denied'});assert.equal(launchDenied.status,403);
   const launch=await request(base,tokens[2].token,'/api/rounds/start',{roundId:'round_proposal_01',requestId:'round_start_claude'});assert.equal(launch.status,202);
+  const roundProposal2=await request(base,tokens[4].token,'/api/rounds/propose',{roundId:'round_proposal_02',objective:'Second independent review round',participants:['chatgpt','claude','qwen'],requestId:'round_proposal_req_02'});assert.equal(roundProposal2.status,201);
+  const launchChatGPT=await request(base,tokens[1].token,'/api/rounds/start',{roundId:'round_proposal_02',requestId:'round_start_chatgpt'});assert.equal(launchChatGPT.status,202);
   const pauseAgain=await request(base,tokens[1].token,'/api/session/pause',{requestId:'pause_equal_ops_02'});assert.equal(pauseAgain.status,200);
   const resumeAgain=await request(base,tokens[2].token,'/api/session/resume',{requestId:'resume_equal_ops_02'});assert.equal(resumeAgain.status,200);
   for(const operator of tokens.slice(1)){
