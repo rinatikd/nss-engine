@@ -15,6 +15,11 @@ if (@([BridgeNativeMetadata]::Listeners(17484)).Count -ne 0) { throw 'Port 17484
 
 $activePid = 0
 $activeStart = $null
+$old = $null
+$oldStdoutTask = $null
+$oldStderrTask = $null
+$testError = $null
+$cleanupError = $null
 function WaitPort([int]$Pid) {
   $deadline = [DateTime]::UtcNow.AddSeconds(12)
   do {
@@ -64,8 +69,8 @@ try {
   $old = New-Object Diagnostics.Process
   $old.StartInfo = $psi
   if (-not $old.Start()) { throw 'Legacy fixture process did not start' }
-  $null = $old.StandardOutput.ReadToEndAsync()
-  $null = $old.StandardError.ReadToEndAsync()
+  $oldStdoutTask = $old.StandardOutput.ReadToEndAsync()
+  $oldStderrTask = $old.StandardError.ReadToEndAsync()
   WaitPort $old.Id
   $oldMeta = Get-BridgeHandleIdentity $old
   $activePid = $old.Id
@@ -128,20 +133,73 @@ try {
   if ($oldNames -contains 'session_request' -or $oldNames -contains 'provider_prepare') { throw 'Rollback did not restore legacy registry' }
   if ((Get-FileHash $configPath -Algorithm SHA256).Hash -ne $configHash) { throw 'Rollback changed config/tokens' }
   Write-Output '[PASS] PR102 Lab server dry-run/apply/health/rollback; PID fencing; config preservation; tools/list upgrade and restore'
+} catch {
+  # Preserve the original test failure; cleanup must not overwrite its evidence.
+  $testError = $_
 } finally {
-  if ($activePid -gt 0) {
+  # The original process is a child created by this test, so its Process handle
+  # is an exact, safe cleanup target even if the cutover already stopped it.
+  if ($old) {
     try {
-      $p = [Diagnostics.Process]::GetProcessById($activePid)
-      $null = $p.Handle
-      $meta = Get-BridgeHandleIdentity $p
-      if ($meta.created -eq $activeStart -and -not $p.HasExited) { $p.Kill(); $null = $p.WaitForExit(8000) }
-      $p.Dispose()
-    } catch {}
+      if (-not $old.HasExited) {
+        $old.Kill()
+        if (-not $old.WaitForExit(8000)) { throw 'Original synthetic server did not stop during cleanup' }
+      }
+    } catch { if (-not $cleanupError) { $cleanupError = $_ } }
+    foreach ($drain in @($oldStdoutTask,$oldStderrTask)) {
+      if ($null -ne $drain) {
+        try { $null = $drain.Wait(2000) } catch {}
+      }
+    }
+    try { $old.Dispose() } catch {}
   }
-  if ($old) { $old.Dispose() }
-  if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+
+  # An updater can start the automatic-rollback server and then throw before
+  # returning its PID. Find only Node processes whose executable command path
+  # is beneath this unique synthetic fixture root; never kill an unrelated
+  # listener merely because it uses port 17484.
+  $fixturePrefix = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+  foreach ($candidate in [Diagnostics.Process]::GetProcesses()) {
+    try {
+      $meta = Get-BridgeHandleIdentity $candidate
+      $command = ([string]$meta.command).Replace('/','\')
+      if (($meta.executable -match '(?i)\\node\.exe$') -and
+          ($command.IndexOf($fixturePrefix,[StringComparison]::OrdinalIgnoreCase) -ge 0) -and
+          -not $candidate.HasExited) {
+        $candidate.Kill()
+        if (-not $candidate.WaitForExit(8000) -and -not $cleanupError) {
+          $cleanupError = 'Synthetic Node process did not stop: PID ' + $candidate.Id
+        }
+      }
+    } catch {
+      # Processes may exit while being enumerated; only retain a cleanup error
+      # when the process still exposes a matching fixture command line.
+    } finally {
+      try { $candidate.Dispose() } catch {}
+    }
+  }
+
+  if (Test-Path -LiteralPath $root) {
+    $removed = $false
+    for ($attempt = 0; $attempt -lt 10 -and -not $removed; $attempt++) {
+      try {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
+        $removed = -not (Test-Path -LiteralPath $root)
+      } catch {
+        Start-Sleep -Milliseconds 200
+      }
+    }
+    if (-not $removed -and -not $cleanupError) {
+      $cleanupError = 'Synthetic fixture directory remains locked after bounded cleanup retries: ' + $root
+    }
+  }
   foreach ($n in @('pr102-server-upgrade-tools.json','pr102-server-upgrade-health.json','pr102-server-rollback-tools.json','pr102-server-rollback-health.json')) {
     $f = Join-Path $env:RUNNER_TEMP $n
-    if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force }
+    if (Test-Path -LiteralPath $f) {
+      try { Remove-Item -LiteralPath $f -Force -ErrorAction Stop } catch {}
+    }
   }
 }
+
+if ($testError) { throw $testError }
+if ($cleanupError) { throw $cleanupError }
