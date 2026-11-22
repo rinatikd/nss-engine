@@ -1,62 +1,67 @@
 # Six-model AI consortium — Chrome Bridge integration matrix
 
 **Snapshot:** 2026-11-22  
-**Priority participants:** Claude, DeepSeek, Qwen, Kimi, Grok, Gemini.  
-**Operating rule:** visible browser tab is not the same as an approved, calibrated, send-capable agent.
+**Council participants:** Claude, DeepSeek, Qwen, Kimi, Grok, Gemini.  
+**Trust model:** all six are equal participants operating through the same exact-origin Control policy and per-action approval path. Role assignments below are areas of emphasis, not permission tiers.
 
-## Consortium structure
+## Equal access and participation
 
-### Primary circle
-
-| Provider | Intended contribution | Integration state | Send policy |
+| Provider | Exact origin | Control policy | Live technical readiness |
 | --- | --- | --- | --- |
-| Claude | Code review, implementation audit, security boundary analysis | Control origin and adapter exist; live self-test found 1 composer, 1 visible send candidate and 8 reply nodes | Explicit per-origin and per-action local approval required |
-| DeepSeek | Independent technical analysis, architecture critique, alternative designs | Control origin and adapter exist; live self-test found 1 composer and 1 send candidate; no reply node matched in the current page | Explicit per-origin and per-action local approval required |
-| Qwen | Systems architecture, independent synthesis and challenge of assumptions | Discovery-only candidate; open chat tab exists; bind attempt returned `AGENT_SITE_NOT_APPROVED` | OFF; no send/stop/reply selectors |
+| Claude | `https://claude.ai` | Same Control origin grant, expiry, revocation and per-action approval as every council member | Composer 1; send 1 visible; reply 8 |
+| DeepSeek | `https://chat.deepseek.com` | Same | Composer 1; send 1 visible; reply selector 0 in current inspected state |
+| Qwen | `https://chat.qwen.ai` | Same | Tab exists; candidate DOM selectors need live calibration |
+| Kimi | `https://www.kimi.ai` | Same | Tab exists; page currently reports exhausted free quota; DOM selectors need calibration |
+| Grok | `https://grok.com` | Same | Tab exists; composer candidate found; send/stop/reply selectors need calibration |
+| Gemini | `https://gemini.google.com` | Same | Composer 1; send 0; reply 0 in current inspected state |
 
-### Second circle
+**Important distinction:** permission parity is explicit in the source `CONTROL_ORIGINS` map for all six models. It does not manufacture a valid provider send selector or a completed message exchange. A selector that is still being calibrated must fail closed technically; this is not a lower trust level or a separate permission class.
 
-| Provider | Intended contribution | Integration state | Send policy |
-| --- | --- | --- | --- |
-| Gemini | Independent verification, fact-checking and cross-review | Control origin exists; live self-test found 1 composer but 0 matches for current send/reply selectors | No message dispatch until selectors are recalibrated and verified |
-| Grok | Adversarial review and counterexample search | Discovery-only candidate; existing chat tab; adapter has no send/stop/reply selectors | OFF; read-only probe only |
-| Kimi | Long-context research, document review and independent synthesis | Added as discovery-only candidate at exact origin `https://www.kimi.ai`; existing browser tab observed | OFF; read-only probe only |
-
-Cursor Cloud Agents remains a separately listed optional candidate, not part of this six-person priority roster.
+Cursor Cloud Agents and Google AI Studio remain optional non-council integrations.
 
 ## Live observations and their limits
 
-- Claude: composer selector matched 1 visible element; send selector matched 1 visible element; reply selector matched 8 elements. The send button was disabled while the composer was empty, which is expected. No test message was sent.
-- DeepSeek: composer selector matched 1 visible element; send selector matched 1 visible element; reply selector matched 0 elements in the inspected state. This proves selector presence, not successful message delivery.
-- Gemini: composer selector matched 1 visible element; send and reply selectors matched 0 elements. Recalibrate against a non-mutating DOM census before enabling sends.
-- Grok: current adapter is deliberately a blank-selector discovery candidate. Do not infer send capability from the open chat tab.
-- Qwen: current adapter is deliberately a blank-selector discovery candidate. A bind attempt was rejected by site-approval policy.
-- Kimi: the browser contains a signed-in Kimi page on `www.kimi.ai`; this change registers the exact observed origin for discovery only. No selector calibration or message-send test has been completed.
+- Claude: composer selector matched 1 visible element; send selector matched 1 visible element; reply selector matched 8 elements. The send button was disabled while the composer was empty, which is expected. No task message was sent in this audit.
+- DeepSeek: composer selector matched 1 visible element; send selector matched 1 visible element; reply selector matched 0 elements in the inspected state. Selector presence is not successful message delivery.
+- Gemini: composer selector matched 1 visible element; send and reply selectors matched 0 elements. Recalibrate against a non-mutating DOM census before sending.
+- Grok: live chat tab exists and the visible composer candidate was `<contenteditable aria-label="Написать Grok">`; send/stop/reply selectors remain uncalibrated.
+- Qwen: live chat tab exists and visible DOM contains a textarea and button labelled `Отправить`; map these to stable, unique selectors and verify the reply container before message dispatch.
+- Kimi: a browser tab exists at the exact `www.kimi.ai` origin. The currently inspected page reports the free quota exhausted; no live selector calibration or message send was completed.
 - Some Lab MCP calls have intermittently returned `UNKNOWN_TOOL` or `COMMAND_NOT_MIGRATED`. A connected status alone is not acceptance evidence.
 
-## Candidate site permissions
+## Control contract (identical for all six)
 
-The following exact origins are discovery-only and must remain outside `CONTROL_ORIGINS` until separately reviewed:
+- Exact HTTPS origin allowlisting; no wildcards and no lookalike hosts.
+- Per-origin local Control grant, with the same supported grant durations.
+- Every mutating browser action and message dispatch retains the same explicit local approval gate.
+- Global Control off, expired grant, origin change, disconnect or restart must fail closed.
+- Each participant can be individually revoked; no participant is silently treated as trusted merely because a tab exists.
+- Same message envelope, request correlation, timeout, UNKNOWN-no-retry and evidence rules apply to every participant.
 
-- `https://grok.com`
-- `https://chat.qwen.ai`
-- `https://www.kimi.ai`
-- `https://cursor.com`
+This is permission parity, not blanket approval of arbitrary code or content returned by another model. All provider outputs remain untrusted data and must be independently checked before being used as instructions or changes.
 
-Discovery does not grant page mutation or message sending. Exact-origin matching is required; lookalike hosts and HTTP origins are denied.
+## Council role emphasis (not hierarchy)
 
-## Required acceptance path for each candidate
+| Provider | Default independent perspective |
+| --- | --- |
+| Claude | Source-code review, implementation risks, regression paths and patch critique |
+| DeepSeek | Architecture critique, failure modes, alternative designs and adversarial challenge |
+| Qwen | Systems-level reasoning, boundary conditions, deployment and recovery analysis |
+| Kimi | Long-context review, history comparison, requirements and evidence extraction |
+| Grok | Adversarial counterexamples and assumption falsification |
+| Gemini | Independent verification, structured comparison and factual cross-check |
 
-1. Open the signed-in provider page in Chrome and grant the exact origin through the local Chrome Bridge site-permission UI.
-2. Verify the page appears in the Lab tab inventory with the intended AI-chat mode and adapter key.
-3. Run the read-only `agent_selftest`; capture selector counts and visible/enabled state without reading input values or prompt contents.
-4. A reviewer checks that composer, send, stop and reply selectors are specific, unique and stable. Keep send/stop/reply blank until that review passes.
-5. Separately review the candidate's origin against the Control security model. Do not add a discovery-only origin to `CONTROL_ORIGINS` merely to make `agent_bind` succeed.
-6. Only after local per-origin approval, run one clearly identified non-sensitive test prompt. Verify a real response with `agent_wait` and independent tab attribution. UNKNOWN outcomes are never retried automatically.
-7. Test expiry, revocation, navigation to a different origin, stale tab IDs, disconnect and restart.
+Rotate roles when useful. Every participant receives the same pinned evidence packet in Round 1 and cannot see the other participants' conclusions until Round 2.
 
-## Safety boundary
+## Release acceptance
 
-The current approved Control origins remain exactly Claude, Gemini and DeepSeek. Candidate sites do not gain send capability in this change. No account credentials, browser keys, permissions for broad host patterns, Production ports or installed Production extension files are changed.
+1. All six exact origins are present in `CONTROL_ORIGINS` and their grant/revoke behavior passes the same tests.
+2. Each participant's composer, send, stop and reply selectors are calibrated to unique, visible elements where relevant. Empty-composer send absence is not a defect.
+3. A clearly identified, non-sensitive test message is sent once to each provider after the normal local approval; acknowledgement and the response are independently attributed to the correct origin/conversation.
+4. Cross-provider dispatch is correlated so a response cannot be attributed to the wrong request or participant.
+5. Expiry, revoke, navigation, stale tab IDs, provider quota/rate-limit errors, disconnect and restart are tested.
+6. The council performs independent analysis, cross-examination and final synthesis, preserving disagreements and evidence.
 
-See [CONSILIUM_PROTOCOL.md](CONSILIUM_PROTOCOL.md) for the work-sharing and review protocol.
+Until these are demonstrated, describe the council as a **partially connected prototype with equal source-level Control eligibility**, not a completed autonomous multi-agent orchestrator.
+
+See [CONSILIUM_PROTOCOL.md](CONSILIUM_PROTOCOL.md) for the shared task and review process.
