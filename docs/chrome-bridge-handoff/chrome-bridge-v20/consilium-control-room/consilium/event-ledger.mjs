@@ -35,6 +35,15 @@ function validateActor(actor) {
   }
   return { id: actor.id, role: actor.role };
 }
+function requireAiMember(actor, code) {
+  if (actor?.role !== 'ai_member') throw Error(code);
+}
+function requireOwnerOrAiMember(actor, code) {
+  if (!['owner', 'ai_member'].includes(actor?.role)) throw Error(code);
+}
+function requireOwner(actor, code) {
+  if (actor?.role !== 'owner') throw Error(code);
+}
 function clone(value) { return structuredClone(value); }
 
 export class EventLedger {
@@ -178,7 +187,7 @@ export function projectEvents(events) {
     const p = event.payload;
     switch (event.type) {
       case 'session.started':
-        if (!['owner', 'ai_member'].includes(event.actor.role)) throw Error('SESSION_CONTROL_REQUIRES_AI_MEMBER');
+        requireOwnerOrAiMember(event.actor, 'SESSION_CONTROL_REQUIRES_AI_MEMBER');
         if (!['IDLE', 'STOPPED'].includes(state.session.status)) throw Error('SESSION_ALREADY_ACTIVE');
         state.session = { status: 'RUNNING', id: p.sessionId, title: p.title, epoch: state.session.epoch + 1 };
         break;
@@ -205,7 +214,7 @@ export function projectEvents(events) {
       case 'round.proposed': {
         if (state.session.status !== 'RUNNING' && state.session.status !== 'PAUSED') throw Error('ROUND_PROPOSAL_REQUIRES_ACTIVE_SESSION');
         if (state.rounds.some(r => r.id === p.roundId)) throw Error('DUPLICATE_ROUND_ID');
-        if (!['ai_member'].includes(event.actor.role)) throw Error('ROUND_PROPOSAL_REQUIRES_AI_MEMBER');
+        requireAiMember(event.actor, 'ROUND_PROPOSAL_REQUIRES_AI_MEMBER');
         state.rounds.push({ id: p.roundId, objective: p.objective, participants: p.participants, proposedBy: event.actor.id, status: 'PROPOSED' });
         break;
       }
@@ -213,13 +222,14 @@ export function projectEvents(events) {
         const round = state.rounds.find(r => r.id === p.roundId);
         if (!round || round.status !== 'PROPOSED') throw Error('ROUND_NOT_PROPOSED');
         if (state.session.status !== 'RUNNING') throw Error('ROUND_START_REQUIRES_RUNNING_SESSION');
-        if (!['ai_member'].includes(event.actor.role)) throw Error('ROUND_START_REQUIRES_AI_MEMBER');
+        requireAiMember(event.actor, 'ROUND_START_REQUIRES_AI_MEMBER');
         round.status = 'STARTED'; round.startedBy = event.actor.id; round.startedAt = event.at;
         break;
       }
-      case 'comment.added': state.comments.push(event); break;
-      case 'message.recorded': state.messages.push(event); break;
+      case 'comment.added': requireOwnerOrAiMember(event.actor, 'COMMENT_ACTOR_REQUIRED'); state.comments.push(event); break;
+      case 'message.recorded': requireOwnerOrAiMember(event.actor, 'MESSAGE_ACTOR_REQUIRED'); state.messages.push(event); break;
       case 'decision.proposed': {
+        requireAiMember(event.actor, 'AI_DECISION_PROPOSAL_REQUIRED');
         if (decisionById.has(p.decisionId)) throw Error('DUPLICATE_DECISION_ID');
         if (!['routine', 'consequential'].includes(p.risk || 'consequential')) throw Error('INVALID_DECISION_RISK');
         const d = { id: p.decisionId, title: p.title, rationale: p.rationale, evidence: p.evidence || [], proposer: event.actor.id, risk: p.risk || 'consequential', status: 'PROPOSED', reviews: [], reviewHistory: [] };
@@ -228,7 +238,7 @@ export function projectEvents(events) {
       case 'decision.reviewed': {
         const d = decisionById.get(p.decisionId);
         if (!d || !['PROPOSED', 'UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE', 'READY_FOR_OWNER'].includes(d.status)) throw Error('DECISION_NOT_REVIEWABLE');
-        if (!['ai_member'].includes(event.actor.role)) throw Error('AI_REVIEW_REQUIRED');
+        requireAiMember(event.actor, 'AI_REVIEW_REQUIRED');
         if (!['SUPPORT', 'OBJECT', 'NEEDS_EVIDENCE'].includes(p.verdict)) throw Error('INVALID_REVIEW_VERDICT');
         const prior = d.reviews.find(r => r.reviewerId === event.actor.id);
         if (prior) {
@@ -252,16 +262,17 @@ export function projectEvents(events) {
       case 'decision.owner_approved': {
         const d = decisionById.get(p.decisionId);
         if (!d || d.status !== 'READY_FOR_OWNER') throw Error('DECISION_NOT_READY_FOR_OWNER');
-        if (event.actor.role !== 'owner') throw Error('OWNER_APPROVAL_REQUIRED');
+        requireOwner(event.actor, 'OWNER_APPROVAL_REQUIRED');
         d.status = 'ACCEPTED'; d.approvedBy = event.actor.id; d.approvedAt = event.at; break;
       }
       case 'decision.rejected': {
         const d = decisionById.get(p.decisionId);
         if (!d || !['PROPOSED', 'UNDER_REVIEW', 'DISPUTED', 'NEEDS_EVIDENCE', 'READY_FOR_OWNER'].includes(d.status)) throw Error('DECISION_NOT_REJECTABLE');
-        if (event.actor.role !== 'owner') throw Error('OWNER_REJECTION_REQUIRED');
+        requireOwner(event.actor, 'OWNER_REJECTION_REQUIRED');
         d.status = 'REJECTED'; d.rejectionReason = p.reason; break;
       }
       case 'task.created': {
+        requireOwnerOrAiMember(event.actor, 'TASK_CREATOR_REQUIRED');
         const d = decisionById.get(p.decisionId);
         if (!d || d.status !== 'ACCEPTED') throw Error('TASK_REQUIRES_ACCEPTED_DECISION');
         if (taskById.has(p.taskId)) throw Error('DUPLICATE_TASK_ID');
@@ -269,6 +280,7 @@ export function projectEvents(events) {
         taskById.set(t.id, t); state.tasks.push(t); break;
       }
       case 'task.state_changed': {
+        requireOwnerOrAiMember(event.actor, 'TASK_UPDATER_REQUIRED');
         const t = taskById.get(p.taskId);
         if (!t) throw Error('TASK_NOT_FOUND');
         const allowed = { READY: ['IN_PROGRESS', 'BLOCKED'], IN_PROGRESS: ['IN_REVIEW', 'BLOCKED', 'FAILED'], IN_REVIEW: ['VERIFIED', 'IN_PROGRESS', 'BLOCKED'], BLOCKED: ['IN_PROGRESS'], FAILED: ['IN_PROGRESS'] };
@@ -280,17 +292,19 @@ export function projectEvents(events) {
         break;
       }
       case 'artifact.linked': {
+        requireOwnerOrAiMember(event.actor, 'ARTIFACT_PUBLISHER_REQUIRED');
         if (artifactById.has(p.artifactId) || !/^[a-f0-9]{64}$/.test(p.sha256 || '') || !Array.isArray(p.recipients) || !p.recipients.length) throw Error('INVALID_ARTIFACT_MANIFEST');
         const artifact = { id: p.artifactId, name: p.name, sha256: p.sha256, sourceCommit: p.sourceCommit, uri: p.uri, recipients: p.recipients, receipts: [] };
         artifactById.set(artifact.id, artifact); state.artifacts.push(artifact); break;
       }
       case 'artifact.received': {
+        requireAiMember(event.actor, 'ARTIFACT_RECIPIENT_MUST_BE_AI_MEMBER');
         const artifact = artifactById.get(p.artifactId);
         if (!artifact || !artifact.recipients.includes(event.actor.id) || p.sha256 !== artifact.sha256) throw Error('ARTIFACT_RECEIPT_MISMATCH');
         if (artifact.receipts.some(r => r.actor === event.actor.id)) throw Error('ARTIFACT_ALREADY_RECEIVED');
         artifact.receipts.push({ actor: event.actor.id, at: event.at, receiptId: p.receiptId || null }); break;
       }
-      case 'agent.availability': state.agents = state.agents.filter(a => a.agent !== p.agent); state.agents.push({ agent: p.agent, status: p.status, observedAt: event.at, details: p.details || null }); break;
+      case 'agent.availability': requireOwnerOrAiMember(event.actor, 'AGENT_AVAILABILITY_ACTOR_REQUIRED'); state.agents = state.agents.filter(a => a.agent !== p.agent); state.agents.push({ agent: p.agent, status: p.status, observedAt: event.at, details: p.details || null }); break;
     }
   }
   return state;
