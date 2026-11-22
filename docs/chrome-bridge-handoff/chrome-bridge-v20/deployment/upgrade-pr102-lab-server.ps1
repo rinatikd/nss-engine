@@ -56,7 +56,14 @@ function PinProcess([int]$ProcessId,[string]$ExpectedStart,[string]$Root) {
     Require ([Math]::Abs(($actualStart-$expected).TotalMilliseconds) -le 2) 'PID start-time mismatch; refusing PID reuse'
     $actualCommand = ([string]$identity.command).Replace('/','\')
     $expectedEntry = (Join-Path $Root 'server\bridge.mjs').Replace('/','\')
-    Require ($actualCommand.IndexOf($expectedEntry,[StringComparison]::OrdinalIgnoreCase) -ge 0) 'Listener command line does not point to the pinned PR102 Lab server'
+    if ($actualCommand.IndexOf($expectedEntry,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
+      $diagnostic = 'expectedEntry=' + $expectedEntry + '; root=' + $Root +
+        '; commandLength=' + $actualCommand.Length +
+        '; containsRoot=' + ($actualCommand.IndexOf($Root,[StringComparison]::OrdinalIgnoreCase) -ge 0) +
+        '; containsBridgeFileName=' + ($actualCommand.IndexOf('bridge.mjs',[StringComparison]::OrdinalIgnoreCase) -ge 0)
+      if ($TestFixture) { $diagnostic += '; syntheticCommand=' + $actualCommand }
+      throw ('Listener command line does not point to the pinned PR102 Lab server; ' + $diagnostic)
+    }
     AssertListener $ProcessId
     return @{process=$p;identity=$identity}
   } catch {
