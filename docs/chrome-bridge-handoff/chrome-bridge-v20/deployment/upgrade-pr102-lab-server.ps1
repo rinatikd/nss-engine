@@ -291,8 +291,12 @@ try {
     Write-Output '[NEXT] Reload only the PR102 Lab extension, then refresh/reconnect the ChatGPT Lab connector.'
   } catch {
     if ($started -and -not $started.process.HasExited) { StopPinned $started.process }
-    if (Test-Path -LiteralPath $serverRoot) { Remove-Item -LiteralPath $serverRoot -Recurse -Force }
-    if (Test-Path -LiteralPath $displaced) { Move-Item -LiteralPath $displaced -Destination $serverRoot -ErrorAction Stop }
+    if (Test-Path -LiteralPath $displaced) {
+      if (Test-Path -LiteralPath $serverRoot) { Remove-Item -LiteralPath $serverRoot -Recurse -Force }
+      Move-Item -LiteralPath $displaced -Destination $serverRoot -ErrorAction Stop
+    } else {
+      Require (Test-Path -LiteralPath (Join-Path $serverRoot 'bridge.mjs') -PathType Leaf) 'Original server directory is missing; automatic rollback cannot continue'
+    }
     $rollbackStarted = StartLabServer $state $run $configHashBefore
     WaitHealthy $rollbackStarted $state $oldExpectedTools $run
     Write-Output '[AUTO_ROLLBACK] Previous PR102 Lab server restored and healthy.'
