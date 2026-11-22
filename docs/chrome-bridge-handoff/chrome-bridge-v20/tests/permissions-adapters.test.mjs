@@ -9,7 +9,7 @@ test('tool descriptions match the preserved Control allowlist and durations', ()
  const description = toolByName('agent_send').description;
  for (const origin of Object.keys(CONTROL_ORIGINS)) assert.ok(description.includes(origin));
  assert.match(description, /explicit local approval \(1, 3 or 4 hours\)/);
-  assert.doesNotMatch(description, /chatgpt\\.com|grok\\.com|chat\\.qwen\\.ai|www\\.kimi\\.ai/);
+   assert.doesNotMatch(description, /chatgpt\.com|grok\.com|chat\.qwen\.ai|www\.kimi\.ai/);
 });
 test('control requires local approval, exact allowed origin and a live epoch; expires and resets', () => {
  let now = 100; const g = new ControlGrants(() => now);
