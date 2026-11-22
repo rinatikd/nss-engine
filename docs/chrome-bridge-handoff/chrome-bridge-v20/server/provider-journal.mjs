@@ -49,7 +49,7 @@ export class ProviderJournal {
     this.fs.mkdirSync(stateDir,{recursive:true,mode:0o700});
     this.file=path.join(stateDir,'provider-transactions.jsonl');
     this.lockFile=this.file+'.lock';
-    this.events=[];this.transactions=new Map();this.tabEpochs=new Map();this.lastHash='0'.repeat(64);
+    this.records=[];this.transactions=new Map();this.tabEpochs=new Map();this.lastHash='0'.repeat(64);
     this.#load();
     // A restart invalidates every in-flight/prepared transaction. Never infer
     // that a prior browser click did not happen merely because its ACK is gone.
@@ -82,7 +82,7 @@ export class ProviderJournal {
         typeof record.type!=='string'||!record.data||typeof record.data!=='object'||
         !record.identity||!identityEqual(validateProviderIdentity(record.identity),record.identity)||
         record.hash!==this.#recordHash(record))throw Error('PROVIDER_JOURNAL_CORRUPT_FAIL_CLOSED');
-      this.#apply(record);this.events.push(record);previous=record.hash;expectedSeq++;
+      this.#apply(record);this.records.push(record);previous=record.hash;expectedSeq++;
     }
     this.lastHash=previous;
   }
@@ -125,7 +125,7 @@ export class ProviderJournal {
       this.fs.writeFileSync(lock,JSON.stringify({pid:process.pid,at:new Date(this.now()).toISOString()}));
       this.fs.fsyncSync(lock);
       const record={
-        seq:this.events.length+1,eventId:crypto.randomUUID(),type,
+        seq:this.records.length+1,eventId:crypto.randomUUID(),type,
         identity:clone(identity),data:clone(data),prevHash:this.lastHash
       };
       record.hash=this.#recordHash(record);
@@ -134,7 +134,7 @@ export class ProviderJournal {
       if(current+Buffer.byteLength(line,'utf8')>this.maxBytes)throw Error('PROVIDER_JOURNAL_FULL_FAIL_CLOSED');
       fd=this.fs.openSync(this.file,'a',0o600);
       this.fs.writeFileSync(fd,line,'utf8');this.fs.fsyncSync(fd);this.fs.closeSync(fd);fd=undefined;
-      this.#apply(record);this.events.push(record);this.lastHash=record.hash;
+      this.#apply(record);this.records.push(record);this.lastHash=record.hash;
       return clone(record);
     } finally {
       if(fd!==undefined)try{this.fs.closeSync(fd);}catch{}
@@ -226,7 +226,7 @@ export class ProviderJournal {
     const tx=this.transactions.get(identity.requestId);
     if(!tx)return {state:'NOT_PERFORMED',identity,reasonCode:'REQUEST_NOT_FOUND'};
     if(!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
-    const out={state:tx.state,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
+    const publicState=tx.state==='PREPARING'?'ACCEPTED':tx.state==='COMMITTING'?'DISPATCHED':tx.state;\n    const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
       ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
       ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
       ...(tx.state==='PREPARED'?{fencingToken:this.#fencingToken(tx)}:{}),
@@ -279,7 +279,7 @@ export class ProviderJournal {
       'prepare.completed':'PREPARED','commit.started':'DISPATCHED','commit.completed':'SENT',
       'transaction.outcome':record.data.state,'stop.requested':'STOP_REQUESTED','stop.clean':'STOPPED_CLEAN'
     })[record.type]||'UNKNOWN';
-    return this.events.filter(e=>e.seq>after).slice(0,limit).map(e=>({
+    return this.records.filter(e=>e.seq>after).slice(0,limit).map(e=>({
       seq:e.seq,eventId:e.eventId,requestId:e.identity.requestId,providerId:e.identity.providerId,
       state:stateFor(e),identity:clone(e.identity),
       ...(e.data.quarantineId?{quarantineId:e.data.quarantineId}:{})
