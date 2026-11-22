@@ -78,28 +78,28 @@ function CopyServer([string]$Source,[string]$Destination) {
   New-Item -ItemType Directory -Path $Destination -Force | Out-Null
   Copy-Item -Path (Join-Path $Source '*') -Destination $Destination -Recurse -Force
 }
-function WriteExpectedTools([string]$ServerRoot,[string]$OutputFile,[string]$NodeExe) {
+function WriteExpectedTools([string]$SourceRoot,[string]$OutputFile,[string]$NodeExe) {
   $code = "import fs from 'node:fs'; import { tools } from './server/tools.mjs'; fs.writeFileSync(process.argv[1], JSON.stringify({result:{tools:tools.map(({kind,...tool})=>tool)}}));"
-  Push-Location $ServerRoot
+  Push-Location $SourceRoot
   try {
     & $NodeExe --input-type=module -e $code $OutputFile
     Require ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $OutputFile -PathType Leaf)) 'Could not generate expected MCP tools registry'
   } finally { Pop-Location }
 }
-function Probe([string]$HealthScript,[string]$ServerRoot,[string]$State,[string]$ExpectedFile,[string]$RunDir,[string]$Mode) {
+function Probe([string]$HealthScript,[string]$SourceRoot,[string]$State,[string]$ExpectedFile,[string]$RunDir,[string]$Mode) {
   $job = Join-Path $RunDir ('health-' + $Mode + '.json')
-  WriteJson $job @{mode=$Mode;source=$ServerRoot;state=$State;port=$LabPort;expected=$ExpectedFile}
+  WriteJson $job @{mode=$Mode;source=$SourceRoot;state=$State;port=$LabPort;expected=$ExpectedFile}
   & $script:NodeExe $HealthScript $job
   Require ($LASTEXITCODE -eq 0) ('MCP health probe failed: ' + $Mode)
 }
-function StartLabServer([string]$ServerRoot,[string]$State,[string]$RunDir,[string]$ConfigHash) {
+function StartLabServer([string]$State,[string]$RunDir,[string]$ConfigHash) {
   $startJob = Join-Path $RunDir ('start-' + [guid]::NewGuid().ToString('N') + '.json')
-  WriteJson $startJob @{source=$ServerRoot;state=$State;port=$LabPort;configHash=$ConfigHash}
+  WriteJson $startJob @{source=$script:LabRoot;state=$State;port=$LabPort;configHash=$ConfigHash}
   $startScript = Join-Path $RunDir 'cutover-start.mjs'
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $script:NodeExe
   $psi.Arguments = '"' + $startScript + '" "' + $startJob + '"'
-  $psi.WorkingDirectory = $ServerRoot
+  $psi.WorkingDirectory = $script:LabRoot
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true
@@ -112,21 +112,17 @@ function StartLabServer([string]$ServerRoot,[string]$State,[string]$RunDir,[stri
   $proc = New-Object Diagnostics.Process
   $proc.StartInfo = $psi
   Require ($proc.Start()) 'Could not start Lab Bridge process'
-  $stdout = Join-Path $RunDir ('server-' + $proc.Id + '.stdout.log')
-  $stderr = Join-Path $RunDir ('server-' + $proc.Id + '.stderr.log')
   $outTask = $proc.StandardOutput.ReadToEndAsync()
   $errTask = $proc.StandardError.ReadToEndAsync()
-  return @{process=$proc;stdoutTask=$outTask;stderrTask=$errTask;stdout=$stdout;stderr=$stderr}
+  return @{process=$proc;stdoutTask=$outTask;stderrTask=$errTask}
 }
-function WaitHealthy($Started,[string]$ServerRoot,[string]$State,[string]$ExpectedFile,[string]$HealthScript,[string]$RunDir) {
+function WaitHealthy($Started,[string]$State,[string]$ExpectedFile,[string]$RunDir) {
   $deadline = [DateTime]::UtcNow.AddSeconds(15)
   do {
     Require (-not $Started.process.HasExited) 'Candidate Bridge process exited during startup'
     try {
       AssertListener $Started.process.Id
-      Probe $HealthScript $ServerRoot $State $ExpectedFile $RunDir 'live'
-      $Started.stdoutTask.Result | Set-Content -LiteralPath $Started.stdout -Encoding UTF8
-      $Started.stderrTask.Result | Set-Content -LiteralPath $Started.stderr -Encoding UTF8
+      Probe $script:HealthScript $script:LabRoot $State $ExpectedFile $RunDir 'live'
       return
     } catch {
       if ([DateTime]::UtcNow -ge $deadline) { throw }
@@ -141,15 +137,25 @@ function StopPinned($Proc) {
     if (-not $Proc.WaitForExit(8000)) { throw 'Owned Bridge process did not stop' }
   }
 }
-function StartFromCurrentServer([string]$State,[string]$RunDir,[string]$ConfigHash) {
-  $start = StartLabServer $root $State $RunDir $ConfigHash
-  WaitHealthy $start $root $State $script:ExpectedTools $script:HealthScript $RunDir
-  return $start
+function CreateBackup([string]$CurrentServer,[string]$Root,[string]$State,[string]$ConfigHash,[string]$CurrentTreeHash,[string]$SourceSha,[string]$RunDir) {
+  $backupParent = Join-Path $Root 'backups'
+  New-Item -ItemType Directory -Path $backupParent -Force | Out-Null
+  $backup = Join-Path $backupParent ('server-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+  New-Item -ItemType Directory -Path $backup -Force | Out-Null
+  Copy-Item -LiteralPath $CurrentServer -Destination (Join-Path $backup 'server') -Recurse -Force
+  Require ((TreeHash (Join-Path $backup 'server')) -eq $CurrentTreeHash) 'Backup tree hash mismatch'
+  WriteJson (Join-Path $backup 'server-backup.json') @{
+    schema='chrome-bridge-pr102-lab-server-backup-v1';target='PR102_LAB';port=17484;
+    labRoot=$Root;stateRoot=$State;createdUtc=[DateTime]::UtcNow.ToString('o');
+    stateConfigSha256=$ConfigHash;serverTreeSha256=$CurrentTreeHash;sourceSha=$SourceSha
+  }
+  return $backup
 }
 
 $root = FullPath $LabRoot
 $state = FullPath $StateRoot
 $candidateRoot = FullPath $CandidateRoot
+$script:LabRoot = $root
 if ($TestFixture) {
   $runnerTemp = [Environment]::GetEnvironmentVariable('RUNNER_TEMP')
   Require (-not [string]::IsNullOrWhiteSpace($runnerTemp)) 'TestFixture requires RUNNER_TEMP'
@@ -164,133 +170,122 @@ Require ((Split-Path $candidateRoot -Leaf) -eq 'chrome-bridge-v20') 'Candidate r
 Require (Test-Path -LiteralPath (Join-Path $candidateRoot 'server\bridge.mjs') -PathType Leaf) 'Candidate server source missing'
 Require (Test-Path -LiteralPath (Join-Path $candidateRoot 'deployment\cutover-start.mjs') -PathType Leaf) 'Cutover launcher missing'
 Require (Test-Path -LiteralPath (Join-Path $candidateRoot 'deployment\cutover-health.mjs') -PathType Leaf) 'Health probe missing'
-Require ((Get-Command git -ErrorAction Stop).Source) 'Git unavailable'
 $actualSha = (& git -C $candidateRoot rev-parse HEAD).Trim()
 Require ($LASTEXITCODE -eq 0 -and $actualSha -eq $ExpectedSourceSha.ToLowerInvariant()) 'Candidate Git SHA mismatch'
 $serverRoot = Join-Path $root 'server'
 Require (Test-Path -LiteralPath $serverRoot -PathType Container) 'Existing Lab server directory missing'
-Require (Test-Path -LiteralPath (Join-Path $state 'config.json') -PathType Leaf) 'Existing Lab config.json missing; refusing to create or replace credentials'
 $configPath = Join-Path $state 'config.json'
+Require (Test-Path -LiteralPath $configPath -PathType Leaf) 'Existing Lab config.json missing; refusing to create or replace credentials'
 $configHashBefore = HashFile $configPath
 $config = ReadJson $configPath
 Require ($config.extensionId -eq $LabExtensionId) 'State config is not pinned to the PR102 Lab extension ID'
 Require (($config.agentToken -is [string]) -and ($config.browserToken -is [string])) 'Existing Lab config lacks required tokens'
 Require ($config.agentToken.Length -ge 32 -and $config.browserToken.Length -ge 32) 'Existing Lab token material is invalid'
 $script:NodeExe = (Get-Command node.exe -ErrorAction Stop).Source
-$script:HealthScript = Join-Path $candidateRoot 'deployment\cutover-health.mjs'
 $nodeVersion = (& $script:NodeExe --version).Trim()
 Require ($LASTEXITCODE -eq 0) 'Node version probe failed'
 
 $identity = PinProcess $ExpectedPid $ExpectedStartUtc $root
 $oldProc = $identity.process
 $oldIdentity = $identity.identity
+$oldTreeHash = TreeHash $serverRoot
 $run = Join-Path $root ('.server-upgrade-' + [guid]::NewGuid().ToString('N'))
-$stageServerRoot = Join-Path $run 'candidate'
-$backupRoot = $null
-$script:ExpectedTools = Join-Path $run 'expected-tools.json'
-$oldExpectedTools = Join-Path $run 'old-tools.json'
-$script:NodeExe = $script:NodeExe
 New-Item -ItemType Directory -Path $run -Force | Out-Null
-$script:HealthScript = Join-Path $candidateRoot 'deployment\cutover-health.mjs'
+$stageRoot = Join-Path $run 'candidate'
+$stageServer = Join-Path $stageRoot 'server'
+$healthScript = Join-Path $run 'cutover-health.mjs'
+$startScript = Join-Path $run 'cutover-start.mjs'
+$script:HealthScript = $healthScript
+$expectedTools = Join-Path $run 'expected-tools.json'
+$oldExpectedTools = Join-Path $run 'old-tools.json'
+$started = $null
+$backupRoot = $null
+$displaced = $null
+
 try {
-  $stageServer = Join-Path $stageServerRoot 'server'
-  New-Item -ItemType Directory -Path $stageServerRoot -Force | Out-Null
-  CopyServer (Join-Path $candidateRoot 'server') $stageServer
-  Copy-Item -LiteralPath (Join-Path $candidateRoot 'deployment\cutover-start.mjs') -Destination (Join-Path $stageServerRoot 'cutover-start.mjs') -Force
-  Copy-Item -LiteralPath (Join-Path $candidateRoot 'deployment\cutover-health.mjs') -Destination (Join-Path $stageServerRoot 'cutover-health.mjs') -Force
+  New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
+  Copy-Item -LiteralPath (Join-Path $candidateRoot 'deployment\cutover-health.mjs') -Destination $healthScript -Force
+  Copy-Item -LiteralPath (Join-Path $candidateRoot 'deployment\cutover-start.mjs') -Destination $startScript -Force
+
+  if ($RollbackFrom) {
+    $requestedBackup = FullPath $RollbackFrom
+    Require (Inside $requestedBackup (Join-Path $root 'backups')) 'Rollback source must be inside PR102 Lab backups'
+    $markerPath = Join-Path $requestedBackup 'server-backup.json'
+    Require (Test-Path -LiteralPath $markerPath -PathType Leaf) 'Server backup marker missing'
+    $marker = ReadJson $markerPath
+    Require ($marker.schema -eq 'chrome-bridge-pr102-lab-server-backup-v1' -and $marker.target -eq 'PR102_LAB' -and $marker.port -eq 17484) 'Server backup marker mismatch'
+    Require ((FullPath ([string]$marker.labRoot)) -ieq $root) 'Server backup belongs to another Lab root'
+    Require ((FullPath ([string]$marker.stateRoot)) -ieq $state) 'Server backup belongs to another state directory'
+    Require ((HashFile $configPath) -eq [string]$marker.stateConfigSha256) 'Lab config changed since server backup'
+    $rollbackServer = Join-Path $requestedBackup 'server'
+    Require (Test-Path -LiteralPath (Join-Path $rollbackServer 'bridge.mjs') -PathType Leaf) 'Rollback server is missing bridge.mjs'
+    Require ((TreeHash $rollbackServer) -eq [string]$marker.serverTreeSha256) 'Rollback server hash mismatch'
+    CopyServer $rollbackServer $stageServer
+  } else {
+    CopyServer (Join-Path $candidateRoot 'server') $stageServer
+  }
 
   foreach ($file in Get-ChildItem -LiteralPath $stageServer -Recurse -File -Filter '*.mjs') {
     & $script:NodeExe --check $file.FullName
     Require ($LASTEXITCODE -eq 0) ('Node syntax error: ' + $file.Name)
   }
-  WriteExpectedTools $stageServerRoot $script:ExpectedTools $script:NodeExe
-  $names = @((ReadJson $script:ExpectedTools).result.tools | ForEach-Object { $_.name })
-  foreach ($required in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events')) {
-    Require ($names -contains $required) ('Required Session/Provider tool missing: ' + $required)
+  WriteExpectedTools $stageRoot $expectedTools $script:NodeExe
+  $toolNames = @((ReadJson $expectedTools).result.tools | ForEach-Object { $_.name })
+  if (-not $RollbackFrom) {
+    foreach ($required in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events')) {
+      Require ($toolNames -contains $required) ('Required Session/Provider tool missing: ' + $required)
+    }
   }
-  Probe (Join-Path $stageServerRoot 'cutover-health.mjs') $stageServerRoot $state $script:ExpectedTools $run 'isolated'
+  WriteExpectedTools $root $oldExpectedTools $script:NodeExe
+  Probe (Join-Path $stageRoot 'cutover-health.mjs') $stageRoot $state $expectedTools $run 'isolated'
 
-  $oldServerHash = TreeHash $serverRoot
-  $candidateServerHash = TreeHash $stageServer
-  Require ($candidateServerHash.Length -gt 0) 'Candidate server hash is empty'
+  $stageHash = TreeHash $stageServer
+  Require ($stageHash.Length -gt 0) 'Candidate server tree hash is empty'
   Write-Output ('[TARGET] PR102 Lab only; port=' + $LabPort)
   Write-Output ('[OWNER_PID] ' + $oldIdentity.id)
   Write-Output ('[OWNER_CREATED_UTC] ' + $oldIdentity.created)
   Write-Output ('[OWNER_EXE] ' + $oldIdentity.executable)
-  Write-Output ('[OLD_SERVER_SHA256_TREE] ' + $oldServerHash)
-  Write-Output ('[CANDIDATE_SERVER_SHA256_TREE] ' + $candidateServerHash)
+  Write-Output ('[OLD_SERVER_SHA256_TREE] ' + $oldTreeHash)
+  Write-Output ('[STAGED_SERVER_SHA256_TREE] ' + $stageHash)
   Write-Output ('[STATE_CONFIG_SHA256] ' + $configHashBefore)
   Write-Output ('[SOURCE_SHA] ' + $actualSha)
   Write-Output ('[NODE] ' + $nodeVersion)
-  if ($RollbackFrom) {
-    $backupRoot = FullPath $RollbackFrom
-    Require (Inside $backupRoot (Join-Path $root 'backups')) 'Rollback source must be inside PR102 Lab backups'
-    $markerPath = Join-Path $backupRoot 'server-backup.json'
-    Require (Test-Path -LiteralPath $markerPath -PathType Leaf) 'Server backup marker missing'
-    $marker = ReadJson $markerPath
-    Require ($marker.schema -eq 'chrome-bridge-pr102-lab-server-backup-v1' -and $marker.port -eq 17484) 'Server backup marker mismatch'
-    Require ((FullPath ([string]$marker.labRoot)) -ieq $root) 'Server backup belongs to another Lab root'
-    Require ((FullPath ([string]$marker.stateRoot)) -ieq $state) 'Server backup belongs to another state directory'
-    Require ((HashFile $configPath) -eq [string]$marker.stateConfigSha256) 'Lab config changed since server backup'
-    $rollbackServer = Join-Path $backupRoot 'server'
-    Require (Test-Path -LiteralPath (Join-Path $rollbackServer 'bridge.mjs') -PathType Leaf) 'Rollback server is missing bridge.mjs'
-    Require ((TreeHash $rollbackServer) -eq [string]$marker.serverTreeSha256) 'Rollback server hash mismatch'
-    if (-not $Apply) { Write-Output '[ROLLBACK_DRY_RUN] Verified backup; no files or processes changed.'; return }
-  } else {
-    $backupParent = Join-Path $root 'backups'
-    New-Item -ItemType Directory -Path $backupParent -Force | Out-Null
-    $backupRoot = Join-Path $backupParent ('server-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
-    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-    Copy-Item -LiteralPath $serverRoot -Destination (Join-Path $backupRoot 'server') -Recurse -Force
-    $marker = [ordered]@{
-      schema='chrome-bridge-pr102-lab-server-backup-v1'
-      target='PR102_LAB'
-      port=17484
-      labRoot=$root
-      stateRoot=$state
-      createdUtc=[DateTime]::UtcNow.ToString('o')
-      stateConfigSha256=$configHashBefore
-      serverTreeSha256=$oldServerHash
-      ownerPid=$oldIdentity.id
-      ownerCreatedUtc=$oldIdentity.created
-      sourceSha=$actualSha
-    }
-    WriteJson (Join-Path $backupRoot 'server-backup.json') $marker
-    if (-not $Apply) {
-      Write-Output '[DRY_RUN] Server package and rollback snapshot validated; no files or processes changed.'
-      Write-Output ('[BACKUP_PLAN] ' + $backupRoot)
-      return
-    }
+
+  if (-not $Apply) {
+    Write-Output '[DRY_RUN] Server and isolated MCP registry validated; no files or processes changed.'
+    return
   }
 
+  if (-not $RollbackFrom) {
+    $backupRoot = CreateBackup $serverRoot $root $state $configHashBefore $oldTreeHash $actualSha $run
+  } else {
+    $backupRoot = CreateBackup $serverRoot $root $state $configHashBefore $oldTreeHash $actualSha $run
+  }
   Require ((HashFile $configPath) -eq $configHashBefore) 'Lab config changed after preflight'
-  AssertListener $ExpectedPid
   $fresh = PinProcess $ExpectedPid $ExpectedStartUtc $root
   try {
     Require ($fresh.identity.command -ceq $oldIdentity.command) 'Lab listener command line changed during preflight'
-    Require ((TreeHash $serverRoot) -eq $oldServerHash) 'Installed Lab server changed during preflight'
+    Require ((TreeHash $serverRoot) -eq $oldTreeHash) 'Installed Lab server changed during preflight'
   } finally { $fresh.process.Dispose() }
 
   $null = $oldProc.Handle
   $oldProc.Kill()
   Require ($oldProc.WaitForExit(8000)) 'Original Lab Bridge process did not stop'
-  $listenersAfterStop = @([BridgeNativeMetadata]::Listeners($LabPort))
-  Require ($listenersAfterStop.Count -eq 0) 'Port 17484 remained occupied after stopping the pinned owner'
+  Require (@([BridgeNativeMetadata]::Listeners($LabPort)).Count -eq 0) 'Port 17484 remained occupied after stopping the pinned owner'
 
   $displaced = Join-Path $root ('.server-displaced-' + [guid]::NewGuid().ToString('N'))
-  $candidateReady = Join-Path $root ('.server-ready-' + [guid]::NewGuid().ToString('N'))
-  $started = $null
   try {
     Move-Item -LiteralPath $serverRoot -Destination $displaced -ErrorAction Stop
     Move-Item -LiteralPath $stageServer -Destination $serverRoot -ErrorAction Stop
-    $candidateParent = Join-Path $run 'active-source'
-    New-Item -ItemType Directory -Path $candidateParent -Force | Out-Null
-    # The launcher imports <source>/server/bridge.mjs. Point source to the Lab root.
-    $started = StartLabServer $root $state $run $configHashBefore
-    WaitHealthy $started $root $state $script:ExpectedTools $script:HealthScript $run
+    $started = StartLabServer $state $run $configHashBefore
+    WaitHealthy $started $state $expectedTools $run
     Require ((HashFile $configPath) -eq $configHashBefore) 'Lab config mutated during server startup'
     Remove-Item -LiteralPath $displaced -Recurse -Force
-    Write-Output '[UPGRADED] PR102 Lab server is running with the new Session/Provider registry.'
+    if ($RollbackFrom) {
+      Write-Output '[ROLLED_BACK] Previous PR102 Lab server is running and healthy.'
+    } else {
+      Write-Output '[UPGRADED] PR102 Lab server is running with the new Session/Provider registry.'
+    }
     Write-Output ('[NEW_PID] ' + $started.process.Id)
     Write-Output ('[BACKUP] ' + $backupRoot)
     Write-Output '[NEXT] Reload only the PR102 Lab extension, then refresh/reconnect the ChatGPT Lab connector.'
@@ -298,17 +293,14 @@ try {
     if ($started -and -not $started.process.HasExited) { StopPinned $started.process }
     if (Test-Path -LiteralPath $serverRoot) { Remove-Item -LiteralPath $serverRoot -Recurse -Force }
     if (Test-Path -LiteralPath $displaced) { Move-Item -LiteralPath $displaced -Destination $serverRoot -ErrorAction Stop }
-    $rollbackStarted = StartLabServer $root $state $run $configHashBefore
-    $oldToolsFile = Join-Path $run 'old-tools.json'
-    WriteExpectedTools $root $oldToolsFile $script:NodeExe
-    WaitHealthy $rollbackStarted $root $state $oldToolsFile $script:HealthScript $run
+    $rollbackStarted = StartLabServer $state $run $configHashBefore
+    WaitHealthy $rollbackStarted $state $oldExpectedTools $run
     Write-Output '[AUTO_ROLLBACK] Previous PR102 Lab server restored and healthy.'
     throw ('Upgrade failed; old server automatically restored: ' + $_.Exception.Message)
   }
 } finally {
   if ($oldProc) { $oldProc.Dispose() }
-  if (Test-Path -LiteralPath $run) {
-    # Keep logs and evidence after apply; remove disposable staging on dry-run only.
-    if (-not $Apply) { Remove-Item -LiteralPath $run -Recurse -Force }
+  if (Test-Path -LiteralPath $run -and -not $Apply) {
+    Remove-Item -LiteralPath $run -Recurse -Force
   }
 }
