@@ -12,7 +12,7 @@ const create={id,requestId:'viewer_create_01',action:'create',actor:'coordinator
 const assign={id,requestId:'viewer_assign_01',action:'assign',actor:'coordinator',role:'planner',owner:'claude'};
 const submit={id,requestId:'viewer_submit_01',action:'submit',actor:'claude',role:'developer',evidence:'report SHA256:abcd'};
 const accept={id,requestId:'viewer_accept_01',action:'accept',actor:'reviewer_a',role:'reviewer',comment:'Reviewed'};
-function fixture(){const dir=mkdtempSync(path.join(os.tmpdir(),'workbench-view-'));return {dir,file:path.join(dir,'tasks.jsonl'),cleanup:()=>rmSync(dir,{recursive:true,force:true})};}}
+function fixture(){const dir=mkdtempSync(path.join(os.tmpdir(),'workbench-view-'));return {dir,file:path.join(dir,'tasks.jsonl'),cleanup:()=>rmSync(dir,{recursive:true,force:true})};}
 
 test('viewer verifies v2 chain and projects task states without mutation',async()=>{
  const f=fixture();
