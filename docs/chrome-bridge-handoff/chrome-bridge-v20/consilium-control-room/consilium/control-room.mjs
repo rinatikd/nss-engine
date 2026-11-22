@@ -103,9 +103,9 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
   const handle = async (req, res) => {
     try {
       const address = server.address();
-      const expectedHost = \`127.0.0.1:\${address.port}\`;
+      const expectedHost = `127.0.0.1:${address.port}`;
       if (req.headers.host !== expectedHost) return json(res, 403, { error: 'HOST_DENIED' });
-      const url = new URL(req.url, \`http://\${expectedHost}\`);
+      const url = new URL(req.url, `http://${expectedHost}`);
       if (req.method === 'GET' && url.pathname === '/healthz') return json(res, 200, { ok: true, bind: host, port: address.port });
       if (req.method === 'GET' && ['/', '/app.js', '/style.css'].includes(url.pathname)) {
         const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
@@ -121,7 +121,7 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
       }
       if (req.method !== 'POST') return json(res, 405, { error: 'METHOD_NOT_ALLOWED' });
       const origin = req.headers.origin;
-      if (origin !== \`http://\${expectedHost}\`) return json(res, 403, { error: 'ORIGIN_DENIED' });
+      if (origin !== `http://${expectedHost}`) return json(res, 403, { error: 'ORIGIN_DENIED' });
       const body = await readBody(req);
       rejectSecrets(body);
       if (!validId(requestId(body))) throw Error('INVALID_REQUEST_ID');
@@ -233,7 +233,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const tokens = loadActorTokens();
   const app = createControlRoom({ dataDir, tokens, port });
   const address = await app.listen();
-  process.stdout.write(\`CONSILIUM_CONTROL_ROOM_READY http://\${address.host}:\${address.port}/\\n\`);
+  process.stdout.write(`CONSILIUM_CONTROL_ROOM_READY http://${address.host}:${address.port}/\\n`);
   const shutdown = async () => { await app.close(); process.exit(0); };
   process.once('SIGINT', shutdown); process.once('SIGTERM', shutdown);
 }
