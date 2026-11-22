@@ -17,3 +17,5 @@ jobs:
         with:
           node-version: '22'
       - run: node --test tools/free-ai-workbench/tests/ledger.test.mjs tools/free-ai-workbench/tests/viewer.test.mjs
+      - run: node --check tools/free-ai-workbench/ui/viewer.mjs
+      - run: node --check tools/free-ai-workbench/ui/app.mjs
