@@ -102,6 +102,12 @@ try {
   $oldStderrTask = $old.StandardError.ReadToEndAsync()
   WaitPort $old.Id
   $oldMeta = Get-BridgeHandleIdentity $old
+  # Safe fixture-only diagnostic: this process was launched by this test with no secrets in its command line.
+  Write-Output ('[FIXTURE_IDENTITY] pid=' + $oldMeta.id + '; executable=' + $oldMeta.executable + '; command=' + $oldMeta.command)
+  $expectedFixtureEntry = (Join-Path $root 'server\bridge.mjs').Replace('/','\')
+  if (([string]$oldMeta.command).Replace('/','\').IndexOf($expectedFixtureEntry,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    throw ('Fixture command mismatch; expected=' + $expectedFixtureEntry + '; actual=' + $oldMeta.command)
+  }
   $activePid = $old.Id
   $activeStart = $oldMeta.created
 
