@@ -10,6 +10,11 @@ test('tool descriptions match the preserved Control allowlist and durations', ()
  for (const origin of Object.keys(CONTROL_ORIGINS)) assert.ok(description.includes(origin));
  assert.match(description, /ChatGPT-owner-approved Session Authorization lease/);
  assert.match(description, /agent_send\/provider_prepare\/provider_commit/);
+ assert.match(toolByName('provider_prepare').description, /Session Authorization lease/);
+ assert.match(toolByName('provider_commit').description, /Session Authorization lease/);
+ assert.match(toolByName('browser_click').description, /not included in Session Authorization/);
+ assert.match(toolByName('browser_fill').description, /individual confirmation/);
+ assert.match(description, /agent_send\/provider_prepare\/provider_commit/);
  assert.match(description, /browser_click\/browser_fill remain individually approved/);
  assert.match(toolByName('provider_prepare').description, /Session Authorization lease/);
  assert.match(toolByName('provider_commit').description, /Session Authorization lease/);
