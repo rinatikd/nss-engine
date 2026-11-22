@@ -30,7 +30,7 @@ test('provider journal validates identity and persists prepare/commit transition
     assert.equal(j.beginPrepare(identity,payloadHash).fencingToken,prepared.fencingToken);
     assert.throws(()=>j.beginPrepare(identity,'b'.repeat(64)),/PROVIDER_REQUEST_ID_CONFLICT/);
     assert.throws(()=>j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:'0'.repeat(64)}),/PROVIDER_FENCING_TOKEN_INVALID/);
-    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken});
+    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash});
     const sent=j.completeCommit(identity,{clickedAt:new Date().toISOString(),clickedSend:true});
     assert.equal(sent.state,'SENT');
     assert.equal(j.status(identity).state,'SENT');
@@ -51,7 +51,7 @@ test('clean stop revokes prepared token, advances epoch and returns verifiable p
     assert.equal(stopped.quiescence.outstandingPrepared,0);
     assert.equal(verifyQuiescence(stopped.quiescence,identity,key),true);
     assert.equal(j.stop(identity).state,'STOPPED_CLEAN');
-    assert.throws(()=>j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken}),/STALE_FENCING_EPOCH|PROVIDER_PREPARE_NOT_COMMITTABLE/);
+    assert.throws(()=>j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash}),/STALE_FENCING_EPOCH|PROVIDER_PREPARE_NOT_COMMITTABLE/);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 
@@ -61,12 +61,12 @@ test('revoke during an uncertain commit advances epoch but keeps outcome quarant
     const j=journal(dir);
     j.beginPrepare(identity,payloadHash);
     const prepared=j.completePrepare(identity,{preparedId:'prepared_0003',expiresAt:new Date(Date.now()+60000).toISOString()});
-    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken});
+    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash});
     const revoked=j.revoke(identity);
     assert.equal(revoked.state,'UNKNOWN');
     assert.equal(revoked.nextEpoch,8);
     assert.ok(revoked.quarantineId);
-    assert.throws(()=>j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken}),/STALE_FENCING_EPOCH/);
+    assert.throws(()=>j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash}),/STALE_FENCING_EPOCH/);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 
@@ -81,7 +81,7 @@ test('restart converts PREPARED to UNKNOWN and never replays the old fencing tok
     assert.equal(status.state,'UNKNOWN');
     assert.ok(status.quarantineId);
     assert.equal(second.beginPrepare(identity,payloadHash).transaction.state,'UNKNOWN');
-    assert.throws(()=>second.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken}),/PROVIDER_PREPARE_NOT_COMMITTABLE/);
+    assert.throws(()=>second.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash}),/PROVIDER_PREPARE_NOT_COMMITTABLE/);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 
@@ -117,7 +117,7 @@ test('stop after a confirmed commit advances the epoch without claiming cancella
     const j=journal(dir);
     j.beginPrepare(identity,payloadHash);
     const prepared=j.completePrepare(identity,{preparedId:'prepared_0006',expiresAt:new Date(Date.now()+60000).toISOString()});
-    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken});
+    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash});
     j.completeCommit(identity,{clickedAt:new Date().toISOString(),clickedSend:true});
     const stopped=j.stop(identity);
     assert.equal(stopped.state,'STOP_AFTER_COMMIT');
