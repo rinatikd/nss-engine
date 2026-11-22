@@ -97,3 +97,19 @@ test('revoke must attest a strictly newer epoch for the exact binding',async()=>
   const invalid=transport(baseAdapter({async revoke(){return {state:'REVOKED',identity,nextEpoch:7}}}));
   await assert.rejects(()=>invalid.revoke(identity),e=>e.code==='FENCING_REVOKE_ATTESTATION_INVALID');
 });
+
+test('stop-request and stop-after-commit must advance the fencing epoch',async()=>{
+  const requested=transport(baseAdapter({async stop(){return {state:'STOP_REQUESTED',identity,nextEpoch:8}}}));
+  assert.equal((await requested.stop(identity)).nextEpoch,8);
+  const afterCommit=transport(baseAdapter({async stop(){return {state:'STOP_AFTER_COMMIT',identity,nextEpoch:8}}}));
+  assert.equal((await afterCommit.stop(identity)).state,'STOP_AFTER_COMMIT');
+  const stale=transport(baseAdapter({async stop(){return {state:'STOP_REQUESTED',identity,nextEpoch:7}}}));
+  await assert.rejects(()=>stale.stop(identity),e=>e.code==='STOP_FENCING_EPOCH_INVALID');
+});
+
+test('revoke may return UNKNOWN only with quarantine and an advanced epoch',async()=>{
+  const t=transport(baseAdapter({async revoke(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001',nextEpoch:8}}}));
+  assert.equal((await t.revoke(identity)).state,'UNKNOWN');
+  const invalid=transport(baseAdapter({async revoke(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001',nextEpoch:7}}}));
+  await assert.rejects(()=>invalid.revoke(identity),e=>e.code==='FENCING_REVOKE_ATTESTATION_INVALID');
+});
