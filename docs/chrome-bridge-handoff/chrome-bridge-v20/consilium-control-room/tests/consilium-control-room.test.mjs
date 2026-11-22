@@ -79,7 +79,7 @@ test('static UI is served with restrictive CSP and without exposing data before 
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const page=await fetch(base+'/');assert.equal(page.status,200);const html=await page.text();assert.match(html,/Consilium Control Room/);assert.match(page.headers.get('content-security-policy'),/script-src 'self'/);
-  const js=await fetch(base+'/app.js');assert.equal(js.status,200);const jsText=await js.text();assert.match(jsText,/api\\/decisions\\/review/);assert.match(jsText,/RESPONSE_UNCERTAIN_RETRY_SAME_REQUEST/);
+  const js=await fetch(base+'/app.js');assert.equal(js.status,200);const jsText=await js.text();assert.ok(jsText.includes('/api/decisions/review'));assert.match(jsText,/RESPONSE_UNCERTAIN_RETRY_SAME_REQUEST/);
   const api=await fetch(base+'/api/snapshot');assert.equal(api.status,401);
  }finally{await app.close()}
 });
