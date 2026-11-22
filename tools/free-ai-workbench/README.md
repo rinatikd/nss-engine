@@ -62,6 +62,10 @@ A torn final JSONL line or a hash mismatch fails closed. The prototype does not 
 These controls provide local corruption detection and safer retries, not authenticated actors, an external signature, or proof against an administrator who can rewrite the whole file. Do not use this ledger to authorize Windows, Git, browser or provider operations.
 
 
+
+
+A verified synthetic example is provided at `tools/free-ai-workbench/examples/sample-ledger.jsonl`. It contains one demo task with the complete create → assign → submit → accept sequence. It has no real project/customer data and can be imported into the viewer to verify the end-to-end read-only presentation.
+
 ## Offline read-only viewer
 
 The viewer is a static file-import board. It verifies v2 payload hashes and the SHA-256 event chain before projecting task cards. Legacy-only logs are labelled LEGACY_UNCHAINED rather than presented as verified. Torn files, tampering, invalid transitions and duplicate request IDs fail closed.
