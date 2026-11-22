@@ -134,7 +134,7 @@ test('stop cannot be marked complete by caller-supplied quiescence strings',asyn
  }finally{await app.close()}
 });
 
-test('all co-equal operators may update a task assigned to another operator',async()=>{
+test('all authenticated AI participants may update a task assigned to another participant',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   await request(base,tokens[1].token,'/api/decisions',{decisionId:'decision_task_0001',title:'Routine choice',rationale:'Reversible',risk:'routine',requestId:'decision_task_req'});
