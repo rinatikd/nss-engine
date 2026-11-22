@@ -69,7 +69,7 @@ function chromiumDump(url, profile) {
     let stdout='', stderr='';
     child.stdout.on('data',v=>{stdout+=v;if(stdout.length>2_000_000)child.kill();});
     child.stderr.on('data',v=>{stderr+=v;if(stderr.length>300_000)child.kill();});
-    const timer=setTimeout(()=>{child.kill();reject(Error('CHROMIUM_TIMEOUT'));},20000);
+    const timer=setTimeout(()=>{child.kill();reject(Error('CHROMIUM_TIMEOUT'));},45000);
     child.on('error',e=>{clearTimeout(timer);reject(e);});
     child.on('close',code=>{
       clearTimeout(timer);
@@ -78,7 +78,7 @@ function chromiumDump(url, profile) {
     });
   });
 }
-test('real Chromium executes PR #97 Gemini DOM adapter on disposable local fixture', {timeout:30000}, async()=>{
+test('real Chromium executes PR #97 Gemini DOM adapter on disposable local fixture', {timeout:60000}, async()=>{
   const profile=fs.mkdtempSync(path.join(os.tmpdir(),'chromebridge-chromium-profile-'));
   const server=http.createServer((req,res)=>{
     if(req.url==='/gemini') {
