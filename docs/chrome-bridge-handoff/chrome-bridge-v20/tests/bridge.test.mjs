@@ -53,13 +53,9 @@ test('session_request binds the owner challenge to the exact selected provider s
       { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' },
       { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' }
     ];
-    const connect = s.rpc('browser_tabs');
-    await new Promise(resolve => setTimeout(resolve, 10));
-    const connectCommand = await s.poll();
-    assert.equal(connectCommand.name, 'browser_tabs');
-    const connectAck = await s.post('/bridge/result', { id: connectCommand.id, result: tabs }, 'b'.repeat(64));
-    assert.equal(connectAck.status, 200);
-    await connect;
+    const disconnectedRead = await s.rpc('browser_read', { tabId: 11 });
+    assert.equal(disconnectedRead.result.isError, true);
+    await s.poll(); // Establish the browser poller, matching the shared Bridge test fixture.
     const request = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
     await new Promise(resolve => setTimeout(resolve, 10));
     const command = await s.poll();
