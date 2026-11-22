@@ -1,15 +1,17 @@
-# Six-model AI consortium protocol
+# Seven-model AI consortium protocol
 
 **Status:** protocol draft for the Chrome Bridge Lab  
-**Equal council participants:** Claude, DeepSeek, Qwen, Kimi, Grok, Gemini
+**Seven equal AI operators:** ChatGPT, Claude, DeepSeek, Qwen, Kimi, Grok, Gemini
+
+**Mandatory core review pair:** ChatGPT + Claude (dual-review gate, not a hierarchy or elevated provider trust tier)
 
 ## Goal
 
-Use multiple independent assistants to review one bounded engineering task, challenge each other's findings, and produce one evidence-backed decision. The consortium is an advisory and review mechanism. It does not replace the operator, tests, code review, or explicit approvals.
+Use seven independently authenticated, equal-permission AI operators to review one bounded engineering task, challenge each other's findings, and produce one evidence-backed decision. ChatGPT and Claude provide the mandatory independent dual-review gate. The consortium does not replace source review, tests or explicit owner approval for consequential actions.
 
 ## Roles
 
-| Participant | Default assignment |
+| Equal operator | Default analytical emphasis (not a permission tier) |
 | --- | --- |
 | Claude | Source-code review, implementation risks, regression paths and patch critique |
 | DeepSeek | Independent architecture analysis, failure modes, alternative designs and adversarial challenge |
@@ -18,7 +20,7 @@ Use multiple independent assistants to review one bounded engineering task, chal
 | Grok | Adversarial counterexamples, assumptions challenge and independent second opinion |
 | Gemini | Independent verification, structured comparison and factual cross-check |
 
-Roles are areas of emphasis only, not a hierarchy or permission tier. All six participants have equal status and the same Control-origin policy. Assignments may be rotated to reduce anchoring.
+These are analytical emphases only, not a hierarchy or permission tier. All seven operators have equal session-control, proposal, review, task and evidence capabilities, and use the same per-provider Control-origin policy. Assignments may be rotated to reduce anchoring.
 
 ## Work item envelope
 
@@ -33,13 +35,13 @@ Every consortium task must carry the same immutable task packet:
 - `required_output`: findings, evidence, severity, confidence, reproduction, recommendation
 - `approval_boundary`: actions that are prohibited without separate operator approval
 
-Do not send secrets, access tokens, personal browser content or unrelated private files to a participant.
+Do not send secrets, access tokens, personal browser content or unrelated private files to any operator.
 
 ## Three-round review
 
 ### Round 1 — independent analysis
 
-Send the same task packet to each available participant independently. Ask each to return:
+Send the same task packet to each available operator independently. Ask each to return:
 
 1. Findings with file/line or evidence reference.
 2. Reproduction steps or a falsifiable test.
@@ -47,11 +49,11 @@ Send the same task packet to each available participant independently. Ask each 
 4. Proposed fix and regression tests.
 5. Unknowns and assumptions.
 
-Participants must not see each other's conclusions in this round.
+Operators must not see each other's conclusions in this round.
 
 ### Round 2 — cross-examination
 
-After freezing Round 1 replies, distribute anonymized findings to other participants. Ask them to classify each finding as confirmed, disproven, incomplete or unverified, with evidence. Require at least one attempt to falsify the leading proposal.
+After freezing Round 1 replies, distribute anonymized findings to other operators. Ask them to classify each finding as confirmed, disproven, incomplete or unverified, with evidence. Require at least one attempt to falsify the leading proposal.
 
 ### Round 3 — synthesis and decision
 
@@ -63,13 +65,13 @@ The coordinator merges duplicates, records disagreements, compares proposals aga
 - recommended patch and tests
 - explicit GO / CONDITIONAL GO / NO-GO decision
 
-A majority vote is not proof. Source, runtime evidence and regression tests outrank consensus. The operator remains the final approver for consequential changes.
+A majority vote is not proof. Source, runtime evidence and regression tests outrank consensus. ChatGPT and Claude must both independently record SUPPORT before a decision passes the core review gate. Any other operator's OBJECT or NEEDS_EVIDENCE verdict blocks acceptance. The owner remains the final approver for consequential changes.
 
 ## Automation and file exchange
 
 The intended Bridge workflow is `agent_send` → `agent_wait` → evidence capture → cross-review. Each send must use a stable `requestId`; an UNKNOWN send must never be retried with a new ID until its original state is resolved.
 
-The current Lab tool surface has shown intermittent `UNKNOWN_TOOL` and `COMMAND_NOT_MIGRATED` responses. Therefore fully automated fan-out/fan-in is **not accepted yet**. Do not report a task as delivered to a participant unless a send acknowledgement and resulting reply are both observed.
+The current Lab tool surface has shown intermittent `UNKNOWN_TOOL` and `COMMAND_NOT_MIGRATED` responses. Therefore fully automated fan-out/fan-in is **not accepted yet**. Do not report a task as delivered to an operator unless a send acknowledgement and resulting reply are both observed.
 
 For text-only handoff, use explicit bounded blocks:
 
@@ -83,11 +85,11 @@ For real files, transfer only an explicitly selected artifact through a verified
 
 ## Equal Control model and readiness
 
-All six council origins (Claude, Gemini, DeepSeek, Grok, Qwen and Kimi) use the same exact-origin `CONTROL_ORIGINS` policy. Each uses the same local per-origin grant, expiry, revocation and per-action approval rules. No participant is assigned a weaker permission tier because of provider brand or historical adapter maturity.
+All six external council origins (Claude, Gemini, DeepSeek, Grok, Qwen and Kimi) use the same exact-origin `CONTROL_ORIGINS` policy. ChatGPT uses its own authenticated host path. Every AI operator has the same session, proposal, review and task permissions. Each external origin uses the same local per-origin grant, expiry, revocation and per-action approval rules. No operator receives a weaker permission tier because of provider brand or adapter maturity.
 
 Technical readiness remains separate from permission eligibility. A tab may exist while its composer/send/reply selectors are uncalibrated, a provider may be rate-limited, or the current bridge endpoint may not expose a requested operation. Those conditions must be reported as technical availability/readiness, not a lower trust class. Do not send until the exact selector path is validated and the normal local approval is active.
 
-A closed tab, stale tab ID, exhausted provider quota or non-responsive connector must be marked unavailable for that task rather than counted as a vote.
+A closed tab, stale tab ID, exhausted provider quota or non-responsive connector must be marked unavailable for that task rather than counted as a review.
 
 ## Release gates
 
