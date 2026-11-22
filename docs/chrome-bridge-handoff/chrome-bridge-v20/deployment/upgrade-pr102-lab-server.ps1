@@ -89,8 +89,31 @@ function WriteExpectedTools([string]$SourceRoot,[string]$OutputFile,[string]$Nod
 function Probe([string]$HealthScript,[string]$SourceRoot,[string]$State,[string]$ExpectedFile,[string]$RunDir,[string]$Mode) {
   $job = Join-Path $RunDir ('health-' + $Mode + '.json')
   WriteJson $job @{mode=$Mode;source=$SourceRoot;state=$State;port=$LabPort;expected=$ExpectedFile}
-  & $script:NodeExe $HealthScript $job
-  Require ($LASTEXITCODE -eq 0) ('MCP health probe failed: ' + $Mode)
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $script:NodeExe
+  $psi.Arguments = '"' + $HealthScript + '" "' + $job + '"'
+  $psi.WorkingDirectory = $SourceRoot
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $probe = New-Object Diagnostics.Process
+  $probe.StartInfo = $psi
+  try {
+    Require ($probe.Start()) 'Could not start MCP health probe'
+    $stdoutTask = $probe.StandardOutput.ReadToEndAsync()
+    $stderrTask = $probe.StandardError.ReadToEndAsync()
+    Require ($probe.WaitForExit(12000)) 'MCP health probe timed out'
+    $stdout = $stdoutTask.Result
+    $stderr = $stderrTask.Result
+    Require ($probe.ExitCode -eq 0) ('MCP health probe failed: ' + $Mode + '; stdout=' + $stdout + '; stderr=' + $stderr)
+    if ($stdout) { Write-Output $stdout.Trim() }
+  } finally {
+    if ($probe -and -not $probe.HasExited) {
+      try { $probe.Kill(); $null = $probe.WaitForExit(3000) } catch {}
+    }
+    $probe.Dispose()
+  }
 }
 function StartLabServer([string]$State,[string]$RunDir,[string]$ConfigHash) {
   $startJob = Join-Path $RunDir ('start-' + [guid]::NewGuid().ToString('N') + '.json')
