@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createBridge, loadConfig } from '../server/bridge.mjs';
+import { createBridge, loadConfig, resolveSessionScope } from '../server/bridge.mjs';
 import { tools as registeredTools } from '../server/tools.mjs';
 import { createChromeBridgeProviderTransport } from '../consilium-control-room/consilium/chrome-bridge-provider-adapter.mjs';
 
@@ -45,49 +45,29 @@ test('auth, origin, host and tool validation', async () => {
   } finally { await s.close(); }
 });
 
-test('session_request binds the owner challenge to the exact selected provider subset', async () => {
-  const s = await setup();
-  try {
-    const tabs = [
-      { tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' },
-      { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' },
-      { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' }
-    ];
-    const pollPromise = s.poll();
-    const request = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
-    const command = await pollPromise;
-    assert.equal(command.name, 'browser_tabs');
-    const ack = await s.post('/bridge/result', { id: command.id, result: tabs }, 'b'.repeat(64));
-    assert.equal(ack.status, 200);
-    const response = await request;
-    assert.notEqual(response.result.isError, true);
-    const challenge = JSON.parse(response.result.content[0].text);
-    assert.equal(challenge.ready, true);
-    assert.equal(challenge.approvalRequired, true);
-    assert.equal(challenge.changedNothing, true);
-    assert.deepEqual(challenge.providers, ['claude', 'grok']);
-    assert.deepEqual(challenge.origins, ['https://claude.ai', 'https://grok.com']);
+test('session scope grants only selected providers and fails closed for missing or mismatched tabs', () => {
+  const claude = { tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' };
+  const grok = { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' };
+  const gemini = { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' };
+  const ready = resolveSessionScope(['claude', 'grok'], [claude, grok, gemini]);
+  assert.equal(ready.ready, true);
+  assert.deepEqual(ready.providers, ['claude', 'grok']);
+  assert.deepEqual(ready.origins, ['https://claude.ai', 'https://grok.com']);
+  assert.deepEqual(ready.missingProviders, []);
 
-    const noClaude = await s.rpc('session_request', { durationMinutes: 60, providers: ['grok'] });
-    assert.equal(noClaude.result.isError, true);
-    assert.match(noClaude.result.content[0].text, /SESSION_CLAUDE_REQUIRED/);
+  const missing = resolveSessionScope(['claude', 'grok'], [claude, gemini]);
+  assert.equal(missing.ready, false);
+  assert.deepEqual(missing.missingProviders, ['grok']);
 
-    const missingPoll = s.poll();
-    const missing = s.rpc('session_request', { durationMinutes: 60, providers: ['claude', 'grok'] });
-    const missingCommand = await missingPoll;
-    assert.equal(missingCommand.name, 'browser_tabs');
-    const missingAck = await s.post('/bridge/result', {
-      id: missingCommand.id,
-      result: [{ tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' }]
-    }, 'b'.repeat(64));
-    assert.equal(missingAck.status, 200);
-    const missingResponse = await missing;
-    const missingChallenge = JSON.parse(missingResponse.result.content[0].text);
-    assert.equal(missingChallenge.ready, false);
-    assert.equal(missingChallenge.changedNothing, true);
-    assert.deepEqual(missingChallenge.missingProviders, ['grok']);
-  } finally { await s.close(); }
+  const mismatched = resolveSessionScope(['claude', 'grok'], [
+    claude, { ...grok, adapter: 'claude' }
+  ]);
+  assert.deepEqual(mismatched.missingProviders, ['grok']);
+  assert.throws(() => resolveSessionScope(['grok'], [grok]), /SESSION_CLAUDE_REQUIRED/);
+  assert.throws(() => resolveSessionScope(['claude', 'claude'], [claude]), /SESSION_PROVIDERS_DUPLICATE/);
+  assert.throws(() => resolveSessionScope(['claude', 'unknown'], [claude]), /SESSION_PROVIDER_DENIED/);
 });
+
 
 test('loadConfig pins only a validated explicit extension ID in temporary config', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-bridge-extid-'));
