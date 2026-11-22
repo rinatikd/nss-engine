@@ -40,7 +40,11 @@ test('auth, origin, host and tool validation', async () => {
     const list = await s.post('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/list' }).then((r) => r.json());
     assert.deepEqual(list.result.tools, registeredTools.map(({ kind, ...tool }) => tool));
     assert.ok(list.result.tools.some(({ name }) => name === 'agent_send'));
-    for (const name of ['session_request', 'session_authorize', 'session_revoke', 'session_status'])
+    for (const name of [
+      'session_request', 'session_authorize', 'session_revoke', 'session_status',
+      'provider_prepare', 'provider_commit', 'provider_status', 'provider_stop',
+      'provider_revoke', 'provider_events'
+    ])
       assert.ok(list.result.tools.some((tool) => tool.name === name), `missing ${name}`);
     assert.equal((await s.post('/mcp', [])).status, 200);
   } finally { await s.close(); }
