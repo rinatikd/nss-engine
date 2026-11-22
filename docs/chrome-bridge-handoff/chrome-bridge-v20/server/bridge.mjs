@@ -75,15 +75,25 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       const limit = timeout ?? EXT_TIMEOUTS[name] ?? 30000;
       const expires = Date.now() + limit;
       const timer = setTimeout(() => {
+        const entry = pending.get(id);
+        if (!entry) return;
         const wasDispatched = activeId === id;
+        entry.timer = null;
+        if (wasDispatched) {
+          // Keep the single-writer slot and tombstone until a late ACK arrives
+          // or the Bridge process is deliberately restarted. Releasing it here
+          // could overlap a still-running DOM action after a lost ACK.
+          entry.expired = true;
+          reject(Object.assign(Error('Command expired after dispatch; execution remains quarantined. Do not retry.'), { dispatchState: 'UNKNOWN' }));
+          return;
+        }
         pending.delete(id);
-        if (activeId === id) activeId = null;
         const i = queue.findIndex((x) => x.id === id);
         if (i >= 0) queue.splice(i, 1);
-        reject(Object.assign(Error('Command expired; result unknown if execution already started. Do not retry clicks automatically.'), { dispatchState: wasDispatched ? 'UNKNOWN' : 'NOT_PERFORMED' }));
+        reject(Object.assign(Error('Command expired before dispatch.'), { dispatchState: 'NOT_PERFORMED' }));
         wake();
       }, limit);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { resolve, reject, timer, expired: false });
       queue.push({ id, name, args, expires });
       wake();
     });
@@ -392,6 +402,13 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         pending.delete(body.id);
         activeId = null;
         lastSeen = Date.now();
+        if (p.expired) {
+          // Late ACK releases the transport lane only. The caller already
+          // received UNKNOWN, so this ACK never triggers an automatic retry.
+          json(res, 200, { ok: true, late: true });
+          wake();
+          return;
+        }
         body.error ? p.reject(Object.assign(Error(String(body.error)), {
           // Only an explicit pre-DOM acknowledgement can mark the command
           // not performed. Absent/ambiguous metadata is always UNKNOWN.
