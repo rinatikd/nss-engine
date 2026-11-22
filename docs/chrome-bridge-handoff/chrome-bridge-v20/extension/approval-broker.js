@@ -20,7 +20,7 @@ export class ApprovalBroker {
     if (!['browser_open','browser_click','browser_fill','agent_send','provider_prepare','provider_commit','agent_new_chat'].includes(command))
       throw Error('COMMAND_NOT_APPROVABLE');
     if (typeof preview!=='string' || preview.length>240 ||
-        !Number.isSafeInteger(contentLength) || contentLength<0 || contentLength>12000)
+        !Number.isSafeInteger(contentLength) || contentLength<0 || contentLength>100000)
       throw Error('INVALID_APPROVAL_PREVIEW');
     const item={id,command,origin,tabId,expires,status:'pending',preview,contentLength};
     this.pending.set(id,item);
