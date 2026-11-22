@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createBridge, loadConfig } from '../server/bridge.mjs';
+import { createChromeBridgeProviderTransport } from '../consilium-control-room/consilium/chrome-bridge-provider-adapter.mjs';
 import { extractVerdict, extractFiles, deepRender } from '../hub/lib.mjs';
 
 async function setup(opts = {}) {
@@ -213,4 +215,78 @@ test('dispatched timeout holds the single-writer lane until a late ACK', async (
     assert.equal(second.result.isError, false);
     assert.deepEqual(JSON.parse(second.result.content[0].text), { text: 'read-only result', links: [] });
   } finally { await s.close(); }
+});
+
+
+test('Chrome Bridge ProviderTransport adapter completes a synthetic prepare/commit/fence cycle', { timeout: 15000 }, async () => {
+  const s = await setup({ timeout: 3000, pollHold: 40 });
+  let running = true;
+  let responderError = null;
+  const responder = (async () => {
+    while (running) {
+      let command;
+      try { command = await s.poll(); }
+      catch (error) { if (running) responderError = error; break; }
+      if (!command) continue;
+      let result;
+      if (command.name === 'agent_probe') result = { adapter: 'claude', verified: true };
+      else if (command.name === 'agent_context') result = {
+        verified: true, origin: 'https://claude.ai', conversationId: 'conversation_001'
+      };
+      else if (command.name === 'provider_prepare') result = {
+        prepared: true, preparedId: command.args.preparedId,
+        expiresAt: command.args.expiresAt, payloadHash: command.args.payloadHash,
+        sideEffect: 'composer-filled-no-send', clickedSend: false
+      };
+      else if (command.name === 'provider_commit') result = {
+        clickedSend: true, clickedAt: new Date().toISOString(), confirmed: true
+      };
+      else throw Error('Unexpected synthetic Bridge command: ' + command.name);
+      const ack = await s.post('/bridge/result', { id: command.id, result }, 'b'.repeat(64));
+      assert.equal(ack.status, 200);
+    }
+  })();
+  try {
+    const bound = await s.rpc('agent_bind', { name: 'claude', tabId: 42 });
+    assert.equal(bound.result.isError, undefined);
+    const transport = createChromeBridgeProviderTransport({
+      endpoint: s.base, agentToken: 'a'.repeat(64), timeoutMs: 3000
+    });
+    const message = 'Review this synthetic ProviderTransport transaction.';
+    const payloadHash = crypto.createHash('sha256').update(message, 'utf8').digest('hex');
+    const identity = {
+      requestId: 'request_0001', taskId: 'task_000001', providerId: 'claude',
+      tabId: 42, origin: 'https://claude.ai', conversationId: 'conversation_001', epoch: 7
+    };
+    const prepared = await transport.prepare({ ...identity, message, payloadHash });
+    assert.equal(prepared.state, 'PREPARED');
+    assert.equal(prepared.clickedSend, false);
+    assert.ok(prepared.fencingToken);
+    const sent = await transport.commit({
+      ...identity, preparedId: prepared.preparedId, fencingToken: prepared.fencingToken
+    });
+    assert.equal(sent.state, 'SENT');
+    assert.equal(sent.clickedSend, true);
+    assert.equal((await transport.status(identity)).state, 'SENT');
+    const stoppedAfterCommit = await transport.stop(identity);
+    assert.equal(stoppedAfterCommit.state, 'STOP_AFTER_COMMIT');
+    assert.equal(stoppedAfterCommit.nextEpoch, 8);
+
+    const nextIdentity = { ...identity, requestId: 'request_0002', taskId: 'task_000002', epoch: 8 };
+    const nextMessage = 'A second synthetic draft that will not be committed.';
+    const nextHash = crypto.createHash('sha256').update(nextMessage, 'utf8').digest('hex');
+    const nextPrepared = await transport.prepare({ ...nextIdentity, message: nextMessage, payloadHash: nextHash });
+    assert.equal(nextPrepared.state, 'PREPARED');
+    const cleanStop = await transport.stop(nextIdentity);
+    assert.equal(cleanStop.state, 'STOPPED_CLEAN');
+    assert.equal(cleanStop.quiescence.nextEpoch, 9);
+    const events = await transport.events({ after: 0, limit: 100 });
+    assert.ok(events.some(event => event.state === 'SENT' && event.requestId === identity.requestId));
+    assert.ok(events.some(event => event.state === 'STOPPED_CLEAN' && event.requestId === nextIdentity.requestId));
+    assert.equal(responderError, null);
+  } finally {
+    running = false;
+    await responder;
+    await s.close();
+  }
 });
