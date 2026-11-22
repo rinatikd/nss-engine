@@ -85,12 +85,12 @@ The required tests include pre-commit stop, post-commit hazard, revoke-before-co
 
 ## 6. MVP implementation status
 
-A local Node.js MVP prototype is implemented in this branch and tested with 29 automated tests (12 Control Room API/UI tests, 12 event-ledger tests and 5 ProviderTransport contract tests). Coverage includes the two-co-operator/five-participant credential split, participant-proposed rounds with co-operator-only launch, participant objection/evidence-gap blocking after the core pair reaches READY_FOR_OWNER, and transport correlation, binding, fencing, UNKNOWN quarantine and epoch revocation. It contains:
+A local Node.js MVP prototype is implemented in this branch and tested with 32 automated tests (12 Control Room API/UI tests, 12 event-ledger tests and 8 ProviderTransport v1 contract tests). Coverage includes the two-co-operator/five-participant credential split, participant-proposed rounds with co-operator-only launch, participant objection/evidence-gap blocking after the core pair reaches READY_FOR_OWNER, and transport correlation, binding, fencing, UNKNOWN quarantine and epoch revocation. It contains:
 
 - loopback-only Control Room HTTP server and browser UI;
 - distinct owner credential, two independently authenticated co-operator credentials and five independently authenticated expert-participant credentials;
 - participant-proposed rounds with launch restricted to ChatGPT or Claude;
-- versioned ProviderTransport v1 contract defining prepare / commit / query / revoke, binding correlation, fencing tokens, delivery evidence and UNKNOWN quarantine (contract only; no live Bridge adapter is attached);
+- versioned ProviderTransport v1 contract defining prepare / commit / status / stop / revoke / events, provider-origin-tab-conversation-epoch binding, no-send preparation, fencing tokens, click evidence, UNKNOWN quarantine and independently verified STOPPED_CLEAN attestation (contract only; no live Bridge adapter is attached);
 - append-only JSONL event ledger, fsync, single-writer lock, hash chain and idempotent request IDs;
 - comments and attributed message records;
 - mandatory ChatGPT + Claude dual review, with equal review/objection rights for all other AI operators, and owner approval for consequential decisions;
