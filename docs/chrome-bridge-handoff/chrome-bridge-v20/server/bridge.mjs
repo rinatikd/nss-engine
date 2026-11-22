@@ -336,7 +336,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
           catch (e) { throw Error(/^[A-Z_]+$/.test(e.message) ? e.message : 'CODEX_INTERNAL_ERROR'); }
         } else data = t.kind === 'ext' ? await enqueue(t.name, args) : await hub[t.name](args);
         result = { content: [{ type: 'text', text: JSON.stringify(data) }] };
-      } catch (e) { result = { isError: true, content: [{ type: 'text', text: e.message }] }; }
+      } catch (e) { result = { isError: true, ...(params.name === 'provider_prepare' || params.name === 'provider_commit' ? { dispatchState: 'NOT_PERFORMED' } : {}), content: [{ type: 'text', text: e.message }] }; }
     } else return { jsonrpc: '2.0', id: id ?? null, error: { code: -32601, message: 'Method not found' } };
     return { jsonrpc: '2.0', id: id ?? null, result };
   }
