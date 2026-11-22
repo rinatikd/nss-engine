@@ -40,13 +40,13 @@ function TreeHash([string]$Path) {
   }
   return (($rows | Sort-Object) -join '|')
 }
-function AssertListener([int]$Pid) {
+function AssertListener([int]$ProcessId) {
   $listeners = @([BridgeNativeMetadata]::Listeners($LabPort))
   Require ($listeners.Count -eq 1) ('Expected one listener on 17484, found ' + $listeners.Count)
-  Require ($listeners[0] -eq ('127.0.0.1|' + $Pid)) ('17484 listener does not belong to expected PID; owner=' + $listeners[0])
+  Require ($listeners[0] -eq ('127.0.0.1|' + $ProcessId)) ('17484 listener does not belong to expected PID; owner=' + $listeners[0])
 }
-function PinProcess([int]$Pid,[string]$ExpectedStart,[string]$Root) {
-  $p = [Diagnostics.Process]::GetProcessById($Pid)
+function PinProcess([int]$ProcessId,[string]$ExpectedStart,[string]$Root) {
+  $p = [Diagnostics.Process]::GetProcessById($ProcessId)
   $null = $p.Handle
   try {
     $identity = Get-BridgeHandleIdentity $p
@@ -57,7 +57,7 @@ function PinProcess([int]$Pid,[string]$ExpectedStart,[string]$Root) {
     $actualCommand = ([string]$identity.command).Replace('/','\')
     $expectedEntry = (Join-Path $Root 'server\bridge.mjs').Replace('/','\')
     Require ($actualCommand.IndexOf($expectedEntry,[StringComparison]::OrdinalIgnoreCase) -ge 0) 'Listener command line does not point to the pinned PR102 Lab server'
-    AssertListener $Pid
+    AssertListener $ProcessId
     return @{process=$p;identity=$identity}
   } catch {
     $p.Dispose()
