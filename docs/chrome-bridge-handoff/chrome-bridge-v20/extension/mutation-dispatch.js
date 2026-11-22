@@ -7,7 +7,7 @@ import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
 
-const MUTATIONS = new Set(['browser_click', 'browser_fill', 'agent_send']);
+const MUTATIONS = new Set(['browser_click', 'browser_fill', 'agent_send', 'provider_prepare', 'provider_commit']);
 const MAX_APPROVAL_MS = 90_000;
 const nowExpired = (cmd, now) => !Number.isFinite(cmd?.expires) || now() >= cmd.expires;
 
@@ -33,6 +33,97 @@ async function boundTab(chromeApi, tabId, originalUrl, origin) {
       current.site.mode !== 'chat') throw Error('CONTROL_SITE_DENIED');
   return current;
 }
+
+async function dispatchProviderMutation(cmd, chromeApi, {
+  approvals, controlGrant, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
+}={}) {
+  let executionStarted=false;
+  let stage='PRECHECK';
+  const args=cmd.args;
+  try {
+    const {requestId,taskId,providerId,tabId,origin,conversationId,epoch}=args;
+    if(!/^[A-Za-z0-9_-]{8,100}$/.test(requestId||'') ||
+       !/^[A-Za-z0-9_-]{8,100}$/.test(taskId||'') ||
+       !Number.isSafeInteger(epoch)||epoch<1 ||
+       typeof conversationId!=='string'||!/^[A-Za-z0-9_-]{8,160}$/.test(conversationId) ||
+       CONTROL_ORIGINS[origin]!==providerId) throw Error('PROVIDER_IDENTITY_INVALID');
+    if(!approvals?.request||typeof controlGrant!=='function')throw Error('BACKGROUND_CONTROL_NOT_CONFIGURED');
+    if(!(await stillEnabled()))throw Error('BACKGROUND_CONTROL_STOPPED');
+    if(nowExpired(cmd,now))throw Error('COMMAND_EXPIRED');
+    const {tab,origin:actualOrigin,site}=await permittedTab(chromeApi,tabId);
+    if(actualOrigin!==origin||site.mode!=='chat'||site.adapter!==providerId)
+      throw Error('PROVIDER_TAB_BINDING_MISMATCH');
+    const controlExpires=await controlGrant(origin,tabId);
+    if(!Number.isFinite(controlExpires)||controlExpires<=now())throw Error('EXPLICIT_CONTROL_GRANT_REQUIRED');
+    const {adapters}=await chromeApi.storage.local.get('adapters');
+    let overrides;
+    try{overrides=JSON.parse(adapters||'{}');}catch{throw Error('INVALID_ADAPTER_CONFIGURATION');}
+    const adapter=mergeAdapters(overrides)[providerId];
+    if(!adapter||adapter.origin!==origin)throw Error('ADAPTER_ORIGIN_MISMATCH');
+    const preflight=await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    if(!preflight.verified||preflight.origin!==origin||preflight.conversationId!==conversationId)
+      throw Error('CONVERSATION_NOT_BOUND');
+    if(cmd.name==='provider_prepare') {
+      if(typeof args.message!=='string'||!args.message.trim()||args.message.length>100000||
+         findSecret(args.message)||!/^[a-f0-9]{64}$/.test(args.payloadHash||'')||
+         !/^[A-Za-z0-9_-]{8,100}$/.test(args.preparedId||'')||
+         !Number.isFinite(Date.parse(args.expiresAt||''))||Date.parse(args.expiresAt)<=now()||
+         Date.parse(args.expiresAt)>now()+120000)throw Error('PROVIDER_PREPARE_INPUT_INVALID');
+    } else if(!/^[A-Za-z0-9_-]{8,100}$/.test(args.preparedId||'')||
+       !/^[a-f0-9]{64}$/.test(args.fencingToken||'')||
+       !/^[a-f0-9]{64}$/.test(args.payloadHash||'')) {
+      throw Error('PROVIDER_COMMIT_INPUT_INVALID');
+    }
+
+    const expires=Math.min(cmd.expires,now()+MAX_APPROVAL_MS);
+    if(expires<=now())throw Error('COMMAND_EXPIRED');
+    stage='APPROVAL';
+    await approvals.request({
+      id:'p-'+uuid(),command:cmd.name,origin,tabId,expires,
+      preview:cmd.name==='provider_prepare'
+        ? 'Prepare '+providerId+' message · request '+requestId
+        : 'Commit prepared '+providerId+' message · request '+requestId,
+      contentLength:cmd.name==='provider_prepare'?args.message.length:0
+    });
+
+    stage='REVALIDATION';
+    if(!(await stillEnabled()))throw Error('BACKGROUND_CONTROL_STOPPED');
+    if(nowExpired(cmd,now)||now()>=expires)throw Error('APPROVAL_EXPIRED');
+    await boundTab(chromeApi,tab.id,tab.url,origin);
+    const refreshedGrant=await controlGrant(origin,tabId);
+    if(!Number.isFinite(refreshedGrant)||refreshedGrant<=now())throw Error('CONTROL_GRANT_EXPIRED');
+    const current=await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    if(!current.verified||current.origin!==origin||current.conversationId!==conversationId)
+      throw Error('CONVERSATION_CHANGED_AFTER_APPROVAL');
+    if(!(await stillEnabled()))throw Error('BACKGROUND_CONTROL_STOPPED');
+
+    const pageArgs=cmd.name==='provider_prepare'
+      ? {adapter,message:args.message,payloadHash:args.payloadHash,preparedId:args.preparedId,
+          expiresAt:args.expiresAt,expectedOrigin:origin,expectedConversationId:conversationId,
+          controlExpires:refreshedGrant}
+      : {adapter,payloadHash:args.payloadHash,preparedId:args.preparedId,fencingToken:args.fencingToken,
+          expectedOrigin:origin,expectedConversationId:conversationId,controlExpires:refreshedGrant};
+    executionStarted=true;
+    const result=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs);
+    if(cmd.name==='provider_prepare') {
+      if(result?.prepared!==true||result.clickedSend!==false||
+         result.sideEffect!=='composer-filled-no-send'||result.preparedId!==args.preparedId||
+         result.payloadHash!==args.payloadHash)throw Error('PROVIDER_PREPARE_RECEIPT_INVALID');
+    } else if(result?.clickedSend!==true||!Number.isFinite(Date.parse(result.clickedAt||''))) {
+      throw Error('PROVIDER_COMMIT_RECEIPT_INVALID');
+    }
+    return result;
+  } catch(error) {
+    if(!executionStarted) {
+      if(!/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')) {
+        error=Object.assign(new Error('PROVIDER_'+stage+'_FAILED'),{dispatchState:error?.dispatchState});
+      }
+      error.dispatchState=/^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|PROVIDER_TAB_BINDING_MISMATCH)$/.test(error.message)
+        ? 'BLOCKED':'NOT_PERFORMED';
+    }
+    throw error;
+  }
+}
 export async function dispatchMutation(cmd, chromeApi, {
   approvals, controlGrant, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
@@ -41,6 +132,9 @@ export async function dispatchMutation(cmd, chromeApi, {
   let stage='PRECHECK';
   try {
   exactCommand(cmd);
+  if (cmd.name === 'provider_prepare' || cmd.name === 'provider_commit') {
+    return dispatchProviderMutation(cmd,chromeApi,{approvals,controlGrant,stillEnabled,now,uuid});
+  }
   if (!approvals?.request || typeof controlGrant !== 'function')
     throw Error('BACKGROUND_CONTROL_NOT_CONFIGURED');
   if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
