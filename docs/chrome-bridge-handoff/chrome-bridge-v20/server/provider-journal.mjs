@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { signQuiescence } from './provider-transport-crypto.mjs';
 
 const ID=/^[A-Za-z0-9_-]{8,100}$/;
+const CONVERSATION_ID=/^[A-Za-z0-9_-]{8,160}$/;
 const PROVIDERS={
   'https://claude.ai':'claude',
   'https://gemini.google.com':'gemini',
@@ -21,7 +22,7 @@ export function validateProviderIdentity(input) {
   if(!ID.test(input.requestId||'')||!ID.test(input.taskId||''))throw Error('PROVIDER_REQUEST_ID_INVALID');
   if(PROVIDERS[input.origin]!==input.providerId)throw Error('PROVIDER_ORIGIN_MISMATCH');
   if(!Number.isSafeInteger(input.tabId)||input.tabId<=0)throw Error('PROVIDER_TAB_ID_INVALID');
-  if(typeof input.conversationId!=='string'||!ID.test(input.conversationId))throw Error('PROVIDER_CONVERSATION_INVALID');
+  if(typeof input.conversationId!=='string'||!CONVERSATION_ID.test(input.conversationId))throw Error('PROVIDER_CONVERSATION_INVALID');
   if(!Number.isSafeInteger(input.epoch)||input.epoch<1)throw Error('PROVIDER_EPOCH_INVALID');
   return Object.freeze({
     requestId:input.requestId,taskId:input.taskId,providerId:input.providerId,
@@ -208,7 +209,9 @@ export class ProviderJournal {
     if(!tx||!identityEqual(tx.identity,identity)||tx.state!=='PREPARED')throw Error('PROVIDER_PREPARE_NOT_COMMITTABLE');
     if(tx.bridgeEpoch!==this.bridgeEpoch||Date.parse(tx.expiresAt)<=this.now())throw Error('PROVIDER_PREPARE_EXPIRED_OR_RESTARTED');
     if(tx.preparedId!==preparedId)throw Error('PROVIDER_PREPARED_ID_MISMATCH');
-    const expected=Buffer.from(this.#fencingToken(tx),'hex');
+    const expectedToken=this.#fencingToken(tx);
+    if(tx.tokenHash!==tokenHash(expectedToken))throw Error('PROVIDER_JOURNAL_TOKEN_CORRUPT');
+    const expected=Buffer.from(expectedToken,'hex');
     const supplied=Buffer.from(typeof fencingToken==='string'?fencingToken:'','hex');
     if(supplied.length!==expected.length||!crypto.timingSafeEqual(supplied,expected))throw Error('PROVIDER_FENCING_TOKEN_INVALID');
     this.#append('commit.started',identity,{preparedId,bridgeEpoch:this.bridgeEpoch,at:new Date(this.now()).toISOString()});
