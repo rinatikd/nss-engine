@@ -64,7 +64,7 @@ These controls provide local corruption detection and safer retries, not authent
 
 
 
-A verified synthetic example is provided at `tools/free-ai-workbench/examples/sample-ledger.jsonl`. It contains one demo task with the complete create → assign → submit → accept sequence. It has no real project/customer data and can be imported into the viewer to verify the end-to-end read-only presentation.
+A verified synthetic example is provided at `tools/free-ai-workbench/examples/sample-ledger.txt`. It contains one demo task with the complete create → assign → submit → accept sequence. It has no real project/customer data and can be imported into the viewer to verify the end-to-end read-only presentation.
 
 ## Offline read-only viewer
 
