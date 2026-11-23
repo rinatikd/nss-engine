@@ -52,7 +52,7 @@
 
 ## PR #138 — отдельная проверенная рабочая копия (2026-11-23)
 
-Целевой исходник для staging: `e4a3e47f17a48e1acc731bc4249551bb43537b70` — branch `feat/psdirect-per-job-workspace-approval-20261123`. Не переключать основной checkout и не выполнять reset.
+Целевой исходник для staging: `d9f12c9912398d5d89d4b2fad9e3caad2e359ee0` — branch `feat/psdirect-per-job-workspace-approval-20261123`. Не переключать основной checkout и не выполнять reset.
 
 1. Одноразовый helper `tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1` запускается из отдельной папки `C:\Engineering` (вне Git checkout) через PowerShell Direct с workspace `C:\Engineering`. Сначала `-Mode Inspect`, затем после PASS — `-Mode Prepare`. Он проверяет основной checkout на точный base SHA `f58f44a52c569a4a45e3ffe025dc6d1f62beff58`, чистоту, origin, удалённый branch HEAD; затем делает отдельный detached worktree:
    `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-e4a3e47f-release-clean`.
