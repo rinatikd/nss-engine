@@ -10,7 +10,7 @@ $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $expectedBase='f58f44a52c569a4a45e3ffe025dc6d1f62beff58'
-$expectedSha='3f86c79fe8116d593737893032bc431efbf4a710'
+$expectedSha='7f479394500ff827972231ca5ccb3e762ebd983d'
 $expectedBranch='feat/psdirect-per-job-workspace-approval-20261123'
 $expectedRemote='github.com/rinatikd/nss-engine'
 $oldRepo=$workspaceExpected
