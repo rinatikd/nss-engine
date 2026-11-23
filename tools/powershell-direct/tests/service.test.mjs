@@ -60,8 +60,8 @@ test('expired pending jobs become reclaimable without allowing approval',()=>{
  const next=x.service.propose({...req,requestId:'expiredjob32'});
  assert.equal(next.state,'PENDING');
  assert.equal(x.service.jobs.size,32);
- assert.equal(x.service.status('expiredjob00').state,'EXPIRED');
- assert.throws(()=>x.service.decide('expiredjob00','0'.repeat(64),true),/NOT_PENDING/);
+ assert.equal(x.service.status('expiredjob01').state,'EXPIRED');
+ assert.throws(()=>x.service.decide('expiredjob01','0'.repeat(64),true),/NOT_PENDING/);
 });
 
 test('no execution before explicit local approval; denial never invokes runner',async()=>{
