@@ -5,7 +5,7 @@ $ErrorActionPreference='Stop'
 $repo=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath
 $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
 $node='C:\Program Files\nodejs\node.exe'
-$branch='platform/ai-windows-control-release-20261114'
+$branch='feat/psdirect-per-job-workspace-approval-20261123'
 $tests=@(
  'tools/powershell-direct/tests/engineering.test.mjs',
  'tools/ai_collaboration/engineering-runner.test.mjs',
@@ -17,7 +17,8 @@ $tests=@(
  'tools/ai_collaboration/chat-approval-attestation.test.mjs',
  'tools/ai_collaboration/chat-approval-redemption.test.mjs',
  'tools/ai_collaboration/chat-approval-replay-store.test.mjs',
- 'tools/ai_collaboration/chat-approval-service.test.mjs'
+ 'tools/ai_collaboration/chat-approval-service.test.mjs',
+ 'tools/ai_collaboration/workspace-policy.test.mjs'
 )
 $required=@(
  'tools/powershell-direct/service.mjs',
@@ -26,6 +27,7 @@ $required=@(
  'tools/ai_collaboration/engineering-runner.mjs',
  'tools/ai_collaboration/engineering-mcp.mjs',
  'tools/ai_collaboration/local_job_service.mjs',
+ 'tools/ai_collaboration/workspace-policy.mjs',
  'tools/powershell-direct/tests/engineering-smoke.mjs'
 )
 foreach($exe in @($node)){
@@ -53,7 +55,7 @@ if($Mode -eq 'Inspect'){
  return
 }
 if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_EXISTS_NO_OVERWRITE'}
-# Tests are executed through the separate allowlisted node-test runner,
+# Tests are executed through the separate fixed-operation node-test runner,
 # not launched from a PowerShell script. R2 remains non-active until tests pass.
 if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_COLLISION'}
 $created=$false
