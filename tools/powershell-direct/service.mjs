@@ -104,12 +104,27 @@ export class PowerShellApprovalService {
   return {requestId:args.requestId,planSha256:hash,
    state:'SIGNED_APPROVAL_ACCEPTED_FOR_PENDING_JOB'};
  }
+ pruneJobs(){
+  // The in-memory read-only diagnostic lane is deliberately bounded.
+  // Reclaim only terminal history; pending approvals and active jobs are never evicted.
+  const now=this.now();
+  for(const job of this.jobs.values()){
+   if(job.state==='PENDING'&&now>=job.payload.expiresAt)job.state='EXPIRED';
+  }
+  if(this.jobs.size<32)return;
+  for(const [id,job] of this.jobs){
+   if(job.state==='PENDING'||job.state==='RUNNING')continue;
+   this.jobs.delete(id);
+   if(this.jobs.size<32)return;
+  }
+ }
  propose(args){
   const id=args?.requestId;
   if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{8,80}$/.test(id))throw Error('INVALID_REQUEST_ID');
   if(this.jobs.has(id))throw Error('DUPLICATE_REQUEST_ID');
-  if(this.jobs.size>=32)throw Error('QUEUE_FULL');
   const spec=validateTask(args.task),workspace=this.workspaceCheck(args.workspace),time=this.now();
+  this.pruneJobs();
+  if(this.jobs.size>=32)throw Error('QUEUE_FULL');
   const payload={id,task:args.task,workspace,exe:spec.exe,argv:[...spec.args],issuedAt:time,expiresAt:time+90000};
   const job={payload,sha256:digest(payload),state:'PENDING',result:null};
   this.jobs.set(id,job);
