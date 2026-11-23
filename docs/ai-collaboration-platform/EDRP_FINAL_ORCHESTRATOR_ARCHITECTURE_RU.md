@@ -1103,3 +1103,33 @@ Exact-head CI at `ada59ef1a8a58e2d9bc8a3aa943b4825adffaec5`:
 **Critical boundary / remaining M1b work:** the adapter consumes a dictionary supplied by a host; it does not itself open an AutoCAD Entity or extract XData from a DWG. It does not write/migrate XData, replace legacy `AGPT_CALC` or `AGPT_CALC_DRAW`, or enable release output. Although calculation sources are now listed in `AGPT.csproj` on this branch, no AutoCAD 2026 plugin build or disposable-DWG E2E is claimed. Next gate: read-only AutoCAD entity/XData bridge, explicit mapping against real AGPT entities, and controlled command cutover only after AutoCAD compile + disposable-DWG regression.
 
 **Gate interpretation:** M1a source/test PASS at its own exact head; M1b schema adapter source/test push and PR gates PASS at the exact head above. AutoCAD host integration remains pending. Overall AGPT release remains BLOCKED. No Production, local Windows configuration, AutoCAD session or user DWG was modified.
+
+### 22.15. Parallel workstreams reactivated — exact evidence refresh (2026-11-23)
+
+This section supersedes stale intermediate heads/statuses in earlier dated subsections. It is a status snapshot, not merge/deployment approval.
+
+| Workstream | Current exact head / PR | Source / CI result | Remaining gate |
+|---|---|---|---|
+| Chat-approved Bridge | NSS PR #132, `fb2c27a843d04e08b97dae876226751d9f3685fd` | All four exact-head workflows SUCCESS; 14/14 server manifest hashes and 20/20 Control Room package hashes independently verified; isolated package exposes 29 tools including 10 session/provider methods | Live Lab-only process identity, dry-run/apply/rollback, connector refresh and live `tools/list`; session authorization/provider E2E remains blocked |
+| Consilium governance | NSS PR #131, `bd4b41329c42a8f477d4211daedaedd53f2cfb7d` | Source checks, RC1 Control Gates and Visual RC SUCCESS | Persistent isolated Control Room deployment, then approved correlated provider test; CI package is not deployment |
+| Free AI Workbench P0 | NSS PR #111, `9ee6e02fbc6a0796985bc3756cfda5e4e3823323` | Source checks and CCTV guard workflow SUCCESS; 17/17 Node ledger/viewer tests reported PASS | Authenticate actor identity, validate target folder and local browser E2E; current scope is offline ledger + static read-only viewer, not multi-agent runtime |
+| EDRP final orchestrator | NSS PR #134, `8a27f774aeff7ef8f9fc8798ef9b9d977bff56ae` | Source checks SUCCESS at the recorded exact head | Updated document requires its own exact-head checks; EDRP remains design-only until disposable Windows recovery/fault tests |
+| Chrome Bridge Stop/Revoke | NSS PRs #127 `6c133e6ab099ca10bebd9ec4b0d7d4ff188b4483` and #128 `06241cb3ac692d421adadbed4cfff3c56cf6ecc6` | Source, Control Gates, Visual RC and PR113 source tests all SUCCESS on their recorded heads | Real Windows/Chrome lifecycle tests and integrated release; no production cutover |
+| AutoCAD MCP architecture | NSS PR #136, updated head `e76416af5905578fbf0b68ea39aa40e9dfaeb116` | Repo guard passed; repository-wide portable job remains red only on the existing CCTV CLI assertion now corrected in PR #137 | Re-run exact-head CI after #137 is reconciled; verify exact AutoCAD update/runtime; no native host implementation or AutoCAD E2E yet |
+| CCTV baseline test correction | NSS PR #137, `0a9549bd317bf05b70b3c2d36ffe2bbeddadd90d` | Exact-head Source checks and CCTV guard tests SUCCESS | Independent review and owner-controlled merge; one test assertion only |
+| Collaboration platform / PowerShell Direct | NSS PR #110, current head `709d55eb6ae69880a3c1a3fffc5d76b6cf0f36b0` | AI collaboration protocol checks SUCCESS; task-envelope tests SUCCESS; Windows PowerShell 5.1 parser gate SUCCESS for staging, identity and new Git-capture diagnostic helpers. Portable job still fails on the same CCTV assertion fixed by PR #137 | Reconcile PR #137 baseline fix; run local Git-capture diagnostic after approved workspace fast-forward; no provider E2E or production release |
+| AGPT M1b | AGPT_Plugin PR #5, `ada59ef1a8a58e2d9bc8a3aa943b4825adffaec5` | M1b XData adapter gate SUCCESS at exact head | Actual AutoCAD XData extraction/host wiring, main plugin build and disposable-DWG E2E; no user DWG mutation |
+
+#### Candidate staging diagnosis — do not serialize unrelated work behind it
+
+The current PR #132 pinned staging helper was executed in the approved Recovery workspace and failed with `CANDIDATE_COMMIT_MISMATCH:` where the displayed SHA was empty. This is not a reason to pause the other workstreams.
+
+Follow-up diagnostics were added to the platform branch:
+- `tools/powershell-direct/Diagnose-PR132GitCapture.ps1` compares direct native Git stdout with the original PowerShell wrapper, captures exit code/output cardinality, records command resolution and only boolean presence of Git environment overrides; it writes no files and does not inspect or print credentials.
+- Windows PowerShell 5.1 parse gate now includes the diagnostic helper.
+- Exact platform commit `709d55eb6ae69880a3c1a3fffc5d76b6cf0f36b0`: `AI collaboration protocol checks` SUCCESS and Windows helper parser SUCCESS; portable job remains blocked only by the baseline CCTV assertion.
+- Local fast-forward request `cb_pr132_platform_diag_ff_20261123_35` is still `PENDING_LOCAL_APPROVAL`; do not duplicate it. Once it completes, run the read-only diagnostic before changing the staging helper or retrying clone setup.
+
+**Parallel execution rule:** failure/blockage in one workstream must not suspend any independent branch. Keep each task's exact SHA, state, evidence and dependency links separate; a shared infrastructure blocker blocks only tasks that actually require that infrastructure. Continue code review, documentation, CI remediation, AGPT/AutoCAD work and offline Workbench work while Lab staging/agent dispatch is being repaired.
+
+No PR in this table is merged or marked Ready. No Lab/Production service, credentials, browser profile, AutoCAD installation, or working DWG was changed by these parallel source/document updates.
