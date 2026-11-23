@@ -301,6 +301,54 @@ foreach($prefsName in @('Preferences','Secure Preferences')){
   }
 }
 
+$extensionRootManifest=Join-Path $targetLabRoot 'manifest.json'
+$extensionRootManifestExists=Test-Path -LiteralPath $extensionRootManifest -PathType Leaf
+$extensionRootManifestInfo=$null
+if($extensionRootManifestExists){
+  try{
+    $m=Get-Content -LiteralPath $extensionRootManifest -Raw -Encoding UTF8|ConvertFrom-Json
+    $extensionRootManifestInfo=[pscustomobject]@{
+      Sha256=(Get-FileHash -LiteralPath $extensionRootManifest -Algorithm SHA256).Hash.ToLowerInvariant()
+      ManifestVersion=$m.manifest_version
+      ServiceWorker=$m.background.service_worker
+      BackgroundType=$m.background.type
+      HasKey=($null -ne $m.PSObject.Properties['key'])
+      HostPermissions=@($m.host_permissions)
+      Permissions=@($m.permissions)
+    }
+  }catch{$extensionRootManifestInfo=[pscustomobject]@{ParseError=$_.Exception.Message}}
+}
+$targetRootListing=@()
+if(Test-Path -LiteralPath $targetLabRoot -PathType Container){
+  $targetRootListing=@(Get-ChildItem -LiteralPath $targetLabRoot -Force | ForEach-Object {
+    [pscustomobject]@{Name=$_.Name;Directory=$_.PSIsContainer;ReparsePoint=[bool]($_.Attributes -band [IO.FileAttributes]::ReparsePoint)}
+  })
+}
+$activeToolsReport=$null
+try{
+  $nodeExePath=[string]$identity.executable
+  $code="import { tools } from './server/tools.mjs'; const names=tools.map(x=>x.name); console.log(JSON.stringify({count:names.length,hasSessionRequest:names.includes('session_request'),hasProviderPrepare:names.includes('provider_prepare'),sessionProviderTools:names.filter(x=>/^(session_|provider_)/.test(x))}));"
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName=$nodeExePath
+  $psi.Arguments='--input-type=module -e "'+$code.Replace('"','\"')+'"'
+  $psi.WorkingDirectory=$processCwd
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $toolProbe=New-Object System.Diagnostics.Process
+  $toolProbe.StartInfo=$psi
+  try{
+    if($toolProbe.Start()){
+      $outTask=$toolProbe.StandardOutput.ReadToEndAsync()
+      $errTask=$toolProbe.StandardError.ReadToEndAsync()
+      if($toolProbe.WaitForExit(10000)){
+        $activeToolsReport=[pscustomobject]@{ExitCode=$toolProbe.ExitCode;Stdout=$outTask.GetAwaiter().GetResult().Trim();Stderr=$errTask.GetAwaiter().GetResult().Trim()}
+      }else{$toolProbe.Kill();$activeToolsReport=[pscustomobject]@{TimedOut=$true}}
+    }
+  }finally{$toolProbe.Dispose()}
+}catch{$activeToolsReport=[pscustomobject]@{Error=$_.Exception.Message}}
+
 $productionListener=@([BridgeNativeMetadata]::Listeners(17381))
 $productionOwner=$null
 if($productionListener.Count -eq 1){
@@ -347,6 +395,10 @@ if($productionListener.Count -eq 1){
   TargetLabServerExists=$targetServerExists
   TargetLabExtensionManifestExists=$targetManifestExists
   TargetLabExtensionKey=$targetExtensionId
+  TargetLabExtensionManifestAtRoot=$extensionRootManifestExists
+  TargetLabRootManifest=$extensionRootManifestInfo
+  TargetLabRootListing=$targetRootListing
+  LiveSourceTreeToolRegistry=$activeToolsReport
   ProcessBridgeHome=$processHome
   ProcessBridgePort=$processPort
   ProcessExtensionIdPresent=(![string]::IsNullOrWhiteSpace($processExtensionId))
