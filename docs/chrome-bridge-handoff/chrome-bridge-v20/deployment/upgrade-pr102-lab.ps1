@@ -106,6 +106,7 @@ if ($TestFixture) {
   $installed = $root
 }
 $script:StateRoot = $state
+Require (Test-Path -LiteralPath $state -PathType Container) 'Existing PR102 Lab state root missing; refusing to create a new state directory'
 Require (Test-Path -LiteralPath $installed -PathType Container) 'Existing Lab extension directory missing'
 Require (Test-Path -LiteralPath (Join-Path $installed 'manifest.json') -PathType Leaf) 'Existing Lab extension manifest missing'
 
