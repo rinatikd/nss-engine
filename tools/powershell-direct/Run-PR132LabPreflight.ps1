@@ -316,7 +316,17 @@ try{
     throw ('LAB_NODE_EXECUTABLE_RESOLUTION_AMBIGUOUS: '+($selectedNodePaths -join ';'))
   }
   if($selectedNodePaths[0] -ine $nodeExe){throw 'LAB_NODE_EXECUTABLE_RESOLUTION_MISMATCH'}
-  $serverOutput=@(& $serverScript @serverParams 2>&1)
+  try{
+    $serverOutput=@(& $serverScript @serverParams 2>&1)
+  }catch{
+    $failure=$_
+    $detail='message='+$failure.Exception.Message+
+      '; script='+$failure.InvocationInfo.ScriptName+
+      '; line='+$failure.InvocationInfo.ScriptLineNumber+
+      '; position='+$failure.InvocationInfo.PositionMessage+
+      '; stack='+$failure.ScriptStackTrace
+    throw ('SERVER_DRY_RUN_EXCEPTION: '+$detail)
+  }
   $serverText=[string]::Join([Environment]::NewLine,[string[]]@($serverOutput|ForEach-Object {[string]$_}))
   if($serverText -notmatch '\[DRY_RUN\] Server and isolated MCP registry validated'){throw ('SERVER_DRY_RUN_FAILED: '+$serverText)}
   $extensionParams=@{
