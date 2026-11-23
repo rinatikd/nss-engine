@@ -6,7 +6,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $expectedWorkspace='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$expectedCommit='39898d5d1ba123cd1509fbdb518a7023f813f20d'
+$expectedCommit='fb2c27a843d04e08b97dae876226751d9f3685fd'
 $remote='https://github.com/rinatikd/nss-engine.git'
 $branch='feat/chat-approved-session-auth-20261122'
 $git='C:\Program Files\Git\cmd\git.exe'
@@ -16,7 +16,7 @@ if($workspace -ine $expectedWorkspace){throw 'UNEXPECTED_APPROVED_WORKSPACE'}
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
 
 $workRoot=Join-Path $workspace 'work'
-$checkoutRoot=Join-Path $workRoot 'ChromeBridge-PR132-39898d5d'
+$checkoutRoot=Join-Path $workRoot 'ChromeBridge-PR132-fb2c27a8'
 $candidateRoot=Join-Path $checkoutRoot 'docs\chrome-bridge-handoff\chrome-bridge-v20'
 if(!(Test-Path -LiteralPath $workRoot -PathType Container)){
   New-Item -ItemType Directory -Path $workRoot -ErrorAction Stop|Out-Null
