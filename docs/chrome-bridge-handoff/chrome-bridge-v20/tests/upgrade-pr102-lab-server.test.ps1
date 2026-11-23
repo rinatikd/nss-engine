@@ -156,6 +156,10 @@ try {
   if (([string]$oldMeta.command).Replace('/','\').IndexOf($expectedFixtureEntry,[StringComparison]::OrdinalIgnoreCase) -lt 0) {
     throw ('Fixture command mismatch; expected=' + $expectedFixtureEntry + '; actual=' + $oldMeta.command)
   }
+  if (([string]$oldMeta.workingDirectory) -ine $root) { throw 'Process working-directory identity mismatch' }
+  if (([string]$oldMeta.bridgeHome) -ine $state) { throw 'Process CHROME_BRIDGE_HOME identity mismatch' }
+  if ([string]$oldMeta.bridgePort -cne '17484') { throw 'Process CHROME_BRIDGE_PORT identity mismatch' }
+  if ([string]$oldMeta.extensionId -and [string]$oldMeta.extensionId -cne 'nhflbnfcaicihaepdcjacdmaddagcmcj') { throw 'Process extension ID identity mismatch' }
   $activePid = $old.Id
   $activeStart = $oldMeta.created
 
