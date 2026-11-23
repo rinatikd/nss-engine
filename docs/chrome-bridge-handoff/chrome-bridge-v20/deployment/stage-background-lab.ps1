@@ -20,7 +20,7 @@ $names = @(
   'session-authorization.js',
   'adapters.js', 'visual-snapshot.js', 'page.js', 'secrets.js',
   'control-targets.js', 'coordinator-ack.js', 'background-mode-reconnect.js',
-  'control-ui-guard.js', 'background-control-ui-state.js'
+  'control-ui-guard.js', 'background-control-ui-state.js', 'connection-diagnostic.js'
 )
 $installed = Join-Path ([IO.Path]::GetFullPath($BridgeRoot)) 'extension'
 $source = Join-Path ([IO.Path]::GetFullPath($CandidateRoot)) 'extension'
