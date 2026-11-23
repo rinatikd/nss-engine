@@ -128,7 +128,7 @@ try{
       Where-Object {$serverBackupsBefore -notcontains $_.FullName -and (Test-Path -LiteralPath (Join-Path $_.FullName 'server-backup.json') -PathType Leaf)})
     if($newServerBackups.Count -eq 1){$serverBackup=$newServerBackups[0].FullName}
   }
-  Require ($serverBackup) 'SERVER_BACKUP_PATH_NOT_RECOVERABLE'
+  Require (-not [string]::IsNullOrWhiteSpace([string]$serverBackup)) 'SERVER_BACKUP_PATH_NOT_RECOVERABLE'
   Require ((FullPath $serverBackup).StartsWith((FullPath $stateBackupRoot)+'\',[StringComparison]::OrdinalIgnoreCase)) 'SERVER_BACKUP_OUTSIDE_LAB_STATE'
   Require (Test-Path -LiteralPath (Join-Path $serverBackup 'server-backup.json') -PathType Leaf) 'SERVER_BACKUP_MARKER_MISSING'
 
