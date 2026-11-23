@@ -15,7 +15,7 @@ const params = (workspace, extras={}) =>
   ({ requestId, suite:'platform-contract', workspace, approved:true, approvedRequestId:requestId, ...extras });
 
 test('approved suite gets a structured immutable command', () => withWorkspace(async root => {
-  const plan = await resolveTestPlan(params(root), [root]);
+  const plan = await resolveTestPlan(params(root));
   assert.equal(plan.command,'python');
   assert.equal(plan.cwd,root);
   assert.equal(plan.args[0],'-m');
@@ -24,48 +24,50 @@ test('approved suite gets a structured immutable command', () => withWorkspace(a
 }));
 
 test('unapproved task rejected before plan creation', () => withWorkspace(async root => {
-  await assert.rejects(resolveTestPlan(params(root,{approved:false}),[root]), /EXPLICIT_APPROVAL_REQUIRED/);
+  await assert.rejects(resolveTestPlan(params(root,{approved:false})), /EXPLICIT_APPROVAL_REQUIRED/);
 }));
 
 test('approval for another request cannot be reused', () => withWorkspace(async root => {
-  await assert.rejects(resolveTestPlan(params(root,{approvedRequestId:'other-request'}),[root]), /EXPLICIT_APPROVAL_REQUIRED/);
+  await assert.rejects(resolveTestPlan(params(root,{approvedRequestId:'other-request'})), /EXPLICIT_APPROVAL_REQUIRED/);
 }));
 
 test('arbitrary shell command cannot be supplied as suite', () => withWorkspace(async root => {
-  await assert.rejects(resolveTestPlan(params(root,{suite:'powershell -enc payload'}),[root]), /UNKNOWN_TEST_SUITE/);
+  await assert.rejects(resolveTestPlan(params(root,{suite:'powershell -enc payload'})), /UNKNOWN_TEST_SUITE/);
 }));
 
-test('workspace outside allowlist is blocked', () => withWorkspace(async root => {
+test('any existing directory can be selected for a single explicit approval', () => withWorkspace(async root => {
   const other = await mkdtemp(path.join(tmpdir(),'platform-runner-other-'));
   try {
-    await assert.rejects(resolveTestPlan(params(root),[other]), /WORKSPACE_NOT_ALLOWLISTED/);
+    const plan=await resolveTestPlan(params(other));
+    assert.equal(plan.cwd,other);
   } finally { await rm(other,{recursive:true,force:true}); }
 }));
 
-test('symlink cannot spoof allowlisted directory', () => withWorkspace(async root => {
+test('symlink workspace is canonicalized before it is shown for approval', () => withWorkspace(async root => {
   const external = await mkdtemp(path.join(tmpdir(),'platform-runner-external-'));
   try {
     const link=path.join(root,'link');
     await symlink(external,link,'dir');
-    await assert.rejects(resolveTestPlan(params(link),[root]), /WORKSPACE_NOT_ALLOWLISTED/);
+    const plan=await resolveTestPlan(params(link));
+    assert.equal(plan.cwd,external);
   } finally { await rm(external,{recursive:true,force:true}); }
 }));
 
 test('non-absolute workspace is refused', async () => {
-  await assert.rejects(resolveTestPlan(params('relative/path'),[]), /INVALID_WORKSPACE/);
+  await assert.rejects(resolveTestPlan(params('relative/path')), /INVALID_WORKSPACE/);
 });
 
 test('invalid request ID is refused', () => withWorkspace(async root => {
-  await assert.rejects(resolveTestPlan(params(root,{requestId:'x'}),[root]), /INVALID_REQUEST_ID/);
+  await assert.rejects(resolveTestPlan(params(root,{requestId:'x'})), /INVALID_REQUEST_ID/);
 }));
 
 test('mutated command plan is rejected before execution', () => withWorkspace(async root => {
-  const plan=await resolveTestPlan(params(root),[root]);
+  const plan=await resolveTestPlan(params(root));
   await assert.rejects(executeTestPlan({...plan,command:'powershell'}), /PLAN_MODIFIED/);
 }));
 
 test('no shell execution, spawn receives fixed args and bounded result', () => withWorkspace(async root => {
-  const plan=await resolveTestPlan(params(root),[root]);
+  const plan=await resolveTestPlan(params(root));
   let options;
   const mockSpawn=(cmd,args,opts) => {
     options={cmd,args,opts};
@@ -84,7 +86,7 @@ test('no shell execution, spawn receives fixed args and bounded result', () => w
 }));
 
 test('output is size-bounded', () => withWorkspace(async root => {
-  const plan=await resolveTestPlan(params(root),[root]);
+  const plan=await resolveTestPlan(params(root));
   const mockSpawn=() => {
     const child=new EventEmitter();
     child.stdout=new EventEmitter();child.stderr=new EventEmitter();
@@ -98,7 +100,7 @@ test('output is size-bounded', () => withWorkspace(async root => {
 }));
 
 test('PR113 unit suite uses only fixed node --test arguments', () => withWorkspace(async root => {
-  const plan=await resolveTestPlan(params(root,{suite:'chrome-pr113-node'}),[root]);
+  const plan=await resolveTestPlan(params(root,{suite:'chrome-pr113-node'}));
   assert.equal(plan.command,'node');
   assert.deepEqual(plan.args,['--test',
     'docs/chrome-bridge-handoff/chrome-bridge-v20/tests/one-click-session.test.mjs']);
@@ -106,7 +108,7 @@ test('PR113 unit suite uses only fixed node --test arguments', () => withWorkspa
 }));
 
 test('PR113 lab build has a fixed output folder and cannot accept caller arguments', () => withWorkspace(async root => {
-  const plan=await resolveTestPlan(params(root,{suite:'chrome-pr113-build-lab17484'}),[root]);
+  const plan=await resolveTestPlan(params(root,{suite:'chrome-pr113-build-lab17484'}));
   assert.equal(plan.command,'powershell.exe');
   assert.equal(plan.args.includes('17484'),true);
   assert.equal(plan.args.at(-1),'C:\\Engineering\\ChromeBridge-PR113-E2E-Build-v4');
@@ -117,7 +119,7 @@ test('PR113 lab build has a fixed output folder and cannot accept caller argumen
 }));
 
 test('unknown script path injected as suite is refused', () => withWorkspace(async root => {
-  await assert.rejects(resolveTestPlan(params(root,{suite:'chrome-pr113-build-lab17484;rm'}),[root]),/UNKNOWN_TEST_SUITE/);
+  await assert.rejects(resolveTestPlan(params(root,{suite:'chrome-pr113-build-lab17484;rm'})),/UNKNOWN_TEST_SUITE/);
 }));
 
 test('Windows timeout terminates the target process tree without shell',()=>{
