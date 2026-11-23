@@ -3,7 +3,8 @@
 [CmdletBinding()]
 param(
  [ValidateSet('Inspect','Prepare')][string]$Mode='Inspect',
- [string]$ExpectedCommit=''
+ [string]$ExpectedCommit='',
+ [string]$NodeExecutable='C:\Program Files\nodejs\node.exe'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -12,7 +13,7 @@ if($ExpectedCommit -notmatch '^[0-9a-f]{40}$'){throw 'EXPECTED_COMMIT_REQUIRED'}
 $expectedCommit=$ExpectedCommit.ToLowerInvariant()
 $repo=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath
 $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
-$node='C:\Program Files\nodejs\node.exe'
+$node=$NodeExecutable
 $git='C:\Program Files\Git\cmd\git.exe'
 $expectedRemote='github.com/rinatikd/nss-engine'
 
