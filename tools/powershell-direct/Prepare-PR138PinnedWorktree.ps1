@@ -15,7 +15,7 @@ $expectedBranch='feat/psdirect-per-job-workspace-approval-20261123'
 $expectedRemote='github.com/rinatikd/nss-engine'
 $oldRepo=$workspaceExpected
 $workRoot=Join-Path $workspaceExpected 'work'
-$newRepo=Join-Path $workRoot 'PowerShellDirect-PR138-d9f12c9-release-clean'
+$newRepo=Join-Path $workRoot 'PowerShellDirect-PR138-pinned-release-clean'
 $git='C:\Program Files\Git\cmd\git.exe'
 
 $workspace=(Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath.TrimEnd('\')
