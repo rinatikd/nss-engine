@@ -19,7 +19,7 @@ $LabExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 . (Join-Path $PSScriptRoot 'verify-candidate-source.ps1')
 
 function Require([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
-function FullPath([string]$Path) { [IO.Path]::GetFullPath($Path).TrimEnd('\') }
+function FullPath([string]$Path) { return (Get-BridgeCanonicalPath $Path) }
 function Inside([string]$Child,[string]$Parent) {
   $c = (FullPath $Child) + '\'
   $p = (FullPath $Parent) + '\'
