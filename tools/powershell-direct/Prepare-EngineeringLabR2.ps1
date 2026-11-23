@@ -106,8 +106,11 @@ foreach($line in (Get-Content -LiteralPath $config)){
 }
 if((Get-RemoteIdentity $origin) -cne $expectedRemote){throw 'GIT_REMOTE_MISMATCH'}
 
-$top=(& $git -C $repo rev-parse --show-toplevel 2>$null | Out-String).Trim()
-if($LASTEXITCODE -ne 0 -or $top -ine $repo){throw 'GIT_TOPLEVEL_MISMATCH'}
+$topRaw=(& $git -C $repo rev-parse --show-toplevel 2>$null | Out-String).Trim()
+if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($topRaw)){throw 'GIT_TOPLEVEL_QUERY_FAILED'}
+$top=[IO.Path]::GetFullPath($topRaw.Replace('/','\')).TrimEnd('\')
+$repoCanonical=[IO.Path]::GetFullPath($repo).TrimEnd('\')
+if($top -ine $repoCanonical){throw 'GIT_TOPLEVEL_MISMATCH'}
 $dirty=@(& $git -C $repo status --porcelain=v1 --untracked-files=all)
 if($LASTEXITCODE -ne 0 -or $dirty.Count){throw 'SOURCE_WORKTREE_NOT_CLEAN'}
 
