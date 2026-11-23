@@ -1156,3 +1156,15 @@ Reviewed exact PR #111 source files: `ledger.mjs`, `ui/viewer.mjs`, `ui/app.mjs`
 **Decision:** Workbench P0 source prototype is suitable for further offline UX/ledger evaluation; it is **not** an authoritative EDRP ledger, approval service, multi-agent coordinator or execution gate. Keep it single-operator/offline. P1 requires exact target-folder baseline and browser E2E; any authenticated multi-agent/network integration requires externally authenticated actor identity, signed/one-shot approvals, durable nonce/replay storage, independent authorization, lock recovery tests and a separate security review.
 
 No local installation, network exposure, provider call, Windows command or DWG mutation was performed by this review.
+
+### 22.17. PR #128 independent Stop-UNKNOWN recovery review — additional fault path (2026-11-23)
+
+Reviewed exact PR #128 head `06241cb3ac692d421adadbed4cfff3c56cf6ecc6`, including `extension/background-coordinator.js` and the PR113 Stop/Quarantine regression.
+
+**Confirmed existing behavior:** Stop fences new mutation admission; accepted page actions drain within a bounded interval; on timeout the affected tab is quarantined; when `storage.local` tab-list persistence fails, `storage.session` is used as a fallback. Existing regression proves the session fallback survives a worker restart and blocks the quarantined tab.
+
+**Additional unresolved failure path:** if both local and session writes for the tab quarantine list fail, code sets the module-local `mutationQuarantinePersistenceFailed` latch and attempts a global lock in both stores. If those final writes also fail, only the in-memory latch remains. After an MV3 service-worker restart that latch is recreated empty. Persistent `bridgeConnectionDesired=false` prevents an automatic reconnect, but an explicit later Connect can proceed because no persisted unknown-outcome record remains to force reconciliation. Thus the existing tests do not cover the all-storage-failed + worker-restart + explicit reconnect case.
+
+**Required before treating Stop-UNKNOWN recovery as complete:** a durable write-ahead mutation admission/unknown record must exist before a page mutation is allowed to execute (or an equivalent mechanism). If no durable journal is available before admission, reject before the click. If an accepted action becomes UNKNOWN and cannot be persisted, a later Connect must not clear the hold; the system needs a durable reconciliation gate. Add a fault test that fails local+session quarantine and lock writes, restarts the worker, attempts explicit Connect and a new mutation, and proves both remain blocked until exact operator reconciliation.
+
+Review was recorded in PR #128 as comment review ID `6016632692`. This finding does not invalidate the passing local→session fallback tests; it identifies the missing all-storage-unavailable boundary. No code was changed in this review.
