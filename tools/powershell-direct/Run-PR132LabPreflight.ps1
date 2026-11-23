@@ -7,9 +7,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-4e33b8d3-release-clean'
+$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-1aa86983-release-clean'
 $candidateRoot=Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
-$expectedSha='4e33b8d34cd5c68b94ee304d4f0c0b502c46d56a'
+$expectedSha='1aa86983fa1bee5b3cf239ca71e4c7d81b76e60b'
 $expectedBranch='feat/chat-approved-session-auth-20261122'
 $remoteExpected='https://github.com/rinatikd/nss-engine'
 $labServerRoot='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
@@ -99,7 +99,14 @@ function GitValue([string[]]$GitArgList){
   if($result.ExitCode -ne 0){throw ('GIT_QUERY_FAILED: '+($GitArgList -join ' ')+'; '+$result.Error.Trim())}
   return $result.Output.Trim()
 }
-function FullPath([string]$Value){return [IO.Path]::GetFullPath($Value).TrimEnd('\')}
+function FullPath([string]$Value){
+  $full=[IO.Path]::GetFullPath($Value.Trim())
+  $rootPath=[IO.Path]::GetPathRoot($full)
+  while($full.Length -gt $rootPath.Length -and ($full.EndsWith('\') -or $full.EndsWith('/'))){
+    $full=$full.Substring(0,$full.Length-1)
+  }
+  return $full
+}
 function RemoteIdentity([string]$Value){
   if([string]::IsNullOrWhiteSpace($Value)){return ''}
   $uri=$null
