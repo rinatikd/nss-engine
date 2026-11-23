@@ -45,7 +45,7 @@ function InvokeGit([string]$CommandLine,[string]$WorkingDirectory){
   $process.WaitForExit()
   return [pscustomobject]@{
     ExitCode=$process.ExitCode
-    Stdout=([string]$stdoutTask.Result).Trim()
+    Stdout=[string]$stdoutTask.Result
     Stderr=([string]$stderrTask.Result).Trim()
   }
 }
@@ -54,7 +54,7 @@ function GitOk([string]$CommandLine,[string]$WorkingDirectory){
   if($result.ExitCode -ne 0){
     throw ('GIT_OPERATION_FAILED ('+$result.ExitCode+'): '+$result.Stderr)
   }
-  return $result.Stdout
+  return $result.Stdout.Trim()
 }
 function RemoteIdentity([string]$Value){
   if([string]::IsNullOrWhiteSpace($Value)){return ''}
@@ -192,12 +192,12 @@ if(-not [string]::IsNullOrWhiteSpace($status.Stdout)){
   if($cached.ExitCode -ne 0 -or $eolOnly.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($untracked)){
     throw 'CANDIDATE_WORKTREE_HAS_NON_EOL_OR_UNTRACKED_CHANGES'
   }
-  $statusLines=@($status.Stdout -split "\r?\n" | Where-Object { $_ })
+  $statusLines=@($status.Stdout -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
   foreach($line in $statusLines){
     if($line.Length -lt 4){throw 'CANDIDATE_STATUS_LINE_INVALID'}
-    $state=$line.Substring(0,2).Trim()
-    if($state -cne 'M'){throw 'CANDIDATE_NON_MODIFIED_STATUS_REFUSED'}
-    $relativePath=$line.Substring(3).Trim()
+    $state=$line.Substring(0,2)
+    if($state -cne ' M'){throw 'CANDIDATE_NON_WORKTREE_STATUS_REFUSED'}
+    $relativePath=$line.Substring(3)
     WriteCommittedBlob $relativePath
   }
   $normalizationPerformed=$true
