@@ -12,6 +12,9 @@ $node = (Get-Command node.exe -ErrorAction Stop).Source
 $sourceSha = (& git -C $packageRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve source SHA' }
 
+$preStatus = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -Arguments @('status','--porcelain=v1','--untracked-files=all','--','server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab-server.ps1')
+if ([string]::IsNullOrWhiteSpace($preStatus)) { Write-Output '[CANDIDATE_PRECHECK_STATUS] CLEAN' } else { Write-Output ('[CANDIDATE_PRECHECK_STATUS] '+$preStatus) }
+
 $sourceInputs = @(
   'server',
   'deployment/cutover-health.mjs',
@@ -27,12 +30,13 @@ try {
   try {
     $null = Assert-BridgeCandidateSource -CandidateRoot $packageRoot -ExpectedSourceSha $sourceSha -InputPaths $sourceInputs
   } catch {
-    if ($_.Exception.Message -eq 'CANDIDATE_WORKTREE_NOT_CLEAN') { $dirtyRejected = $true } else { throw }
+    if ($_.Exception.Message -like 'CANDIDATE_WORKTREE_NOT_CLEAN*') { $dirtyRejected = $true } else { throw }
   }
 } finally {
   if (Test-Path -LiteralPath $dirtyFile) { Remove-Item -LiteralPath $dirtyFile -Force }
 }
 if (-not $dirtyRejected) { throw 'Untracked server candidate file was not rejected' }
+Write-Output '[PASS] Server candidate untracked-file rejection'
 
 $ignoredFile = Join-Path $packageRoot 'server\pr102-candidate-ignored-test.json'
 [IO.File]::WriteAllText($ignoredFile,'synthetic ignored candidate data')
@@ -47,6 +51,7 @@ try {
   if (Test-Path -LiteralPath $ignoredFile) { Remove-Item -LiteralPath $ignoredFile -Force }
 }
 if (-not $ignoredRejected) { throw 'Ignored server candidate file was not rejected' }
+Write-Output '[PASS] Server candidate ignored-file rejection'
 if (Test-Path -LiteralPath $root) { throw 'Fixture already exists; refusing overwrite' }
 if (@([BridgeNativeMetadata]::Listeners(17484)).Count -ne 0) { throw 'Port 17484 occupied; refusing unrelated process' }
 
