@@ -10,6 +10,19 @@ $rootWithTrailingSeparator = $root + [IO.Path]::DirectorySeparatorChar
 if ((Get-BridgeCanonicalPath $rootWithTrailingSeparator) -cne (Get-BridgeCanonicalPath $root)) {
   throw 'Trailing-separator process path normalization failed'
 }
+$nodeCommand=(Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
+$resolvedDuplicateNode=Get-BridgeUniqueCanonicalPath @($nodeCommand,$nodeCommand.Replace('\','/'))
+if($resolvedDuplicateNode -ine (Get-BridgeCanonicalPath $nodeCommand)){
+  throw 'Duplicate Node path normalization failed'
+}
+$ambiguousNodeRejected=$false
+try{
+  $alternateNode=Join-Path (Split-Path -Parent $nodeCommand) 'alternate-node.exe'
+  $null=Get-BridgeUniqueCanonicalPath @($nodeCommand,$alternateNode)
+}catch{
+  if($_.Exception.Message -like 'EXPECTED_ONE_UNIQUE_PATH*'){$ambiguousNodeRejected=$true}else{throw}
+}
+if(-not $ambiguousNodeRejected){throw 'Ambiguous Node executable paths were not rejected'}
 $state = Join-Path $root 'state'
 $server = Join-Path $root 'server'
 $node = (Get-Command node.exe -ErrorAction Stop).Source
