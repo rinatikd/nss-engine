@@ -5,14 +5,14 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $expectedPid=23580
-$expectedSourceSha='b77d67521090c799d0db544694ee9cf00c177ea7'
+$expectedSourceSha='16e07aa1a8c7c6f39af20da8a7eec33662fe0b09'
 $expectedConfigSha='cb3bc9bc5ff43559e36185ac130eed56828beac4f27634439476d95f8b33b61b'
 $labServerRoot='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
 $labExtensionRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
 $stateRoot='C:\Engineering\ChromeBridge-PR102-17484-State'
 $labPort=17484
 $labExtensionId='nhflbnfcaicihaepdcjacdmaddagcmcj'
-$candidateRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\ChromeBridge-PR132-b77d6752-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$candidateRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\ChromeBridge-PR132-16e07aa1-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
 . (Join-Path $candidateRoot 'deployment\process-identity.ps1')
 function Require([bool]$Condition,[string]$Message){if(-not $Condition){throw $Message}}
 function FullPath([string]$Path){Get-BridgeCanonicalPath $Path}
