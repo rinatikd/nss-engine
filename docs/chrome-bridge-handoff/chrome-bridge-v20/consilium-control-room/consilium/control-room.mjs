@@ -19,6 +19,7 @@ const ACTOR_TOKENS = [
 ];
 const TOKEN_MIN = 32;
 const ACTOR_ROLES = { owner: 'owner', chatgpt: 'ai_member', claude: 'ai_member', deepseek: 'ai_member', qwen: 'ai_member', kimi: 'ai_member', grok: 'ai_member', gemini: 'ai_member' };
+const AI_MEMBER_IDS = new Set(Object.entries(ACTOR_ROLES).filter(([, role]) => role === 'ai_member').map(([id]) => id));
 const MAX_BODY = 128 * 1024;
 const SECRET = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+\/-]{16,}|\b(?:sk|rk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{16,}/i;
 
@@ -207,6 +208,7 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
       if (url.pathname === '/api/artifacts') {
         requireRole(actor, ['owner', 'ai_member']);
         if (!validId(body.artifactId) || !validString(body.name, 180) || !/^[a-f0-9]{64}$/.test(body.sha256 || '') || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(body.sourceCommit || '') || !validString(body.uri, 2000) || !/^https?:\/\//i.test(body.uri) || !Array.isArray(body.recipients) || !body.recipients.length || body.recipients.length > 16 || body.recipients.some(x => !/^[a-z][a-z0-9_-]{1,31}$/.test(x)) || new Set(body.recipients).size !== body.recipients.length) throw Error('INVALID_ARTIFACT_MANIFEST');
+        if (body.recipients.some(id => !AI_MEMBER_IDS.has(id))) throw Error('ARTIFACT_RECIPIENT_UNKNOWN');
         return json(res, 201, { event: append('artifact.linked', { artifactId: body.artifactId, name: body.name, sha256: body.sha256, sourceCommit: body.sourceCommit, uri: body.uri, recipients: body.recipients.slice(0, 16) }) });
       }
       if (url.pathname === '/api/artifacts/receipt') {
@@ -216,6 +218,7 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
       if (url.pathname === '/api/tasks') {
         requireRole(actor, ['owner', 'ai_member']);
         if (!validId(body.taskId) || !validId(body.decisionId) || !validString(body.title, 180) || !validString(body.assignee, 32)) throw Error('INVALID_TASK');
+        if (!AI_MEMBER_IDS.has(body.assignee)) throw Error('TASK_ASSIGNEE_UNKNOWN');
         return json(res, 201, { event: append('task.created', { taskId: body.taskId, decisionId: body.decisionId, title: body.title.trim(), assignee: body.assignee }) });
       }
       if (url.pathname === '/api/tasks/state') {
