@@ -54,3 +54,23 @@ test('denies filesystem volume roots and OS protected folders, not ordinary user
   platform:'win32',env,realpath:fakeRealpath,stat:fakeStat
  }),'C:\\Users\\Rinat\\Downloads\\NSS_Engine');
 });
+
+test('rejects UNC/device workspaces including canonical network targets',()=>{
+ const fakeStat=()=>({isDirectory:()=>true});
+ const env={SystemRoot:'C:\\Windows',WINDIR:'C:\\Windows',
+  ProgramFiles:'C:\\Program Files','ProgramFiles(x86)':'C:\\Program Files (x86)',
+  ProgramW6432:'C:\\Program Files'};
+ const common={platform:'win32',env,stat:fakeStat};
+ assert.throws(()=>canonicalUserWorkspace('\\\\server\\share',{
+  ...common,realpath:p=>path.win32.normalize(p)
+ }),/WORKSPACE_NETWORK_PATH_DENIED/);
+ assert.throws(()=>canonicalUserWorkspace('//server/share',{
+  ...common,realpath:p=>path.win32.normalize(p)
+ }),/WORKSPACE_NETWORK_PATH_DENIED/);
+ assert.throws(()=>canonicalUserWorkspace('C:\\Users\\Rinat\\network-link',{
+  ...common,realpath:()=> '\\\\?\\UNC\\server\\share'
+ }),/WORKSPACE_NETWORK_PATH_DENIED/);
+ assert.throws(()=>canonicalUserWorkspace('\\\\.\\PhysicalDrive0',{
+  ...common,realpath:p=>path.win32.normalize(p)
+ }),/WORKSPACE_DEVICE_PATH_DENIED/);
+});
