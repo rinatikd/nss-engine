@@ -78,7 +78,7 @@ function RemoteIdentity([string]$Value){
   }
   return ''
 }
-function WriteCommittedBlob([string]$RelativePath){
+function RestoreCommittedFile([string]$RelativePath){
   if($RelativePath -notmatch '^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$'){
     throw 'CANDIDATE_UNSAFE_RELATIVE_PATH'
   }
@@ -101,42 +101,8 @@ function WriteCommittedBlob([string]$RelativePath){
   if(!(Test-Path -LiteralPath $fullPath -PathType Leaf)){
     throw 'CANDIDATE_DIRTY_FILE_MISSING'
   }
-
-  $tempPath=$fullPath+'.pr132-blobtmp-'+[guid]::NewGuid().ToString('N')
-  $psi=New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName=$git
-  $psi.Arguments='cat-file blob HEAD:'+$RelativePath
-  $psi.WorkingDirectory=$checkoutRoot
-  $psi.UseShellExecute=$false
-  $psi.CreateNoWindow=$true
-  $psi.RedirectStandardOutput=$true
-  $psi.RedirectStandardError=$true
-  $proc=New-Object System.Diagnostics.Process
-  $proc.StartInfo=$psi
-  if(!$proc.Start()){throw 'GIT_BLOB_PROCESS_START_FAILED'}
-  $stderrTask=$proc.StandardError.ReadToEndAsync()
-  $stream=$null
-  try{
-    $stream=[IO.File]::Open($tempPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-    $proc.StandardOutput.BaseStream.CopyTo($stream)
-    $stream.Flush()
-  }finally{
-    if($stream){$stream.Dispose()}
-  }
-  if(!$proc.WaitForExit(15000)){
-    try{$proc.Kill()}catch{}
-    if(Test-Path -LiteralPath $tempPath){Remove-Item -LiteralPath $tempPath -Force}
-    throw 'GIT_BLOB_READ_TIMEOUT'
-  }
-  $proc.WaitForExit()
-  $stderr=[string]$stderrTask.Result
-  if($proc.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($stderr)){
-    if(Test-Path -LiteralPath $tempPath){Remove-Item -LiteralPath $tempPath -Force}
-    throw 'GIT_BLOB_READ_FAILED'
-  }
-  Move-Item -LiteralPath $tempPath -Destination $fullPath -Force
+  $null=GitOk ('checkout-index --force -- '+$RelativePath) $checkoutRoot
 }
-
 if(Test-Path -LiteralPath $checkoutRoot){
   if(!(Test-Path -LiteralPath (Join-Path $checkoutRoot '.git') -PathType Container)){
     throw 'CANDIDATE_DESTINATION_EXISTS_NOT_A_VERIFIED_CLONE'
@@ -198,7 +164,7 @@ if(-not [string]::IsNullOrWhiteSpace($status.Stdout)){
     $state=$line.Substring(0,2)
     if($state -cne ' M'){throw 'CANDIDATE_NON_WORKTREE_STATUS_REFUSED'}
     $relativePath=$line.Substring(3)
-    WriteCommittedBlob $relativePath
+    RestoreCommittedFile $relativePath
   }
   $normalizationPerformed=$true
 }
