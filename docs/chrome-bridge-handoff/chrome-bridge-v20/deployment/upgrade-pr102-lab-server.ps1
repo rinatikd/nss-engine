@@ -347,8 +347,8 @@ try {
   }
 
   foreach ($file in Get-ChildItem -LiteralPath $stageServer -Recurse -File -Filter '*.mjs') {
-    & $script:NodeExe --check $file.FullName
-    Require ($LASTEXITCODE -eq 0) ('Node syntax error: ' + $file.Name)
+    $syntaxProbe=InvokeNodeCapture $script:NodeExe ('--check "'+$file.FullName+'"') $stageRoot 10000
+    Require ($syntaxProbe.ExitCode -eq 0) ('Node syntax error: ' + $file.Name + '; ' + $syntaxProbe.Stderr)
   }
   WriteExpectedTools $stageRoot $expectedTools $script:NodeExe
   $toolNames = @((ReadJson $expectedTools).result.tools | ForEach-Object { $_.name })
