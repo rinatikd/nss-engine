@@ -14,8 +14,92 @@ $parts=([string]$listeners[0]).Split('|')
 if($parts.Count -ne 2 -or $parts[0] -cne '127.0.0.1'){throw 'LAB_LISTENER_ADDRESS_MISMATCH'}
 $pidValue=0
 if(![int]::TryParse($parts[1],[ref]$pidValue)){throw 'LAB_LISTENER_PID_INVALID'}
+if(-not ('BridgeProcessEnvironment' -as [type])){
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.IO;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class BridgeProcessEnvironment {
+  [StructLayout(LayoutKind.Sequential)]
+  struct PROCESS_BASIC_INFORMATION {
+    public IntPtr Reserved1;
+    public IntPtr PebBaseAddress;
+    public IntPtr Reserved2_0;
+    public IntPtr Reserved2_1;
+    public UIntPtr UniqueProcessId;
+    public UIntPtr InheritedFromUniqueProcessId;
+  }
+  [DllImport("ntdll.dll")]
+  static extern int NtQueryInformationProcess(IntPtr processHandle,int infoClass,out PROCESS_BASIC_INFORMATION info,int length,out int returned);
+  [DllImport("kernel32.dll",SetLastError=true)]
+  static extern bool ReadProcessMemory(IntPtr process,IntPtr address,byte[] buffer,IntPtr size,out IntPtr read);
+  static IntPtr ReadPointer(IntPtr h,IntPtr address){
+    byte[] b=new byte[IntPtr.Size];IntPtr read;
+    if(!ReadProcessMemory(h,address,b,(IntPtr)b.Length,out read)||(long)read!=b.Length)throw new Exception("PEB_POINTER_READ_FAILED");
+    return IntPtr.Size==8?new IntPtr(BitConverter.ToInt64(b,0)):new IntPtr(BitConverter.ToInt32(b,0));
+  }
+  static byte[] ReadExact(IntPtr h,IntPtr address,int length){
+    byte[] b=new byte[length];IntPtr read;
+    if(!ReadProcessMemory(h,address,b,(IntPtr)length,out read)||(long)read!=length)throw new Exception("PEB_STRING_READ_FAILED");
+    return b;
+  }
+  public static string[] ReadSelected(IntPtr h){
+    PROCESS_BASIC_INFORMATION basic;int returned;
+    int status=NtQueryInformationProcess(h,0,out basic,Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)),out returned);
+    if(status!=0||basic.PebBaseAddress==IntPtr.Zero)throw new Exception("PEB_QUERY_FAILED");
+    IntPtr parameters=ReadPointer(h,IntPtr.Add(basic.PebBaseAddress,0x20));
+    if(parameters==IntPtr.Zero)throw new Exception("PROCESS_PARAMETERS_MISSING");
+    byte[] cwdDescriptor=ReadExact(h,IntPtr.Add(parameters,0x38),IntPtr.Size==8?16:8);
+    int cwdLength=BitConverter.ToUInt16(cwdDescriptor,0);
+    IntPtr cwdBuffer=IntPtr.Size==8?new IntPtr(BitConverter.ToInt64(cwdDescriptor,8)):new IntPtr(BitConverter.ToInt32(cwdDescriptor,4));
+    string cwd=(cwdLength>0&&cwdLength<32768&&cwdBuffer!=IntPtr.Zero)?Encoding.Unicode.GetString(ReadExact(h,cwdBuffer,cwdLength)):"";
+    IntPtr env=ReadPointer(h,IntPtr.Add(parameters,IntPtr.Size==8?0x80:0x48));
+    if(env==IntPtr.Zero)throw new Exception("PROCESS_ENVIRONMENT_MISSING");
+    using(MemoryStream stream=new MemoryStream()){
+      bool done=false;
+      for(int offset=0;offset<1048576&&!done;offset+=4096){
+        byte[] chunk=new byte[4096];IntPtr got;
+        if(!ReadProcessMemory(h,IntPtr.Add(env,offset),chunk,(IntPtr)chunk.Length,out got)){
+          if((long)got<=0)throw new Exception("PROCESS_ENVIRONMENT_READ_FAILED");
+        }
+        int count=(int)got;if(count<=0)break;
+        stream.Write(chunk,0,count);
+        byte[] all=stream.ToArray();
+        for(int i=0;i+3<all.Length;i+=2){
+          if(all[i]==0&&all[i+1]==0&&all[i+2]==0&&all[i+3]==0){done=true;break;}
+        }
+        if(count<chunk.Length)break;
+      }
+      string[] entries=Encoding.Unicode.GetString(stream.ToArray()).Split(new char[]{'\0'},StringSplitOptions.RemoveEmptyEntries);
+      var selected=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+      foreach(string entry in entries){
+        int eq=entry.IndexOf('=');if(eq<=0)continue;
+        string key=entry.Substring(0,eq);
+        if(key.Equals("CHROME_BRIDGE_HOME",StringComparison.OrdinalIgnoreCase)||
+           key.Equals("CHROME_BRIDGE_PORT",StringComparison.OrdinalIgnoreCase)||
+           key.Equals("CHROME_BRIDGE_EXTENSION_ID",StringComparison.OrdinalIgnoreCase))
+          selected[key]=entry.Substring(eq+1);
+      }
+      string home=selected.ContainsKey("CHROME_BRIDGE_HOME")?selected["CHROME_BRIDGE_HOME"]:"";
+      string port=selected.ContainsKey("CHROME_BRIDGE_PORT")?selected["CHROME_BRIDGE_PORT"]:"";
+      string ext=selected.ContainsKey("CHROME_BRIDGE_EXTENSION_ID")?selected["CHROME_BRIDGE_EXTENSION_ID"]:"";
+      return new string[]{cwd,home,port,ext};
+    }
+  }
+}
+'@
+}
 $proc=[Diagnostics.Process]::GetProcessById($pidValue)
-try{$identity=Get-BridgeHandleIdentity $proc}finally{$proc.Dispose()}
+try{
+  $identity=Get-BridgeHandleIdentity $proc
+  $selectedEnvironment=[BridgeProcessEnvironment]::ReadSelected($proc.Handle)
+}finally{$proc.Dispose()}
+$processCwd=[string]$selectedEnvironment[0]
+$processHome=[string]$selectedEnvironment[1]
+$processPort=[string]$selectedEnvironment[2]
+$processExtensionId=[string]$selectedEnvironment[3]
 $command=[string]$identity.command
 $safeCommand=$command
 $safeCommand=[regex]::Replace($safeCommand,'(?i)(bearer\s+)[A-Za-z0-9._~+/-]{16,}','$1[REDACTED]')
@@ -59,12 +143,30 @@ try{
     CommandLine=$parentCommand
   }
 }catch{}
-$defaultConfigPath=Join-Path $env:USERPROFILE '.chrome-bridge\config.json'
-$defaultConfig=$null
-if(Test-Path -LiteralPath $defaultConfigPath -PathType Leaf){
+$stateRoot=if(-not [string]::IsNullOrWhiteSpace($processHome)){$processHome}else{Join-Path $env:USERPROFILE '.chrome-bridge'}
+$resolvedConfigPath=Join-Path $stateRoot 'config.json'
+$actualConfig=$null
+if(Test-Path -LiteralPath $resolvedConfigPath -PathType Leaf){
   try{
-    $defaultCfg=Get-Content -LiteralPath $defaultConfigPath -Raw -Encoding UTF8|ConvertFrom-Json
-    $defaultConfig=[pscustomobject]@{
+    $actualCfg=Get-Content -LiteralPath $resolvedConfigPath -Raw -Encoding UTF8|ConvertFrom-Json
+    $insideLab=$false
+    $normalizedState=[IO.Path]::GetFullPath($stateRoot).TrimEnd('\')
+    $normalizedLab=[IO.Path]::GetFullPath($labRoot).TrimEnd('\')
+    $insideLab=$normalizedState.StartsWith(($normalizedLab+'\'),[StringComparison]::OrdinalIgnoreCase) -or
+      $normalizedState -ieq $normalizedLab
+    $actualConfig=[pscustomobject]@{
+      ConfigPath=$resolvedConfigPath
+      Sha256=(Get-FileHash -LiteralPath $resolvedConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
+      AgentTokenLength=if($actualCfg.agentToken -is [string]){$actualCfg.agentToken.Length}else{0}
+      BrowserTokenLength=if($actualCfg.browserToken -is [string]){$actualCfg.browserToken.Length}else{0}
+      HasExtensionId=($null -ne $actualCfg.PSObject.Properties['extensionId'])
+      ExtensionIdMatches=if($null -ne $actualCfg.PSObject.Properties['extensionId']){([string]$actualCfg.extensionId -ceq 'nhflbnfcaicihaepdcjacdmaddagcmcj')}else{$false}
+      PropertyNames=@($actualCfg.PSObject.Properties.Name)
+      StateRootInsideLab=$insideLab
+    }
+  }catch{$actualConfig=[pscustomobject]@{ConfigPath=$resolvedConfigPath;ParseError=$_.Exception.Message}}
+}
+[pscustomobject]@{
       RelativeToUserProfile='.chrome-bridge\config.json'
       Sha256=(Get-FileHash -LiteralPath $defaultConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
       AgentTokenLength=if($defaultCfg.agentToken -is [string]){$defaultCfg.agentToken.Length}else{0}
@@ -89,7 +191,13 @@ if(Test-Path -LiteralPath $defaultConfigPath -PathType Leaf){
   CommandHasStartJob=($command -match '(?i)start-[0-9a-f]{32}\.json')
   CommandRedacted=$safeCommand
   ConfigFiles=$configReports
-  DefaultUserConfig=$defaultConfig
+  ProcessWorkingDirectory=$processCwd
+  ProcessBridgeHome=$processHome
+  ProcessBridgePort=$processPort
+  ProcessExtensionIdPresent=(![string]::IsNullOrWhiteSpace($processExtensionId))
+  ProcessExtensionIdMatches=($processExtensionId -ceq 'nhflbnfcaicihaepdcjacdmaddagcmcj')
+  EffectiveStateRoot=$stateRoot
+  EffectiveConfig=$actualConfig
   ProductionPathsTouched=$false
   CredentialsPrinted=$false
 }|ConvertTo-Json -Depth 8
