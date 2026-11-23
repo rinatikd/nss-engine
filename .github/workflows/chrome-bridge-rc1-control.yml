@@ -58,6 +58,18 @@ jobs:
             throw 'Lab server package manifest does not match the tested source commit'
           }
 
+      - name: Upload immutable PR132 MCP server Lab package
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-bridge-pr132-server-lab-package
+          path: |
+            ${{ runner.temp }}/chrome-bridge-pr132-server-lab-package/server/**
+            ${{ runner.temp }}/chrome-bridge-pr132-server-lab-package/deployment/cutover-health.mjs
+            ${{ runner.temp }}/chrome-bridge-pr132-server-lab-package/server-release-manifest.json
+            ${{ runner.temp }}/chrome-bridge-pr132-server-lab-package/expected-tools.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Verify MCP registry, agent dispatch and Session Authorization
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
