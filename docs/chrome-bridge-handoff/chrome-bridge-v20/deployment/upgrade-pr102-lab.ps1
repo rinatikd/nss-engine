@@ -8,6 +8,7 @@ param(
   [string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
   [ValidateSet(17484)][int]$LabPort = 17484,
   [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSourceSha,
+  [string]$NodeExe,
   [switch]$Apply,
   [string]$RollbackFrom,
   [switch]$TestFixture
@@ -35,6 +36,34 @@ function FullPath([string]$Path) {
     $full = $full.Substring(0, $full.Length - 1)
   }
   return $full
+}
+function InvokeNodeCapture([string]$Executable,[string]$Arguments,[string]$WorkingDirectory,[int]$TimeoutMs=10000){
+  $psi=New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName=$Executable
+  $psi.Arguments=$Arguments
+  $psi.WorkingDirectory=$WorkingDirectory
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $process=New-Object Diagnostics.Process
+  $process.StartInfo=$psi
+  $started=$false
+  try{
+    if(-not $process.Start()){throw 'NODE_PROCESS_START_FAILED'}
+    $started=$true
+    $stdoutTask=$process.StandardOutput.ReadToEndAsync()
+    $stderrTask=$process.StandardError.ReadToEndAsync()
+    if(-not $process.WaitForExit($TimeoutMs)){throw 'NODE_PROCESS_TIMEOUT'}
+    $stdout=[string]$stdoutTask.GetAwaiter().GetResult()
+    $stderr=[string]$stderrTask.GetAwaiter().GetResult()
+    return [pscustomobject]@{ExitCode=$process.ExitCode;Stdout=$stdout;Stderr=$stderr}
+  }finally{
+    if($started -and -not $process.HasExited){
+      try{$process.Kill();$null=$process.WaitForExit(3000)}catch{}
+    }
+    $process.Dispose()
+  }
 }
 function ReadManifest([string]$Path) {
   Require (Test-Path -LiteralPath $Path -PathType Leaf) 'Extension manifest.json missing'
@@ -76,11 +105,16 @@ function ValidateLabExtension([string]$ExtensionPath) {
     $source = [IO.File]::ReadAllText((Join-Path $ExtensionPath $name))
     Require ($source.Contains(('127.0.0.1:{0}' -f $LabPort))) ('Lab endpoint missing from ' + $name)
   }
-  $node = Get-Command node -ErrorAction SilentlyContinue
-  Require ($null -ne $node) 'Node.js required for extension syntax checks'
+  $nodePath=$NodeExe
+  if([string]::IsNullOrWhiteSpace($nodePath)){
+    $nodeCommand=Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $nodePath=[string]$nodeCommand.Source
+  }
+  Require (-not [string]::IsNullOrWhiteSpace($nodePath) -and (Test-Path -LiteralPath $nodePath -PathType Leaf)) 'Node.js required for extension syntax checks'
+  $nodePath=FullPath $nodePath
   foreach ($file in $allJs) {
-    & $node.Source --check $file.FullName
-    Require ($LASTEXITCODE -eq 0) ('JavaScript syntax error: ' + $file.Name)
+    $syntaxProbe=InvokeNodeCapture $nodePath ('--check "'+$file.FullName+'"') (Split-Path -Parent $file.FullName) 10000
+    Require ($syntaxProbe.ExitCode -eq 0) ('JavaScript syntax error: ' + $file.Name + '; ' + $syntaxProbe.Stderr)
   }
   return $manifest
 }
