@@ -60,4 +60,3 @@ function Get-BridgeHandleIdentity($p) {
   if ($p.HasExited) {throw 'Process exited'}
   @{id=$p.Id;executable=[BridgeNativeMetadata]::Image($h);command=[BridgeNativeMetadata]::Command($h);created=$p.StartTime.ToUniversalTime().ToString('o')}
 }
-
