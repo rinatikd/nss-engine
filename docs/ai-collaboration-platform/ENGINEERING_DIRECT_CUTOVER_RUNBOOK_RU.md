@@ -8,8 +8,8 @@
 - Проверенный дочерний `tunnel-client.exe` исходного супервизора: PID 18236 **на момент измерения**, обслуживает `127.0.0.1:18086`, `/healthz=live`, `/readyz=ready` и успешный control-plane poll.
 - В системе ещё три других `tunnel-client.exe`. **Никогда не останавливать все экземпляры по имени.**
 - Изолированная подготовленная версия: `C:\Engineering\PowerShellDirect-Engineering-Lab-R1`.
-- Конфигурация нового инженерного MCP требует одновременно `PS_DIRECT_ENGINEERING_WORKSPACES` и `PS_DIRECT_ENGINEERING_AUDIT_DIR`.
-- Разрешённые точные каталоги для первой активации: `C:\Engineering\ChromeBridge-Recovery-Install-20261114` и `C:\Engineering\PowerShellDirect-Engineering-Lab-R1`.
+- Новая модель требует только отдельный `PS_DIRECT_ENGINEERING_AUDIT_DIR`; список рабочих каталогов не настраивается и не загружается.
+- Рабочий каталог задаётся в каждом запросе, канонизируется и показывается в локальной карточке подтверждения; статического списка папок нет.
 - Изолированный аудит: `C:\Engineering\PowerShellDirect-Engineering-Audit-R1` (не Git checkout).
 - Восстановительный DPAPI-файл: `%LOCALAPPDATA%\ChromeBridge-Recovery\control-plane.dpapi`. Файл имеется, расшифровывается текущим пользователем; независимый read-only `admin tunnels get` с этим ключом получил HTTP-успех и совпадение tunnel ID.
 - Tunnel ID: `tunnel_6af7222489608191a79063530fc14929`. Это **существующий** туннель, не создавать дубликат.
@@ -43,3 +43,8 @@
 ## Ограничение
 
 Это **runbook**, не реализованный production switch. Текущий сервис и туннель остаются работающими. Нельзя интерпретировать проверенное `ReadyToDraftOperatorTransaction=true` как разрешение `AuthorizeShutdown=true`.
+
+
+## Новая политика workspace (feature branch 2026-11-23)
+
+Постоянные allowlist-переменные `PS_DIRECT_ALLOWED_ROOT`, `PS_DIRECT_ENGINEERING_WORKSPACES` и `PS_DIRECT_NAMED_SUITE_WORKSPACES` удаляются из запуска supervisor. Любой существующий локальный каталог, доступный текущей Windows-учётной записи по ACL, может быть выбран для конкретного задания. Перед показом запроса сервис разрешает его в canonical realpath, запрещает томовые корни, системные каталоги, UNC/device-пути и включает полученный `cwd` в SHA-256 плана. После локального Approve once тот же canonical path сверяется повторно. Это не разрешает произвольные команды, не отключает per-job approval и не даёт дополнительных прав файловой системе. Обновление не считать установленным до Windows E2E и проверки MCP discovery.
