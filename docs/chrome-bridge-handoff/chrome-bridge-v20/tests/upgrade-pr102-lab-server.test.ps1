@@ -142,6 +142,7 @@ try {
   $psi.RedirectStandardError = $true
   $psi.EnvironmentVariables['CHROME_BRIDGE_HOME'] = $state
   $psi.EnvironmentVariables['CHROME_BRIDGE_PORT'] = '17484'
+  $psi.EnvironmentVariables['CHROME_BRIDGE_EXTENSION_ID'] = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
   $psi.EnvironmentVariables.Remove('CHROME_BRIDGE_CODEX_POLICY')
   $old = New-Object Diagnostics.Process
   $old.StartInfo = $psi
