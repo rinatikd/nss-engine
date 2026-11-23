@@ -28,7 +28,7 @@ try {
   try {
     $null = Assert-BridgeCandidateSource -CandidateRoot $packageRoot -ExpectedSourceSha $sourceSha -InputPaths $sourceInputs
   } catch {
-    if ($_.Exception.Message -eq 'CANDIDATE_WORKTREE_NOT_CLEAN') { $dirtyRejected = $true } else { throw }
+    if ($_.Exception.Message -like 'CANDIDATE_WORKTREE_NOT_CLEAN*') { $dirtyRejected = $true } else { throw }
   }
 } finally {
   if (Test-Path -LiteralPath $dirtyFile) { Remove-Item -LiteralPath $dirtyFile -Force }
