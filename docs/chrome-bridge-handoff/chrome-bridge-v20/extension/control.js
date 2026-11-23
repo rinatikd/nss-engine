@@ -5,6 +5,7 @@ import { backgroundStartupDecision } from './background-mode-reconnect.js';
 import { captureLocalTab } from './visual-snapshot.js';
 import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
 import { verifyBridgeCredential } from './connection-check.js';
+import { safeConnectionErrorCode, backgroundConnectionStatusLabel } from './connection-diagnostic.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
@@ -572,23 +573,19 @@ async function updateBackgroundStatus() {
     $('actions').checked = false; // Never auto-enable Control in background mode.
     $('actions').disabled = true;
     $('backgroundModeStatus').textContent = 'Фоновый режим: чтение доступно. Отправка возможна только в экспериментальном Control с временными разрешениями и подтверждением каждого действия.';
-    const labels = {
-      connected:'Подключено · фоновый режим',
-      connecting:'Фоновое подключение…',
-      recovering:'Восстанавливаем соединение с сервером…',
-      'auth-failed':'Ошибка авторизации фонового соединения',
-      // A disconnected transport does not prove the owner pressed Stop.
-      disconnected:'Соединение не установлено'
-    };
-    const safeErrorCode = typeof current.error === 'string' &&
-      /^[A-Z][A-Z0-9_]{2,80}$/.test(current.error) ? current.error : null;
-    const stateLabel = labels[current.state] || 'Фоновый режим: ' + current.state;
-    setStatus((current.state === 'auth-failed' || current.state === 'recovering') && safeErrorCode
-      ? stateLabel + ': ' + safeErrorCode : stateLabel);
+    const {bridgeLastConnectError} = await chrome.storage.local.get('bridgeLastConnectError');
+    setStatus(backgroundConnectionStatusLabel(
+      current.state,
+      current.error,
+      bridgeLastConnectError
+    ));
+    if (active && bridgeLastConnectError) {
+      await chrome.storage.local.set({bridgeLastConnectError:null});
+    }
     refreshGrantLabels();
     await showBackgroundApprovals();
   } catch (e) {
-    setStatus('Фоновый координатор недоступен: ' + e.message);
+    setStatus('Фоновый координатор недоступен: ' + safeConnectionErrorCode(e?.message));
   }
 }
 async function switchToBackgroundMode() {
@@ -724,20 +721,28 @@ async function connectBridge({ automatic = false } = {}) {
     const token = $('token').value.trim();
     if (!token) { setStatus('Введите ключ браузера.'); return; }
     $('connect').disabled = true;
+    setStatus('Проверяем авторизацию и запускаем фоновый транспорт…');
     try {
+      await chrome.storage.local.set({bridgeLastConnectError:null});
       await verifyBridgeCredential(fetch, token);
       await saveBrowserKey(chrome, token);
-      await chrome.storage.local.set({bridgeConnectionDesired:true});
+      await chrome.storage.local.set({bridgeConnectionDesired:true,bridgeLastConnectError:null});
       await requestCoordinatorAck(
         ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
         'BACKGROUND_START'
       );
       await updateBackgroundStatus();
     } catch (e) {
-      await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+      const diagnosticCode = safeConnectionErrorCode(e?.message);
+      await chrome.storage.local.set({
+        bridgeConnectionDesired:false,
+        bridgeMutationLabMode:false,
+        bridgeLastConnectError:diagnosticCode
+      }).catch(()=>{});
       try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
       running = false;
-      setStatus('Фоновое подключение: ' + e.message);
+      setStatus('Фоновое подключение: ' + diagnosticCode);
+      void updateBackgroundStatus();
     }
     finally { $('connect').disabled = false; }
     return;
