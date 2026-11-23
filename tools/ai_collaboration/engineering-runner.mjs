@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
+import {canonicalUserWorkspace} from './workspace-policy.mjs';
 import {spawn,spawnSync} from 'node:child_process';
 import {verifyEngineeringPlan} from './engineering-plan.mjs';
 const MAX=65536;
@@ -40,6 +41,8 @@ export async function runEngineeringPlan(plan,{
   platform=process.platform
 }={}){
   verifyEngineeringPlan(plan);
+  const currentWorkspace=canonicalUserWorkspace(plan.cwd,{platform,env:process.env});
+  if(currentWorkspace!==plan.cwd)throw Error('WORKSPACE_CHANGED_SINCE_APPROVAL');
   if(platform!=='win32')throw Error('WINDOWS_ONLY_EXECUTION');
   if(!path.win32.isAbsolute(plan.executable)||!executableCheck(plan.executable))
     throw Error('TRUSTED_EXECUTABLE_MISSING');
