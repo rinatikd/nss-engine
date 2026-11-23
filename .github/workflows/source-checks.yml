@@ -73,7 +73,7 @@ jobs:
           $git = 'C:\Program Files\Git\cmd\git.exe'
           if (!(Test-Path -LiteralPath $git -PathType Leaf)) { throw 'TRUSTED_GIT_MISSING' }
           $head = (& $git -C $env:GITHUB_WORKSPACE rev-parse HEAD 2>$null | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}) { throw 'CHECKOUT_HEAD_INVALID' }
+          if ($LASTEXITCODE -ne 0 -or $head.Length -ne 40) { throw 'CHECKOUT_HEAD_INVALID' }
           $script = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
           $result = & $script -Mode Inspect -ExpectedCommit $head
           $preflight = ($result | Out-String).Trim() | ConvertFrom-Json
