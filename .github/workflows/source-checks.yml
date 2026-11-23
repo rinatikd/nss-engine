@@ -55,7 +55,8 @@ jobs:
             'tools/powershell-direct/Upgrade-EngineeringApproval.ps1',
             'tools/powershell-direct/Prepare-EngineeringCutover.ps1',
             'tools/powershell-direct/Stage-EngineeringDirect.ps1',
-            'tools/powershell-direct/Prepare-EngineeringLabR2.ps1'
+            'tools/powershell-direct/Prepare-EngineeringLabR2.ps1',
+            'tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
