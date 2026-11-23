@@ -25,12 +25,50 @@ if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
 if(!(Test-Path -LiteralPath $candidateRoot -PathType Container)){throw 'PINNED_CANDIDATE_NOT_FOUND'}
 if(!(Test-Path -LiteralPath $labRoot -PathType Container)){throw 'PR102_LAB_ROOT_NOT_FOUND'}
 
+function QuoteWindowsArgument([string]$Value){
+  $sb=New-Object System.Text.StringBuilder
+  [void]$sb.Append('"')
+  $slashCount=0
+  foreach($ch in $Value.ToCharArray()){
+    if($ch -eq [char]'\'){$slashCount++;continue}
+    if($ch -eq [char]'"'){
+      if($slashCount -gt 0){[void]$sb.Append(('\' * ($slashCount*2)))}
+      [void]$sb.Append('\"')
+      $slashCount=0
+      continue
+    }
+    if($slashCount -gt 0){[void]$sb.Append(('\' * $slashCount));$slashCount=0}
+    [void]$sb.Append($ch)
+  }
+  if($slashCount -gt 0){[void]$sb.Append(('\' * ($slashCount*2)))}
+  [void]$sb.Append('"')
+  return $sb.ToString()
+}
 function InvokeGit([string[]]$GitArguments){
-  $global:LASTEXITCODE=0
-  $raw=@(& $git -C $repo @GitArguments 2>&1)
-  $exitCode=$global:LASTEXITCODE
-  $output=[string]::Join([Environment]::NewLine,[string[]]@($raw|ForEach-Object {[string]$_}))
-  return [pscustomobject]@{ExitCode=$exitCode;Output=$output}
+  $allArguments=@('-C',$repo)+$GitArguments
+  $quoted=@($allArguments|ForEach-Object { QuoteWindowsArgument ([string]$_) })
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName=$git
+  $psi.WorkingDirectory=$repo
+  $psi.Arguments=[string]::Join(' ',$quoted)
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $process=New-Object System.Diagnostics.Process
+  $process.StartInfo=$psi
+  try{
+    if(-not $process.Start()){throw 'GIT_PROCESS_START_FAILED'}
+    $stdoutTask=$process.StandardOutput.ReadToEndAsync()
+    $stderrTask=$process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $stdout=$stdoutTask.GetAwaiter().GetResult()
+    $stderr=$stderrTask.GetAwaiter().GetResult()
+    $exitCode=$process.ExitCode
+  }finally{
+    $process.Dispose()
+  }
+  return [pscustomobject]@{ExitCode=$exitCode;Output=$stdout;Error=$stderr}
 }
 function GitValue([string[]]$GitArguments){
   $r=InvokeGit $GitArguments
