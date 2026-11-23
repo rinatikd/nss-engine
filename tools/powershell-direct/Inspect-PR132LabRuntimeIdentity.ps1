@@ -191,6 +191,31 @@ function ReadGitValue([string[]]$Arguments){
 }
 $currentRepoRoot=ReadGitValue @('-C',$processCwd,'rev-parse','--show-toplevel')
 $currentRepoHead=ReadGitValue @('-C',$processCwd,'rev-parse','HEAD')
+$activeTree=[pscustomobject]@{
+  Root=$processCwd
+  BridgeExists=(Test-Path -LiteralPath (Join-Path $processCwd 'server\bridge.mjs') -PathType Leaf)
+  ToolsRegistryExists=(Test-Path -LiteralPath (Join-Path $processCwd 'server\tools.mjs') -PathType Leaf)
+  ExtensionDirectoryExists=(Test-Path -LiteralPath (Join-Path $processCwd 'extension') -PathType Container)
+  ExtensionManifestExists=(Test-Path -LiteralPath (Join-Path $processCwd 'extension\manifest.json') -PathType Leaf)
+  PackageTemplateExists=(Test-Path -LiteralPath (Join-Path $processCwd 'package.json.template') -PathType Leaf)
+}
+$chromeProfileMatches=@()
+$chromeUserData=Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
+if(Test-Path -LiteralPath $chromeUserData -PathType Container){
+  $idsToFind=@('nhflbnfcaicihaepdcjacdmaddagcmcj')
+  if($actualConfig -and $actualConfig.PSObject.Properties['ExtensionId'] -and -not [string]::IsNullOrWhiteSpace([string]$actualConfig.ExtensionId)){
+    $idsToFind += [string]$actualConfig.ExtensionId
+  }
+  foreach($profile in Get-ChildItem -LiteralPath $chromeUserData -Directory -Force | Where-Object {$_.Name -eq 'Default' -or $_.Name -match '^Profile \d+$'}){
+    foreach($extensionId in ($idsToFind|Select-Object -Unique)){
+      $extensionRoot=Join-Path $profile.FullName ('Extensions\'+$extensionId)
+      if(Test-Path -LiteralPath $extensionRoot -PathType Container){
+        $chromeProfileMatches += [pscustomobject]@{Profile=$profile.Name;ExtensionId=$extensionId;Installed=$true}
+      }
+    }
+  }
+}
+$stateRootItem=if(Test-Path -LiteralPath $stateRoot){Get-Item -LiteralPath $stateRoot -Force}else{$null}
 $targetLabRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
 $targetServerExists=Test-Path -LiteralPath (Join-Path $targetLabRoot 'server\bridge.mjs') -PathType Leaf
 $targetExtensionManifest=Join-Path $targetLabRoot 'extension\manifest.json'
@@ -229,7 +254,10 @@ if($targetManifestExists){
   ProcessBridgePort=$processPort
   ProcessExtensionIdPresent=(![string]::IsNullOrWhiteSpace($processExtensionId))
   ProcessExtensionIdMatches=($processExtensionId -ceq 'nhflbnfcaicihaepdcjacdmaddagcmcj')
+  ActiveSourceTree=$activeTree
+  ChromeProfileExtensionMatches=$chromeProfileMatches
   EffectiveStateRoot=$stateRoot
+  StateRootIsReparsePoint=if($stateRootItem){[bool]($stateRootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)}else{$false}
   EffectiveConfig=$actualConfig
   ProductionPathsTouched=$false
   CredentialsPrinted=$false
