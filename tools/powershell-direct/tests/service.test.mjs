@@ -50,6 +50,23 @@ test('pending approvals are never evicted to make room in the read-only queue',(
  assert.equal(x.service.status('pendingjob31').state,'PENDING');
 });
 
+test('running jobs are never evicted to make room in the read-only queue',async()=>{
+ const x=fixture(),runningId='runningjob00';
+ const active=x.service.propose({...req,requestId:runningId});
+ assert.equal(x.service.decide(runningId,active.sha256,true).state,'RUNNING');
+ assert.equal(x.service.status(runningId).state,'RUNNING');
+ for(let i=1;i<32;i++){
+  const id='pendingjob'+String(i).padStart(2,'0');
+  x.service.propose({...req,requestId:id});
+ }
+ assert.equal(x.service.jobs.size,32);
+ assert.throws(()=>x.service.propose({...req,requestId:'pendingjob32'}),/QUEUE_FULL/);
+ assert.equal(x.service.status(runningId).state,'RUNNING');
+ assert.equal(x.service.active,runningId);
+ x.finish();await flush();
+ assert.equal(x.service.status(runningId).state,'FINISHED');
+});
+
 test('expired pending jobs become reclaimable without allowing approval',()=>{
  const x=fixture();
  for(let i=0;i<32;i++){
