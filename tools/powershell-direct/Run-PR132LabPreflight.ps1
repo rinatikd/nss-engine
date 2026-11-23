@@ -21,9 +21,31 @@ $git='C:\Program Files\Git\cmd\git.exe'
 
 $workspace=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
 if($workspace -ine $workspaceExpected){throw 'UNEXPECTED_APPROVED_WORKSPACE'}
-if(!(Test-Path -LiteralPath $repo -PathType Container)){throw 'PINNED_WORKTREE_NOT_FOUND'}
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
+
+$refreshScript=Join-Path $PSScriptRoot 'Refresh-PR132PinnedWorktree.ps1'
+$parserScript=Join-Path $PSScriptRoot 'Test-PR132ReleaseScripts.ps1'
+$applyScript=Join-Path $PSScriptRoot 'Apply-PR132LabRelease.ps1'
+foreach($scriptPath in @($PSCommandPath,$refreshScript,$parserScript,$applyScript)){
+  if(!(Test-Path -LiteralPath $scriptPath -PathType Leaf)){throw ('RELEASE_HELPER_MISSING: '+$scriptPath)}
+  $parseTokens=$null
+  $parseErrors=$null
+  $null=[System.Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$parseTokens,[ref]$parseErrors)
+  if($parseErrors -and $parseErrors.Count -gt 0){
+    $details=@($parseErrors|ForEach-Object {('{0}:{1} {2}' -f $_.Extent.StartLineNumber,$_.Extent.StartColumnNumber,$_.Message)}) -join ' | '
+    throw ('RELEASE_HELPER_PARSE_FAILED: '+$scriptPath+'; '+$details)
+  }
+}
+if(!(Test-Path -LiteralPath $repo -PathType Container)){
+  $refreshOutput=@(& $refreshScript 2>&1)
+  $refreshText=[string]::Join([Environment]::NewLine,[string[]]@($refreshOutput|ForEach-Object {[string]$_}))
+  if($refreshText -notmatch 'PR132_PINNED_WORKTREE_READY'){throw ('PINNED_WORKTREE_REFRESH_FAILED: '+$refreshText)}
+}
+if(!(Test-Path -LiteralPath $repo -PathType Container)){throw 'PINNED_WORKTREE_NOT_FOUND'}
 if(!(Test-Path -LiteralPath $candidateRoot -PathType Container)){throw 'PINNED_CANDIDATE_NOT_FOUND'}
+$parserOutput=@(& $parserScript 2>&1)
+$parserText=[string]::Join([Environment]::NewLine,[string[]]@($parserOutput|ForEach-Object {[string]$_}))
+if($parserText -notmatch 'PR132_POWERSHELL_51_PARSE_PASS'){throw ('POWERSHELL_51_PARSE_GATE_FAILED: '+$parserText)}
 foreach($rootPath in @($labServerRoot,$labExtensionRoot,$labStateRoot)){
   if(!(Test-Path -LiteralPath $rootPath -PathType Container)){throw ('PR102_LAB_ROOT_NOT_FOUND: '+$rootPath)}
   if((Get-Item -LiteralPath $rootPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){
