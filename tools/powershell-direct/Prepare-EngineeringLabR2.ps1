@@ -143,6 +143,7 @@ if($Mode -eq 'Inspect'){
   TargetExists=(Test-Path -LiteralPath $stage)
   RequiredSourceCount=$required.Count
   RegressionTestCount=$tests.Count
+  InventoriedFileCount=$hashFiles.Count
   ExistingR1Untouched=$true
   ProductionUntouched=$true
  } | ConvertTo-Json -Compress
