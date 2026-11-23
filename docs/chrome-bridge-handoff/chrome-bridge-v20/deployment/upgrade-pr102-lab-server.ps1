@@ -20,6 +20,35 @@ $LabExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 
 function Require([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
 function FullPath([string]$Path) { return (Get-BridgeCanonicalPath $Path) }
+function InvokeNodeCapture([string]$Executable,[string]$Arguments,[string]$WorkingDirectory,[int]$TimeoutMs=15000){
+  $psi=New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName=$Executable
+  $psi.Arguments=$Arguments
+  $psi.WorkingDirectory=$WorkingDirectory
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $process=New-Object Diagnostics.Process
+  $process.StartInfo=$psi
+  $started=$false
+  try{
+    if(-not $process.Start()){throw 'NODE_PROCESS_START_FAILED'}
+    $started=$true
+    $stdoutTask=$process.StandardOutput.ReadToEndAsync()
+    $stderrTask=$process.StandardError.ReadToEndAsync()
+    if(-not $process.WaitForExit($TimeoutMs)){throw 'NODE_PROCESS_TIMEOUT'}
+    $stdout=[string]$stdoutTask.GetAwaiter().GetResult()
+    $stderr=[string]$stderrTask.GetAwaiter().GetResult()
+    return [pscustomobject]@{ExitCode=$process.ExitCode;Stdout=$stdout;Stderr=$stderr}
+  }finally{
+    if($started -and -not $process.HasExited){
+      try{$process.Kill();$null=$process.WaitForExit(3000)}catch{}
+    }
+    $process.Dispose()
+  }
+}
+
 function Inside([string]$Child,[string]$Parent) {
   $c = (FullPath $Child) + '\'
   $p = (FullPath $Parent) + '\'
@@ -130,13 +159,9 @@ function CopyServer([string]$Source,[string]$Destination) {
 }
 function WriteExpectedTools([string]$SourceRoot,[string]$OutputFile,[string]$NodeExe) {
   $code = "import fs from 'node:fs'; import { tools } from './server/tools.mjs'; fs.writeFileSync(process.argv[1], JSON.stringify({result:{tools:tools.map(({kind,...tool})=>tool)}}));"
-  Push-Location $SourceRoot
-  try {
-    $LASTEXITCODE=-1
-    & $NodeExe --input-type=module -e $code $OutputFile
-    $nodeExitCode=$LASTEXITCODE
-    Require ($nodeExitCode -eq 0 -and (Test-Path -LiteralPath $OutputFile -PathType Leaf)) 'Could not generate expected MCP tools registry'
-  } finally { Pop-Location }
+  $arguments='--input-type=module -e "'+$code.Replace('"','\"')+'" "'+$OutputFile+'"'
+  $probe=InvokeNodeCapture $NodeExe $arguments $SourceRoot 15000
+  Require ($probe.ExitCode -eq 0 -and (Test-Path -LiteralPath $OutputFile -PathType Leaf)) ('Could not generate expected MCP tools registry: exitCode='+$probe.ExitCode+'; stderr='+$probe.Stderr)
 }
 function Probe([string]$HealthScript,[string]$SourceRoot,[string]$State,[string]$ExpectedFile,[string]$RunDir,[string]$Mode) {
   $job = Join-Path $RunDir ('health-' + $Mode + '.json')
@@ -277,11 +302,9 @@ $nodeProcess=[Diagnostics.Process]::GetProcessById($ExpectedPid)
 try{$nodeIdentity=Get-BridgeHandleIdentity $nodeProcess}finally{$nodeProcess.Dispose()}
 $nodeCommandPaths=@(Get-Command node.exe -CommandType Application -All -ErrorAction Stop | ForEach-Object {[string]$_.Source})
 $script:NodeExe=Get-BridgePinnedExecutable ([string]$nodeIdentity.executable) $nodeCommandPaths
-$LASTEXITCODE=-1
-$nodeVersionOutput=& $script:NodeExe --version
-$nodeVersionExitCode=$LASTEXITCODE
-Require ($nodeVersionExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$nodeVersionOutput)) 'Node version probe failed'
-$nodeVersion=([string]$nodeVersionOutput).Trim()
+$nodeVersionProbe=InvokeNodeCapture $script:NodeExe '--version' $root 10000
+Require ($nodeVersionProbe.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($nodeVersionProbe.Stdout)) ('Node version probe failed: exitCode='+$nodeVersionProbe.ExitCode+'; stderr='+$nodeVersionProbe.Stderr)
+$nodeVersion=$nodeVersionProbe.Stdout.Trim()
 
 $identity = PinProcess $ExpectedPid $ExpectedStartUtc $root $state $configHashBefore
 $oldProc = $identity.process
