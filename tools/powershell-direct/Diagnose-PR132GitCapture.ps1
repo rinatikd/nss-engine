@@ -13,9 +13,13 @@ if ($workspace -ine $expectedWorkspace) { throw 'UNEXPECTED_APPROVED_WORKSPACE' 
 if (!(Test-Path -LiteralPath $git -PathType Leaf)) { throw 'TRUSTED_GIT_NOT_FOUND' }
 
 $gitDir = Join-Path $checkoutRoot '.git'
-$checkoutExists = Test-Path -LiteralPath $checkoutRoot -PathType Container
-$gitDirExists = Test-Path -LiteralPath $gitDir
-$gitDirItem = if ($gitDirExists) { Get-Item -LiteralPath $gitDir } else { $null }
+# .git may be a hidden directory or a file (worktree pointer). Use .NET
+# existence checks and never let an optional metadata probe abort diagnostics.
+$checkoutExists = [System.IO.Directory]::Exists($checkoutRoot)
+$gitDirDirectoryExists = [System.IO.Directory]::Exists($gitDir)
+$gitDirFileExists = [System.IO.File]::Exists($gitDir)
+$gitDirExists = $gitDirDirectoryExists -or $gitDirFileExists
+$gitDirItemType = if ($gitDirDirectoryExists) { 'Directory' } elseif ($gitDirFileExists) { 'File' } else { 'Missing' }
 
 function Invoke-GitProbe {
     param(
@@ -78,7 +82,7 @@ foreach ($name in @('GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_CEILING_DIRE
     Workspace = $workspace
     CheckoutExists = $checkoutExists
     GitDirectoryExists = $gitDirExists
-    GitDirectoryItemType = if ($gitDirItem) { [string]$gitDirItem.GetType().FullName } else { $null }
+    GitDirectoryItemType = $gitDirItemType
     GitCommandResolution = @($command)
     GitEnvironmentOverridesPresent = $envPresence
     DirectAndVersionProbes = @($results)
