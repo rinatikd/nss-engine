@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $labRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
 $labPort=17484
-$candidateRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\ChromeBridge-PR132-42ccb6de-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$candidateRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\ChromeBridge-PR132-1aa86983-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
 if(!(Test-Path -LiteralPath $labRoot -PathType Container)){throw 'LAB_ROOT_NOT_FOUND'}
 . (Join-Path $candidateRoot 'deployment\process-identity.ps1')
 $listeners=@([BridgeNativeMetadata]::Listeners($labPort))
@@ -100,6 +100,24 @@ $processCwd=[string]$selectedEnvironment[0]
 $processHome=[string]$selectedEnvironment[1]
 $processPort=[string]$selectedEnvironment[2]
 $processExtensionId=[string]$selectedEnvironment[3]
+$expectedLabServerRoot='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$identityWorkingDirectory=[string]$identity.workingDirectory
+$canonicalRawCwd=Get-BridgeCanonicalPath $processCwd
+$canonicalIdentityCwd=Get-BridgeCanonicalPath $identityWorkingDirectory
+$canonicalExpectedLabRoot=Get-BridgeCanonicalPath $expectedLabServerRoot
+$pathDiagnostics=[pscustomobject]@{
+  RawProcessCwd=$processCwd
+  IdentityWorkingDirectory=$identityWorkingDirectory
+  CanonicalRawCwd=$canonicalRawCwd
+  CanonicalIdentityCwd=$canonicalIdentityCwd
+  CanonicalExpectedLabRoot=$canonicalExpectedLabRoot
+  RawCwdMatches=$canonicalRawCwd -ceq $canonicalExpectedLabRoot
+  IdentityCwdMatches=$canonicalIdentityCwd -ceq $canonicalExpectedLabRoot
+  RawCwdLength=$processCwd.Length
+  IdentityCwdLength=$identityWorkingDirectory.Length
+  RawCwdTailCodePoints=@($processCwd.ToCharArray() | Select-Object -Last 8 | ForEach-Object {[int][char]$_})
+  IdentityCwdTailCodePoints=@($identityWorkingDirectory.ToCharArray() | Select-Object -Last 8 | ForEach-Object {[int][char]$_})
+}
 $command=[string]$identity.command
 $safeCommand=$command
 $safeCommand=[regex]::Replace($safeCommand,'(?i)(bearer\s+)[A-Za-z0-9._~+/-]{16,}','$1[REDACTED]')
@@ -390,6 +408,8 @@ if($productionListener.Count -eq 1){
   CommandRedacted=$safeCommand
   ConfigFiles=$configReports
   ProcessWorkingDirectory=$processCwd
+  ProcessIdentityWorkingDirectory=$identityWorkingDirectory
+  PathDiagnostics=$pathDiagnostics
   CurrentRepoRoot=$currentRepoRoot
   CurrentRepoHead=$currentRepoHead
   TargetLabServerExists=$targetServerExists
