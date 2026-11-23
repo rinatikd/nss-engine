@@ -143,6 +143,19 @@ function Get-BridgeCanonicalPath([string]$Value) {
   }
   return $full
 }
+function Get-BridgeUniqueCanonicalPath([string[]]$Values) {
+  $normalized=@()
+  foreach($value in $Values){
+    if(-not [string]::IsNullOrWhiteSpace($value)){
+      $candidate=Get-BridgeCanonicalPath $value
+      if(-not ($normalized -icontains $candidate)){$normalized+=,$candidate}
+    }
+  }
+  if($normalized.Count -ne 1){
+    throw ('EXPECTED_ONE_UNIQUE_PATH: '+($normalized -join ';'))
+  }
+  return [string]$normalized[0]
+}
 function Get-BridgeIdentity($number) {
   $p=[Diagnostics.Process]::GetProcessById([int]$number)
   try { Get-BridgeHandleIdentity $p } finally { $p.Dispose() }
