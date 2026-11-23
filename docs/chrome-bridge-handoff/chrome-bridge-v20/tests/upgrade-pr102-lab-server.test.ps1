@@ -94,6 +94,28 @@ function WaitPort([int]$ProcessId) {
     Start-Sleep -Milliseconds 150
   } while ($true)
 }
+function AssertExtensionOriginAccepted {
+  $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:17484/bridge/poll')
+  $request.Method = 'OPTIONS'
+  $request.Headers.Add('Origin', 'chrome-extension://nhflbnfcaicihaepdcjacdmaddagcmcj')
+  $request.Timeout = 5000
+  $response = $null
+  $status = 0
+  try {
+    $response = [Net.HttpWebResponse]$request.GetResponse()
+    $status = [int]$response.StatusCode
+  } catch [Net.WebException] {
+    if ($_.Exception.Response) {
+      $response = [Net.HttpWebResponse]$_.Exception.Response
+      $status = [int]$response.StatusCode
+    } else { throw }
+  } finally {
+    if ($response) { $response.Close() }
+  }
+  if ($status -ne 204) {
+    throw ('Expected Lab extension Origin preflight HTTP 204, received HTTP ' + $status)
+  }
+}
 function RunUpdater([hashtable]$NamedArgs) {
   $result = @(& $updater @NamedArgs 2>&1)
   if ($LASTEXITCODE -ne 0) { throw ('Updater failed: ' + ($result -join ' ')) }
@@ -143,7 +165,8 @@ try {
   $config = @{
     agentToken = 'synthetic-lab-agent-' + [guid]::NewGuid().ToString('N')
     browserToken = 'synthetic-lab-browser-' + [guid]::NewGuid().ToString('N')
-    extensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
+    # Deliberately stale but syntactically valid ID: the cutover launcher must honor its pinned process override.
+    extensionId = 'ehmllfabjbfcinaigionjggbgonkokfg'
   }
   $configPath = Join-Path $state 'config.json'
   [IO.File]::WriteAllText($configPath,($config | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
@@ -220,6 +243,8 @@ try {
   [IO.File]::WriteAllText($job,(@{mode='live';source=$root;state=$state;port=17484;expected=$expectedNew} | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
   $healthOutput = InvokeNodeHealth $health $job $packageRoot
   if ($healthOutput -notmatch '"ok":true') { throw ('Upgraded server health returned unexpected output: ' + $healthOutput) }
+  AssertExtensionOriginAccepted
+  Write-Output '[PASS] Stale State extensionId safely overridden by pinned Lab process environment'
   $newNames = @((Get-Content $expectedNew -Raw | ConvertFrom-Json).result.tools | ForEach-Object { $_.name })
   foreach ($n in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events')) {
     if ($newNames -notcontains $n) { throw ('New registry missing ' + $n) }
@@ -253,6 +278,7 @@ try {
   [IO.File]::WriteAllText($job2,(@{mode='live';source=$root;state=$state;port=17484;expected=$expectedOld} | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
   $rollbackHealthOutput = InvokeNodeHealth $health $job2 $root
   if ($rollbackHealthOutput -notmatch '"ok":true') { throw ('Rolled-back server health returned unexpected output: ' + $rollbackHealthOutput) }
+  AssertExtensionOriginAccepted
   $oldNames = @((Get-Content $expectedOld -Raw | ConvertFrom-Json).result.tools | ForEach-Object { $_.name })
   if ($oldNames -contains 'session_request' -or $oldNames -contains 'provider_prepare') { throw 'Rollback did not restore legacy registry' }
   if ((Get-FileHash $configPath -Algorithm SHA256).Hash -ne $configHash) { throw 'Rollback changed config/tokens' }
