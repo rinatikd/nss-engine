@@ -1,59 +1,63 @@
 // Read-only startup preflight for the staged Engineering Approval modules.
-// Importing service.mjs is safe: it does not bind/listen unless invoked as main.
+// Imports the service without binding/listening; verifies per-job workspace logic.
 // No credentials, tunnel run, network access or process/service mutations.
 import {pathToFileURL} from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 const stage='C:\\Engineering\\PowerShellDirect-Engineering-Lab-R1';
-const allowedRoot='C:\\Engineering';
 const files=[
  'tools/powershell-direct/service.mjs',
  'tools/powershell-direct/stack-supervisor.mjs',
  'tools/powershell-direct/runner.mjs',
  'tools/ai_collaboration/engineering-plan.mjs',
+ 'tools/ai_collaboration/engineering-runner.mjs',
  'tools/ai_collaboration/engineering-mcp.mjs',
  'tools/ai_collaboration/local_job_service.mjs',
+ 'tools/ai_collaboration/workspace-policy.mjs'
 ];
 const out={check:'ENGINEERING_STAGED_MODULE_PREFLIGHT',platform:process.platform,
-  nodeVersion:process.version,checks:[],stackStarted:false,
-  productionTouched:false,secretValuesRead:false};
+ nodeVersion:process.version,checks:[],stackStarted:false,
+ productionTouched:false,secretValuesRead:false};
 for(const relative of files){
  const full=path.win32.join(stage,relative);
  out.checks.push({file:relative,exists:fs.existsSync(full)});
 }
 try{
+ if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
+ if(out.checks.some(x=>!x.exists))throw Error('STAGED_MODULE_MISSING');
  const servicePath=path.win32.join(stage,'tools/powershell-direct/service.mjs');
  const runnerPath=path.win32.join(stage,'tools/powershell-direct/runner.mjs');
+ const supervisorPath=path.win32.join(stage,'tools/powershell-direct/stack-supervisor.mjs');
+ const planPath=path.win32.join(stage,'tools/ai_collaboration/engineering-plan.mjs');
  const {PowerShellApprovalService}=await import(pathToFileURL(servicePath).href);
  const {canonicalWorkspace}=await import(pathToFileURL(runnerPath).href);
- const roots=[
-  'C:\\Engineering\\ChromeBridge-Recovery-Install-20261114',
-  'C:\\Engineering\\PowerShellDirect-Engineering-Lab-R1'
- ];
- const checked=roots.map(x=>canonicalWorkspace(x,allowedRoot));
+ const checked=canonicalWorkspace(stage);
+ out.workspaceCanonicalized=path.win32.normalize(checked).toLowerCase()===path.win32.normalize(stage).toLowerCase();
+ const supervisorSource=fs.readFileSync(supervisorPath,'utf8');
+ const planSource=fs.readFileSync(planPath,'utf8');
+ out.workspacePolicyPerJob=out.workspaceCanonicalized &&
+   !/PS_DIRECT_(?:ALLOWED_ROOT|ENGINEERING_WORKSPACES|NAMED_SUITE_WORKSPACES)/.test(supervisorSource) &&
+   planSource.includes('canonicalUserWorkspace');
  const instance=new PowerShellApprovalService({
-  root:allowedRoot,port:0,chatReadonlyEnabled:true,
-  engineeringAuditDirectory:'C:\\Engineering\\PowerShellDirect-Engineering-Audit-R1'
+  port:0,chatReadonlyEnabled:true,
+  engineeringAuditDirectory:path.win32.join(stage,'audit')
  });
- out.importsOk=true;out.workspaceRootsValid=checked.length===2;
+ out.importsOk=true;
  const registered=instance.rpc({jsonrpc:'2.0',id:1,method:'tools/list'})
-  .result.tools.map(x=>x.name);
+   .result.tools.map(x=>x.name);
  out.engineeringSubmitRegistered=registered.includes('powershell_engineering_submit');
  out.engineeringStatusRegistered=registered.includes('powershell_engineering_status');
  out.engineeringRecentRegistered=registered.includes('powershell_engineering_recent');
  out.engineeringToolsRegistered=out.engineeringSubmitRegistered&&out.engineeringStatusRegistered;
- out.stagedFeatureLevel=out.engineeringRecentRegistered?'CURRENT_AUDIT_INBOX':
-   'LEGACY_NO_AUDIT_INBOX';
- // Instance is neither started nor listening; no keys are exported.
+ out.stagedFeatureLevel=out.engineeringRecentRegistered?'CURRENT_AUDIT_INBOX':'LEGACY_NO_AUDIT_INBOX';
  out.serverListening=instance.server.listening;
- out.result=out.engineeringToolsRegistered&&!out.serverListening?'PASS':'ENGINEERING_TOOLS_NOT_REGISTERED';
+ out.result=out.engineeringToolsRegistered&&!out.serverListening&&out.workspacePolicyPerJob
+  ?'PASS':'ENGINEERING_TOOLS_OR_WORKSPACE_POLICY_NOT_READY';
 }catch(e){
  out.importsOk=false;out.result='BLOCKED';
  const code=String(e?.code||e?.message||'UNKNOWN');
- // Never emit stack traces, module URLs, arguments or environment.
- const safe=/^(?:ERR_[A-Z0-9_]+|[A-Z][A-Z0-9_]+)$/.test(code)
-   ?code:'MODULE_OR_CONFIG_LOAD_FAILED';
+ const safe=/^(?:ERR_[A-Z0-9_]+|[A-Z][A-Z0-9_]+)$/.test(code)?code:'MODULE_OR_CONFIG_LOAD_FAILED';
  out.errorCode=safe.slice(0,80);
 }
-process.stdout.write(JSON.stringify(out,null,2)+'\n');
+process.stdout.write(JSON.stringify(out,null,2)+'\\n');
 if(out.result!=='PASS')process.exitCode=1;
