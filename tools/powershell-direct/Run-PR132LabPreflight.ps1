@@ -136,12 +136,18 @@ if(-not [string]::IsNullOrWhiteSpace($status.Output)){
     if($relativePath -notmatch '^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$'){throw 'CANDIDATE_UNSAFE_RELATIVE_PATH'}
     $fullPath=[IO.Path]::GetFullPath((Join-Path $repo ($relativePath.Replace('/','\'))))
     if(-not (IsInside $fullPath $repo)){throw 'CANDIDATE_PATH_ESCAPES_CHECKOUT'}
-    $null=GitValue @('-c','core.autocrlf=true','-c','core.safecrlf=false','checkout-index','--force','--',$relativePath)
+    # Restore only this proven EOL-only worktree file from the pinned HEAD.
+    # --worktree leaves the index untouched; explicit conversion honors .gitattributes.
+    $null=GitValue @('-c','core.autocrlf=true','-c','core.safecrlf=false','restore','--source=HEAD','--worktree','--',$relativePath)
     $normalizationCount++
   }
 }
 $after=GitValue @('status','--porcelain=v1','--untracked-files=all')
-if(-not [string]::IsNullOrWhiteSpace($after)){throw 'CANDIDATE_WORKTREE_NOT_CLEAN'}
+if(-not [string]::IsNullOrWhiteSpace($after)){
+  $eolReport=InvokeGit @('ls-files','--eol')
+  $attrReport=InvokeGit (@('check-attr','text','eol','--') + @($rows | ForEach-Object { $_.Substring(3) }))
+  throw ('CANDIDATE_WORKTREE_NOT_CLEAN: status='+$after+'; eol='+$eolReport.Output+'; attributes='+$attrReport.Output)
+}
 if((GitValue @('rev-parse','HEAD')) -cne $expectedSha){throw 'CANDIDATE_HEAD_CHANGED_DURING_NORMALIZATION'}
 
 # Gate 3: verify required source files and source tree integrity.
