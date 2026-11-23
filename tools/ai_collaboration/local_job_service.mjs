@@ -18,18 +18,17 @@ const fingerprint = plan => createHash('sha256')
   .digest('hex');
 
 export function createLocalJobService({
-  approvedWorkspaceRoots,
   auditDirectory,
   approveRequest,
   runner = executeTestPlan,
-  resolvePlan = (request,roots) => resolveTestPlan({
+  resolvePlan = request => resolveTestPlan({
     requestId:request.requestId,suite:request.suite,workspace:request.workspace,
     approved:true,approvedRequestId:request.requestId
-  },roots),
+  }),
   operationName='execute-named-suite'
 }) {
-  if (!Array.isArray(approvedWorkspaceRoots) || !approvedWorkspaceRoots.length)
-    throw new TaskPolicyError('WORKSPACE_POLICY_MISSING');
+  if (typeof resolvePlan !== 'function')
+    throw new TaskPolicyError('WORKSPACE_RESOLVER_REQUIRED');
   if (typeof approveRequest !== 'function')
     throw new TaskPolicyError('LOCAL_APPROVAL_HANDLER_MISSING');
   if (!path.isAbsolute(auditDirectory))
@@ -146,7 +145,7 @@ export function createLocalJobService({
       try {
         // The "approved" fields below are solely internal compatibility values;
         // the genuine decision MUST come from the host-owned approveRequest hook.
-        plan = await resolvePlan(request, approvedWorkspaceRoots);
+        plan = await resolvePlan(request);
         const digest = fingerprint(plan);
         await claim.writeFile(JSON.stringify({requestId,suite,state:'PENDING_LOCAL_APPROVAL',
           planSha256:digest,createdAt:new Date().toISOString()}));
