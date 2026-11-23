@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-const stage='C:/Engineering/PowerShellDirect-Engineering-Lab-R2';
-const source='C:/Engineering/ChromeBridge-Recovery-Install-20261114/work/PowerShellDirect-PR138-pinned-release-clean';
+const stage=process.env.R2_STAGE_ROOT||'C:/Engineering/PowerShellDirect-Engineering-Lab-R2';
+const source=process.env.R2_SOURCE_ROOT||'C:/Engineering/ChromeBridge-Recovery-Install-20261114/work/PowerShellDirect-PR138-pinned-release-clean';
 const tests=[
  'tools/ai_collaboration/workspace-policy.test.mjs',
  'tools/ai_collaboration/local_test_runner.test.mjs',
@@ -38,7 +38,7 @@ function treeInventory(base){
  return files.sort();
 }
 function trackedInventory(base){
- const git='C:/Program Files/Git/cmd/git.exe';
+ const git=process.env.R2_GIT_EXE||'C:/Program Files/Git/cmd/git.exe';
  const result=spawnSync(git,['-C',base,'ls-files','--',
   'tools/powershell-direct','tools/ai_collaboration'],{
    cwd:base,encoding:'utf8',timeout:15000,windowsHide:true
@@ -64,7 +64,7 @@ test('R2 exists and manifest covers every copied pinned runtime and test file',(
  }
 });
 test('all staged Node modules pass syntax and selected tests',()=>{
- const node='C:/Program Files/nodejs/node.exe';
+ const node=process.env.R2_NODE_EXE||'C:/Program Files/nodejs/node.exe';
  for(const rel of [
   'tools/powershell-direct/service.mjs',
   'tools/powershell-direct/stack-supervisor.mjs',
