@@ -15,7 +15,7 @@ const request = workspace => ({requestId:'pr113-safe-test-001',suite:'chrome-pr1
 test('host-approved named suite executes exactly once and redacts outputs',()=>fixture(async(root,audits)=>{
   let started=0;
   const service=createLocalJobService({
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+    auditDirectory:audits,
     approveRequest:async ({requestId,planSha256})=>({approved:true,requestId,planSha256}),
     runner:async plan=>{started++;return {
       exitCode:0,stdout:'Bearer sample-secret-token',stderr:'api_key=abc123',truncated:false
@@ -116,8 +116,7 @@ test('interrupted audit entries display manual review, never active approval',()
     requestId:'stalejob123',suite:'node-test',state:'PENDING_LOCAL_APPROVAL',
     createdAt:'2026-11-15T05:00:00.000Z',planSha256:'f'.repeat(64)
   }));
-  const service=createLocalJobService({approvedWorkspaceRoots:[root],
-    auditDirectory:audits,approveRequest:async()=>{throw Error('SHOULD_NOT_APPROVE');}});
+  const service=createLocalJobService({    auditDirectory:audits,approveRequest:async()=>{throw Error('SHOULD_NOT_APPROVE');}});
   const rows=await service.recent();
   assert.equal(rows[0].state,'REQUIRES_MANUAL_REVIEW');
   assert.equal((await service.submit({requestId:'stalejob123',suite:'chrome-pr113-node',workspace:root})).state,
