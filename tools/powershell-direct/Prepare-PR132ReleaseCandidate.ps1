@@ -24,8 +24,10 @@ if(!(Test-Path -LiteralPath $workRoot -PathType Container)){
 if((Resolve-Path -LiteralPath $workRoot).ProviderPath -ine $workRoot){throw 'WORK_ROOT_REDIRECTED'}
 
 function Git([string[]]$Arguments){
+  $global:LASTEXITCODE=0
   $output=@(& $git -c core.hooksPath=NUL -c protocol.ext.allow=never -c protocol.file.allow=never @Arguments 2>&1)
-  if($LASTEXITCODE -ne 0){throw ('GIT_OPERATION_FAILED: '+(($output|Out-String).Trim()))}
+  $exitCode=$global:LASTEXITCODE
+  if($exitCode -ne 0){throw ('GIT_OPERATION_FAILED ('+$exitCode+'): '+(($output|Out-String).Trim()))}
   return $output
 }
 if(!(Test-Path -LiteralPath (Join-Path $checkoutRoot '.git') -PathType Container)){
@@ -41,18 +43,18 @@ if(!(Test-Path -LiteralPath (Join-Path $checkoutRoot '.git') -PathType Container
     $env:GIT_CONFIG_GLOBAL='NUL'
     $env:GIT_CONFIG_NOSYSTEM='1'
     $env:GIT_OPTIONAL_LOCKS='0'
-    Git @('clone','--depth','1','--single-branch','--branch',$branch,'--no-tags','--',$remote,$checkoutRoot)|Out-Null
+    Git -Arguments @('clone','--depth','1','--single-branch','--branch',$branch,'--no-tags','--',$remote,$checkoutRoot)|Out-Null
   }finally{
     foreach($name in $old.Keys){[Environment]::SetEnvironmentVariable($name,$old[$name],'Process')}
   }
 }else{
   if((Resolve-Path -LiteralPath $checkoutRoot).ProviderPath -ine $checkoutRoot){throw 'CANDIDATE_PATH_REDIRECTED'}
-  if((Git @('-C',$checkoutRoot,'remote','get-url','origin')|Out-String).Trim() -cne $remote){throw 'CANDIDATE_REMOTE_MISMATCH'}
-  if((Git @('-C',$checkoutRoot,'branch','--show-current')|Out-String).Trim() -cne $branch){throw 'CANDIDATE_BRANCH_MISMATCH'}
+  if((Git -Arguments @('-C',$checkoutRoot,'remote','get-url','origin')|Out-String).Trim() -cne $remote){throw 'CANDIDATE_REMOTE_MISMATCH'}
+  if((Git -Arguments @('-C',$checkoutRoot,'branch','--show-current')|Out-String).Trim() -cne $branch){throw 'CANDIDATE_BRANCH_MISMATCH'}
 }
-$actual=(Git @('-C',$checkoutRoot,'rev-parse','HEAD')|Out-String).Trim()
+$actual=(Git -Arguments @('-C',$checkoutRoot,'rev-parse','HEAD')|Out-String).Trim()
 if($actual -cne $expectedCommit){throw ('CANDIDATE_COMMIT_MISMATCH: '+$actual)}
-$changes=@(Git @('-C',$checkoutRoot,'status','--porcelain=v1','--untracked-files=all'))
+$changes=@(Git -Arguments @('-C',$checkoutRoot,'status','--porcelain=v1','--untracked-files=all'))
 if($changes.Count -gt 0){throw 'CANDIDATE_WORKTREE_NOT_CLEAN'}
 foreach($required in @(
  'server\bridge.mjs',
