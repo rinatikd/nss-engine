@@ -7,9 +7,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-9b0af752-release-clean'
+$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-1149c981-release-clean'
 $candidateRoot=Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
-$expectedSha='9b0af752575a3e10ebee93a31014c5d95b3bd818'
+$expectedSha='1149c981df88ff8d79e3f521f8a10f5a574696d0'
 $expectedBranch='feat/chat-approved-session-auth-20261122'
 $remoteExpected='https://github.com/rinatikd/nss-engine'
 $labServerRoot='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
