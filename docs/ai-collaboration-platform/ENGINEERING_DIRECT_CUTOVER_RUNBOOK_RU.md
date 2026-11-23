@@ -52,11 +52,11 @@
 
 ## PR #138 — отдельная проверенная рабочая копия (2026-11-23)
 
-Целевой исходник для staging: `d9f12c9912398d5d89d4b2fad9e3caad2e359ee0` — branch `feat/psdirect-per-job-workspace-approval-20261123`. Не переключать основной checkout и не выполнять reset.
+Целевой исходник для staging — точный `CandidateSha`, который helper выводит на этапе Inspect. Он выбирается как неизменяемый предок текущей feature-ветки; helper проверяет его SHA, ancestry и чистоту основного checkout. Не переключать основной checkout и не выполнять reset.
 
 1. Одноразовый helper `tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1` запускается из отдельной папки `C:\Engineering` (вне Git checkout) через PowerShell Direct с workspace `C:\Engineering`. Сначала `-Mode Inspect`, затем после PASS — `-Mode Prepare`. Он проверяет основной checkout на точный base SHA `f58f44a52c569a4a45e3ffe025dc6d1f62beff58`, чистоту, origin, удалённый branch HEAD; затем делает отдельный detached worktree:
-   `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-d9f12c9-release-clean`.
-2. Из нового worktree запустить `tools/powershell-direct/Prepare-EngineeringLabR2.ps1` сначала с `-Mode Inspect`, затем `-Mode Prepare`. Эта редакция читает detached `.git` pointer, проверяет общий Git config/origin и точный HEAD; требует чистое дерево и создаёт только `C:\Engineering\PowerShellDirect-Engineering-Lab-R2`. Действующие R1, supervisor 17486/18086, туннель и production не перезапускаются.
+   `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-pinned-release-clean`.
+2. Из нового worktree запустить `tools/powershell-direct/Prepare-EngineeringLabR2.ps1` сначала с `-Mode Inspect -ExpectedCommit <CandidateSha из шага 1>`, затем с `-Mode Prepare -ExpectedCommit <тот же CandidateSha>`. Скрипт читает detached `.git` pointer, проверяет общий Git config/origin и сверяет `HEAD` с переданным SHA; требует чистое дерево и создаёт только `C:\Engineering\PowerShellDirect-Engineering-Lab-R2`. SHA передаётся извне, а не зашивается в сам скрипт, чтобы не создавать циклическую зависимость от хэша коммита. Действующие R1, supervisor 17486/18086, туннель и production не перезапускаются.
 3. После подготовки выполнить реальный Windows Node 24 regression suite из R2: `workspace-policy.test.mjs`, `local_test_runner.test.mjs`, `local_job_service.test.mjs`, `engineering-runner.test.mjs`, `service.test.mjs`, `named-suites.test.mjs`, `engineering.test.mjs`. Каждый запуск — отдельное одобренное задание; затем сверить source hashes из `source-hashes.json`.
 
 **Текущий статус:** source/CI PASS; pinned helper и R2 detached-worktree support включены в PR #138. Это ещё не означает, что helper уже скопирован на Work PC, worktree создан или R2 staged. До подтверждения всех Windows E2E результатов не переключать supervisor и не менять конфигурацию службы.
