@@ -24,20 +24,25 @@ export function canonicalUserWorkspace(candidate,{
   const mod=win?path.win32:path;
   if(typeof candidate!=='string'||!mod.isAbsolute(candidate))
     throw Error('WORKSPACE_NOT_ABSOLUTE');
-  if(win){
-    const normalizedCandidate=mod.normalize(candidate);
-    if(normalizedCandidate.toLowerCase().startsWith('\\\\?\\globalroot')||
-       normalizedCandidate.startsWith('\\\\.\\'))
+  const assertLocalWindowsPath=value=>{
+    const normalized=mod.normalize(value);
+    const lower=normalized.toLowerCase();
+    if(lower.startsWith('\\\\?\\globalroot')||normalized.startsWith('\\\\.\\'))
       throw Error('WORKSPACE_DEVICE_PATH_DENIED');
-    if(normalizedCandidate.startsWith('\\\\'))
+    // Node may return an extended-length local drive path from realpath.
+    // Permit only that \\\\?\\X:\\ form; deny UNC and every other device namespace.
+    const extendedLocalDrive=lower.startsWith('\\\\?\\')&&/^[a-z]:\\/.test(normalized.slice(4));
+    if(normalized.startsWith('\\\\')&&!extendedLocalDrive)
       throw Error('WORKSPACE_NETWORK_PATH_DENIED');
-  }
+  };
+  if(win)assertLocalWindowsPath(candidate);
   let actual;
   try{actual=realpath(candidate);}catch{throw Error('WORKSPACE_NOT_FOUND');}
   let info;
   try{info=stat(actual);}catch{throw Error('WORKSPACE_NOT_FOUND');}
   if(!info.isDirectory())throw Error('WORKSPACE_NOT_DIRECTORY');
   if(win){
+    assertLocalWindowsPath(actual);
     const volumeRoot=mod.parse(actual).root;
     if(volumeRoot&&same(actual,volumeRoot,true))throw Error('WORKSPACE_VOLUME_ROOT_DENIED');
     const protectedValues=[
