@@ -57,6 +57,7 @@ test('decision must be owner-approved before a task may be created',()=>{
  ledger.append({type:'decision.reviewed',actor:chatgpt,payload:{decisionId:'decision_01',verdict:'SUPPORT',rationale:'Matches requirements'}});
  ledger.append({type:'decision.reviewed',actor:claude,payload:{decisionId:'decision_01',verdict:'SUPPORT',rationale:'Independent review agrees'}});
  ledger.append({type:'decision.owner_approved',actor:owner,payload:{decisionId:'decision_01'}});
+ assert.throws(()=>ledger.append({type:'task.created',actor:chatgpt,payload:{taskId:'task_rogue_01',decisionId:'decision_01',title:'Orphan',assignee:'mallory'}}),/TASK_ASSIGNEE_UNKNOWN/);
  ledger.append({type:'task.created',actor:chatgpt,payload:{taskId:'task_000001',decisionId:'decision_01',title:'Implement',assignee:'claude'}});
  const state=projectEvents(ledger.list());assert.equal(state.decisions[0].status,'ACCEPTED');assert.equal(state.tasks[0].status,'READY');ledger.close();
 });
@@ -140,5 +141,18 @@ test('any of the seven AI members may control a session and launch a proposed ro
  assert.equal(round.status,'STARTED');
  assert.equal(round.proposedBy,'kimi');
  assert.equal(round.startedBy,'kimi');
+ ledger.close();
+});
+
+test('artifact ledger rejects non-council and duplicate recipients',()=>{
+ const ledger=new EventLedger(temp());
+ const payload={artifactId:'sourcepack_01',name:'Review pack',sha256:'b'.repeat(64),
+  sourceCommit:'c'.repeat(40),uri:'https://example.invalid/review-pack',
+  recipients:['claude','mallory']};
+ assert.throws(()=>ledger.append({type:'artifact.linked',actor:chatgpt,payload}),/INVALID_ARTIFACT_MANIFEST/);
+ assert.equal(ledger.list().length,0);
+ const duplicate={...payload,recipients:['claude','claude']};
+ assert.throws(()=>ledger.append({type:'artifact.linked',actor:chatgpt,payload:duplicate}),/INVALID_ARTIFACT_MANIFEST/);
+ assert.equal(ledger.list().length,0);
  ledger.close();
 });
