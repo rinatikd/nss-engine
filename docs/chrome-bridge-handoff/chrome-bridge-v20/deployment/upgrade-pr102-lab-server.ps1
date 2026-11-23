@@ -6,7 +6,7 @@ param(
   [Parameter(Mandatory=$true)][ValidateRange(1,2147483647)][int]$ExpectedPid,
   [Parameter(Mandatory=$true)][string]$ExpectedStartUtc,
   [string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
-  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}
+  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSourceSha,
   [string]$RollbackFrom,
   [switch]$Apply,
   [switch]$TestFixture
