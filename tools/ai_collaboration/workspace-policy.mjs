@@ -24,10 +24,14 @@ export function canonicalUserWorkspace(candidate,{
   const mod=win?path.win32:path;
   if(typeof candidate!=='string'||!mod.isAbsolute(candidate))
     throw Error('WORKSPACE_NOT_ABSOLUTE');
-  if(win&&(candidate.startsWith('\\\\.\\')||candidate.toLowerCase().startsWith('\\\\?\\globalroot')))
-    throw Error('WORKSPACE_DEVICE_PATH_DENIED');
-  if(win&&candidate.startsWith('\\\\'))
-    throw Error('WORKSPACE_NETWORK_PATH_DENIED');
+  if(win){
+    const normalizedCandidate=mod.normalize(candidate);
+    if(normalizedCandidate.toLowerCase().startsWith('\\\\?\\globalroot')||
+       normalizedCandidate.startsWith('\\\\.\\'))
+      throw Error('WORKSPACE_DEVICE_PATH_DENIED');
+    if(normalizedCandidate.startsWith('\\\\'))
+      throw Error('WORKSPACE_NETWORK_PATH_DENIED');
+  }
   let actual;
   try{actual=realpath(candidate);}catch{throw Error('WORKSPACE_NOT_FOUND');}
   let info;
