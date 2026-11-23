@@ -15,12 +15,12 @@ function Invoke-BridgeCandidateGit {
     throw 'TRUSTED_GIT_NOT_FOUND'
   }
   $global:LASTEXITCODE=0
-  $output=@(& $gitExe -C $CandidateRoot @Arguments 2>&1)
+  $gitLines=@(& $gitExe -C $CandidateRoot @Arguments 2>&1)
   $exitCode=$global:LASTEXITCODE
   if ($exitCode -ne 0) {
-    throw ('CANDIDATE_GIT_QUERY_FAILED ('+$exitCode+'): '+(($output|Out-String).Trim()))
+    throw ('CANDIDATE_GIT_QUERY_FAILED ('+$exitCode+'): '+(($gitLines|Out-String).Trim()))
   }
-  return (($output | ForEach-Object { [string]$_ }) -join "`n").Trim()
+  return (($gitLines | ForEach-Object { [string]$_ }) -join "`n").Trim()
 }
 
 function Assert-BridgeCandidateSource {
