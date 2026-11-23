@@ -577,7 +577,8 @@ async function updateBackgroundStatus() {
       connecting:'Фоновое подключение…',
       recovering:'Восстанавливаем соединение с сервером…',
       'auth-failed':'Ошибка авторизации фонового соединения',
-      disconnected:'Отключено вручную'
+      // A disconnected transport does not prove the owner pressed Stop.
+      disconnected:'Соединение не установлено'
     };
     setStatus(labels[current.state] || 'Фоновый режим: ' + current.state);
     refreshGrantLabels();
@@ -760,7 +761,10 @@ async function connectBridge({ automatic = false } = {}) {
     const code = error.message || 'UNKNOWN';
     const hints = {
       BROWSER_KEY_REJECTED_401: 'Ключ отклонён сервером (HTTP 401). Проверьте browserToken активной конфигурации; ключ не сохранялся.',
-      EXTENSION_ORIGIN_REJECTED_403: 'Сервер отклонил идентификатор расширения (HTTP 403). Проверьте extensionId в активной конфигурации.',
+      BRIDGE_HOST_REJECTED_403: 'Lab-сервер отклонил Host (HTTP 403). Проверьте адрес и порт 17484.',
+      EXTENSION_ORIGIN_REJECTED_403: 'Lab-сервер отклонил Origin расширения. Сверьте ID установленного Lab-расширения с CHROME_BRIDGE_EXTENSION_ID сервера.',
+      EXTENSION_ID_NOT_PINNED_403: 'На Lab-сервере не закреплён ID расширения. Проверьте CHROME_BRIDGE_EXTENSION_ID и активный процесс сервера.',
+      BRIDGE_FORBIDDEN_403: 'Lab-сервер вернул HTTP 403 без известной причины. Нужна проверка заголовков и серверного журнала.',
       BRIDGE_NETWORK_UNREACHABLE: 'Мост недоступен на 127.0.0.1:17381. Проверьте, что сервер запущен.',
       BRIDGE_TIMEOUT: 'Нет ответа от моста за 26 секунд. Проверьте сервер и попробуйте после диагностики.',
       KEY_EMPTY: 'Ключ не введён.'
