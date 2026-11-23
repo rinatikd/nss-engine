@@ -118,37 +118,43 @@ if([string]::IsNullOrWhiteSpace($remoteIdentity) -or
 if($branch -cne $expectedBranch){throw 'CANDIDATE_BRANCH_MISMATCH'}
 if($head -cne $expectedSha){throw 'CANDIDATE_COMMIT_MISMATCH'}
 
-# Gate 2: normalize only tracked, unstaged, EOL-only differences in this disposable checkout.
+# Gate 2: allow only proven EOL-only edits outside every deployment input.
+# Preserve these unrelated checkout files; never rewrite/reset them. The actual server,
+# extension and Control Room inputs are checked independently below by Assert-BridgeCandidateSource.
 $status=InvokeGit @('status','--porcelain=v1','--untracked-files=all')
 if($status.ExitCode -ne 0){throw 'CANDIDATE_STATUS_READ_FAILED'}
-$normalizationCount=0
+$eolOnlyFileCount=0
 if(-not [string]::IsNullOrWhiteSpace($status.Output)){
   $cached=InvokeGit @('diff','--cached','--quiet')
   $eolOnly=InvokeGit @('diff','--quiet','--ignore-space-at-eol')
   $untracked=GitValue @('ls-files','--others','--exclude-standard')
   if($cached.ExitCode -ne 0 -or $eolOnly.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($untracked)){
-    throw 'CANDIDATE_WORKTREE_HAS_NON_EOL_OR_UNTRACKED_CHANGES'
+    throw 'CANDIDATE_WORKTREE_HAS_STAGED_NON_EOL_OR_UNTRACKED_CHANGES'
   }
   $rows=@($status.Output -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  $protectedInputs=@(
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/server',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/extension',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/consilium-control-room',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/cutover-health.mjs',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/cutover-start.mjs',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/process-identity.ps1',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/verify-candidate-source.ps1',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/upgrade-pr102-lab-server.ps1',
+    'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/upgrade-pr102-lab.ps1'
+  )
   foreach($line in $rows){
     if($line.Length -lt 4 -or $line.Substring(0,2) -cne ' M'){throw 'CANDIDATE_NON_WORKTREE_STATUS_REFUSED'}
-    $relativePath=$line.Substring(3)
-    if($relativePath -notmatch '^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$'){throw 'CANDIDATE_UNSAFE_RELATIVE_PATH'}
-    $fullPath=[IO.Path]::GetFullPath((Join-Path $repo ($relativePath.Replace('/','\'))))
-    if(-not (IsInside $fullPath $repo)){throw 'CANDIDATE_PATH_ESCAPES_CHECKOUT'}
-    # Restore only this proven EOL-only worktree file from the pinned HEAD.
-    # --worktree leaves the index untouched; explicit conversion honors .gitattributes.
-    $null=GitValue @('-c','core.autocrlf=true','-c','core.safecrlf=false','restore','--source=HEAD','--worktree','--',$relativePath)
-    $normalizationCount++
+    $relativePath=$line.Substring(3).Replace('\','/')
+    if($relativePath -match '(^|/)\.\.(/|$)' -or $relativePath.StartsWith('/')){throw 'CANDIDATE_UNSAFE_RELATIVE_PATH'}
+    foreach($protected in $protectedInputs){
+      if($relativePath -ieq $protected -or $relativePath.StartsWith($protected+'/',[StringComparison]::OrdinalIgnoreCase)){
+        throw ('CANDIDATE_DEPLOYMENT_INPUT_MODIFIED: '+$relativePath)
+      }
+    }
+    $eolOnlyFileCount++
   }
 }
-$after=GitValue @('status','--porcelain=v1','--untracked-files=all')
-if(-not [string]::IsNullOrWhiteSpace($after)){
-  $eolReport=InvokeGit @('ls-files','--eol')
-  $attrReport=InvokeGit (@('check-attr','text','eol','--') + @($rows | ForEach-Object { $_.Substring(3) }))
-  throw ('CANDIDATE_WORKTREE_NOT_CLEAN: status='+$after+'; eol='+$eolReport.Output+'; attributes='+$attrReport.Output)
-}
-if((GitValue @('rev-parse','HEAD')) -cne $expectedSha){throw 'CANDIDATE_HEAD_CHANGED_DURING_NORMALIZATION'}
 
 # Gate 3: verify required source files and source tree integrity.
 foreach($relative in @(
@@ -169,8 +175,10 @@ foreach($relative in @(
 . (Join-Path $candidateRoot 'deployment\verify-candidate-source.ps1')
 $sourceInputsServer=@('server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab-server.ps1')
 $sourceInputsExtension=@('extension','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab.ps1')
+$sourceInputsControlRoom=@('consilium-control-room','deployment/verify-candidate-source.ps1')
 $null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths $sourceInputsServer
 $null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths $sourceInputsExtension
+$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths $sourceInputsControlRoom
 
 # Gate 4: exact owner and process identity for the one loopback Lab listener.
 . (Join-Path $candidateRoot 'deployment\process-identity.ps1')
@@ -276,7 +284,11 @@ if($extensionText -notmatch '\[DRY_RUN\] No installed files changed'){throw ('EX
 
 # Reconfirm immutable checkout and unchanged process identity after dry-runs.
 if((GitValue @('rev-parse','HEAD')) -cne $expectedSha){throw 'CANDIDATE_HEAD_CHANGED_AFTER_DRY_RUN'}
-if(-not [string]::IsNullOrWhiteSpace((GitValue @('status','--porcelain=v1','--untracked-files=all')))){throw 'CANDIDATE_WORKTREE_CHANGED_AFTER_DRY_RUN'}
+$finalStatus=GitValue @('status','--porcelain=v1','--untracked-files=all')
+if($finalStatus -cne $status.Output.Trim()){throw 'CANDIDATE_CHECKOUT_STATUS_CHANGED_DURING_PREFLIGHT'}
+$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths $sourceInputsServer
+$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths $sourceInputsExtension
+$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths $sourceInputsControlRoom
 $currentListener=@([BridgeNativeMetadata]::Listeners($labPort))
 if($currentListener.Count -ne 1 -or [string]$currentListener[0] -cne ('127.0.0.1|'+$expectedPid)){throw 'LAB_LISTENER_CHANGED_DURING_PREFLIGHT'}
 if((Get-FileHash -LiteralPath $configEvidence.Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $configEvidence.ConfigSha256){throw 'LAB_CONFIG_CHANGED_DURING_PREFLIGHT'}
@@ -287,8 +299,9 @@ if((Get-FileHash -LiteralPath $configEvidence.Path -Algorithm SHA256).Hash.ToLow
   SourceBranch=$expectedBranch
   SourceRemoteIdentity=(RemoteIdentity $remote)
   CandidateRoot=$candidateRoot
-  CandidateWorktreeClean=$true
-  EolOnlyFilesNormalized=$normalizationCount
+  CandidateWorktreeClean=([string]::IsNullOrWhiteSpace($finalStatus))
+  UnrelatedEolOnlyFilesPreserved=$eolOnlyFileCount
+  DeploymentInputTreesClean=$true
   LabRoot=$labRoot
   LabPort=$labPort
   LabExtensionId=$labExtensionId
