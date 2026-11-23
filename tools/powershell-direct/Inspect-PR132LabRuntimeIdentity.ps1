@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $labRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
 $labPort=17484
-$candidateRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\ChromeBridge-PR132-1149c981-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$candidateRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\ChromeBridge-PR132-1bd79cafd-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
 if(!(Test-Path -LiteralPath $labRoot -PathType Container)){throw 'LAB_ROOT_NOT_FOUND'}
 . (Join-Path $candidateRoot 'deployment\process-identity.ps1')
 $listeners=@([BridgeNativeMetadata]::Listeners($labPort))
