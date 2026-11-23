@@ -46,6 +46,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Parse PowerShell Direct staging, cutover and recovery scripts with Windows PowerShell 5.1
         shell: powershell
         run: |
@@ -91,15 +94,18 @@ jobs:
           $node = (Get-Command node.exe -ErrorAction Stop).Source
           $head = (& $git -C $env:GITHUB_WORKSPACE rev-parse HEAD 2>$null | Out-String).Trim()
           if ($LASTEXITCODE -ne 0 -or $head.Length -ne 40) { throw 'CHECKOUT_HEAD_INVALID' }
+          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
+          $inspect = & $script -Mode Inspect -ExpectedCommit $head
+          $preflight = ($inspect | Out-String).Trim() | ConvertFrom-Json
+          if ($preflight.Result -cne 'R2_CREATE_ONLY_PREFLIGHT' -or $preflight.CandidateSha -cne $head) { throw 'R2_PREFLIGHT_RECHECK_FAILED' }
           $stage = 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
-          if (Test-Path -LiteralPath $stage) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
+          if ($preflight.TargetExists -or (Test-Path -LiteralPath $stage)) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
           $null = New-Item -ItemType Directory -Path 'C:\Engineering' -Force
           $env:R2_SOURCE_ROOT = $env:GITHUB_WORKSPACE
           $env:R2_STAGE_ROOT = $stage
           $env:R2_NODE_EXE = $node
           $env:R2_GIT_EXE = $git
           try {
-            $script = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
             $result = & $script -Mode Prepare -ExpectedCommit $head -NodeExecutable $node
             $prepared = ($result | Out-String).Trim() | ConvertFrom-Json
             if ($prepared.Result -cne 'R2_STAGED_UNTESTED') { throw 'R2_PREPARE_RESULT_INVALID' }
