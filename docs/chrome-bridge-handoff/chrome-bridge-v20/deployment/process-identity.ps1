@@ -145,7 +145,7 @@ function Get-BridgeHandleIdentity($p) {
     id=$p.Id
     executable=[BridgeNativeMetadata]::Image($h)
     command=[BridgeNativeMetadata]::Command($h)
-    workingDirectory=[BridgeNativeMetadata]::CurrentDirectory($h)
+    workingDirectory=[IO.Path]::GetFullPath([BridgeNativeMetadata]::CurrentDirectory($h)).TrimEnd('\\')
     bridgeHome=[BridgeNativeMetadata]::EnvironmentVariable($h,'CHROME_BRIDGE_HOME')
     bridgePort=[BridgeNativeMetadata]::EnvironmentVariable($h,'CHROME_BRIDGE_PORT')
     extensionId=[BridgeNativeMetadata]::EnvironmentVariable($h,'CHROME_BRIDGE_EXTENSION_ID')
