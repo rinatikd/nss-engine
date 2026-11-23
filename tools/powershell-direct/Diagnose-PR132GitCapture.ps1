@@ -40,10 +40,57 @@ function Invoke-GitProbe {
 
 $results = @()
 $results += Invoke-GitProbe -Label 'git-version' -GitArguments @('--version')
+$processResults = @()
+$processResults += Invoke-GitProcessProbe -Label 'process-git-version' -GitArguments @('--version')
+if ($checkoutExists) {
+    $processResults += Invoke-GitProcessProbe -Label 'process-rev-parse' -GitArguments @('-C', $checkoutRoot, 'rev-parse', '--verify', 'HEAD')
+    $processResults += Invoke-GitProcessProbe -Label 'process-branch' -GitArguments @('-C', $checkoutRoot, 'branch', '--show-current')
+    $processResults += Invoke-GitProcessProbe -Label 'process-status' -GitArguments @('-C', $checkoutRoot, 'status', '--porcelain=v1', '--untracked-files=all')
+}
 if ($checkoutExists) {
     $results += Invoke-GitProbe -Label 'direct-rev-parse' -GitArguments @('-C', $checkoutRoot, 'rev-parse', '--verify', 'HEAD')
     $results += Invoke-GitProbe -Label 'direct-branch' -GitArguments @('-C', $checkoutRoot, 'branch', '--show-current')
     $results += Invoke-GitProbe -Label 'direct-status' -GitArguments @('-C', $checkoutRoot, 'status', '--porcelain=v1', '--untracked-files=all')
+}
+
+function Invoke-GitProcessProbe {
+    param(
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)][string[]]$GitArguments
+    )
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $git
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.WorkingDirectory = $expectedWorkspace
+    $quoted = @()
+    foreach ($argument in $GitArguments) {
+        if ($argument -match '[\s"]') {
+            $quoted += '"' + $argument.Replace('"', '\"') + '"'
+        } else {
+            $quoted += $argument
+        }
+    }
+    $start.Arguments = [string]::Join(' ', [string[]]$quoted)
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $start
+    if (-not $process.Start()) { throw 'GIT_PROCESS_START_FAILED' }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+    [pscustomobject]@{
+        Label = $Label
+        ExitCode = $process.ExitCode
+        StdoutLength = $stdout.Length
+        StderrLength = $stderr.Length
+        Stdout = $stdout.TrimEnd([char[]]@([char]13,[char]10))
+        Stderr = $stderr.TrimEnd([char[]]@([char]13,[char]10))
+    }
+    $process.Dispose()
 }
 
 function Git([string[]]$Arguments) {
@@ -86,6 +133,7 @@ foreach ($name in @('GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_CEILING_DIRE
     GitCommandResolution = @($command)
     GitEnvironmentOverridesPresent = $envPresence
     DirectAndVersionProbes = @($results)
+    DotNetProcessProbes = @($processResults)
     ExistingWrapperOutput = $wrapperOutput
     ExistingWrapperError = $wrapperError
     ExistingWrapperLastExitCode = $wrapperExitCode
