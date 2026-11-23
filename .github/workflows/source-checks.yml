@@ -67,3 +67,19 @@ jobs:
             if ($errors.Count -gt 0) { throw ($file + ': ' + ($errors | Out-String)) }
             Write-Output ('[PASS] PowerShell 5.1 parse: ' + $file)
           }
+      - name: Execute read-only R2 preflight on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $git = 'C:\Program Files\Git\cmd\git.exe'
+          if (!(Test-Path -LiteralPath $git -PathType Leaf)) { throw 'TRUSTED_GIT_MISSING' }
+          $head = (& $git -C $env:GITHUB_WORKSPACE rev-parse HEAD 2>$null | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}) { throw 'CHECKOUT_HEAD_INVALID' }
+          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
+          $result = & $script -Mode Inspect -ExpectedCommit $head
+          $preflight = ($result | Out-String).Trim() | ConvertFrom-Json
+          if ($preflight.Result -cne 'R2_CREATE_ONLY_PREFLIGHT') { throw 'R2_PREFLIGHT_RESULT_INVALID' }
+          if ($preflight.CandidateSha -cne $head) { throw 'R2_PREFLIGHT_SHA_MISMATCH' }
+          if ($preflight.RequiredSourceCount -ne 10 -or $preflight.RegressionTestCount -ne 7) { throw 'R2_PREFLIGHT_INPUT_COUNT_MISMATCH' }
+          if ($preflight.InventoriedFileCount -lt 17) { throw 'R2_PREFLIGHT_FILE_INVENTORY_TOO_SMALL' }
+          if ($preflight.TargetExists) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
+          Write-Output ('[PASS] R2 PowerShell 5.1 read-only preflight: files=' + $preflight.InventoriedFileCount)
