@@ -37,7 +37,7 @@ test('host-approved named suite executes exactly once and redacts outputs',()=>f
 test('local DENY blocks execution independently of model fields',()=>fixture(async(root,audits)=>{
   let started=0;
   const service=createLocalJobService({
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+auditDirectory:audits,
     approveRequest:async()=>({approved:false}),
     runner:async()=>{started++;return {exitCode:0};}
   });
@@ -49,7 +49,7 @@ test('local DENY blocks execution independently of model fields',()=>fixture(asy
 test('host approval with wrong plan fingerprint is rejected',()=>fixture(async(root,audits)=>{
   let started=0;
   const service=createLocalJobService({
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+auditDirectory:audits,
     approveRequest:async({requestId})=>({approved:true,requestId,planSha256:'wrong'}),
     runner:async()=>{started++;return {exitCode:0};}
   });
@@ -80,7 +80,7 @@ test('workspace selection is per-job and does not require a persistent directory
 test('crash after claiming does not permit replay',()=>fixture(async(root,audits)=>{
   let invoked=0;
   const service=createLocalJobService({
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+auditDirectory:audits,
     approveRequest:async({requestId,planSha256})=>({approved:true,requestId,planSha256}),
     runner:async()=>{invoked++;throw Error('simulated lost completion');}
   });
@@ -92,7 +92,7 @@ test('crash after claiming does not permit replay',()=>fixture(async(root,audits
 test('durable audit inbox survives service recreation without replay rights',()=>fixture(async(root,audits)=>{
   let executions=0;
   const settings={
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+auditDirectory:audits,
     approveRequest:async()=>({approved:false,reason:'APPROVAL_EXPIRED'}),
     runner:async()=>{executions++;return {exitCode:0};}
   };
