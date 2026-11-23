@@ -15,8 +15,9 @@ if(!(Test-Path -LiteralPath $preflightScript -PathType Leaf)){throw 'CONSOLIDATE
 
 # Dot-source the same consolidated gate, retaining its verified paths,
 # process identity, config hash and updater parameter sets in this scope.
-$preflightJson=. $preflightScript
-$preflight=[string]$preflightJson|ConvertFrom-Json
+$preflightOutput = . $preflightScript
+$preflightJson = [string]$preflightOutput
+$preflight = ConvertFrom-Json -InputObject $preflightJson
 if($preflight.Result -cne 'PR132_LAB_PREFLIGHT_READY'){throw 'PR132_LAB_PREFLIGHT_NOT_READY'}
 $manifestBeforeApply=Get-Content -LiteralPath (Join-Path $labExtensionRoot 'manifest.json') -Raw -Encoding UTF8|ConvertFrom-Json
 $manifestKeyBefore=''
@@ -83,8 +84,12 @@ if($expectedSha -cne '4e33b8d34cd5c68b94ee304d4f0c0b502c46d56a'){throw 'UNEXPECT
 $initialPid=[int]$expectedPid
 $initialIdentity=$identity
 $stateBackupRoot=Join-Path $labStateRoot 'backups'
-$extensionBackupsBefore=@(Get-ChildItem -LiteralPath $stateBackupRoot -Directory -Filter 'extension-*' -ErrorAction SilentlyContinue | ForEach-Object {$_.FullName})
-$serverBackupsBefore=@(Get-ChildItem -LiteralPath $stateBackupRoot -Directory -Filter 'server-*' -ErrorAction SilentlyContinue | ForEach-Object {$_.FullName})
+$extensionBackupsBefore=@()
+$serverBackupsBefore=@()
+if(Test-Path -LiteralPath $stateBackupRoot -PathType Container){
+  $extensionBackupsBefore=@(Get-ChildItem -LiteralPath $stateBackupRoot -Directory -Filter 'extension-*' -ErrorAction SilentlyContinue | ForEach-Object {$_.FullName})
+  $serverBackupsBefore=@(Get-ChildItem -LiteralPath $stateBackupRoot -Directory -Filter 'server-*' -ErrorAction SilentlyContinue | ForEach-Object {$_.FullName})
+}
 
 $serverBackup=$null
 $extensionBackup=$null
