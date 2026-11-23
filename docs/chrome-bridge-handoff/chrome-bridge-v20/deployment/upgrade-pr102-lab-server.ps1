@@ -271,8 +271,10 @@ $configHashBefore = HashFile $configPath
 $config = ReadJson $configPath
 Require (($config.agentToken -is [string]) -and ($config.browserToken -is [string])) 'Existing Lab config lacks required tokens'
 Require ($config.agentToken.Length -ge 32 -and $config.browserToken.Length -ge 32) 'Existing Lab token material is invalid'
+$nodeProcess=[Diagnostics.Process]::GetProcessById($ExpectedPid)
+try{$nodeIdentity=Get-BridgeHandleIdentity $nodeProcess}finally{$nodeProcess.Dispose()}
 $nodeCommandPaths=@(Get-Command node.exe -CommandType Application -All -ErrorAction Stop | ForEach-Object {[string]$_.Source})
-$script:NodeExe=Get-BridgeUniqueCanonicalPath $nodeCommandPaths
+$script:NodeExe=Get-BridgePinnedExecutable ([string]$nodeIdentity.executable) $nodeCommandPaths
 $nodeVersionOutput=& $script:NodeExe --version
 Require ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$nodeVersionOutput)) 'Node version probe failed'
 $nodeVersion=([string]$nodeVersionOutput).Trim()
