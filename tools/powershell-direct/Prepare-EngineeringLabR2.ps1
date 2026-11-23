@@ -38,7 +38,7 @@ foreach($exe in @($node)){
 $headFile=Join-Path $repo '.git\HEAD'
 if(!(Test-Path -LiteralPath $headFile -PathType Leaf)){throw 'GIT_HEAD_MISSING'}
 $head=(Get-Content -LiteralPath $headFile -Raw).Trim()
-$actualBranch='platform/ai-windows-control-release-20261114'
+$actualBranch='feat/psdirect-per-job-workspace-approval-20261123'
 if($head -cne ('ref: refs/heads/'+$actualBranch)){throw 'UNEXPECTED_BRANCH'}
 # A separate trusted git-status operation must validate a clean worktree.
 foreach($rel in ($required+$tests)){
