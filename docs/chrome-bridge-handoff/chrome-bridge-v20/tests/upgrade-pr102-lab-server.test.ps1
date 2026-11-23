@@ -4,12 +4,49 @@ $ErrorActionPreference = 'Stop'
 $packageRoot = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $packageRoot 'deployment\upgrade-pr102-lab-server.ps1'
 . (Join-Path $packageRoot 'deployment\process-identity.ps1')
+. (Join-Path $packageRoot 'deployment\verify-candidate-source.ps1')
 $root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-Server-TestFixture'
 $state = Join-Path $root 'state'
 $server = Join-Path $root 'server'
 $node = (Get-Command node.exe -ErrorAction Stop).Source
 $sourceSha = (& git -C $packageRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve source SHA' }
+
+$sourceInputs = @(
+  'server',
+  'deployment/cutover-health.mjs',
+  'deployment/cutover-start.mjs',
+  'deployment/process-identity.ps1',
+  'deployment/verify-candidate-source.ps1',
+  'deployment/upgrade-pr102-lab-server.ps1'
+)
+$dirtyFile = Join-Path $packageRoot 'server\.pr102-candidate-dirty-test.mjs'
+[IO.File]::WriteAllText($dirtyFile,'synthetic untracked candidate source')
+$dirtyRejected = $false
+try {
+  try {
+    $null = Assert-BridgeCandidateSource -CandidateRoot $packageRoot -ExpectedSourceSha $sourceSha -InputPaths $sourceInputs
+  } catch {
+    if ($_.Exception.Message -eq 'CANDIDATE_WORKTREE_NOT_CLEAN') { $dirtyRejected = $true } else { throw }
+  }
+} finally {
+  if (Test-Path -LiteralPath $dirtyFile) { Remove-Item -LiteralPath $dirtyFile -Force }
+}
+if (-not $dirtyRejected) { throw 'Untracked server candidate file was not rejected' }
+
+$ignoredFile = Join-Path $packageRoot 'server\pr102-candidate-ignored-test.json'
+[IO.File]::WriteAllText($ignoredFile,'synthetic ignored candidate data')
+$ignoredRejected = $false
+try {
+  try {
+    $null = Assert-BridgeCandidateSource -CandidateRoot $packageRoot -ExpectedSourceSha $sourceSha -InputPaths $sourceInputs
+  } catch {
+    if ($_.Exception.Message -eq 'CANDIDATE_IGNORED_FILES_PRESENT') { $ignoredRejected = $true } else { throw }
+  }
+} finally {
+  if (Test-Path -LiteralPath $ignoredFile) { Remove-Item -LiteralPath $ignoredFile -Force }
+}
+if (-not $ignoredRejected) { throw 'Ignored server candidate file was not rejected' }
 if (Test-Path -LiteralPath $root) { throw 'Fixture already exists; refusing overwrite' }
 if (@([BridgeNativeMetadata]::Listeners(17484)).Count -ne 0) { throw 'Port 17484 occupied; refusing unrelated process' }
 
