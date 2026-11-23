@@ -1168,3 +1168,17 @@ Reviewed exact PR #128 head `06241cb3ac692d421adadbed4cfff3c56cf6ecc6`, includin
 **Required before treating Stop-UNKNOWN recovery as complete:** a durable write-ahead mutation admission/unknown record must exist before a page mutation is allowed to execute (or an equivalent mechanism). If no durable journal is available before admission, reject before the click. If an accepted action becomes UNKNOWN and cannot be persisted, a later Connect must not clear the hold; the system needs a durable reconciliation gate. Add a fault test that fails local+session quarantine and lock writes, restarts the worker, attempts explicit Connect and a new mutation, and proves both remain blocked until exact operator reconciliation.
 
 Review was recorded in PR #128 as comment review ID `6016632692`. This finding does not invalidate the passing local→session fallback tests; it identifies the missing all-storage-unavailable boundary. No code was changed in this review.
+
+### 22.18. PR132 Git-capture probe repair and local queue state — 2026-11-23
+
+The first diagnostic execution (`cb_pr132_git_capture_probe_20261123_36`) failed before invoking Git: optional `.git` metadata inspection used `Get-Item` and raised a path-resolution error. This was a defect in the diagnostic helper, not evidence about Git stdout or the prior candidate mismatch.
+
+Corrected helper commit: `14cec70e7f9339633c4c5cc3757e7ef6a7e7f0e3`.
+- Optional checkout / .git inspection now uses .NET `Directory.Exists` and `File.Exists`, explicitly distinguishing a directory, a worktree pointer file, and a missing path.
+- No Git probe output, credentials, config contents or DWG information are written.
+- Exact-head Windows PowerShell 5.1 parser gate SUCCESS on run #45113082285, job #137489620899.
+- Portable job on the same commit remains blocked by the shared CCTV assertion already corrected in Draft PR #137.
+
+Local fast-forward of the corrected diagnostic helper was submitted as `cb_pr132_platform_diag_ff_retry_20261123_37`, still `PENDING_LOCAL_APPROVAL` at last status read. After it completes, run the read-only probe once, inspect the direct Git stdout/exit code and checkout path state, and only then revise the pinned staging helper. Do not retry clone/staging with the old script or interpret this helper's earlier Get-Item failure as a Git root cause.
+
+No PR #132 staging clone, Lab server replacement, extension update, provider send or Production operation has occurred.
