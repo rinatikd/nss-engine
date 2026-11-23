@@ -23,7 +23,8 @@ jobs:
         run: |
           $files = @(
             'tools/powershell-direct/Prepare-PR132ReleaseCandidate.ps1',
-            'tools/powershell-direct/Inspect-PR132LabIdentity.ps1'
+            'tools/powershell-direct/Inspect-PR132LabIdentity.ps1',
+            'tools/powershell-direct/Diagnose-PR132GitCapture.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
