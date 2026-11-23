@@ -54,7 +54,7 @@ test('symlink workspace is canonicalized before it is shown for approval', () =>
 }));
 
 test('non-absolute workspace is refused', async () => {
-  await assert.rejects(resolveTestPlan(params('relative/path')), /INVALID_WORKSPACE/);
+  await assert.rejects(resolveTestPlan(params('relative/path')), /WORKSPACE_NOT_ABSOLUTE/);
 });
 
 test('invalid request ID is refused', () => withWorkspace(async root => {
