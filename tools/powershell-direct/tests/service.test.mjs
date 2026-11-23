@@ -22,6 +22,48 @@ function fixture(){
 const req={requestId:'approvedcmd01',task:'git-status',workspace};
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
+test('terminal history is reclaimed before the read-only queue becomes permanently full',()=>{
+ const x=fixture();
+ for(let i=0;i<32;i++){
+  const id='historyjob'+String(i).padStart(2,'0');
+  const p=x.service.propose({...req,requestId:id});
+  x.service.decide(id,p.sha256,false);
+ }
+ assert.equal(x.service.jobs.size,32);
+ const nextId='historyjob32';
+ const next=x.service.propose({...req,requestId:nextId});
+ assert.equal(next.state,'PENDING');
+ assert.equal(x.service.jobs.size,32);
+ assert.throws(()=>x.service.status('historyjob00'),/JOB_NOT_FOUND/);
+ assert.throws(()=>x.service.propose({...req,requestId:'historyjob31'}),/DUPLICATE_REQUEST_ID/);
+});
+
+test('pending approvals are never evicted to make room in the read-only queue',()=>{
+ const x=fixture();
+ for(let i=0;i<32;i++){
+  const id='pendingjob'+String(i).padStart(2,'0');
+  x.service.propose({...req,requestId:id});
+ }
+ assert.equal(x.service.jobs.size,32);
+ assert.throws(()=>x.service.propose({...req,requestId:'pendingjob32'}),/QUEUE_FULL/);
+ assert.equal(x.service.status('pendingjob00').state,'PENDING');
+ assert.equal(x.service.status('pendingjob31').state,'PENDING');
+});
+
+test('expired pending jobs become reclaimable without allowing approval',()=>{
+ const x=fixture();
+ for(let i=0;i<32;i++){
+  const id='expiredjob'+String(i).padStart(2,'0');
+  x.service.propose({...req,requestId:id});
+ }
+ x.advance(90000);
+ const next=x.service.propose({...req,requestId:'expiredjob32'});
+ assert.equal(next.state,'PENDING');
+ assert.equal(x.service.jobs.size,32);
+ assert.equal(x.service.status('expiredjob00').state,'EXPIRED');
+ assert.throws(()=>x.service.decide('expiredjob00','0'.repeat(64),true),/NOT_PENDING/);
+});
+
 test('no execution before explicit local approval; denial never invokes runner',async()=>{
  const x=fixture(),p=x.service.propose(req);
  assert.equal(p.state,'PENDING');assert.equal(x.executed(),0);
