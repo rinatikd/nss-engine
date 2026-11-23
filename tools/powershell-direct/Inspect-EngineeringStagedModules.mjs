@@ -33,7 +33,6 @@ try{
  const checked=roots.map(x=>canonicalWorkspace(x,allowedRoot));
  const instance=new PowerShellApprovalService({
   root:allowedRoot,port:0,chatReadonlyEnabled:true,
-  engineeringWorkspaceRoots:checked,
   engineeringAuditDirectory:'C:\\Engineering\\PowerShellDirect-Engineering-Audit-R1'
  });
  out.importsOk=true;out.workspaceRootsValid=checked.length===2;
