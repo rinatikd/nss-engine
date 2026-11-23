@@ -14,17 +14,48 @@ jobs:
       - run: python tools/repo_guard.py --tree HEAD
       - run: python tools/run_portable_checks.py
 
-  windows-release-helper-syntax:
+  powershell-direct-node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check changed PowerShell Direct modules
+        run: |
+          node --check tools/ai_collaboration/workspace-policy.mjs
+          node --check tools/ai_collaboration/engineering-plan.mjs
+          node --check tools/ai_collaboration/engineering-runner.mjs
+          node --check tools/ai_collaboration/local_job_service.mjs
+          node --check tools/ai_collaboration/local_test_runner.mjs
+          node --check tools/powershell-direct/runner.mjs
+          node --check tools/powershell-direct/service.mjs
+          node --check tools/powershell-direct/stack-supervisor.mjs
+      - name: Run per-job workspace and approval regression tests
+        run: |
+          node --test \
+            tools/ai_collaboration/workspace-policy.test.mjs \
+            tools/ai_collaboration/local_test_runner.test.mjs \
+            tools/ai_collaboration/local_job_service.test.mjs \
+            tools/ai_collaboration/engineering-runner.test.mjs \
+            tools/powershell-direct/tests/service.test.mjs \
+            tools/powershell-direct/tests/named-suites.test.mjs \
+            tools/powershell-direct/tests/engineering.test.mjs
+
+  windows-powershell-5-1-syntax:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Parse PR132 staging and native identity helpers with Windows PowerShell 5.1
+      - name: Parse PowerShell Direct staging, cutover and recovery scripts with Windows PowerShell 5.1
         shell: powershell
         run: |
           $files = @(
-            'tools/powershell-direct/Prepare-PR132ReleaseCandidate.ps1',
-            'tools/powershell-direct/Inspect-PR132LabIdentity.ps1',
-            'tools/powershell-direct/Diagnose-PR132GitCapture.ps1'
+            'tools/powershell-direct/Invoke-EngineeringCutover.ps1',
+            'tools/powershell-direct/Recover-EngineeringDirect.ps1',
+            'tools/powershell-direct/Upgrade-EngineeringApproval.ps1',
+            'tools/powershell-direct/Prepare-EngineeringCutover.ps1',
+            'tools/powershell-direct/Stage-EngineeringDirect.ps1',
+            'tools/powershell-direct/Prepare-EngineeringLabR2.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
