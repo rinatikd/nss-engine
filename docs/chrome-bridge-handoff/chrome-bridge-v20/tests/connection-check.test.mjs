@@ -41,10 +41,16 @@ test('HTML has readable labels and the controller verifies before persisting', a
   assert.match(handler, /EXTENSION_ORIGIN_REJECTED_403/);
   assert.match(handler, /BRIDGE_HOST_REJECTED_403/);
   assert.match(handler, /EXTENSION_ID_NOT_PINNED_403/);
-  assert.match(js, /disconnected:'Соединение не установлено'/);
-  assert.doesNotMatch(js, /disconnected:'Отключено вручную'/);
-  assert.match(js, /safeErrorCode/);
+  const diagnostic = readFileSync(new URL('../extension/connection-diagnostic.js', import.meta.url), 'utf8');
+  assert.match(js, /backgroundConnectionStatusLabel/);
+  assert.match(diagnostic, /disconnected:\s*'Соединение не установлено'/);
+  assert.match(js, /safeConnectionErrorCode/);
+  assert.match(js, /bridgeLastConnectError/);
   assert.match(js, /current\.error/);
+
+
+
+
 });
 
 test('persistent key automatically reconnects without granting control', async () => {
