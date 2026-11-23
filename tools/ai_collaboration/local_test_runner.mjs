@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
+import {canonicalUserWorkspace} from './workspace-policy.mjs';
 
 export const SUITES = Object.freeze({
   'platform-contract': {
@@ -98,28 +99,24 @@ const MAX_OUTPUT = 64 * 1024;
 const REQUEST = /^[a-zA-Z0-9_-]{8,80}$/;
 export class TaskPolicyError extends Error {}
 
-export async function resolveTestPlan({ requestId, suite, workspace, approved, approvedRequestId }, workspaceAllowlist) {
+export async function resolveTestPlan({ requestId, suite, workspace, approved, approvedRequestId }) {
   if (typeof requestId !== 'string' || !REQUEST.test(requestId))
     throw new TaskPolicyError('INVALID_REQUEST_ID');
   if (approved !== true || approvedRequestId !== requestId)
     throw new TaskPolicyError('EXPLICIT_APPROVAL_REQUIRED');
   if (typeof suite !== 'string' || !Object.hasOwn(SUITES, suite))
     throw new TaskPolicyError('UNKNOWN_TEST_SUITE');
-  if (typeof workspace !== 'string' || !path.isAbsolute(workspace))
-    throw new TaskPolicyError('INVALID_WORKSPACE');
-  const candidate = await realpath(workspace);
-  if (!(await stat(candidate)).isDirectory())
-    throw new TaskPolicyError('NOT_A_DIRECTORY');
-  const roots = await Promise.all(workspaceAllowlist.map(root => realpath(root)));
-  if (!roots.includes(candidate))
-    throw new TaskPolicyError('WORKSPACE_NOT_ALLOWLISTED');
+  let candidate;
+  try{candidate=canonicalUserWorkspace(workspace);}
+  catch(error){
+    throw new TaskPolicyError(/^[A-Z0-9_]+$/.test(error?.message||'')?error.message:'WORKSPACE_INVALID');
+  }
   const spec = SUITES[suite];
   return Object.freeze({
     requestId, suite, command: spec.command,
     args: Object.freeze([...spec.args]), cwd: candidate,
     timeoutMs: spec.timeoutMs
   });
-}
 
 // Windows child processes can spawn grandchildren (Node -> PowerShell -> tests).
 // A direct child.kill() does not guarantee cleanup of the tree. Use a fixed,
