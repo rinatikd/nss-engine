@@ -580,7 +580,11 @@ async function updateBackgroundStatus() {
       // A disconnected transport does not prove the owner pressed Stop.
       disconnected:'Соединение не установлено'
     };
-    setStatus(labels[current.state] || 'Фоновый режим: ' + current.state);
+    const safeErrorCode = typeof current.error === 'string' &&
+      /^[A-Z][A-Z0-9_]{2,80}$/.test(current.error) ? current.error : null;
+    const stateLabel = labels[current.state] || 'Фоновый режим: ' + current.state;
+    setStatus((current.state === 'auth-failed' || current.state === 'recovering') && safeErrorCode
+      ? stateLabel + ': ' + safeErrorCode : stateLabel);
     refreshGrantLabels();
     await showBackgroundApprovals();
   } catch (e) {
