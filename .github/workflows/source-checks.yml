@@ -49,6 +49,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/checkout@v4
+        with:
+          ref: platform/ai-windows-control-release-20261114
+          path: primary-base-checkout
+          fetch-depth: 0
       - name: Parse PowerShell Direct staging, cutover and recovery scripts with Windows PowerShell 5.1
         shell: powershell
         run: |
@@ -86,38 +91,66 @@ jobs:
           if ($preflight.InventoriedFileCount -lt 17) { throw 'R2_PREFLIGHT_FILE_INVENTORY_TOO_SMALL' }
           if ($preflight.TargetExists) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
           Write-Output ('[PASS] R2 PowerShell 5.1 read-only preflight: files=' + $preflight.InventoriedFileCount)
-      - name: Execute isolated R2 staging and verify the complete manifest on Windows
+      - name: Execute the exact pinned worktree and R2 preparation flow on Windows
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $git = 'C:\Program Files\Git\cmd\git.exe'
           $node = (Get-Command node.exe -ErrorAction Stop).Source
-          $head = (& $git -C $env:GITHUB_WORKSPACE rev-parse HEAD 2>$null | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or $head.Length -ne 40) { throw 'CHECKOUT_HEAD_INVALID' }
-          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
-          $inspect = & $script -Mode Inspect -ExpectedCommit $head
-          $preflight = ($inspect | Out-String).Trim() | ConvertFrom-Json
-          if ($preflight.Result -cne 'R2_CREATE_ONLY_PREFLIGHT' -or $preflight.CandidateSha -cne $head) { throw 'R2_PREFLIGHT_RECHECK_FAILED' }
+          $expectedBase = 'f58f44a52c569a4a45e3ffe025dc6d1f62beff58'
+          $expectedPin = '5f6837a8f99dd0db23f35ec84e1b4dc8c172886d'
+          $primary = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
+          $worktree = Join-Path $primary 'work\PowerShellDirect-PR138-pinned-release-clean'
           $stage = 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
-          if ($preflight.TargetExists -or (Test-Path -LiteralPath $stage)) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
+          $baseCheckout = Join-Path $env:GITHUB_WORKSPACE 'primary-base-checkout'
+          if (Test-Path -LiteralPath $primary) { throw 'PRIMARY_CLONE_ALREADY_EXISTS' }
+          if (Test-Path -LiteralPath $stage) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
           $null = New-Item -ItemType Directory -Path 'C:\Engineering' -Force
-          $env:R2_SOURCE_ROOT = $env:GITHUB_WORKSPACE
-          $env:R2_STAGE_ROOT = $stage
-          $env:R2_NODE_EXE = $node
-          $env:R2_GIT_EXE = $git
           try {
-            $result = & $script -Mode Prepare -ExpectedCommit $head -NodeExecutable $node
-            $prepared = ($result | Out-String).Trim() | ConvertFrom-Json
-            if ($prepared.Result -cne 'R2_STAGED_UNTESTED') { throw 'R2_PREPARE_RESULT_INVALID' }
-            if ($prepared.RuntimeSourceSha -cne $head) { throw 'R2_PREPARE_SHA_MISMATCH' }
-            if ($prepared.VerifiedFileCount -ne $preflight.InventoriedFileCount) { throw 'R2_PREPARE_FILE_COUNT_MISMATCH' }
-            if ($prepared.TrackedFilesOnly -ne $true) { throw 'R2_PREPARE_TRACKED_ONLY_INVALID' }
-            $verify = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\tests\r2-stage.test.mjs'
+            & $git clone --no-hardlinks $baseCheckout $primary
+            if ($LASTEXITCODE -ne 0) { throw 'PRIMARY_CLONE_FAILED' }
+            & $git -C $primary checkout -B platform/ai-windows-control-release-20261114 $expectedBase
+            if ($LASTEXITCODE -ne 0) { throw 'PRIMARY_BASE_CHECKOUT_FAILED' }
+            & $git -C $primary remote set-url origin https://github.com/rinatikd/nss-engine.git
+            if ($LASTEXITCODE -ne 0) { throw 'PRIMARY_ORIGIN_SET_FAILED' }
+            $baseHead = (& $git -C $primary rev-parse HEAD 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $baseHead -cne $expectedBase) { throw 'PRIMARY_BASE_SHA_MISMATCH' }
+            $outer = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-PR138PinnedWorktree.ps1'
+            $inspect = & $outer -Mode Inspect -RepositoryRoot $primary
+            $outerPreflight = ($inspect | Out-String).Trim() | ConvertFrom-Json
+            if ($outerPreflight.Result -cne 'PR138_WORKTREE_PREFLIGHT') { throw 'OUTER_PREFLIGHT_RESULT_INVALID' }
+            if ($outerPreflight.PrimaryHead -cne $expectedBase -or $outerPreflight.CandidateCommit -cne $expectedPin) { throw 'OUTER_PREFLIGHT_PIN_MISMATCH' }
+            if ($outerPreflight.DestinationExists -or $outerPreflight.FetchPerformed -or $outerPreflight.WorktreeCreated) { throw 'OUTER_PREFLIGHT_SIDE_EFFECT' }
+            $preparedWorktree = & $outer -Mode Prepare -RepositoryRoot $primary
+            $worktreeResult = ($preparedWorktree | Out-String).Trim() | ConvertFrom-Json
+            if ($worktreeResult.Result -cne 'PR138_PINNED_WORKTREE_READY') { throw 'PINNED_WORKTREE_RESULT_INVALID' }
+            if ($worktreeResult.CandidateSha -cne $expectedPin -or $worktreeResult.Worktree -cne $worktree) { throw 'PINNED_WORKTREE_SHA_OR_PATH_MISMATCH' }
+            if ($worktreeResult.WorktreeClean -ne $true -or $worktreeResult.ProductionChanged -ne $false) { throw 'PINNED_WORKTREE_STATE_INVALID' }
+            $r2 = Join-Path $worktree 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
+            $r2Inspect = & $r2 -Mode Inspect -ExpectedCommit $expectedPin
+            $preflight = ($r2Inspect | Out-String).Trim() | ConvertFrom-Json
+            if ($preflight.Result -cne 'R2_CREATE_ONLY_PREFLIGHT' -or $preflight.CandidateSha -cne $expectedPin) { throw 'R2_PREFLIGHT_RECHECK_FAILED' }
+            if ($preflight.TargetExists -or $preflight.InventoriedFileCount -lt 17) { throw 'R2_PREFLIGHT_INVENTORY_OR_TARGET_INVALID' }
+            $env:R2_SOURCE_ROOT = $worktree
+            $env:R2_STAGE_ROOT = $stage
+            $env:R2_NODE_EXE = $node
+            $env:R2_GIT_EXE = $git
+            $r2Prepared = & $r2 -Mode Prepare -ExpectedCommit $expectedPin -NodeExecutable $node
+            $prepared = ($r2Prepared | Out-String).Trim() | ConvertFrom-Json
+            if ($prepared.Result -cne 'R2_STAGED_UNTESTED' -or $prepared.RuntimeSourceSha -cne $expectedPin) { throw 'R2_PREPARE_RESULT_OR_PIN_INVALID' }
+            if ($prepared.VerifiedFileCount -ne $preflight.InventoriedFileCount -or $prepared.TrackedFilesOnly -ne $true) { throw 'R2_PREPARE_INVENTORY_INVALID' }
+            $verify = Join-Path $worktree 'tools\powershell-direct\tests\r2-stage.test.mjs'
             & $node --test $verify
             if ($LASTEXITCODE -ne 0) { throw 'R2_STAGE_REGRESSION_FAILED' }
-            Write-Output ('[PASS] R2 actual staging + manifest + Windows Node regression: files=' + $prepared.VerifiedFileCount)
+            Write-Output ('[PASS] Outer helper + pinned detached worktree + R2 Inspect/Prepare + full manifest/regression: sha=' + $expectedPin + ' files=' + $prepared.VerifiedFileCount)
           } finally {
             if (Test-Path -LiteralPath $stage) {
               Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+            if ((Test-Path -LiteralPath $primary) -and (Test-Path -LiteralPath $worktree)) {
+              & $git -C $primary worktree remove --force $worktree 2>$null
+            }
+            if (Test-Path -LiteralPath $primary) {
+              Remove-Item -LiteralPath $primary -Recurse -Force
             }
           }
