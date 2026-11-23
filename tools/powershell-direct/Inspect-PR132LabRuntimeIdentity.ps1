@@ -273,6 +273,34 @@ try{
     }
   }
 }catch{}
+$chromeExtensionSettings=@()
+$defaultProfile=Join-Path $chromeUserData 'Default'
+foreach($prefsName in @('Preferences','Secure Preferences')){
+  $prefsPath=Join-Path $defaultProfile $prefsName
+  if(Test-Path -LiteralPath $prefsPath -PathType Leaf){
+    try{
+      $prefs=Get-Content -LiteralPath $prefsPath -Raw -Encoding UTF8|ConvertFrom-Json
+      $settings=$prefs.extensions.settings
+      if($settings){
+        foreach($extensionId in ($idsToFind|Select-Object -Unique)){
+          $entry=$settings.PSObject.Properties[$extensionId]
+          if($entry){
+            $value=$entry.Value
+            $chromeExtensionSettings += [pscustomobject]@{
+              PreferencesFile=$prefsName
+              ExtensionId=$extensionId
+              Path=if($value.PSObject.Properties['path']){[string]$value.path}else{''}
+              State=if($value.PSObject.Properties['state']){[string]$value.state}else{''}
+              Location=if($value.PSObject.Properties['location']){[string]$value.location}else{''}
+              FromWebStore=if($value.PSObject.Properties['from_webstore']){[bool]$value.from_webstore}else{$false}
+            }
+          }
+        }
+      }
+    }catch{}
+  }
+}
+
 $productionListener=@([BridgeNativeMetadata]::Listeners(17381))
 $productionOwner=$null
 if($productionListener.Count -eq 1){
@@ -326,6 +354,7 @@ if($productionListener.Count -eq 1){
   ActiveSourceTree=$activeTree
   ChromeProfileExtensionMatches=$chromeProfileMatches
   ChromeProcessLoadEvidence=$chromeLoadEvidence
+  ChromePreferenceExtensionSettings=$chromeExtensionSettings
   ProductionProcessIdentity=$productionOwner
   EffectiveStateRoot=$stateRoot
   StateRootIsReparsePoint=if($stateRootItem){[bool]($stateRootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)}else{$false}
