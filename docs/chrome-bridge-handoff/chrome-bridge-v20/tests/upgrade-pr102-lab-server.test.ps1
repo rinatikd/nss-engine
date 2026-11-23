@@ -6,6 +6,10 @@ $updater = Join-Path $packageRoot 'deployment\upgrade-pr102-lab-server.ps1'
 . (Join-Path $packageRoot 'deployment\process-identity.ps1')
 . (Join-Path $packageRoot 'deployment\verify-candidate-source.ps1')
 $root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-Server-TestFixture'
+$rootWithTrailingSeparator = $root + [IO.Path]::DirectorySeparatorChar
+if ((Get-BridgeCanonicalPath $rootWithTrailingSeparator) -cne (Get-BridgeCanonicalPath $root)) {
+  throw 'Trailing-separator process path normalization failed'
+}
 $state = Join-Path $root 'state'
 $server = Join-Path $root 'server'
 $node = (Get-Command node.exe -ErrorAction Stop).Source
