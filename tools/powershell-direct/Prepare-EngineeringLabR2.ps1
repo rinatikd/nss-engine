@@ -135,12 +135,16 @@ if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_EXISTS_NO_OVERWRITE'}
 
 $created=$false
 try{
- $null=New-Item -ItemType Directory -Path (Join-Path $stage 'tools') -ErrorAction Stop
+ $null=New-Item -ItemType Directory -Path $stage -ErrorAction Stop
  $created=$true
+ $null=New-Item -ItemType Directory -Path (Join-Path $stage 'tools') -ErrorAction Stop
  Copy-Item -LiteralPath (Join-Path $repo 'tools\powershell-direct') -Destination (Join-Path $stage 'tools\powershell-direct') -Recurse -ErrorAction Stop
  Copy-Item -LiteralPath (Join-Path $repo 'tools\ai_collaboration') -Destination (Join-Path $stage 'tools\ai_collaboration') -Recurse -ErrorAction Stop
 
- $hashFiles=@($required+$tests | Select-Object -Unique)
+ $hashFiles=@($required)
+ foreach($rel in $tests){
+  if($hashFiles -notcontains $rel){$hashFiles+= $rel}
+ }
  $rows=@()
  foreach($rel in $hashFiles){
   $src=Join-Path $repo $rel
