@@ -6,7 +6,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 const stage='C:/Engineering/PowerShellDirect-Engineering-Lab-R2';
-const source='C:/Engineering/ChromeBridge-Recovery-Install-20261114/work/PowerShellDirect-PR138-d9f12c9-release-clean';
+const source='C:/Engineering/ChromeBridge-Recovery-Install-20261114/work/PowerShellDirect-PR138-pinned-release-clean';
 const tests=[
  'tools/ai_collaboration/workspace-policy.test.mjs',
  'tools/ai_collaboration/local_test_runner.test.mjs',
