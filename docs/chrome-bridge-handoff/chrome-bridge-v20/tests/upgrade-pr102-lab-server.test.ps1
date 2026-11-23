@@ -10,7 +10,7 @@ $rootWithTrailingSeparator = $root + [IO.Path]::DirectorySeparatorChar
 if ((Get-BridgeCanonicalPath $rootWithTrailingSeparator) -cne (Get-BridgeCanonicalPath $root)) {
   throw 'Trailing-separator process path normalization failed'
 }
-$nodeCommand=(Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
+$nodeCommand=[string](Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $resolvedDuplicateNode=Get-BridgeUniqueCanonicalPath @($nodeCommand,$nodeCommand.Replace('\','/'))
 if($resolvedDuplicateNode -ine (Get-BridgeCanonicalPath $nodeCommand)){
   throw 'Duplicate Node path normalization failed'
