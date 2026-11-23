@@ -1,9 +1,16 @@
+import { bridgeHttpErrorCode } from './connection-check.js';
+
 // Browser transport independent of a UI document. No Chrome UI or permission
 // APIs here: the host owns command execution and approval requirements.
 // This module is intentionally NOT activated by the old control.html poller.
 // A single owner must be selected during the migration; two pollers can steal
 // each other's commands and violate delivery/approval semantics.
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:17381';
+const AUTH_FAILURES = new Set([
+  'BROWSER_KEY_REJECTED_401', 'BRIDGE_HOST_REJECTED_403',
+  'EXTENSION_ORIGIN_REJECTED_403', 'EXTENSION_ID_NOT_PINNED_403',
+  'BRIDGE_FORBIDDEN_403'
+]);
 export class BridgeTransport {
   constructor({ fetchImpl = fetch, execute, onStatus = () => {},
     sleepImpl = ms => new Promise(r => setTimeout(r, ms)), endpoint = DEFAULT_ENDPOINT }) {
@@ -55,8 +62,8 @@ export class BridgeTransport {
       if (limit.aborted) throw Error('BRIDGE_TIMEOUT');
       throw Error('BRIDGE_NETWORK_UNREACHABLE');
     }
-    if (response.status === 401) throw Error('BROWSER_KEY_REJECTED_401');
-    if (response.status === 403) throw Error('EXTENSION_ORIGIN_REJECTED_403');
+    if (response.status === 401 || response.status === 403)
+      throw Error(await bridgeHttpErrorCode(response));
     if (!response.ok) throw Error('BRIDGE_HTTP_' + response.status);
     return response.json();
   }
@@ -115,7 +122,7 @@ export class BridgeTransport {
       } catch (e) {
         if (!this.active || gen !== this.generation || abort.signal.aborted) break;
         const reason = e?.message || 'UNKNOWN';
-        if (reason === 'BROWSER_KEY_REJECTED_401' || reason === 'EXTENSION_ORIGIN_REJECTED_403') {
+        if (AUTH_FAILURES.has(reason)) {
           this.active = false;
           this.token = null;
           this.status('auth-failed', reason);
