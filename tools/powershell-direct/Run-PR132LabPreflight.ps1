@@ -204,65 +204,82 @@ if(!(Test-Path -LiteralPath $nodeExe -PathType Leaf)){throw 'LAB_NODE_EXECUTABLE
 $nodeExeDirectory=Split-Path -Parent $nodeExe
 if([string]::IsNullOrWhiteSpace($nodeExeDirectory)){throw 'LAB_NODE_EXECUTABLE_DIRECTORY_INVALID'}
 
-# Identify exactly one existing Lab config without printing token material.
-$configPaths=@(
- (Join-Path $labRoot 'config.json'),
- (Join-Path $labRoot 'state\config.json'),
- (Join-Path $labRoot 'data\config.json'),
- (Join-Path $labRoot '.state\config.json')
-)
-$configMatches=@()
-foreach($path in $configPaths){
-  if(Test-Path -LiteralPath $path -PathType Leaf){
-    $cfg=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json
-    if($cfg.extensionId -ceq $labExtensionId -and
-       $cfg.agentToken -is [string] -and $cfg.agentToken.Length -ge 32 -and
-       $cfg.browserToken -is [string] -and $cfg.browserToken.Length -ge 32){
-      $configMatches += [pscustomobject]@{
-        Path=$path
-        StateRoot=(Split-Path -Parent $path)
-        ConfigSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-      }
-    }
-  }
-}
-if($configMatches.Count -ne 1){throw ('LAB_CONFIG_IDENTITY_NOT_UNIQUE: '+$configMatches.Count)}
-$configEvidence=$configMatches[0]
-
-# Require the process command line to be pinned either directly to this Lab's bridge.mjs
-# or to a same-Lab cutover transaction whose job pins source/state/port/config hash.
+# Pin the existing listener command before locating its state/config directory.
+# The transaction job is the authoritative state-root binding for a cutover-launched server.
 $command=([string]$identity.command).Replace('/','\')
 $expectedBridge=(Join-Path $labRoot 'server\bridge.mjs').Replace('/','\')
 $directServer=$command.IndexOf($expectedBridge,[StringComparison]::OrdinalIgnoreCase) -ge 0
 $transactionValid=$false
 $commandKind='UNMATCHED'
+$configEvidence=$null
 $match=[regex]::Match($command,'^"(?<exe>[^"]+)"\s+"(?<script>[^"]+\\cutover-start\.mjs)"\s+"(?<job>[^"]+\\start-[0-9a-f]{32}\.json)"$',[Text.RegularExpressions.RegexOptions]::IgnoreCase)
 if($match.Success){
   $exePath=FullPath $match.Groups['exe'].Value
   $scriptPath=FullPath $match.Groups['script'].Value
   $jobPath=FullPath $match.Groups['job'].Value
+  $scriptDir=FullPath (Split-Path -Parent $scriptPath)
+  $jobDir=FullPath (Split-Path -Parent $jobPath)
+  $runLeaf=Split-Path -Leaf $scriptDir
   if($exePath -ieq (FullPath $nodeExe) -and (IsInside $scriptPath $labRoot) -and (IsInside $jobPath $labRoot) -and
-     (Test-Path -LiteralPath $scriptPath -PathType Leaf) -and (Test-Path -LiteralPath $jobPath -PathType Leaf)){
+     (Test-Path -LiteralPath $scriptPath -PathType Leaf) -and (Test-Path -LiteralPath $jobPath -PathType Leaf) -and
+     $scriptDir -ieq $jobDir -and $runLeaf -match '^\.server-upgrade-[0-9a-f]{32}$' -and
+     (Split-Path -Leaf $scriptPath) -ceq 'cutover-start.mjs'){
     $job=Get-Content -LiteralPath $jobPath -Raw -Encoding UTF8|ConvertFrom-Json
     $jobSource=FullPath ([string]$job.source)
     $jobState=FullPath ([string]$job.state)
-    $scriptDir=FullPath (Split-Path -Parent $scriptPath)
-    $jobDir=FullPath (Split-Path -Parent $jobPath)
-    $runLeaf=Split-Path -Leaf $scriptDir
-    $transactionValid=(
-      $jobSource -ieq (FullPath $labRoot) -and
-      $jobState -ieq (FullPath $configEvidence.StateRoot) -and
-      [int]$job.port -eq $labPort -and
-      [string]$job.configHash -ceq $configEvidence.ConfigSha256 -and
-      $scriptDir -ieq $jobDir -and
-      $runLeaf -match '^\.server-upgrade-[0-9a-f]{32}$' -and
-      (Split-Path -Leaf $scriptPath) -ceq 'cutover-start.mjs'
-    )
-    if($transactionValid){$commandKind='transaction-launcher'}
+    if($jobSource -ieq (FullPath $labRoot) -and (IsInside $jobState $labRoot) -and [int]$job.port -eq $labPort){
+      $configPath=Join-Path $jobState 'config.json'
+      if(Test-Path -LiteralPath $configPath -PathType Leaf){
+        $cfg=Get-Content -LiteralPath $configPath -Raw -Encoding UTF8|ConvertFrom-Json
+        $validTokens=($cfg.agentToken -is [string] -and $cfg.agentToken.Length -ge 32 -and
+          $cfg.browserToken -is [string] -and $cfg.browserToken.Length -ge 32)
+        $optionalExtensionId=$true
+        if($cfg.PSObject.Properties['extensionId'] -and -not [string]::IsNullOrWhiteSpace([string]$cfg.extensionId)){
+          $optionalExtensionId=([string]$cfg.extensionId -ceq $labExtensionId)
+        }
+        $configHash=(Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $transactionValid=($validTokens -and $optionalExtensionId -and
+          [string]$job.configHash -ceq $configHash)
+        if($transactionValid){
+          $configEvidence=[pscustomobject]@{Path=$configPath;StateRoot=$jobState;ConfigSha256=$configHash}
+          $commandKind='transaction-launcher'
+        }
+      }
+    }
   }
 }
-if($directServer){$commandKind='direct-bridge'}
+if($directServer){
+  # Legacy direct-bridge startup has no transaction job; enumerate config.json
+  # files under this Lab root, excluding backups and transient upgrade directories.
+  $configMatches=@()
+  $configFiles=@(Get-ChildItem -LiteralPath $labRoot -Filter 'config.json' -File -Recurse -Force |
+    Where-Object {
+      $p=$_.FullName.Replace('/','\')
+      $p -notmatch '(?i)\\(?:backups|server|extension|\.server-upgrade-[0-9a-f]{32}|\.extension-[^\\]+)\\'
+    })
+  foreach($file in $configFiles){
+    $cfg=Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8|ConvertFrom-Json
+    $validTokens=($cfg.agentToken -is [string] -and $cfg.agentToken.Length -ge 32 -and
+      $cfg.browserToken -is [string] -and $cfg.browserToken.Length -ge 32)
+    $optionalExtensionId=$true
+    if($cfg.PSObject.Properties['extensionId'] -and -not [string]::IsNullOrWhiteSpace([string]$cfg.extensionId)){
+      $optionalExtensionId=([string]$cfg.extensionId -ceq $labExtensionId)
+    }
+    if($validTokens -and $optionalExtensionId){
+      $configMatches += [pscustomobject]@{
+        Path=$file.FullName
+        StateRoot=(Split-Path -Parent $file.FullName)
+        ConfigSha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+      }
+    }
+  }
+  if($configMatches.Count -ne 1){throw ('LAB_CONFIG_IDENTITY_NOT_UNIQUE: '+$configMatches.Count)}
+  $configEvidence=$configMatches[0]
+  $commandKind='direct-bridge'
+}
 if(-not ($directServer -or $transactionValid)){throw 'LAB_PROCESS_COMMAND_LINE_NOT_PINNED_TO_EXPECTED_LAB_SERVER'}
+if($null -eq $configEvidence){throw 'LAB_CONFIG_IDENTITY_NOT_VERIFIED'}
+
 $expectedStartUtc=[DateTime]::Parse($identity.created).ToUniversalTime().ToString('o')
 
 # Gate 5: server dry-run, then extension dry-run, both pinned to source SHA and Lab 17484.
