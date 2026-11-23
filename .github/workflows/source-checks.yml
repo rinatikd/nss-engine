@@ -17,7 +17,7 @@ jobs:
       - run: python tools/repo_guard.py --tree HEAD
       - name: Verify Chrome Bridge adapter and origin permissions
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
-        run: node --test tests/permissions-adapters.test.mjs tests/claude-gemini-adapters.test.mjs tests/provider-journal.test.mjs tests/provider-bridge-integration.test.mjs
+        run: node --test tests/permissions-adapters.test.mjs tests/claude-gemini-adapters.test.mjs tests/provider-journal.test.mjs tests/provider-bridge-integration.test.mjs tests/session-authorization.test.mjs tests/mutation-dispatch.test.mjs tests/background-coordinator.test.mjs
       - name: Test Consilium Control Room MVP
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20/consilium-control-room
         run: |

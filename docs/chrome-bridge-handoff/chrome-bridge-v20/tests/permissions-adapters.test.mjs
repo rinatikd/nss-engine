@@ -4,12 +4,17 @@ import { ControlGrants, CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrig
 import { DEFAULT_ADAPTERS } from '../extension/adapters.js';
 import { pageAction } from '../extension/page.js';
 import { toolByName } from '../server/tools.mjs';
-test('tool descriptions match the preserved Control allowlist and durations', () => {
+test('tool descriptions match the preserved Control allowlist and scoped session capabilities', () => {
  assert.deepEqual(Object.keys(CONTROL_ORIGINS).sort(), ['https://chat.deepseek.com', 'https://chat.qwen.ai', 'https://claude.ai', 'https://gemini.google.com', 'https://grok.com', 'https://www.kimi.ai']);
  const description = toolByName('agent_send').description;
  for (const origin of Object.keys(CONTROL_ORIGINS)) assert.ok(description.includes(origin));
- assert.match(description, /explicit local approval \(1, 3 or 4 hours\)/);
-    assert.doesNotMatch(description, /chatgpt\.com|cursor\.com/);
+ assert.match(description, /ChatGPT-owner-approved Session Authorization lease/);
+ assert.match(description, /agent_send\/provider_prepare\/provider_commit/);
+ assert.match(toolByName('provider_prepare').description, /Session Authorization lease/);
+ assert.match(toolByName('provider_commit').description, /Session Authorization lease/);
+ assert.match(toolByName('browser_click').description, /not included in Session Authorization/);
+ assert.match(toolByName('browser_fill').description, /individual confirmation/);
+ assert.doesNotMatch(description, /chatgpt\.com|cursor\.com/);
 });
 test('control requires local approval, exact allowed origin and a live epoch; expires and resets', () => {
  let now = 100; const g = new ControlGrants(() => now);

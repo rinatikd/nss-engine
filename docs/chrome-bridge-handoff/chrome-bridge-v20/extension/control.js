@@ -262,9 +262,12 @@ async function execute(cmd) {
       item.tabs.push({tabId:grant.tabId,expiresAt:grant.expiresAt});
     }
     const backgroundActive=backgroundControl.backgroundMode===true;
+    const sessionAuthorization=backgroundActive ? backgroundControl.sessionAuthorization : null;
     return {
       connected:backgroundActive ? backgroundControl.connected===true : running,
       globalEnabled,
+      sessionControlEnabled:sessionAuthorization?.active===true,
+      sessionAuthorization,
       approvalPending:backgroundActive ? backgroundControl.approvalPending : approvals.size,
       origins:backgroundActive ? [...byOrigin.values()] : legacyOrigins,
       controlMode:backgroundActive ? 'background' : 'legacy',

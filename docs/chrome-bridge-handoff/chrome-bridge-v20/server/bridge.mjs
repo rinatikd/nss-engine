@@ -15,7 +15,37 @@ export { tools };
 export const VERSION = '0.2.0';
 export const PORT = Number(process.env.CHROME_BRIDGE_PORT || 17381);
 const SUPPORTED = ['2025-06-18', '2025-03-26', '2024-11-05'];
-const CHAT_ORIGINS = new Set(['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com']);
+const COUNCIL_ORIGINS = Object.freeze({
+  'https://claude.ai':'claude','https://gemini.google.com':'gemini',
+  'https://chat.deepseek.com':'deepseek','https://grok.com':'grok',
+  'https://chat.qwen.ai':'qwen','https://www.kimi.ai':'kimi'
+});
+const CHAT_ORIGINS = new Set(Object.keys(COUNCIL_ORIGINS));
+const SESSION_DURATIONS = new Set([60,180,240]);
+const SESSION_CHALLENGE_TTL_MS = 120000;
+export function resolveSessionScope(providers, tabs) {
+  if (!Array.isArray(providers) || providers.length < 1 || providers.length > 6)
+    throw Error('SESSION_PROVIDERS_INVALID');
+  const allowedProviders = new Set(Object.values(COUNCIL_ORIGINS));
+  const selectedProviders = [...new Set(providers)];
+  if (selectedProviders.length !== providers.length) throw Error('SESSION_PROVIDERS_DUPLICATE');
+  if (selectedProviders.some(provider => !allowedProviders.has(provider)))
+    throw Error('SESSION_PROVIDER_DENIED');
+  if (!selectedProviders.includes('claude')) throw Error('SESSION_CLAUDE_REQUIRED');
+  const origins = Object.entries(COUNCIL_ORIGINS)
+    .filter(([,provider]) => selectedProviders.includes(provider))
+    .map(([origin]) => origin).sort();
+  const availableOrigins = new Set((Array.isArray(tabs) ? tabs : []).flatMap(tab => {
+    try {
+      const origin = new URL(tab.url).origin;
+      return tab.mode === 'chat' && COUNCIL_ORIGINS[origin] === tab.adapter ? [origin] : [];
+    } catch { return []; }
+  }));
+  const missingProviders = origins.filter(origin => !availableOrigins.has(origin))
+    .map(origin => COUNCIL_ORIGINS[origin]);
+  return { providers: selectedProviders, origins, missingProviders, ready: missingProviders.length === 0 };
+}
+
 const EXTENSION_ID = /^[a-p]{32}$/;
 const DEFAULT_STATE = process.env.CHROME_BRIDGE_HOME || path.join(os.homedir(), '.chrome-bridge');
 
@@ -94,7 +124,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         wake();
       }, limit);
       pending.set(id, { resolve, reject, timer, expired: false });
-      queue.push({ id, name, args, expires });
+      queue.push({ id, name, args, expires, bridgeEpoch: epoch });
       wake();
     });
   }
@@ -208,6 +238,10 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
 
   const hub = {
     browser_status: async () => ({ connected: isConnected(), queued: pending.size, agents: [...agents].map(([n, a]) => ({ name: n, tabId: a.tabId })) }),
+    session_request: sessionRequest,
+    session_authorize: sessionAuthorize,
+    session_revoke: sessionRevoke,
+    session_status: sessionStatus,
     async agent_list() {
       const tabs = (await enqueue('browser_tabs', {})).filter((t) => t.mode === 'chat');
       return { chatTabs: tabs, bound: [...agents].map(([n, a]) => ({ name: n, tabId: a.tabId, alive: tabs.some((t) => t.tabId === a.tabId) })) };
@@ -316,6 +350,59 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     },
   };
   const agent_peekRaw = (name) => enqueue('agent_peek', { tabId: agent(name).tabId });
+
+  // Chat approval is a two-step owner workflow: create a non-authorizing challenge,
+  // show its exact scope in ChatGPT, then consume it only after the owner says yes.
+  const sessionChallenges = new Map();
+  async function sessionRequest({durationMinutes=240,providers}={}) {
+    if (!SESSION_DURATIONS.has(durationMinutes)) throw Error('SESSION_DURATION_INVALID');
+    const scope = resolveSessionScope(providers, []);
+    if (!isConnected()) throw Error('CHROME_NOT_CONNECTED');
+    const tabs = await enqueue('browser_tabs', {});
+    const currentScope = resolveSessionScope(scope.providers, tabs);
+    if (!currentScope.ready) {
+      sessionChallenges.clear();
+      return {ready:false,approvalRequired:false,changedNothing:true,
+        providers:currentScope.providers,missingProviders:currentScope.missingProviders,
+        reasonCode:'SESSION_PROVIDERS_NOT_READY'};
+    }
+    const challengeId = crypto.randomBytes(16).toString('hex');
+    const sessionId = crypto.randomUUID();
+    const expiresAt = Date.now() + SESSION_CHALLENGE_TTL_MS;
+    sessionChallenges.clear();
+    sessionChallenges.set(challengeId,{sessionId,durationMinutes,origins:currentScope.origins,
+      providers:currentScope.providers,bridgeEpoch:epoch,expiresAt});
+    return {ready:true,challengeId,sessionId,durationMinutes,expiresAt,bridgeEpoch:epoch,
+      origins:currentScope.origins,providers:currentScope.providers,missingProviders:[],
+      capabilities:['agent_send','provider_prepare','provider_commit'],
+      approvalRequired:true,changedNothing:true};
+  }
+  async function sessionAuthorize({challengeId}={}) {
+    const challenge=sessionChallenges.get(challengeId);
+    if (!challenge || challenge.expiresAt<=Date.now()) {
+      sessionChallenges.delete(challengeId);
+      throw Error('SESSION_CHALLENGE_INVALID_OR_EXPIRED');
+    }
+    if (challenge.bridgeEpoch!==epoch) throw Error('SESSION_CHALLENGE_EPOCH_MISMATCH');
+    const tabs=await enqueue('browser_tabs',{});
+    const currentOrigins=new Set(tabs
+      .filter(tab=>tab.mode==='chat' && COUNCIL_ORIGINS[new URL(tab.url).origin]===tab.adapter)
+      .map(tab=>new URL(tab.url).origin));
+    if (challenge.origins.some(origin=>!currentOrigins.has(origin)))
+      throw Error('SESSION_ORIGIN_SET_CHANGED');
+    sessionChallenges.delete(challengeId);
+    const result=await enqueue('session_authorize',{
+      sessionId:challenge.sessionId,durationMinutes:challenge.durationMinutes,origins:challenge.origins
+    });
+    return {...result,challengeId,providers:challenge.origins.map(origin=>COUNCIL_ORIGINS[origin])};
+  }
+  async function sessionRevoke() {
+    sessionChallenges.clear();
+    return enqueue('session_revoke',{});
+  }
+  async function sessionStatus() {
+    return enqueue('session_status',{});
+  }
 
   // ---------- JSON-RPC / MCP ----------
   async function rpc(msg) {

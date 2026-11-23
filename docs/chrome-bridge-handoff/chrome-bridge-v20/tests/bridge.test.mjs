@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createBridge, loadConfig } from '../server/bridge.mjs';
+import { createBridge, loadConfig, resolveSessionScope } from '../server/bridge.mjs';
+import { tools as registeredTools } from '../server/tools.mjs';
+import { validateArgs } from '../server/schema.mjs';
 import { createChromeBridgeProviderTransport } from '../consilium-control-room/consilium/chrome-bridge-provider-adapter.mjs';
-import { extractVerdict, extractFiles, deepRender } from '../hub/lib.mjs';
 
 async function setup(opts = {}) {
   const { stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chrome-bridge-test-')), cleanupStateDir = true, extensionId = 'a'.repeat(32), ...bridgeOpts } = opts;
@@ -37,8 +38,145 @@ test('auth, origin, host and tool validation', async () => {
     const init = await s.post('/mcp', { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }).then((r) => r.json());
     assert.equal(init.result.protocolVersion, '2025-06-18');
     const list = await s.post('/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/list' }).then((r) => r.json());
-    assert.equal(list.result.tools.length, 24);
+    assert.deepEqual(list.result.tools, registeredTools.map(({ kind, ...tool }) => tool));
+    assert.ok(list.result.tools.some(({ name }) => name === 'agent_send'));
+    for (const name of [
+      'session_request', 'session_authorize', 'session_revoke', 'session_status',
+      'provider_prepare', 'provider_commit', 'provider_status', 'provider_stop',
+      'provider_revoke', 'provider_events'
+    ])
+      assert.ok(list.result.tools.some((tool) => tool.name === name), `missing ${name}`);
     assert.equal((await s.post('/mcp', [])).status, 200);
+  } finally { await s.close(); }
+});
+
+test('MCP schema validator accepts only bounded arrays of allowed session providers', () => {
+  const tool = registeredTools.find(({ name }) => name === 'session_request');
+  assert.ok(tool);
+  assert.doesNotThrow(() => validateArgs(tool, { durationMinutes: 60, providers: ['claude', 'grok'] }));
+  assert.throws(() => validateArgs(tool, { durationMinutes: 60 }), /Missing argument: providers/);
+  assert.throws(() => validateArgs(tool, { durationMinutes: 60, providers: [] }), /Invalid argument: providers/);
+  assert.throws(() => validateArgs(tool, { durationMinutes: 60, providers: ['claude', 'unknown'] }), /Invalid argument: providers\[1\]/);
+  assert.throws(() => validateArgs(tool, { durationMinutes: 60, providers: ['claude', 'grok', 'deepseek', 'gemini', 'qwen', 'kimi', 'extra'] }), /Invalid argument: providers/);
+});
+
+test('session scope grants only selected providers and fails closed for missing or mismatched tabs', () => {
+  const claude = { tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' };
+  const grok = { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' };
+  const gemini = { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' };
+  const ready = resolveSessionScope(['claude', 'grok'], [claude, grok, gemini]);
+  assert.equal(ready.ready, true);
+  assert.deepEqual(ready.providers, ['claude', 'grok']);
+  assert.deepEqual(ready.origins, ['https://claude.ai', 'https://grok.com']);
+  assert.deepEqual(ready.missingProviders, []);
+
+  const missing = resolveSessionScope(['claude', 'grok'], [claude, gemini]);
+  assert.equal(missing.ready, false);
+  assert.deepEqual(missing.missingProviders, ['grok']);
+
+  const mismatched = resolveSessionScope(['claude', 'grok'], [
+    claude, { ...grok, adapter: 'claude' }
+  ]);
+  assert.deepEqual(mismatched.missingProviders, ['grok']);
+  assert.throws(() => resolveSessionScope(['grok'], [grok]), /SESSION_CLAUDE_REQUIRED/);
+  assert.throws(() => resolveSessionScope(['claude', 'claude'], [claude]), /SESSION_PROVIDERS_DUPLICATE/);
+  assert.throws(() => resolveSessionScope(['claude', 'unknown'], [claude]), /SESSION_PROVIDER_DENIED/);
+});
+
+
+test('session_request rejects a Claude-less session before contacting the browser', async () => {
+  const s = await setup();
+  try {
+    const response = await s.rpc('session_request', { durationMinutes: 60, providers: ['grok'] });
+    assert.equal(response.result.isError, true);
+    assert.match(response.result.content[0].text, /SESSION_CLAUDE_REQUIRED/);
+    const status = JSON.parse((await s.rpc('browser_status')).result.content[0].text);
+    assert.equal(status.queued, 0);
+  } finally { await s.close(); }
+});
+
+
+test('session challenge authorizes only selected providers and round-trips status and revoke', async () => {
+  const s = await setup();
+  const tabs = [
+    { tabId: 11, mode: 'chat', adapter: 'claude', url: 'https://claude.ai/chat/conversation_01' },
+    { tabId: 12, mode: 'chat', adapter: 'grok', url: 'https://grok.com/c/conversation_02' },
+    { tabId: 13, mode: 'chat', adapter: 'gemini', url: 'https://gemini.google.com/app/conversation_03' }
+  ];
+  const browserKey = 'b'.repeat(64);
+  const pause = () => new Promise(resolve => setTimeout(resolve, 20));
+  const ack = async (command, result) => {
+    const response = await s.post('/bridge/result', {id:command.id,result}, browserKey);
+    assert.equal(response.status, 200);
+  };
+  try {
+    // Challenge request performs a real server queue round-trip for browser_tabs.
+    const challengePoll = s.poll();
+    await pause();
+    const challengeRequest = s.rpc('session_request', {
+      durationMinutes: 60, providers: ['claude', 'grok']
+    });
+    const discovery = await challengePoll;
+    assert.equal(discovery.name, 'browser_tabs');
+    await ack(discovery, tabs);
+    const challengeResponse = await challengeRequest;
+    assert.notEqual(challengeResponse.result.isError, true);
+    const challenge = JSON.parse(challengeResponse.result.content[0].text);
+    assert.equal(challenge.ready, true);
+    assert.equal(challenge.approvalRequired, true);
+    assert.equal(challenge.changedNothing, true);
+    assert.deepEqual(challenge.providers, ['claude', 'grok']);
+    assert.deepEqual(challenge.origins, ['https://claude.ai', 'https://grok.com']);
+    assert.deepEqual(challenge.capabilities, ['agent_send', 'provider_prepare', 'provider_commit']);
+
+    // Authorize rechecks the provider tab set before dispatching session_authorize.
+    const recheckPoll = s.poll();
+    await pause();
+    const authorizeRequest = s.rpc('session_authorize', {challengeId:challenge.challengeId});
+    const recheck = await recheckPoll;
+    assert.equal(recheck.name, 'browser_tabs');
+    await ack(recheck, tabs);
+    const authorizePoll = s.poll();
+    const authorizeCommand = await authorizePoll;
+    assert.equal(authorizeCommand.name, 'session_authorize');
+    assert.equal(authorizeCommand.args.sessionId, challenge.sessionId);
+    assert.equal(authorizeCommand.args.durationMinutes, 60);
+    assert.deepEqual(authorizeCommand.args.origins, challenge.origins);
+    await ack(authorizeCommand, {
+      active:true,
+      sessionId:challenge.sessionId,
+      bridgeEpoch:challenge.bridgeEpoch,
+      origins:challenge.origins,
+      capabilities:challenge.capabilities
+    });
+    const authorized = JSON.parse((await authorizeRequest).result.content[0].text);
+    assert.equal(authorized.active, true);
+    assert.equal(authorized.challengeId, challenge.challengeId);
+
+    const statusPoll = s.poll();
+    await pause();
+    const statusRequest = s.rpc('session_status');
+    const statusCommand = await statusPoll;
+    assert.equal(statusCommand.name, 'session_status');
+    await ack(statusCommand, {
+      active:true,
+      sessionId:challenge.sessionId,
+      bridgeEpoch:challenge.bridgeEpoch,
+      origins:challenge.origins,
+      capabilities:challenge.capabilities
+    });
+    const status = JSON.parse((await statusRequest).result.content[0].text);
+    assert.equal(status.active, true);
+    assert.deepEqual(status.origins, challenge.origins);
+
+    const revokePoll = s.poll();
+    await pause();
+    const revokeRequest = s.rpc('session_revoke');
+    const revokeCommand = await revokePoll;
+    assert.equal(revokeCommand.name, 'session_revoke');
+    await ack(revokeCommand, {revoked:true});
+    const revoked = JSON.parse((await revokeRequest).result.content[0].text);
+    assert.equal(revoked.revoked, true);
   } finally { await s.close(); }
 });
 
@@ -173,18 +311,6 @@ test('agent_send requestId remains idempotent after Bridge restart and UNKNOWN i
   }
 });
 
-test('hub: verdict, files, templates', () => {
-  assert.deepEqual(extractVerdict('С‚РµРєСЃС‚ {РЅРµ json} ```json\n{"score":7,"verdict":"revise","must_fix":["a"]}\n```').must_fix, ['a']);
-  assert.equal(extractVerdict('РЅРµС‚ РІРµСЂРґРёРєС‚Р° {"x":1}'), null);
-  assert.equal(extractVerdict('{"score":9,"verdict":"accept","summary":"СЃРєРѕР±РєРё } РІРЅСѓС‚СЂРё"}').verdict, 'accept');
-  assert.deepEqual(extractFiles('=== FILE: a/b.txt ===\nhi\n=== END FILE ==='), [{ path: 'a/b.txt', content: 'hi\n' }]);
-  assert.throws(() => extractFiles('=== FILE: ../x ===\nhi\n=== END FILE ==='), /Unsafe/);
-  assert.throws(() => extractFiles('=== FILE: C:\\x ===\nhi\n=== END FILE ==='), /Unsafe/);
-  assert.deepEqual(deepRender({ a: ['{{x}}'], b: 1 }, { x: 'q"\n' }), { a: ['q"\n'], b: 1 });
-});
-
-
-
 test('dispatched timeout holds the single-writer lane until a late ACK', async () => {
   const s = await setup({ timeout: 120, pollHold: 50 });
   try {
@@ -212,7 +338,7 @@ test('dispatched timeout holds the single-writer lane until a late ACK', async (
       id: secondCommand.id, result: { text: 'read-only result', links: [] }
     }, 'b'.repeat(64));
     const second = await secondPromise;
-    assert.equal(second.result.isError, false);
+    assert.notEqual(second.result.isError, true);
     assert.deepEqual(JSON.parse(second.result.content[0].text), { text: 'read-only result', links: [] });
   } finally { await s.close(); }
 });

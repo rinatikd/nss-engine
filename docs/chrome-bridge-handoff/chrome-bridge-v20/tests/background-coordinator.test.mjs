@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {startBackgroundTransport, installBackgroundCoordinator} from '../extension/background-coordinator.js';
+import {startBackgroundTransport, stopBackgroundTransport, installBackgroundCoordinator} from '../extension/background-coordinator.js';
 
 function fakeChrome(data={}) {
   const listeners=[];
@@ -48,6 +48,30 @@ test('background start restricts storage before reading and creates offscreen ho
   assert.equal(result.ok,true);
   assert.deepEqual(c.calls.map(x=>x[0]),['restrict','create','message']);
 });
+test('manual Stop supersedes a start that is waiting for offscreen host creation',async()=>{
+  const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
+  let releaseCreation;
+  let markCreationStarted;
+  const creationStarted=new Promise(resolve=>{markCreationStarted=resolve;});
+  const holdCreation=new Promise(resolve=>{releaseCreation=resolve;});
+  c.offscreen.createDocument=async opts=>{
+    c.calls.push(['create',opts.reasons[0]]);
+    markCreationStarted();
+    await holdCreation;
+  };
+
+  const pendingStart=startBackgroundTransport(c);
+  await creationStarted;
+  await stopBackgroundTransport(c);
+  releaseCreation();
+
+  const result=await pendingStart;
+  assert.equal(result.ok,false);
+  assert.equal(result.reason,'START_SUPERSEDED');
+  const messages=c.calls.filter(x=>x[0]==='message').map(x=>x[1]);
+  assert.deepEqual(messages,['stop'],'a late START must never be delivered after manual Stop');
+});
+
 test('content scripts cannot spoof coordinator status or dispatch',async()=>{
   const c=fakeChrome();
   installBackgroundCoordinator(c);

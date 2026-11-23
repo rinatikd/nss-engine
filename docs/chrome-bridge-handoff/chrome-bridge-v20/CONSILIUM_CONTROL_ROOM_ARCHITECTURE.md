@@ -136,3 +136,14 @@ Stop closes future dispatch and increments the orchestration epoch. The UI repor
 - [ ] Production ports, credentials, browser profile and installation remain untouched until a separate owner-approved release.
 
 No AI participants have been contacted by this PR. The existing consortium pause remains in effect.
+
+
+## 10. Owner-approved session authorization and bootstrap boundary
+
+The startup orchestrator may request one owner approval in the current ChatGPT conversation for a short-lived Session Authorization lease. Before approval, it must display the exact providers/origins, capability list, Bridge epoch and expiry. Creating the challenge is non-authorizing. It is single-use and expires after 120 seconds.
+
+The current lease is limited to `agent_send`, `provider_prepare` and `provider_commit` on the exact subset of council origins selected for that session. Claude is mandatory as the permanent co-operator; other participants are selected per task. A missing selected provider prevents challenge creation, but unselected providers need not be open and receive no access. It does not grant general browser control: arbitrary clicks, fills, navigation, file access, GitHub operations, OS commands, credentials and Production changes are excluded. Exact tab/origin/adapter/conversation, host permission, epoch and lease expiry are revalidated on each dispatch. The owner may revoke the lease, and stop/restart/Bridge epoch change invalidates it.
+
+This mechanism is separate from machine bootstrap. A future independent Recovery/Bootstrap Manager must start/check Windows services, tunnels, Bridge server, Chrome extension, provider tabs and Control Room in dependency order, then request the one owner approval. The Control Room cannot be the only recovery mechanism for itself or the Bridge. Startup health checks and the Session Authorization state must be reported separately; a connected process is not proof of a healthy provider or a running council.
+
+The chat approval is enforced by the trusted ChatGPT host workflow: natural-language consent is not independently verifiable by the Bridge process. The orchestrator must never invoke `session_authorize` without explicit owner approval of that exact challenge in the current chat. Challenge IDs are private owner-control data and must not be sent to participant agents.
