@@ -6,10 +6,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $workspace='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$checkout=Join-Path $workspace 'work\ChromeBridge-PR132-47fa8f35'
+$checkout=Join-Path $workspace 'work\ChromeBridge-PR132-0a246e22'
 $candidate=Join-Path $checkout 'docs\chrome-bridge-handoff\chrome-bridge-v20'
 $helper=Join-Path $candidate 'deployment\process-identity.ps1'
-$expectedSha='47fa8f35cb2bd53e2d5906d70969ac43bfe3bd75'
+$expectedSha='0a246e222ae5b4f1e325111547844a40a23e2994'
 $labRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
 $labExtensionId='nhflbnfcaicihaepdcjacdmaddagcmcj'
 if(!(Test-Path -LiteralPath $helper -PathType Leaf)){throw 'PINNED_PROCESS_IDENTITY_HELPER_NOT_FOUND'}
