@@ -125,6 +125,90 @@ if($actual -cne $expectedCommit){throw ('CANDIDATE_COMMIT_MISMATCH: '+$actual)}
 # A first checkout on some Windows hosts can differ only in trailing end-of-line
 # whitespace. Normalize ONLY this disposable release checkout, and only after
 # proving: no staged changes, no untracked files, and no meaningful diff.
+# Restore the raw committed blob bytes for each dirty tracked file; do not touch
+# the index, HEAD, prior checkout, or any unrelated file.
+function WriteCommittedBlob([string]$RelativePath){
+  if($RelativePath -notmatch '^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+
+
+foreach($required in @(
+ 'server\bridge.mjs',
+ 'server\tools.mjs',
+ 'deployment\process-identity.ps1',
+ 'deployment\upgrade-pr102-lab-server.ps1',
+ 'deployment\stage-server-lab.ps1',
+ 'deployment\CHAT_APPROVAL_LAB_CUTOVER.md',
+ 'extension\session-authorization.js'
+)){
+ if(!(Test-Path -LiteralPath (Join-Path $candidateRoot $required) -PathType Leaf)){
+   throw ('PINNED_CANDIDATE_FILE_MISSING: '+$required)
+ }
+}
+[pscustomobject]@{
+ Result='PR132_PINNED_SOURCE_READY'
+ Workspace=$workspace
+ CheckoutRoot=$checkoutRoot
+ PreservedPriorCheckoutRoot=$priorCheckoutRoot
+ PriorCheckoutPreserved=(Test-Path -LiteralPath $priorCheckoutRoot -PathType Container)
+ CandidateRoot=$candidateRoot
+ Branch=$branch
+ CommitSha=$actual
+ WorktreeClean=$true
+EolOnlyNormalizationPerformed=(![string]::IsNullOrWhiteSpace($status.Stdout))
+ LabChanged=$false
+ ProductionChanged=$false
+ CredentialsRead=$false
+}|ConvertTo-Json -Depth 4
+){
+    throw 'CANDIDATE_UNSAFE_RELATIVE_PATH'
+  }
+  $normalized=$RelativePath.Replace('/','\')
+  $fullPath=[IO.Path]::GetFullPath((Join-Path $checkoutRoot $normalized))
+  $prefix=[IO.Path]::GetFullPath($checkoutRoot).TrimEnd('\')+'\'
+  if(-not $fullPath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){
+    throw 'CANDIDATE_PATH_ESCAPES_CHECKOUT'
+  }
+  $segments=$normalized.Split('\')
+  $cursor=$checkoutRoot
+  foreach($segment in $segments){
+    $cursor=Join-Path $cursor $segment
+    if(Test-Path -LiteralPath $cursor){
+      $item=Get-Item -LiteralPath $cursor -Force
+      if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){
+        throw 'CANDIDATE_REPARSE_POINT_REFUSED'
+      }
+    }
+  }
+  if(!(Test-Path -LiteralPath $fullPath -PathType Leaf)){
+    throw 'CANDIDATE_DIRTY_FILE_MISSING'
+  }
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName=$git
+  $psi.Arguments='cat-file blob HEAD:'+$RelativePath
+  $psi.WorkingDirectory=$checkoutRoot
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $proc=New-Object System.Diagnostics.Process
+  $proc.StartInfo=$psi
+  if(!$proc.Start()){throw 'GIT_BLOB_PROCESS_START_FAILED'}
+  $stderrTask=$proc.StandardError.ReadToEndAsync()
+  $stream=$null
+  try{
+    $stream=New-Object System.IO.FileStream($fullPath,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    $proc.StandardOutput.BaseStream.CopyTo($stream)
+    $stream.Flush()
+  }finally{
+    if($stream){$stream.Dispose()}
+  }
+  if(!$proc.WaitForExit(15000)){
+    try{$proc.Kill()}catch{}
+    throw 'GIT_BLOB_READ_TIMEOUT'
+  }
+  $proc.WaitForExit()
+  if($proc.ExitCode -ne 0){throw 'GIT_BLOB_READ_FAILED'}
+  $null=$stderrTask.Result
+}
 $status=InvokeGit 'status --porcelain=v1 --untracked-files=all' $checkoutRoot
 if($status.ExitCode -ne 0){throw 'CANDIDATE_STATUS_READ_FAILED'}
 if(-not [string]::IsNullOrWhiteSpace($status.Stdout)){
@@ -134,7 +218,14 @@ if(-not [string]::IsNullOrWhiteSpace($status.Stdout)){
   if($cached.ExitCode -ne 0 -or $eolOnly.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($untracked)){
     throw 'CANDIDATE_WORKTREE_HAS_NON_EOL_OR_UNTRACKED_CHANGES'
   }
-  $null=GitOk 'restore --worktree -- .' $checkoutRoot
+  $statusLines=@($status.Stdout -split "\r?\n" | Where-Object { $_ })
+  foreach($line in $statusLines){
+    if($line.Length -lt 4){throw 'CANDIDATE_STATUS_LINE_INVALID'}
+    $state=$line.Substring(0,2).Trim()
+    if($state -cne 'M'){throw 'CANDIDATE_NON_MODIFIED_STATUS_REFUSED'}
+    $relativePath=$line.Substring(3).Trim()
+    WriteCommittedBlob $relativePath
+  }
 }
 $changes=GitOk 'status --porcelain=v1 --untracked-files=all' $checkoutRoot
 if(-not [string]::IsNullOrWhiteSpace($changes)){throw 'CANDIDATE_WORKTREE_NOT_CLEAN'}
