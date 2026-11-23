@@ -230,6 +230,75 @@ if($targetManifestExists){
   }catch{}
 }
 
+$idsToFind=@('nhflbnfcaicihaepdcjacdmaddagcmcj')
+if(-not [string]::IsNullOrWhiteSpace($processExtensionId)){$idsToFind += $processExtensionId}
+if($actualConfig -and $actualConfig.PSObject.Properties['ExtensionId'] -and -not [string]::IsNullOrWhiteSpace([string]$actualConfig.ExtensionId)){
+  $idsToFind += [string]$actualConfig.ExtensionId
+}
+$chromeLoadEvidence=@()
+try{
+  $chromeProcesses=@(Get-CimInstance Win32_Process -Filter "Name='chrome.exe'")
+  foreach($chromeProcess in $chromeProcesses){
+    $line=[string]$chromeProcess.CommandLine
+    if([string]::IsNullOrWhiteSpace($line)){continue}
+    $userDataMatch=[regex]::Match($line,'(?i)--user-data-dir=(?:"(?<v>[^"]+)"|(?<v>\S+))')
+    $profileMatch=[regex]::Match($line,'(?i)--profile-directory=(?:"(?<v>[^"]+)"|(?<v>\S+))')
+    $loadMatch=[regex]::Match($line,'(?i)--load-extension=(?:"(?<v>[^"]+)"|(?<v>\S+))')
+    $exceptMatch=[regex]::Match($line,'(?i)--disable-extensions-except=(?:"(?<v>[^"]+)"|(?<v>\S+))')
+    if($userDataMatch.Success -or $profileMatch.Success -or $loadMatch.Success -or $exceptMatch.Success){
+      $dataRoot=if($userDataMatch.Success){$userDataMatch.Groups['v'].Value}else{$chromeUserData}
+      $profileName=if($profileMatch.Success){$profileMatch.Groups['v'].Value}else{'Default'}
+      $profileRoot=Join-Path $dataRoot $profileName
+      $installedIds=@()
+      foreach($extensionId in ($idsToFind|Select-Object -Unique)){
+        if(Test-Path -LiteralPath (Join-Path $profileRoot ('Extensions\'+$extensionId)) -PathType Container){$installedIds += $extensionId}
+      }
+      $loadPaths=@()
+      if($loadMatch.Success){
+        foreach($loadPath in ($loadMatch.Groups['v'].Value -split ',')){
+          $loadPaths += [pscustomobject]@{
+            Path=$loadPath
+            ManifestExists=(Test-Path -LiteralPath (Join-Path $loadPath 'manifest.json') -PathType Leaf)
+          }
+        }
+      }
+      $chromeLoadEvidence += [pscustomobject]@{
+        ProcessId=$chromeProcess.ProcessId
+        UserDataRoot=$dataRoot
+        Profile=$profileName
+        InstalledExpectedOrActiveIds=$installedIds
+        LoadExtensionPaths=$loadPaths
+        HasDisableExtensionsExcept=$exceptMatch.Success
+      }
+    }
+  }
+}catch{}
+$productionListener=@([BridgeNativeMetadata]::Listeners(17381))
+$productionOwner=$null
+if($productionListener.Count -eq 1){
+  $prodParts=([string]$productionListener[0]).Split('|')
+  $prodPid=0
+  if($prodParts.Count -eq 2 -and [int]::TryParse($prodParts[1],[ref]$prodPid)){
+    try{
+      $prodProc=[Diagnostics.Process]::GetProcessById($prodPid)
+      try{
+        $prodIdentity=Get-BridgeHandleIdentity $prodProc
+        $prodEnv=[BridgeProcessEnvironment]::ReadSelected($prodProc.Handle)
+        $prodHome=[string]$prodEnv[1]
+        $productionOwner=[pscustomobject]@{
+          Listener=$productionListener[0]
+          ProcessId=$prodPid
+          Executable=$prodIdentity.executable
+          WorkingDirectory=[string]$prodEnv[0]
+          BridgeHome=$prodHome
+          BridgePort=[string]$prodEnv[2]
+          SharesLabState=([IO.Path]::GetFullPath($(if($prodHome){$prodHome}else{Join-Path $env:USERPROFILE '.chrome-bridge'})).TrimEnd('\') -ieq [IO.Path]::GetFullPath($stateRoot).TrimEnd('\'))
+        }
+      }finally{$prodProc.Dispose()}
+    }catch{$productionOwner=[pscustomobject]@{Listener=$productionListener[0];Error=$_.Exception.Message}}
+  }
+}
+
 [pscustomobject]@{
   Result='PR102_LAB_RUNTIME_IDENTITY_READ_ONLY'
   Listener=$listeners[0]
@@ -256,6 +325,8 @@ if($targetManifestExists){
   ProcessExtensionIdMatches=($processExtensionId -ceq 'nhflbnfcaicihaepdcjacdmaddagcmcj')
   ActiveSourceTree=$activeTree
   ChromeProfileExtensionMatches=$chromeProfileMatches
+  ChromeProcessLoadEvidence=$chromeLoadEvidence
+  ProductionProcessIdentity=$productionOwner
   EffectiveStateRoot=$stateRoot
   StateRootIsReparsePoint=if($stateRootItem){[bool]($stateRootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)}else{$false}
   EffectiveConfig=$actualConfig
