@@ -64,9 +64,19 @@ function RemoteIdentity([string]$Value){
 
 # Gate 1: exact repository, branch and immutable source commit.
 $remote=GitValue @('remote','get-url','origin')
+$storedRemote=GitValue @('config','--local','--get','remote.origin.url')
 $branch=GitValue @('branch','--show-current')
 $head=GitValue @('rev-parse','HEAD')
-if((RemoteIdentity $remote) -cne (RemoteIdentity $remoteExpected)){throw 'CANDIDATE_REMOTE_MISMATCH'}
+$remoteIdentity=RemoteIdentity $remote
+$storedIdentity=RemoteIdentity $storedRemote
+$expectedIdentity=RemoteIdentity $remoteExpected
+if([string]::IsNullOrWhiteSpace($remoteIdentity) -or
+   [string]::IsNullOrWhiteSpace($storedIdentity) -or
+   $remoteIdentity -ine $expectedIdentity -or
+   $storedIdentity -ine $expectedIdentity){
+  throw ('CANDIDATE_REMOTE_MISMATCH: effectiveIdentity='+$remoteIdentity+
+    '; storedIdentity='+$storedIdentity+'; expectedIdentity='+$expectedIdentity)
+}
 if($branch -cne $expectedBranch){throw 'CANDIDATE_BRANCH_MISMATCH'}
 if($head -cne $expectedSha){throw 'CANDIDATE_COMMIT_MISMATCH'}
 
