@@ -269,8 +269,8 @@ if([int]$manifest.manifest_version -ne 3 -or [string]$manifest.background.servic
    [string]$manifest.background.type -cne 'module'){throw 'LAB_EXTENSION_MANIFEST_PROFILE_MISMATCH'}
 $manifestHosts=@($manifest.host_permissions)
 $loopbackHosts=@($manifestHosts | Where-Object {$_ -match '^http://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/\*$'})
-if($manifestHosts -notcontains 'http://127.0.0.1:17484/*' -or
-   ($loopbackHosts | Where-Object {$_ -cne 'http://127.0.0.1:17484/*'}).Count -gt 0){
+$unexpectedLoopbackHosts=@($loopbackHosts | Where-Object {$_ -cne 'http://127.0.0.1:17484/*'})
+if($manifestHosts -notcontains 'http://127.0.0.1:17484/*' -or $unexpectedLoopbackHosts.Count -gt 0){
   throw 'LAB_EXTENSION_HOST_PERMISSION_MISMATCH'
 }
 
