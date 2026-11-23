@@ -87,7 +87,7 @@ function InvokeExtensionRollback([string]$BackupPath){
 }
 
 # Values and strict guards are supplied by Run-PR132LabPreflight.ps1.
-if($expectedSha -cne '1aa86983fa1bee5b3cf239ca71e4c7d81b76e60b'){throw 'UNEXPECTED_PR132_RELEASE_SHA'}
+if($expectedSha -cne 'af27f9ff777bedc380c3cb9657e0bf85d3d6db3e'){throw 'UNEXPECTED_PR132_RELEASE_SHA'}
 $initialPid=[int]$expectedPid
 $initialIdentity=$identity
 $stateBackupRoot=Join-Path $labStateRoot 'backups'
