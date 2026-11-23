@@ -4,6 +4,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory=$true)][string]$LabRoot,
+  [string]$StateRoot,
   [string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
   [ValidateSet(17484)][int]$LabPort = 17484,
   [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSourceSha,
@@ -86,22 +87,39 @@ if ($TestFixture) {
   $tempRoot = (FullPath $runnerTemp) + '\'
   Require ($root.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'TestFixture path must remain below RUNNER_TEMP'
   Require ((Split-Path $root -Leaf) -eq 'ChromeBridge-PR102-17484-Lab-TestFixture') 'Unexpected synthetic Lab fixture name'
+  if ([string]::IsNullOrWhiteSpace($StateRoot)) {
+    $state = $root
+    $installed = Join-Path $root 'extension'
+  } else {
+    $state = FullPath $StateRoot
+    Require ($state.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'TestFixture state must remain below RUNNER_TEMP'
+    $installed = $root
+  }
 } else {
-  Require ($root -ieq 'C:\Engineering\ChromeBridge-PR102-17484-Lab') 'Only the exact PR102 Lab directory is permitted'
+  Require ($root -ieq 'C:\Engineering\ChromeBridge-PR102-17484-Lab') 'Only the exact PR102 unpacked extension root is permitted'
+  if ([string]::IsNullOrWhiteSpace($StateRoot)) { throw 'PR102 Lab StateRoot is required' }
+  $state = FullPath $StateRoot
+  Require ($state -ieq 'C:\Engineering\ChromeBridge-PR102-17484-State') 'Only the exact PR102 Lab state root is permitted'
+  Require (-not ((Get-Item -LiteralPath $root -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'PR102 Lab extension root must not be a reparse point'
+  Require (-not ((Get-Item -LiteralPath $state -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'PR102 Lab state root must not be a reparse point'
+  Require ([IO.Path]::GetPathRoot($root) -ieq [IO.Path]::GetPathRoot($state)) 'Extension and state roots must share a volume for atomic directory replacement'
+  $installed = $root
 }
-$installed = Join-Path $root 'extension'
+$script:StateRoot = $state
 Require (Test-Path -LiteralPath $installed -PathType Container) 'Existing Lab extension directory missing'
+Require (Test-Path -LiteralPath (Join-Path $installed 'manifest.json') -PathType Leaf) 'Existing Lab extension manifest missing'
 
 if (-not [string]::IsNullOrWhiteSpace($RollbackFrom)) {
   $backupRoot = FullPath $RollbackFrom
-  $backupPrefix = $root + '\backups\'
+  $backupPrefix = (FullPath (Join-Path $state 'backups')) + '\'
   Require ($backupRoot.StartsWith($backupPrefix,[StringComparison]::OrdinalIgnoreCase)) 'Rollback backup must be inside this Lab backup directory'
   $markerPath = Join-Path $backupRoot 'lab-backup.json'
   Require (Test-Path -LiteralPath $markerPath -PathType Leaf) 'Lab backup marker missing'
   $marker = Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8 | ConvertFrom-Json
   Require ($marker.schema -eq 'chrome-bridge-pr102-lab-backup-v1') 'Unknown Lab backup schema'
   Require ($marker.target -eq 'PR102_LAB' -and $marker.port -eq 17484) 'Lab backup target/port mismatch'
-  Require ((FullPath ([string]$marker.labRoot)) -ieq $root) 'Backup belongs to a different Lab root'
+  Require ((FullPath ([string]$marker.labRoot)) -ieq $root) 'Backup belongs to a different Lab extension root'
+  if ($marker.PSObject.Properties['stateRoot']) { Require ((FullPath ([string]$marker.stateRoot)) -ieq $state) 'Backup belongs to a different Lab state root' }
   $backupExtension = Join-Path $backupRoot 'extension'
   Require (Test-Path -LiteralPath $backupExtension -PathType Container) 'Backup extension tree missing'
   $backupManifestPath = Join-Path $backupExtension 'manifest.json'
@@ -111,8 +129,8 @@ if (-not [string]::IsNullOrWhiteSpace($RollbackFrom)) {
     Write-Output '[RESTORE_DRY_RUN] Lab backup identity verified; no files changed.'
     return
   }
-  $restoreStage = Join-Path $root ('.extension-restore-' + [guid]::NewGuid().ToString('N'))
-  $displaced = Join-Path $root ('.extension-displaced-' + [guid]::NewGuid().ToString('N'))
+  $restoreStage = Join-Path $state ('.extension-restore-' + [guid]::NewGuid().ToString('N'))
+  $displaced = Join-Path $state ('.extension-displaced-' + [guid]::NewGuid().ToString('N'))
   try {
     Copy-Item -LiteralPath $backupExtension -Destination $restoreStage -Recurse -Force
     Move-Item -LiteralPath $installed -Destination $displaced -ErrorAction Stop
@@ -140,7 +158,7 @@ foreach ($name in $DeployFiles) {
 $sourceInputs = @('extension','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab.ps1')
 $null = Assert-BridgeCandidateSource -CandidateRoot (FullPath $CandidateRoot) -ExpectedSourceSha $ExpectedSourceSha -InputPaths $sourceInputs
 
-$stage = Join-Path $root ('.extension-candidate-' + [guid]::NewGuid().ToString('N'))
+$stage = Join-Path $state ('.extension-candidate-' + [guid]::NewGuid().ToString('N'))
 try {
   Copy-Item -LiteralPath $installed -Destination $stage -Recurse -Force
   foreach ($name in $DeployFiles) {
@@ -150,10 +168,14 @@ try {
   foreach ($name in @('control.js','connection-check.js','transport-engine.js')) {
     $target = Join-Path $stage $name
     $original = [IO.File]::ReadAllText($target)
-    Require ($original.Contains('http://127.0.0.1:17381')) ('Expected current Bridge endpoint missing in ' + $name)
-    $converted = $original.Replace('http://127.0.0.1:17381','http://127.0.0.1:17484')
-    $converted = $converted.Replace('127.0.0.1:17381','127.0.0.1:17484')
-    WriteUtf8NoBom $target $converted
+    if ($original.Contains('127.0.0.1:17382')) { throw ('Production tunnel endpoint retained in ' + $name) }
+    if ($original.Contains('127.0.0.1:17381')) {
+      $converted = $original.Replace('http://127.0.0.1:17381','http://127.0.0.1:17484')
+      $converted = $converted.Replace('127.0.0.1:17381','127.0.0.1:17484')
+      WriteUtf8NoBom $target $converted
+    } elseif (-not $original.Contains('127.0.0.1:17484')) {
+      throw ('No approved Lab or legacy endpoint found in ' + $name)
+    }
   }
 
   $manifestPath = Join-Path $stage 'manifest.json'
@@ -187,7 +209,7 @@ try {
     return
   }
 
-  $backupParent = Join-Path $root 'backups'
+  $backupParent = Join-Path $state 'backups'
   New-Item -ItemType Directory -Path $backupParent -Force | Out-Null
   $backupRoot = Join-Path $backupParent ('extension-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
   New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
@@ -197,18 +219,19 @@ try {
     target = 'PR102_LAB'
     port = 17484
     labRoot = $root
+    stateRoot = $state
     createdUtc = [DateTime]::UtcNow.ToString('o')
     manifestSha256 = (Get-FileHash -LiteralPath (Join-Path $backupRoot 'extension/manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
   }
   WriteUtf8NoBom (Join-Path $backupRoot 'lab-backup.json') (($marker | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 
-  $displaced = Join-Path $root ('.extension-displaced-' + [guid]::NewGuid().ToString('N'))
+  $displaced = Join-Path $state ('.extension-displaced-' + [guid]::NewGuid().ToString('N'))
   try {
     Move-Item -LiteralPath $installed -Destination $displaced -ErrorAction Stop
     Move-Item -LiteralPath $stage -Destination $installed -ErrorAction Stop
     Remove-Item -LiteralPath $displaced -Recurse -Force
     Write-Output ('[INSTALLED] PR102 Lab extension updated at existing path. Chrome reload required. Backup: ' + $backupRoot)
-    Write-Output ('[ROLLBACK] -LabRoot "' + $root + '" -LabPort 17484 -RollbackFrom "' + $backupRoot + '" -Apply')
+    Write-Output ('[ROLLBACK] -LabRoot "' + $root + '" -StateRoot "' + $state + '" -LabPort 17484 -RollbackFrom "' + $backupRoot + '" -Apply')
   } catch {
     if (-not (Test-Path -LiteralPath $installed) -and (Test-Path -LiteralPath $displaced)) {
       Move-Item -LiteralPath $displaced -Destination $installed
