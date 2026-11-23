@@ -78,6 +78,64 @@ function RemoteIdentity([string]$Value){
   }
   return ''
 }
+function WriteCommittedBlob([string]$RelativePath){
+  if($RelativePath -notmatch '^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$'){
+    throw 'CANDIDATE_UNSAFE_RELATIVE_PATH'
+  }
+  $normalized=$RelativePath.Replace('/','\')
+  $fullPath=[IO.Path]::GetFullPath((Join-Path $checkoutRoot $normalized))
+  $prefix=[IO.Path]::GetFullPath($checkoutRoot).TrimEnd('\')+'\'
+  if(-not $fullPath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){
+    throw 'CANDIDATE_PATH_ESCAPES_CHECKOUT'
+  }
+  $cursor=$checkoutRoot
+  foreach($segment in $normalized.Split('\')){
+    $cursor=Join-Path $cursor $segment
+    if(Test-Path -LiteralPath $cursor){
+      $item=Get-Item -LiteralPath $cursor -Force
+      if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){
+        throw 'CANDIDATE_REPARSE_POINT_REFUSED'
+      }
+    }
+  }
+  if(!(Test-Path -LiteralPath $fullPath -PathType Leaf)){
+    throw 'CANDIDATE_DIRTY_FILE_MISSING'
+  }
+
+  $tempPath=$fullPath+'.pr132-blobtmp-'+[guid]::NewGuid().ToString('N')
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName=$git
+  $psi.Arguments='cat-file blob HEAD:'+$RelativePath
+  $psi.WorkingDirectory=$checkoutRoot
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $proc=New-Object System.Diagnostics.Process
+  $proc.StartInfo=$psi
+  if(!$proc.Start()){throw 'GIT_BLOB_PROCESS_START_FAILED'}
+  $stderrTask=$proc.StandardError.ReadToEndAsync()
+  $stream=$null
+  try{
+    $stream=[IO.File]::Open($tempPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    $proc.StandardOutput.BaseStream.CopyTo($stream)
+    $stream.Flush()
+  }finally{
+    if($stream){$stream.Dispose()}
+  }
+  if(!$proc.WaitForExit(15000)){
+    try{$proc.Kill()}catch{}
+    if(Test-Path -LiteralPath $tempPath){Remove-Item -LiteralPath $tempPath -Force}
+    throw 'GIT_BLOB_READ_TIMEOUT'
+  }
+  $proc.WaitForExit()
+  $stderr=[string]$stderrTask.Result
+  if($proc.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($stderr)){
+    if(Test-Path -LiteralPath $tempPath){Remove-Item -LiteralPath $tempPath -Force}
+    throw 'GIT_BLOB_READ_FAILED'
+  }
+  Move-Item -LiteralPath $tempPath -Destination $fullPath -Force
+}
 
 if(Test-Path -LiteralPath $checkoutRoot){
   if(!(Test-Path -LiteralPath (Join-Path $checkoutRoot '.git') -PathType Container)){
@@ -122,95 +180,11 @@ if($currentBranch -cne $branch){throw 'CANDIDATE_BRANCH_MISMATCH'}
 $actual=GitOk 'rev-parse HEAD' $checkoutRoot
 if($actual -cne $expectedCommit){throw ('CANDIDATE_COMMIT_MISMATCH: '+$actual)}
 
-# A first checkout on some Windows hosts can differ only in trailing end-of-line
-# whitespace. Normalize ONLY this disposable release checkout, and only after
-# proving: no staged changes, no untracked files, and no meaningful diff.
-# Restore the raw committed blob bytes for each dirty tracked file; do not touch
-# the index, HEAD, prior checkout, or any unrelated file.
-function WriteCommittedBlob([string]$RelativePath){
-  if($RelativePath -notmatch '^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+
-
-foreach($required in @(
- 'server\bridge.mjs',
- 'server\tools.mjs',
- 'deployment\process-identity.ps1',
- 'deployment\upgrade-pr102-lab-server.ps1',
- 'deployment\stage-server-lab.ps1',
- 'deployment\CHAT_APPROVAL_LAB_CUTOVER.md',
- 'extension\session-authorization.js'
-)){
- if(!(Test-Path -LiteralPath (Join-Path $candidateRoot $required) -PathType Leaf)){
-   throw ('PINNED_CANDIDATE_FILE_MISSING: '+$required)
- }
-}
-[pscustomobject]@{
- Result='PR132_PINNED_SOURCE_READY'
- Workspace=$workspace
- CheckoutRoot=$checkoutRoot
- PreservedPriorCheckoutRoot=$priorCheckoutRoot
- PriorCheckoutPreserved=(Test-Path -LiteralPath $priorCheckoutRoot -PathType Container)
- CandidateRoot=$candidateRoot
- Branch=$branch
- CommitSha=$actual
- WorktreeClean=$true
-EolOnlyNormalizationPerformed=(![string]::IsNullOrWhiteSpace($status.Stdout))
- LabChanged=$false
- ProductionChanged=$false
- CredentialsRead=$false
-}|ConvertTo-Json -Depth 4
-){
-    throw 'CANDIDATE_UNSAFE_RELATIVE_PATH'
-  }
-  $normalized=$RelativePath.Replace('/','\')
-  $fullPath=[IO.Path]::GetFullPath((Join-Path $checkoutRoot $normalized))
-  $prefix=[IO.Path]::GetFullPath($checkoutRoot).TrimEnd('\')+'\'
-  if(-not $fullPath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){
-    throw 'CANDIDATE_PATH_ESCAPES_CHECKOUT'
-  }
-  $segments=$normalized.Split('\')
-  $cursor=$checkoutRoot
-  foreach($segment in $segments){
-    $cursor=Join-Path $cursor $segment
-    if(Test-Path -LiteralPath $cursor){
-      $item=Get-Item -LiteralPath $cursor -Force
-      if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){
-        throw 'CANDIDATE_REPARSE_POINT_REFUSED'
-      }
-    }
-  }
-  if(!(Test-Path -LiteralPath $fullPath -PathType Leaf)){
-    throw 'CANDIDATE_DIRTY_FILE_MISSING'
-  }
-  $psi=New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName=$git
-  $psi.Arguments='cat-file blob HEAD:'+$RelativePath
-  $psi.WorkingDirectory=$checkoutRoot
-  $psi.UseShellExecute=$false
-  $psi.CreateNoWindow=$true
-  $psi.RedirectStandardOutput=$true
-  $psi.RedirectStandardError=$true
-  $proc=New-Object System.Diagnostics.Process
-  $proc.StartInfo=$psi
-  if(!$proc.Start()){throw 'GIT_BLOB_PROCESS_START_FAILED'}
-  $stderrTask=$proc.StandardError.ReadToEndAsync()
-  $stream=$null
-  try{
-    $stream=[IO.File]::Open($fullPath,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
-    $proc.StandardOutput.BaseStream.CopyTo($stream)
-    $stream.Flush()
-  }finally{
-    if($stream){$stream.Dispose()}
-  }
-  if(!$proc.WaitForExit(15000)){
-    try{$proc.Kill()}catch{}
-    throw 'GIT_BLOB_READ_TIMEOUT'
-  }
-  $proc.WaitForExit()
-  if($proc.ExitCode -ne 0){throw 'GIT_BLOB_READ_FAILED'}
-  $null=$stderrTask.Result
-}
+# Normalize ONLY proven whitespace-at-EOL changes in this disposable release checkout.
+# The index must equal HEAD and there must be no untracked files or meaningful diff.
 $status=InvokeGit 'status --porcelain=v1 --untracked-files=all' $checkoutRoot
 if($status.ExitCode -ne 0){throw 'CANDIDATE_STATUS_READ_FAILED'}
+$normalizationPerformed=$false
 if(-not [string]::IsNullOrWhiteSpace($status.Stdout)){
   $cached=InvokeGit 'diff --cached --quiet' $checkoutRoot
   $eolOnly=InvokeGit 'diff --quiet --ignore-space-at-eol' $checkoutRoot
@@ -226,6 +200,7 @@ if(-not [string]::IsNullOrWhiteSpace($status.Stdout)){
     $relativePath=$line.Substring(3).Trim()
     WriteCommittedBlob $relativePath
   }
+  $normalizationPerformed=$true
 }
 $changes=GitOk 'status --porcelain=v1 --untracked-files=all' $checkoutRoot
 if(-not [string]::IsNullOrWhiteSpace($changes)){throw 'CANDIDATE_WORKTREE_NOT_CLEAN'}
@@ -253,7 +228,7 @@ foreach($required in @(
  Branch=$branch
  CommitSha=$actual
  WorktreeClean=$true
-EolOnlyNormalizationPerformed=(![string]::IsNullOrWhiteSpace($status.Stdout))
+ EolOnlyNormalizationPerformed=$normalizationPerformed
  LabChanged=$false
  ProductionChanged=$false
  CredentialsRead=$false
