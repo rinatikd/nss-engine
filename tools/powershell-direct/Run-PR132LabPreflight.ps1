@@ -220,7 +220,13 @@ $nodeExe=FullPath ([string]$identity.executable)
 if($nodeExe -ine 'C:\Program Files\nodejs\node.exe'){throw 'LAB_NODE_EXECUTABLE_NOT_EXPECTED'}
 if(!(Test-Path -LiteralPath $nodeExe -PathType Leaf)){throw 'LAB_NODE_EXECUTABLE_NOT_FOUND'}
 $nodeExeDirectory=Split-Path -Parent $nodeExe
-if((FullPath ([string]$identity.workingDirectory) -ine (FullPath $labServerRoot))){throw 'LAB_PROCESS_WORKING_DIRECTORY_MISMATCH'}
+$actualWorkingDirectory=FullPath ([string]$identity.workingDirectory)
+$expectedWorkingDirectory=FullPath $labServerRoot
+if($actualWorkingDirectory -ine $expectedWorkingDirectory){
+  $actualTailCodes=(@($actualWorkingDirectory.ToCharArray()|Select-Object -Last 12|ForEach-Object {[int][char]$_}) -join ',')
+  $expectedTailCodes=(@($expectedWorkingDirectory.ToCharArray()|Select-Object -Last 12|ForEach-Object {[int][char]$_}) -join ',')
+  throw ('LAB_PROCESS_WORKING_DIRECTORY_MISMATCH: actual=['+$actualWorkingDirectory+']; expected=['+$expectedWorkingDirectory+']; actualLength='+$actualWorkingDirectory.Length+'; expectedLength='+$expectedWorkingDirectory.Length+'; actualTailCodes='+$actualTailCodes+'; expectedTailCodes='+$expectedTailCodes)
+}
 if((FullPath ([string]$identity.bridgeHome) -ine (FullPath $labStateRoot))){throw 'LAB_PROCESS_STATE_ROOT_MISMATCH'}
 if([string]$identity.bridgePort -cne [string]$labPort){throw 'LAB_PROCESS_PORT_MISMATCH'}
 if([string]$identity.extensionId -cne $labExtensionId){throw 'LAB_PROCESS_EXTENSION_ID_MISMATCH'}
