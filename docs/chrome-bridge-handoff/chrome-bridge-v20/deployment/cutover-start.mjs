@@ -10,6 +10,13 @@ try {
   const bytes = fs.readFileSync(path.join(job.state, 'config.json'));
   if (crypto.createHash('sha256').update(bytes).digest('hex').toLowerCase() !== String(job.configHash).toLowerCase()) throw Error('Config changed');
   const config = JSON.parse(bytes);
+  // Match loadConfig(): the launcher reads the pinned State file directly, so it
+  // must still honor the process-level extension identity supplied by the Lab
+  // cutover helper. Without this override, a stale config.json ID rejects the
+  // currently installed unpacked extension at the HTTP Origin guard.
+  if (process.env.CHROME_BRIDGE_EXTENSION_ID) {
+    config.extensionId = process.env.CHROME_BRIDGE_EXTENSION_ID;
+  }
   redactions = [config.agentToken, config.browserToken].filter(value => typeof value === 'string' && value.length > 0);
   if (typeof config.agentToken !== 'string' || typeof config.browserToken !== 'string') throw Error('Invalid config');
   const { createBridge } = await import(pathToFileURL(path.join(job.source, 'server/bridge.mjs')));
