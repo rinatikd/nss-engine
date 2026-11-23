@@ -49,7 +49,7 @@ test('a transient network outage recovers, and manual stop prevents further poll
 test('invalid origin response fails closed without retrying the browser key', async () => {
   let calls=0;
   const transport=new BridgeTransport({
-    fetchImpl:async()=>{calls++;return {ok:false,status:403};},
+    fetchImpl:async()=>{calls++;return {ok:false,status:403,json:async()=>({error:'Extension Origin denied'})};},
     execute:async()=>({})
   });
   await transport.start('synthetic-key');
