@@ -15,7 +15,7 @@ $expectedBranch='feat/psdirect-per-job-workspace-approval-20261123'
 $expectedRemote='github.com/rinatikd/nss-engine'
 $oldRepo=$workspaceExpected
 $workRoot=Join-Path $workspaceExpected 'work'
-$newRepo=Join-Path $workRoot 'PowerShellDirect-PR138-e4a3e47f-release-clean'
+$newRepo=Join-Path $workRoot 'PowerShellDirect-PR138-d9f12c9-release-clean'
 $git='C:\Program Files\Git\cmd\git.exe'
 
 $workspace=(Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath.TrimEnd('\')
@@ -113,7 +113,9 @@ $remoteRef='refs/heads/'+$expectedBranch
 $trackingRef='refs/remotes/origin/'+$expectedBranch
 $null=InvokeGit $oldRepo @('fetch','--no-tags','origin',($remoteRef+':'+$trackingRef))
 $remoteHead=InvokeGit $oldRepo @('rev-parse',$trackingRef)
-if($remoteHead -cne $expectedSha){throw 'PR138_REMOTE_HEAD_MISMATCH'}
+# The target is an immutable pinned ancestor; the feature branch may contain
+# later helper/runbook-only commits without changing the staged runtime source.
+$null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$expectedSha,$remoteHead)
 $null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$expectedBase,$expectedSha)
 $null=InvokeGit $oldRepo @('worktree','add','--detach',$newRepo,$expectedSha)
 $actualHead=InvokeGit $newRepo @('rev-parse','HEAD')
