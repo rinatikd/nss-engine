@@ -6,7 +6,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $expectedWorkspace='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$expectedCommit='0a246e222ae5b4f1e325111547844a40a23e2994'
+$expectedCommit='22cdfb36b43b4f9ddf7f96d3cffe042a40616200'
 $remote='https://github.com/rinatikd/nss-engine.git'
 $branch='feat/chat-approved-session-auth-20261122'
 $git='C:\Program Files\Git\cmd\git.exe'
@@ -16,7 +16,7 @@ if($workspace -ine $expectedWorkspace){throw 'UNEXPECTED_APPROVED_WORKSPACE'}
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
 
 $workRoot=Join-Path $workspace 'work'
-$checkoutRoot=Join-Path $workRoot 'ChromeBridge-PR132-0a246e22'
+$checkoutRoot=Join-Path $workRoot 'ChromeBridge-PR132-22cdfb36'
 $candidateRoot=Join-Path $checkoutRoot 'docs\chrome-bridge-handoff\chrome-bridge-v20'
 if(!(Test-Path -LiteralPath $workRoot -PathType Container)){
   New-Item -ItemType Directory -Path $workRoot -ErrorAction Stop|Out-Null
@@ -25,10 +25,11 @@ if((Resolve-Path -LiteralPath $workRoot).ProviderPath -ine $workRoot){throw 'WOR
 
 function Git([string[]]$Arguments){
   $global:LASTEXITCODE=0
-  $output=@(& $git -c core.hooksPath=NUL -c protocol.ext.allow=never -c protocol.file.allow=never @Arguments 2>&1)
+  $gitLines=@(& $git -c core.hooksPath=NUL -c protocol.ext.allow=never -c protocol.file.allow=never @Arguments 2>&1)
   $exitCode=$global:LASTEXITCODE
-  if($exitCode -ne 0){throw ('GIT_OPERATION_FAILED ('+$exitCode+'): '+(($output|Out-String).Trim()))}
-  return $output
+  if($exitCode -ne 0){throw ('GIT_OPERATION_FAILED ('+$exitCode+'): '+(($gitLines|Out-String).Trim()))}
+  $gitText=[string]::Join([Environment]::NewLine,[string[]]@($gitLines|ForEach-Object {[string]$_}))
+  return $gitText
 }
 if(!(Test-Path -LiteralPath (Join-Path $checkoutRoot '.git') -PathType Container)){
   if(Test-Path -LiteralPath $checkoutRoot){throw 'CANDIDATE_DESTINATION_EXISTS_NOT_A_VERIFIED_CLONE'}
@@ -54,8 +55,8 @@ if(!(Test-Path -LiteralPath (Join-Path $checkoutRoot '.git') -PathType Container
 }
 $actual=(Git -Arguments @('-C',$checkoutRoot,'rev-parse','HEAD')|Out-String).Trim()
 if($actual -cne $expectedCommit){throw ('CANDIDATE_COMMIT_MISMATCH: '+$actual)}
-$changes=@(Git -Arguments @('-C',$checkoutRoot,'status','--porcelain=v1','--untracked-files=all'))
-if($changes.Count -gt 0){throw 'CANDIDATE_WORKTREE_NOT_CLEAN'}
+$changes=Git -Arguments @('-C',$checkoutRoot,'status','--porcelain=v1','--untracked-files=all')
+if(-not [string]::IsNullOrWhiteSpace($changes)){throw 'CANDIDATE_WORKTREE_NOT_CLEAN'}
 foreach($required in @(
  'server\bridge.mjs',
  'server\tools.mjs',
