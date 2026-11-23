@@ -55,7 +55,7 @@
 Целевой исходник для staging: `d9f12c9912398d5d89d4b2fad9e3caad2e359ee0` — branch `feat/psdirect-per-job-workspace-approval-20261123`. Не переключать основной checkout и не выполнять reset.
 
 1. Одноразовый helper `tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1` запускается из отдельной папки `C:\Engineering` (вне Git checkout) через PowerShell Direct с workspace `C:\Engineering`. Сначала `-Mode Inspect`, затем после PASS — `-Mode Prepare`. Он проверяет основной checkout на точный base SHA `f58f44a52c569a4a45e3ffe025dc6d1f62beff58`, чистоту, origin, удалённый branch HEAD; затем делает отдельный detached worktree:
-   `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-e4a3e47f-release-clean`.
+   `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-d9f12c9-release-clean`.
 2. Из нового worktree запустить `tools/powershell-direct/Prepare-EngineeringLabR2.ps1` сначала с `-Mode Inspect`, затем `-Mode Prepare`. Эта редакция читает detached `.git` pointer, проверяет общий Git config/origin и точный HEAD; требует чистое дерево и создаёт только `C:\Engineering\PowerShellDirect-Engineering-Lab-R2`. Действующие R1, supervisor 17486/18086, туннель и production не перезапускаются.
 3. После подготовки выполнить реальный Windows Node 24 regression suite из R2: `workspace-policy.test.mjs`, `local_test_runner.test.mjs`, `local_job_service.test.mjs`, `engineering-runner.test.mjs`, `service.test.mjs`, `named-suites.test.mjs`, `engineering.test.mjs`. Каждый запуск — отдельное одобренное задание; затем сверить source hashes из `source-hashes.json`.
 
