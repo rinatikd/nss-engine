@@ -38,11 +38,13 @@ export function canonicalUserWorkspace(candidate,{
   if(win)assertLocalWindowsPath(candidate);
   let actual;
   try{actual=realpath(candidate);}catch{throw Error('WORKSPACE_NOT_FOUND');}
+  // Reject a junction/mount that resolves to UNC/device space BEFORE stat
+  // can trigger any network access.
+  if(win)assertLocalWindowsPath(actual);
   let info;
   try{info=stat(actual);}catch{throw Error('WORKSPACE_NOT_FOUND');}
   if(!info.isDirectory())throw Error('WORKSPACE_NOT_DIRECTORY');
   if(win){
-    assertLocalWindowsPath(actual);
     const volumeRoot=mod.parse(actual).root;
     if(volumeRoot&&same(actual,volumeRoot,true))throw Error('WORKSPACE_VOLUME_ROOT_DENIED');
     const protectedValues=[
