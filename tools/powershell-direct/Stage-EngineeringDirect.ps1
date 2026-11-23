@@ -19,6 +19,7 @@ $required=@(
   'tools\ai_collaboration\engineering-runner.mjs',
   'tools\ai_collaboration\engineering-mcp.mjs',
   'tools\ai_collaboration\local_job_service.mjs',
+  'tools\ai_collaboration\workspace-policy.mjs',
   'tools\powershell-direct\tests\engineering.test.mjs'
 )
 if(!(Test-Path -LiteralPath $node -PathType Leaf)){throw 'NODE_NOT_FOUND'}
