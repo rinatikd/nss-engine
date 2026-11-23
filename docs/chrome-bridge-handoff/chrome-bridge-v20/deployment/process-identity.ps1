@@ -143,18 +143,19 @@ function Get-BridgeCanonicalPath([string]$Value) {
   }
   return $full
 }
-function Get-BridgeUniqueCanonicalPath([string[]]$Values) {
-  $normalized=@()
-  foreach($value in $Values){
+function Get-BridgePinnedExecutable([string]$ExpectedPath,[string[]]$AvailablePaths) {
+  $expected=Get-BridgeCanonicalPath $ExpectedPath
+  $resolved=@()
+  foreach($value in $AvailablePaths){
     if(-not [string]::IsNullOrWhiteSpace($value)){
       $candidate=Get-BridgeCanonicalPath $value
-      if(-not ($normalized -icontains $candidate)){$normalized+=,$candidate}
+      if(-not ($resolved -icontains $candidate)){$resolved+=,$candidate}
     }
   }
-  if($normalized.Count -ne 1){
-    throw ('EXPECTED_ONE_UNIQUE_PATH: '+($normalized -join ';'))
+  if(-not ($resolved -icontains $expected)){
+    throw ('EXPECTED_PROCESS_EXECUTABLE_NOT_IN_PATH: '+$expected+'; available='+($resolved -join ';'))
   }
-  return [string]$normalized[0]
+  return $expected
 }
 function Get-BridgeIdentity($number) {
   $p=[Diagnostics.Process]::GetProcessById([int]$number)
