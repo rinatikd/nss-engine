@@ -43,6 +43,8 @@ test('HTML has readable labels and the controller verifies before persisting', a
   assert.match(handler, /EXTENSION_ID_NOT_PINNED_403/);
   assert.match(js, /disconnected:'Соединение не установлено'/);
   assert.doesNotMatch(js, /disconnected:'Отключено вручную'/);
+  assert.match(js, /safeErrorCode/);
+  assert.match(js, /current\.error/);
 });
 
 test('persistent key automatically reconnects without granting control', async () => {
