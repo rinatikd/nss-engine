@@ -271,9 +271,11 @@ $configHashBefore = HashFile $configPath
 $config = ReadJson $configPath
 Require (($config.agentToken -is [string]) -and ($config.browserToken -is [string])) 'Existing Lab config lacks required tokens'
 Require ($config.agentToken.Length -ge 32 -and $config.browserToken.Length -ge 32) 'Existing Lab token material is invalid'
-$script:NodeExe = (Get-Command node.exe -ErrorAction Stop).Source
-$nodeVersion = (& $script:NodeExe --version).Trim()
-Require ($LASTEXITCODE -eq 0) 'Node version probe failed'
+$nodeCommandPaths=@(Get-Command node.exe -CommandType Application -All -ErrorAction Stop | ForEach-Object {[string]$_.Source})
+$script:NodeExe=Get-BridgeUniqueCanonicalPath $nodeCommandPaths
+$nodeVersionOutput=& $script:NodeExe --version
+Require ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$nodeVersionOutput)) 'Node version probe failed'
+$nodeVersion=([string]$nodeVersionOutput).Trim()
 
 $identity = PinProcess $ExpectedPid $ExpectedStartUtc $root $state $configHashBefore
 $oldProc = $identity.process
