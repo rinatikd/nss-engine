@@ -46,7 +46,8 @@ function Assert-BridgeCandidateSource {
     throw ('CANDIDATE_SHA_MISMATCH: '+$actualSha)
   }
 
-  $dirty=Invoke-BridgeCandidateGit -CandidateRoot $CandidateRoot -Arguments @('status','--porcelain=v1','--untracked-files=all')
+  $dirtyArgs=@('status','--porcelain=v1','--untracked-files=all','--') + @($InputPaths)
+  $dirty=Invoke-BridgeCandidateGit -CandidateRoot $CandidateRoot -Arguments $dirtyArgs
   if (-not [string]::IsNullOrWhiteSpace($dirty)) {
     throw 'CANDIDATE_WORKTREE_NOT_CLEAN'
   }
