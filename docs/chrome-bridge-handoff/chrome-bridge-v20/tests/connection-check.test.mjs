@@ -16,9 +16,12 @@ test('accepts authenticated bridge handshake without writing credentials', async
 test('rejects empty credential before network call', async () => {
   await assert.rejects(verifyBridgeCredential(() => { throw Error('unexpected fetch'); }, ' '), /KEY_EMPTY/);
 });
-test('distinguishes rejected key from extension origin', async () => {
+test('distinguishes 401 from the server allow-listed 403 causes', async () => {
   await assert.rejects(verifyBridgeCredential(respond(401), 'wrong'), /BROWSER_KEY_REJECTED_401/);
-  await assert.rejects(verifyBridgeCredential(respond(403), 'wrong'), /EXTENSION_ORIGIN_REJECTED_403/);
+  await assert.rejects(verifyBridgeCredential(respond(403, {error:'Extension Origin denied'}), 'wrong'), /EXTENSION_ORIGIN_REJECTED_403/);
+  await assert.rejects(verifyBridgeCredential(respond(403, {error:'Invalid Host'}), 'wrong'), /BRIDGE_HOST_REJECTED_403/);
+  await assert.rejects(verifyBridgeCredential(respond(403, {error:'Extension ID is not pinned'}), 'wrong'), /EXTENSION_ID_NOT_PINNED_403/);
+  await assert.rejects(verifyBridgeCredential(respond(403, {error:'unexpected private detail'}), 'wrong'), /BRIDGE_FORBIDDEN_403/);
 });
 test('rejects unexpected server replies and network failures', async () => {
   await assert.rejects(verifyBridgeCredential(respond(200, { command: null }), 'x'), /BRIDGE_INVALID_HANDSHAKE/);
@@ -36,6 +39,10 @@ test('HTML has readable labels and the controller verifies before persisting', a
   assert.ok(handler.indexOf('verifyBridgeCredential') < handler.indexOf('saveBrowserKey'));
   assert.match(handler, /BROWSER_KEY_REJECTED_401/);
   assert.match(handler, /EXTENSION_ORIGIN_REJECTED_403/);
+  assert.match(handler, /BRIDGE_HOST_REJECTED_403/);
+  assert.match(handler, /EXTENSION_ID_NOT_PINNED_403/);
+  assert.match(js, /disconnected:'Соединение не установлено'/);
+  assert.doesNotMatch(js, /disconnected:'Отключено вручную'/);
 });
 
 test('persistent key automatically reconnects without granting control', async () => {
