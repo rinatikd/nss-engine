@@ -10,8 +10,7 @@ async function fixture(fn) {
   const dir=await mkdtemp(path.join(tmpdir(),'psdirect-named-'));
   let starts=0;
   const svc=new PowerShellApprovalService({
-    root:'C:\\Engineering',port:0,namedWorkspaceRoots:[dir],
-    namedAuditDirectory:path.join(dir,'audits'),
+    port:0,namedAuditDirectory:path.join(dir,'audits'),
     namedRunner:async()=>{starts++;return {
       exitCode:0,stdout:'PASS',stderr:'',truncated:false
     }}
