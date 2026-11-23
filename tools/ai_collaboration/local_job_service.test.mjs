@@ -58,19 +58,22 @@ test('host approval with wrong plan fingerprint is rejected',()=>fixture(async(r
   assert.equal(started,0);
 }));
 
-test('workspace outside allowlist never executes',()=>fixture(async(root,audits)=>{
+test('workspace selection is per-job and does not require a persistent directory list',()=>fixture(async(root,audits)=>{
   const other=await mkdtemp(path.join(tmpdir(),'nonallow-'));
   try {
-    let started=0;
+    let started=0,approvedWorkspace='';
     const service=createLocalJobService({
-      approvedWorkspaceRoots:[root],auditDirectory:audits,
-      approveRequest:async()=>{throw Error('SHOULD_NOT_APPROVE');},
+      auditDirectory:audits,
+      approveRequest:async({requestId,planSha256,workspace})=>{
+        approvedWorkspace=workspace;
+        return {approved:true,requestId,planSha256};
+      },
       runner:async()=>{started++;return {exitCode:0};}
     });
     const r=await service.submit(request(other));
-    assert.equal(r.state,'UNKNOWN_OR_FAILED');
-    assert.equal(r.errorCode,'WORKSPACE_NOT_ALLOWLISTED');
-    assert.equal(started,0);
+    assert.equal(r.state,'FINISHED');
+    assert.equal(approvedWorkspace,other);
+    assert.equal(started,1);
   } finally {await rm(other,{recursive:true,force:true});}
 }));
 
