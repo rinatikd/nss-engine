@@ -59,7 +59,6 @@ function Get-RemoteIdentity([string]$Value){
 }
 
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_MISSING'}
-if(!(Test-Path -LiteralPath $node -PathType Leaf)){throw 'TRUSTED_NODE_MISSING'}
 
 $dotGit=Join-Path $repo '.git'
 if(!(Test-Path -LiteralPath $dotGit)){throw 'GIT_METADATA_MISSING'}
@@ -150,6 +149,7 @@ if($Mode -eq 'Inspect'){
  return
 }
 
+if(!(Test-Path -LiteralPath $node -PathType Leaf)){throw 'TRUSTED_NODE_MISSING'}
 if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_EXISTS_NO_OVERWRITE'}
 
 $created=$false
