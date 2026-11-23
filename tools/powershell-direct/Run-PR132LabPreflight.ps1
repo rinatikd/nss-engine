@@ -105,6 +105,7 @@ $remote=GitValue @('remote','get-url','origin')
 $storedRemote=GitValue @('config','--local','--get','remote.origin.url')
 $branch=GitValue @('branch','--show-current')
 $head=GitValue @('rev-parse','HEAD')
+$remoteBranchHead=GitValue @('rev-parse',('refs/remotes/origin/'+$expectedBranch))
 $remoteIdentity=RemoteIdentity $remote
 $storedIdentity=RemoteIdentity $storedRemote
 $expectedIdentity=RemoteIdentity $remoteExpected
@@ -115,8 +116,11 @@ if([string]::IsNullOrWhiteSpace($remoteIdentity) -or
   throw ('CANDIDATE_REMOTE_MISMATCH: effectiveIdentity='+$remoteIdentity+
     '; storedIdentity='+$storedIdentity+'; expectedIdentity='+$expectedIdentity)
 }
-if($branch -cne $expectedBranch){throw 'CANDIDATE_BRANCH_MISMATCH'}
+if(-not [string]::IsNullOrWhiteSpace($branch) -and $branch -cne $expectedBranch){
+  throw 'CANDIDATE_BRANCH_MISMATCH'
+}
 if($head -cne $expectedSha){throw 'CANDIDATE_COMMIT_MISMATCH'}
+if($remoteBranchHead -cne $expectedSha){throw 'CANDIDATE_REMOTE_BRANCH_HEAD_MISMATCH'}
 
 # Gate 2: allow only proven EOL-only edits outside every deployment input.
 # Preserve these unrelated checkout files; never rewrite/reset them. The actual server,
