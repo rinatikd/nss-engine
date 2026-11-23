@@ -10,11 +10,6 @@ $recover='C:\Engineering\ChromeBridge-Recovery-Install-20261114\tools\ai_collabo
 $client='C:\Engineering\chrome-bridge\codex-handoff-output\direct-cli-v21\runtime\tunnel-client.exe'
 $credential=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\control-plane.dpapi'
 $node='C:\Program Files\nodejs\node.exe'
-$allowedRoot='C:\Engineering'
-$workspaces=@(
- 'C:\Engineering\ChromeBridge-Recovery-Install-20261114',
- 'C:\Engineering\PowerShellDirect-Engineering-Lab-R1'
-)
 $engineeringAudit='C:\Engineering\PowerShellDirect-Engineering-Audit-R1'
 $ports=17486,18086
 $ls=@{}
@@ -39,7 +34,8 @@ $files=@(
  'tools\ai_collaboration\engineering-plan.mjs',
  'tools\ai_collaboration\engineering-runner.mjs',
  'tools\ai_collaboration\engineering-mcp.mjs',
- 'tools\ai_collaboration\local_job_service.mjs'
+ 'tools\ai_collaboration\local_job_service.mjs',
+ 'tools\ai_collaboration\workspace-policy.mjs'
 )
 $source='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $parity=@()
@@ -58,8 +54,14 @@ $recoverSource=if(Test-Path -LiteralPath $recover -PathType Leaf){
 $restoreTargetsOld=$recoverSource.Contains($old)
 $envFeatures=if(Test-Path -LiteralPath $replacement -PathType Leaf){
  $src=Get-Content -LiteralPath $replacement -Raw
- $src.Contains('PS_DIRECT_ENGINEERING_WORKSPACES') -and
- $src.Contains('PS_DIRECT_ENGINEERING_AUDIT_DIR')
+ $plan=Get-Content -LiteralPath (Join-Path $stage 'tools\ai_collaboration\engineering-plan.mjs') -Raw
+ $policy=Get-Content -LiteralPath (Join-Path $stage 'tools\ai_collaboration\workspace-policy.mjs') -Raw
+ $src.Contains('PS_DIRECT_ENGINEERING_AUDIT_DIR') -and
+ !$src.Contains('PS_DIRECT_ENGINEERING_WORKSPACES') -and
+ !$src.Contains('PS_DIRECT_NAMED_SUITE_WORKSPACES') -and
+ !$src.Contains('PS_DIRECT_ALLOWED_ROOT') -and
+ $plan.Contains('canonicalUserWorkspace') -and
+ $policy.Contains('WORKSPACE_VOLUME_ROOT_DENIED')
 }else{$false}
 $checks=[ordered]@{
  VerifiedOriginalSupervisor=[bool]$originalOwner
@@ -71,7 +73,7 @@ $checks=[ordered]@{
  ExistingRuntimeKeyFilePresent=(Test-Path -LiteralPath $credential -PathType Leaf)
  ExpectedTunnelExecutablePresent=(Test-Path -LiteralPath $client -PathType Leaf)
  ExpectedNodeExecutablePresent=(Test-Path -LiteralPath $node -PathType Leaf)
- WorkspacesPresent=(@($workspaces|Where-Object {!(Test-Path -LiteralPath $_ -PathType Container)}).Count -eq 0)
+ WorkspacePolicyPerJobAndNoStaticRoots=[bool]$envFeatures
  AuditPathIsNotInsideGitCheckout=(!$engineeringAudit.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase))
 }
 $ok=@($checks.Values|Where-Object {$_ -ne $true}).Count -eq 0
@@ -80,7 +82,7 @@ $ok=@($checks.Values|Where-Object {$_ -ne $true}).Count -eq 0
  OriginalSupervisorPid=$superPid
  OriginalTunnelPid=if($tunnel.Count -eq 1){$tunnel[0].ProcessId}else{$null}
  StageRoot=$stage
- EngineeringWorkspaceRoots=$workspaces
+ WorkspaceSelection='PER_JOB_CANONICAL_PATH_LOCAL_APPROVAL'
  EngineeringAuditDirectory=$engineeringAudit
  VerifiedChecks=$checks
  ReadyToDraftOperatorTransaction=[bool]$ok
