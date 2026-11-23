@@ -83,3 +83,35 @@ jobs:
           if ($preflight.InventoriedFileCount -lt 17) { throw 'R2_PREFLIGHT_FILE_INVENTORY_TOO_SMALL' }
           if ($preflight.TargetExists) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
           Write-Output ('[PASS] R2 PowerShell 5.1 read-only preflight: files=' + $preflight.InventoriedFileCount)
+      - name: Execute isolated R2 staging and verify the complete manifest on Windows
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $git = 'C:\Program Files\Git\cmd\git.exe'
+          $node = (Get-Command node.exe -ErrorAction Stop).Source
+          $head = (& $git -C $env:GITHUB_WORKSPACE rev-parse HEAD 2>$null | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head.Length -ne 40) { throw 'CHECKOUT_HEAD_INVALID' }
+          $stage = 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
+          if (Test-Path -LiteralPath $stage) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
+          $null = New-Item -ItemType Directory -Path 'C:\Engineering' -Force
+          $env:R2_SOURCE_ROOT = $env:GITHUB_WORKSPACE
+          $env:R2_STAGE_ROOT = $stage
+          $env:R2_NODE_EXE = $node
+          $env:R2_GIT_EXE = $git
+          try {
+            $script = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
+            $result = & $script -Mode Prepare -ExpectedCommit $head -NodeExecutable $node
+            $prepared = ($result | Out-String).Trim() | ConvertFrom-Json
+            if ($prepared.Result -cne 'R2_STAGED_UNTESTED') { throw 'R2_PREPARE_RESULT_INVALID' }
+            if ($prepared.RuntimeSourceSha -cne $head) { throw 'R2_PREPARE_SHA_MISMATCH' }
+            if ($prepared.VerifiedFileCount -ne $preflight.InventoriedFileCount) { throw 'R2_PREPARE_FILE_COUNT_MISMATCH' }
+            if ($prepared.TrackedFilesOnly -ne $true) { throw 'R2_PREPARE_TRACKED_ONLY_INVALID' }
+            $verify = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\tests\r2-stage.test.mjs'
+            & $node --test $verify
+            if ($LASTEXITCODE -ne 0) { throw 'R2_STAGE_REGRESSION_FAILED' }
+            Write-Output ('[PASS] R2 actual staging + manifest + Windows Node regression: files=' + $prepared.VerifiedFileCount)
+          } finally {
+            if (Test-Path -LiteralPath $stage) {
+              Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+          }
