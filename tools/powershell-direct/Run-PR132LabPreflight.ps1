@@ -227,7 +227,13 @@ if($actualWorkingDirectory -ine $expectedWorkingDirectory){
   $expectedTailCodes=(@($expectedWorkingDirectory.ToCharArray()|Select-Object -Last 12|ForEach-Object {[int][char]$_}) -join ',')
   throw ('LAB_PROCESS_WORKING_DIRECTORY_MISMATCH: actual=['+$actualWorkingDirectory+']; expected=['+$expectedWorkingDirectory+']; actualLength='+$actualWorkingDirectory.Length+'; expectedLength='+$expectedWorkingDirectory.Length+'; actualTailCodes='+$actualTailCodes+'; expectedTailCodes='+$expectedTailCodes)
 }
-if((FullPath ([string]$identity.bridgeHome) -ine (FullPath $labStateRoot))){throw 'LAB_PROCESS_STATE_ROOT_MISMATCH'}
+$actualStateRoot=FullPath ([string]$identity.bridgeHome)
+$expectedStateRoot=FullPath $labStateRoot
+if($actualStateRoot -ine $expectedStateRoot){
+  $actualStateTailCodes=(@($actualStateRoot.ToCharArray()|Select-Object -Last 12|ForEach-Object {[int][char]$_}) -join ',')
+  $expectedStateTailCodes=(@($expectedStateRoot.ToCharArray()|Select-Object -Last 12|ForEach-Object {[int][char]$_}) -join ',')
+  throw ('LAB_PROCESS_STATE_ROOT_MISMATCH: actual=['+$actualStateRoot+']; expected=['+$expectedStateRoot+']; actualLength='+$actualStateRoot.Length+'; expectedLength='+$expectedStateRoot.Length+'; actualTailCodes='+$actualStateTailCodes+'; expectedTailCodes='+$expectedStateTailCodes)
+}
 if([string]$identity.bridgePort -cne [string]$labPort){throw 'LAB_PROCESS_PORT_MISMATCH'}
 if([string]$identity.extensionId -cne $labExtensionId){throw 'LAB_PROCESS_EXTENSION_ID_MISMATCH'}
 $command=([string]$identity.command).Replace('/','\').Trim()
