@@ -1,4 +1,4 @@
-# Create a separate, pinned PR #132 source checkout for PR102 Lab release work.
+# Create/validate a separate, pinned PR #132 source checkout for PR102 Lab release work.
 # Preserves any existing local checkout; does not modify installed Lab, Production or credentials.
 [CmdletBinding()]
 param()
@@ -24,19 +24,41 @@ if(!(Test-Path -LiteralPath $workRoot -PathType Container)){
 }
 if((Resolve-Path -LiteralPath $workRoot).ProviderPath -ine $workRoot){throw 'WORK_ROOT_REDIRECTED'}
 
-function Git([string[]]$Arguments){
-  $global:LASTEXITCODE=0
-  $gitLines=@(& $git -c core.hooksPath=NUL -c protocol.ext.allow=never -c protocol.file.allow=never @Arguments 2>&1)
-  $exitCode=$global:LASTEXITCODE
-  if($exitCode -ne 0){throw ('GIT_OPERATION_FAILED ('+$exitCode+'): '+(($gitLines|Out-String).Trim()))}
-  $gitText=[string]::Join([Environment]::NewLine,[string[]]@($gitLines|ForEach-Object {[string]$_}))
-  return $gitText
+function InvokeGit([string]$CommandLine,[string]$WorkingDirectory){
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName=$git
+  $psi.Arguments=$CommandLine
+  $psi.WorkingDirectory=$WorkingDirectory
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $process=New-Object System.Diagnostics.Process
+  $process.StartInfo=$psi
+  if(!$process.Start()){throw 'GIT_PROCESS_START_FAILED'}
+  $stdoutTask=$process.StandardOutput.ReadToEndAsync()
+  $stderrTask=$process.StandardError.ReadToEndAsync()
+  if(!$process.WaitForExit(30000)){
+    try{$process.Kill()}catch{}
+    throw 'GIT_OPERATION_TIMEOUT'
+  }
+  $process.WaitForExit()
+  return [pscustomobject]@{
+    ExitCode=$process.ExitCode
+    Stdout=([string]$stdoutTask.Result).Trim()
+    Stderr=([string]$stderrTask.Result).Trim()
+  }
 }
-
+function GitOk([string]$CommandLine,[string]$WorkingDirectory){
+  $result=InvokeGit $CommandLine $WorkingDirectory
+  if($result.ExitCode -ne 0){
+    throw ('GIT_OPERATION_FAILED ('+$result.ExitCode+'): '+$result.Stderr)
+  }
+  return $result.Stdout
+}
 function RemoteIdentity([string]$Value){
   if([string]::IsNullOrWhiteSpace($Value)){return ''}
   $s=$Value.Trim()
-  # Parse URI schemes first: HTTPS must not be mistaken for SCP-style SSH syntax.
   try{
     $u=[Uri]$s
     if($u.IsAbsoluteUri -and $u.Host){
@@ -47,7 +69,6 @@ function RemoteIdentity([string]$Value){
       return ($u.Host.ToLowerInvariant()+$path.ToLowerInvariant())
     }
   }catch{}
-  # SCP-style SSH URL: git@github.com:owner/repo(.git)
   if($s -match '^(?:[^@/]+@)?(?<host>[^/:]+):(?<path>[^?#]+)$'){
     $path=$Matches.path.TrimStart('/').TrimEnd('/')
     if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){
@@ -67,7 +88,7 @@ if(Test-Path -LiteralPath $checkoutRoot){
   }
 }else{
   $old=@{}
-  foreach($name in @('GIT_TERMINAL_PROMPT','GCM_INTERACTIVE','GCM_GUI_PROMPT','GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','GIT_OPTIONAL_LOCKS')){
+  foreach($name in @('GIT_TERMINAL_PROMPT','GCM_INTERACTIVE','GCM_GUI_PROMPT','GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','GIT_OPTIONAL_LOCKS','GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE')){
     $old[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
   }
   try{
@@ -77,7 +98,11 @@ if(Test-Path -LiteralPath $checkoutRoot){
     $env:GIT_CONFIG_GLOBAL='NUL'
     $env:GIT_CONFIG_NOSYSTEM='1'
     $env:GIT_OPTIONAL_LOCKS='0'
-    Git -Arguments @('clone','--depth','1','--single-branch','--branch',$branch,'--no-tags','--',$remote,$checkoutRoot)|Out-Null
+    [Environment]::SetEnvironmentVariable('GIT_DIR',$null,'Process')
+    [Environment]::SetEnvironmentVariable('GIT_WORK_TREE',$null,'Process')
+    [Environment]::SetEnvironmentVariable('GIT_INDEX_FILE',$null,'Process')
+    $cloneArgs='clone --depth 1 --single-branch --branch '+$branch+' --no-tags -- '+$remote+' "'+$checkoutRoot+'"'
+    $null=GitOk $cloneArgs $workRoot
   }finally{
     foreach($name in $old.Keys){
       [Environment]::SetEnvironmentVariable($name,$old[$name],'Process')
@@ -88,15 +113,30 @@ if(!(Test-Path -LiteralPath (Join-Path $checkoutRoot '.git') -PathType Container
   throw 'CANDIDATE_CLONE_METADATA_MISSING'
 }
 
-$currentRemote=(Git -Arguments @('-C',$checkoutRoot,'remote','get-url','origin')|Out-String).Trim()
+$currentRemote=GitOk 'remote get-url origin' $checkoutRoot
 if((RemoteIdentity $currentRemote) -cne (RemoteIdentity $remote)){
   throw 'CANDIDATE_REMOTE_MISMATCH'
 }
-$currentBranch=(Git -Arguments @('-C',$checkoutRoot,'branch','--show-current')|Out-String).Trim()
+$currentBranch=GitOk 'branch --show-current' $checkoutRoot
 if($currentBranch -cne $branch){throw 'CANDIDATE_BRANCH_MISMATCH'}
-$actual=(Git -Arguments @('-C',$checkoutRoot,'rev-parse','HEAD')|Out-String).Trim()
+$actual=GitOk 'rev-parse HEAD' $checkoutRoot
 if($actual -cne $expectedCommit){throw ('CANDIDATE_COMMIT_MISMATCH: '+$actual)}
-$changes=Git -Arguments @('-C',$checkoutRoot,'status','--porcelain=v1','--untracked-files=all')
+
+# A first checkout on some Windows hosts can differ only in trailing end-of-line
+# whitespace. Normalize ONLY this disposable release checkout, and only after
+# proving: no staged changes, no untracked files, and no meaningful diff.
+$status=InvokeGit 'status --porcelain=v1 --untracked-files=all' $checkoutRoot
+if($status.ExitCode -ne 0){throw 'CANDIDATE_STATUS_READ_FAILED'}
+if(-not [string]::IsNullOrWhiteSpace($status.Stdout)){
+  $cached=InvokeGit 'diff --cached --quiet' $checkoutRoot
+  $eolOnly=InvokeGit 'diff --quiet --ignore-space-at-eol' $checkoutRoot
+  $untracked=GitOk 'ls-files --others --exclude-standard' $checkoutRoot
+  if($cached.ExitCode -ne 0 -or $eolOnly.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($untracked)){
+    throw 'CANDIDATE_WORKTREE_HAS_NON_EOL_OR_UNTRACKED_CHANGES'
+  }
+  $null=GitOk 'restore --worktree -- .' $checkoutRoot
+}
+$changes=GitOk 'status --porcelain=v1 --untracked-files=all' $checkoutRoot
 if(-not [string]::IsNullOrWhiteSpace($changes)){throw 'CANDIDATE_WORKTREE_NOT_CLEAN'}
 
 foreach($required in @(
@@ -122,6 +162,7 @@ foreach($required in @(
  Branch=$branch
  CommitSha=$actual
  WorktreeClean=$true
+EolOnlyNormalizationPerformed=(![string]::IsNullOrWhiteSpace($status.Stdout))
  LabChanged=$false
  ProductionChanged=$false
  CredentialsRead=$false
