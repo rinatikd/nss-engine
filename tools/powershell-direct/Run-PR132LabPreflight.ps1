@@ -7,9 +7,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-af27f9ff-release-clean'
+$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-9b0af752-release-clean'
 $candidateRoot=Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
-$expectedSha='af27f9ff777bedc380c3cb9657e0bf85d3d6db3e'
+$expectedSha='9b0af752575a3e10ebee93a31014c5d95b3bd818'
 $expectedBranch='feat/chat-approved-session-auth-20261122'
 $remoteExpected='https://github.com/rinatikd/nss-engine'
 $labServerRoot='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
@@ -312,10 +312,9 @@ try{
   $env:PATH=$nodeExeDirectory+';'+$previousPath
   $selectedNodePaths=@(Get-Command node.exe -CommandType Application -All -ErrorAction Stop |
     ForEach-Object {FullPath ([string]$_.Source)} | Select-Object -Unique)
-  if($selectedNodePaths.Count -ne 1){
-    throw ('LAB_NODE_EXECUTABLE_RESOLUTION_AMBIGUOUS: '+($selectedNodePaths -join ';'))
+  if(-not ($selectedNodePaths -icontains $nodeExe)){
+    throw ('LAB_NODE_EXECUTABLE_RESOLUTION_MISMATCH: expected='+$nodeExe+'; available='+($selectedNodePaths -join ';'))
   }
-  if($selectedNodePaths[0] -ine $nodeExe){throw 'LAB_NODE_EXECUTABLE_RESOLUTION_MISMATCH'}
   try{
     $serverOutput=@(& $serverScript @serverParams 2>&1)
   }catch{
