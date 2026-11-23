@@ -100,12 +100,17 @@ function GitValue([string[]]$GitArgList){
   return $result.Output.Trim()
 }
 function FullPath([string]$Value){
-  $full=[IO.Path]::GetFullPath($Value.Trim())
-  $rootPath=[IO.Path]::GetPathRoot($full)
-  while($full.Length -gt $rootPath.Length -and ($full.EndsWith('\') -or $full.EndsWith('/'))){
-    $full=$full.Substring(0,$full.Length-1)
+  if([string]::IsNullOrWhiteSpace($Value)){throw 'FULLPATH_EMPTY_ARGUMENT'}
+  try{
+    $full=[IO.Path]::GetFullPath($Value.Trim())
+    $rootPath=[IO.Path]::GetPathRoot($full)
+    while($full.Length -gt $rootPath.Length -and ($full.EndsWith('\') -or $full.EndsWith('/'))){
+      $full=$full.Substring(0,$full.Length-1)
+    }
+    return $full
+  }catch{
+    throw ('FULLPATH_INVALID_ARGUMENT: value=['+$Value+']; length='+$Value.Length+'; '+$_.Exception.Message)
   }
-  return $full
 }
 function RemoteIdentity([string]$Value){
   if([string]::IsNullOrWhiteSpace($Value)){return ''}
