@@ -1,7 +1,10 @@
 # Create a separate detached, SHA-pinned PR138 worktree.
 # Fetches only the named branch; never switches or rewrites the primary checkout.
 [CmdletBinding()]
-param([ValidateSet('Inspect','Prepare')][string]$Mode='Inspect')
+param(
+ [ValidateSet('Inspect','Prepare')][string]$Mode='Inspect',
+ [string]$RepositoryRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
@@ -15,7 +18,7 @@ $workRoot=Join-Path $workspaceExpected 'work'
 $newRepo=Join-Path $workRoot 'PowerShellDirect-PR138-e4a3e47f-release-clean'
 $git='C:\Program Files\Git\cmd\git.exe'
 
-$workspace=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
+$workspace=(Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath.TrimEnd('\')
 if($workspace -ine $workspaceExpected){throw 'UNEXPECTED_APPROVED_WORKSPACE'}
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
 if(!(Test-Path -LiteralPath (Join-Path $oldRepo '.git') -PathType Container)){throw 'PRIMARY_GIT_DIRECTORY_MISSING'}
