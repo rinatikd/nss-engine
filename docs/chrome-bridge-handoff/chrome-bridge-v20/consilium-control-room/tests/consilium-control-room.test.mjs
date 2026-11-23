@@ -88,6 +88,46 @@ test('all seven AI members share session and round control while owner retains c
  }finally{await app.close()}
 });
 
+test('task assignees and artifact recipients must be registered AI members',async()=>{
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
+ try{
+  const proposal=await request(base,tokens[1].token,'/api/decisions',{
+   decisionId:'decision_members_01',title:'Limit task recipients',rationale:'Prevent orphaned task assignments',risk:'routine',requestId:'decision_members_req'
+  });assert.equal(proposal.status,201);
+  assert.equal((await request(base,tokens[1].token,'/api/decisions/review',{
+   decisionId:'decision_members_01',verdict:'SUPPORT',rationale:'ChatGPT supports',requestId:'review_members_cgpt'
+  })).status,201);
+  assert.equal((await request(base,tokens[2].token,'/api/decisions/review',{
+   decisionId:'decision_members_01',verdict:'SUPPORT',rationale:'Claude supports',requestId:'review_members_claude'
+  })).status,201);
+  assert.equal((await request(base,tokens[0].token,'/api/decisions/approve',{
+   decisionId:'decision_members_01',requestId:'approve_members_owner'
+  })).status,200);
+
+  const unknownTask=await request(base,tokens[1].token,'/api/tasks',{
+   taskId:'task_unknown_01',decisionId:'decision_members_01',title:'Orphan task',assignee:'mallory',requestId:'task_unknown_req'
+  });
+  assert.equal(unknownTask.status,400);
+  assert.equal((await unknownTask.json()).error,'TASK_ASSIGNEE_UNKNOWN');
+  const knownTask=await request(base,tokens[1].token,'/api/tasks',{
+   taskId:'task_known_01',decisionId:'decision_members_01',title:'Review source pack',assignee:'claude',requestId:'task_known_req'
+  });
+  assert.equal(knownTask.status,201);
+
+  const unknownArtifact=await request(base,tokens[1].token,'/api/artifacts',{
+   artifactId:'sourcepack_unknown_01',name:'Unknown recipient pack',sha256:'b'.repeat(64),sourceCommit:'c'.repeat(40),
+   uri:'https://example.invalid/pack',recipients:['mallory'],requestId:'artifact_unknown_req'
+  });
+  assert.equal(unknownArtifact.status,400);
+  assert.equal((await unknownArtifact.json()).error,'ARTIFACT_RECIPIENT_UNKNOWN');
+  const knownArtifact=await request(base,tokens[1].token,'/api/artifacts',{
+   artifactId:'sourcepack_known_01',name:'Claude review pack',sha256:'d'.repeat(64),sourceCommit:'e'.repeat(40),
+   uri:'https://example.invalid/known-pack',recipients:['claude'],requestId:'artifact_known_req'
+  });
+  assert.equal(knownArtifact.status,201);
+ }finally{await app.close()}
+});
+
 test('state-changing POST requires same-origin',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{const r=await request(base,tokens[1].token,'/api/session/start',{title:'CSRF test',requestId:'start_req_0003'},{origin:'http://attacker.invalid'});assert.equal(r.status,403)}finally{await app.close()}
