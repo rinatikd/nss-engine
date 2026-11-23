@@ -10,6 +10,7 @@ const source='C:/Engineering/ChromeBridge-Recovery-Install-20261114';
 const tests=[
  'tools/powershell-direct/tests/engineering.test.mjs',
  'tools/ai_collaboration/engineering-runner.test.mjs',
+ 'tools/ai_collaboration/workspace-policy.test.mjs',
  'tools/powershell-direct/tests/named-suites.test.mjs',
  'tools/ai_collaboration/local_job_service.test.mjs',
  'tools/ai_collaboration/local_mcp_dispatch.test.mjs',
