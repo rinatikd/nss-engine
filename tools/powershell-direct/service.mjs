@@ -18,28 +18,21 @@ const clean=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(obj));};
 
 export class PowerShellApprovalService {
- constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
-   namedWorkspaceRoots=[],namedAuditDirectory=null,namedRunner,
-   engineeringWorkspaceRoots=[],engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan,
+ constructor({port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
+   namedAuditDirectory=null,namedRunner,
+   engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan,
    engineeringChatVerifier=null}={}){
-  const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
-  const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
-  const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
-  if(!root||!path.win32.isAbsolute(root)||(port!==PORT&&port!==0)||driveRoot||
-     normalizedRoot.startsWith('\\\\')||
-     pathSegments.some(x=>['windows','system32','program files'].includes(x)))
-    throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
-  this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
+  if(port!==PORT&&port!==0)throw Error('SAFE_PORT_REQUIRED');
+  this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
   this.chatReadonlyEnabled=chatReadonlyEnabled===true;
   if(engineeringChatVerifier!==null&&typeof engineeringChatVerifier!=='function')throw Error('CHAT_APPROVAL_VERIFIER_INVALID');
   this.engineeringChatVerifier=engineeringChatVerifier;
   this.namedPending=new Map();
   this.namedService=null;
   this.namedHandlers=null;
-  if(namedWorkspaceRoots.length){
-    if(!namedAuditDirectory)throw Error('NAMED_AUDIT_DIR_REQUIRED');
+  if(namedAuditDirectory){
     this.namedService=createLocalJobService({
-      approvedWorkspaceRoots:namedWorkspaceRoots,auditDirectory:namedAuditDirectory,
+      auditDirectory:namedAuditDirectory,
       runner:namedRunner,
       approveRequest:details=>new Promise(resolve=>{
         if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
@@ -59,12 +52,10 @@ export class PowerShellApprovalService {
   }
   this.engineeringService=null;
   this.engineeringHandlers=null;
-  if(engineeringWorkspaceRoots.length){
-    if(!engineeringAuditDirectory)throw Error('ENGINEERING_AUDIT_DIR_REQUIRED');
+  if(engineeringAuditDirectory){
     this.engineeringService=createLocalJobService({
-      approvedWorkspaceRoots:engineeringWorkspaceRoots,
       auditDirectory:engineeringAuditDirectory,
-      resolvePlan:resolveEngineeringPlan,
+      resolvePlan:request=>resolveEngineeringPlan(request),
       runner:engineeringRunner,
       operationName:'engineering-operation',
       approveRequest:details=>new Promise(resolve=>{
@@ -118,7 +109,7 @@ export class PowerShellApprovalService {
   if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{8,80}$/.test(id))throw Error('INVALID_REQUEST_ID');
   if(this.jobs.has(id))throw Error('DUPLICATE_REQUEST_ID');
   if(this.jobs.size>=32)throw Error('QUEUE_FULL');
-  const spec=validateTask(args.task),workspace=this.workspaceCheck(args.workspace,this.root),time=this.now();
+  const spec=validateTask(args.task),workspace=this.workspaceCheck(args.workspace),time=this.now();
   const payload={id,task:args.task,workspace,exe:spec.exe,argv:[...spec.args],issuedAt:time,expiresAt:time+90000};
   const job={payload,sha256:digest(payload),state:'PENDING',result:null};
   this.jobs.set(id,job);
@@ -156,7 +147,7 @@ export class PowerShellApprovalService {
   if(this.active)throw Error('ANOTHER_JOB_RUNNING');
   j.state='RUNNING';this.active=id;
   void (async()=>{try{
-   j.result=await this.run({task:j.payload.task,workspace:j.payload.workspace,allowedRoot:this.root});
+   j.result=await this.run({task:j.payload.task,workspace:j.payload.workspace});
    j.state=j.result.state==='FINISHED'?'FINISHED':'FAILED';
   }catch(e){j.result={reason:e.code||'RUNNER_ERROR'};j.state='FAILED';}finally{this.active=null;}})();
   return {state:'RUNNING'};
@@ -351,8 +342,7 @@ export class PowerShellApprovalService {
  stop(){return new Promise(resolve=>this.server.close(resolve));}
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const root=process.argv[2];if(!root)throw Error('USAGE: node service.mjs WINDOWS_ALLOWED_ROOT');
- const svc=new PowerShellApprovalService({root,chatReadonlyEnabled:process.env.PS_DIRECT_CHAT_READONLY_ENABLED==='1'});await svc.start();
+ const svc=new PowerShellApprovalService({chatReadonlyEnabled:process.env.PS_DIRECT_CHAT_READONLY_ENABLED==='1'});await svc.start();
  console.error('PS_LAB_READY 127.0.0.1:'+svc.port);
  console.error('LOCAL_APPROVAL_URL http://127.0.0.1:'+svc.port+'/approve?key='+svc.uiToken);
  console.error('MCP_AGENT_TOKEN '+svc.agentToken);
