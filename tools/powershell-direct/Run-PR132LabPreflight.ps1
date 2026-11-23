@@ -310,8 +310,12 @@ $serverParams=@{
 $previousPath=$env:PATH
 try{
   $env:PATH=$nodeExeDirectory+';'+$previousPath
-  $selectedNode=(Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
-  if((FullPath $selectedNode) -ine $nodeExe){throw 'LAB_NODE_EXECUTABLE_RESOLUTION_MISMATCH'}
+  $selectedNodePaths=@(Get-Command node.exe -CommandType Application -All -ErrorAction Stop |
+    ForEach-Object {FullPath ([string]$_.Source)} | Select-Object -Unique)
+  if($selectedNodePaths.Count -ne 1){
+    throw ('LAB_NODE_EXECUTABLE_RESOLUTION_AMBIGUOUS: '+($selectedNodePaths -join ';'))
+  }
+  if($selectedNodePaths[0] -ine $nodeExe){throw 'LAB_NODE_EXECUTABLE_RESOLUTION_MISMATCH'}
   $serverOutput=@(& $serverScript @serverParams 2>&1)
   $serverText=[string]::Join([Environment]::NewLine,[string[]]@($serverOutput|ForEach-Object {[string]$_}))
   if($serverText -notmatch '\[DRY_RUN\] Server and isolated MCP registry validated'){throw ('SERVER_DRY_RUN_FAILED: '+$serverText)}
