@@ -48,3 +48,15 @@
 ## Новая политика workspace (feature branch 2026-11-23)
 
 Постоянные allowlist-переменные `PS_DIRECT_ALLOWED_ROOT`, `PS_DIRECT_ENGINEERING_WORKSPACES` и `PS_DIRECT_NAMED_SUITE_WORKSPACES` удаляются из запуска supervisor. Любой существующий локальный каталог, доступный текущей Windows-учётной записи по ACL, может быть выбран для конкретного задания. Перед показом запроса сервис разрешает его в canonical realpath, запрещает томовые корни, системные каталоги, UNC/device-пути и включает полученный `cwd` в SHA-256 плана. После локального Approve once тот же canonical path сверяется повторно. Это не разрешает произвольные команды, не отключает per-job approval и не даёт дополнительных прав файловой системе. Обновление не считать установленным до Windows E2E и проверки MCP discovery.
+
+
+## PR #138 — отдельная проверенная рабочая копия (2026-11-23)
+
+Целевой исходник для staging: `e4a3e47f17a48e1acc731bc4249551bb43537b70` — branch `feat/psdirect-per-job-workspace-approval-20261123`. Не переключать основной checkout и не выполнять reset.
+
+1. Одноразовый helper `tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1` запускается из отдельной папки `C:\Engineering` (вне Git checkout) через PowerShell Direct с workspace `C:\Engineering`. Сначала `-Mode Inspect`, затем после PASS — `-Mode Prepare`. Он проверяет основной checkout на точный base SHA `f58f44a52c569a4a45e3ffe025dc6d1f62beff58`, чистоту, origin, удалённый branch HEAD; затем делает отдельный detached worktree:
+   `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-e4a3e47f-release-clean`.
+2. Из нового worktree запустить `tools/powershell-direct/Prepare-EngineeringLabR2.ps1` сначала с `-Mode Inspect`, затем `-Mode Prepare`. Эта редакция читает detached `.git` pointer, проверяет общий Git config/origin и точный HEAD; требует чистое дерево и создаёт только `C:\Engineering\PowerShellDirect-Engineering-Lab-R2`. Действующие R1, supervisor 17486/18086, туннель и production не перезапускаются.
+3. После подготовки выполнить реальный Windows Node 24 regression suite из R2: `workspace-policy.test.mjs`, `local_test_runner.test.mjs`, `local_job_service.test.mjs`, `engineering-runner.test.mjs`, `service.test.mjs`, `named-suites.test.mjs`, `engineering.test.mjs`. Каждый запуск — отдельное одобренное задание; затем сверить source hashes из `source-hashes.json`.
+
+**Текущий статус:** source/CI PASS; pinned helper и R2 detached-worktree support включены в PR #138. Это ещё не означает, что helper уже скопирован на Work PC, worktree создан или R2 staged. До подтверждения всех Windows E2E результатов не переключать supervisor и не менять конфигурацию службы.
