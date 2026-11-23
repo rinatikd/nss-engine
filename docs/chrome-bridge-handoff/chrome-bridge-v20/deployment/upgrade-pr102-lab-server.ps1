@@ -132,8 +132,10 @@ function WriteExpectedTools([string]$SourceRoot,[string]$OutputFile,[string]$Nod
   $code = "import fs from 'node:fs'; import { tools } from './server/tools.mjs'; fs.writeFileSync(process.argv[1], JSON.stringify({result:{tools:tools.map(({kind,...tool})=>tool)}}));"
   Push-Location $SourceRoot
   try {
+    $LASTEXITCODE=-1
     & $NodeExe --input-type=module -e $code $OutputFile
-    Require ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $OutputFile -PathType Leaf)) 'Could not generate expected MCP tools registry'
+    $nodeExitCode=$LASTEXITCODE
+    Require ($nodeExitCode -eq 0 -and (Test-Path -LiteralPath $OutputFile -PathType Leaf)) 'Could not generate expected MCP tools registry'
   } finally { Pop-Location }
 }
 function Probe([string]$HealthScript,[string]$SourceRoot,[string]$State,[string]$ExpectedFile,[string]$RunDir,[string]$Mode) {
@@ -275,8 +277,10 @@ $nodeProcess=[Diagnostics.Process]::GetProcessById($ExpectedPid)
 try{$nodeIdentity=Get-BridgeHandleIdentity $nodeProcess}finally{$nodeProcess.Dispose()}
 $nodeCommandPaths=@(Get-Command node.exe -CommandType Application -All -ErrorAction Stop | ForEach-Object {[string]$_.Source})
 $script:NodeExe=Get-BridgePinnedExecutable ([string]$nodeIdentity.executable) $nodeCommandPaths
+$LASTEXITCODE=-1
 $nodeVersionOutput=& $script:NodeExe --version
-Require ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$nodeVersionOutput)) 'Node version probe failed'
+$nodeVersionExitCode=$LASTEXITCODE
+Require ($nodeVersionExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$nodeVersionOutput)) 'Node version probe failed'
 $nodeVersion=([string]$nodeVersionOutput).Trim()
 
 $identity = PinProcess $ExpectedPid $ExpectedStartUtc $root $state $configHashBefore
