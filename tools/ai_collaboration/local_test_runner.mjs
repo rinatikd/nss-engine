@@ -117,6 +117,7 @@ export async function resolveTestPlan({ requestId, suite, workspace, approved, a
     args: Object.freeze([...spec.args]), cwd: candidate,
     timeoutMs: spec.timeoutMs
   });
+}
 
 // Windows child processes can spawn grandchildren (Node -> PowerShell -> tests).
 // A direct child.kill() does not guarantee cleanup of the tree. Use a fixed,
