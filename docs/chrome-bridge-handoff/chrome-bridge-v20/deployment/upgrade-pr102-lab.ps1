@@ -29,7 +29,12 @@ function Require([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
 }
 function FullPath([string]$Path) {
-  return [IO.Path]::GetFullPath($Path).TrimEnd('\')
+  $full = [IO.Path]::GetFullPath($Path.Trim())
+  $rootPath = [IO.Path]::GetPathRoot($full)
+  while ($full.Length -gt $rootPath.Length -and ($full.EndsWith('\') -or $full.EndsWith('/'))) {
+    $full = $full.Substring(0, $full.Length - 1)
+  }
+  return $full
 }
 function ReadManifest([string]$Path) {
   Require (Test-Path -LiteralPath $Path -PathType Leaf) 'Extension manifest.json missing'
