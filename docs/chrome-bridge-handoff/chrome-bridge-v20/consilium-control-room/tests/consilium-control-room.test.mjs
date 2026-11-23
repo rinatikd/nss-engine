@@ -92,7 +92,7 @@ test('task assignees and artifact recipients must be registered AI members',asyn
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const proposal=await request(base,tokens[1].token,'/api/decisions',{
-   decisionId:'decision_members_01',title:'Limit task recipients',rationale:'Prevent orphaned task assignments',risk:'routine',requestId:'decision_members_req'
+   decisionId:'decision_members_01',title:'Limit task recipients',rationale:'Prevent orphaned task assignments',risk:'consequential',requestId:'decision_members_req'
   });assert.equal(proposal.status,201);
   assert.equal((await request(base,tokens[1].token,'/api/decisions/review',{
    decisionId:'decision_members_01',verdict:'SUPPORT',rationale:'ChatGPT supports',requestId:'review_members_cgpt'
