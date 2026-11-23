@@ -8,16 +8,42 @@ $ErrorActionPreference='Stop'
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $checkoutRoot=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-fb2c27a8-release-clean'
 $git='C:\Program Files\Git\cmd\git.exe'
+$expectedBranch='feat/chat-approved-session-auth-20261122'
+$expectedHead='fb2c27a843d04e08b97dae876226751d9f3685fd'
 $workspace=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
 if($workspace -ine $workspaceExpected){throw 'UNEXPECTED_APPROVED_WORKSPACE'}
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
+if(!(Test-Path -LiteralPath $checkoutRoot -PathType Container)){throw 'PINNED_CHECKOUT_NOT_FOUND'}
 
-function Git([string[]]$Arguments){
-  $global:LASTEXITCODE=0
-  $items=@(& $git -c core.hooksPath=NUL -c protocol.ext.allow=never -c protocol.file.allow=never @Arguments 2>&1)
-  $code=$global:LASTEXITCODE
-  $value=[string]::Join([Environment]::NewLine,[string[]]@($items|ForEach-Object {[string]$_})).Trim()
-  return [pscustomobject]@{ExitCode=$code;Output=$value}
+function Quote-GitArgument([string]$Value){
+  return '"' + $Value.Replace('"','\"') + '"'
+}
+function Invoke-GitRead([string[]]$GitArguments){
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName=$git
+  $quoted=@()
+  foreach($arg in $GitArguments){$quoted += (Quote-GitArgument ([string]$arg))}
+  $psi.Arguments=[string]::Join(' ',$quoted)
+  $psi.WorkingDirectory=$checkoutRoot
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $process=New-Object System.Diagnostics.Process
+  $process.StartInfo=$psi
+  if(!$process.Start()){throw 'GIT_PROCESS_START_FAILED'}
+  $stdoutTask=$process.StandardOutput.ReadToEndAsync()
+  $stderrTask=$process.StandardError.ReadToEndAsync()
+  if(!$process.WaitForExit(15000)){
+    try{$process.Kill()}catch{}
+    throw 'GIT_READ_TIMEOUT'
+  }
+  $process.WaitForExit()
+  return [pscustomobject]@{
+    ExitCode=$process.ExitCode
+    Stdout=([string]$stdoutTask.Result).Trim()
+    Stderr=([string]$stderrTask.Result).Trim()
+  }
 }
 function RemoteIdentity([string]$Value){
   if([string]::IsNullOrWhiteSpace($Value)){return ''}
@@ -26,117 +52,82 @@ function RemoteIdentity([string]$Value){
     $u=[Uri]$s
     if($u.IsAbsoluteUri -and $u.Host){
       $path=$u.AbsolutePath.TrimEnd('/')
-      if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){
-        $path=$path.Substring(0,$path.Length-4)
-      }
+      if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$path=$path.Substring(0,$path.Length-4)}
       return ($u.Host.ToLowerInvariant()+$path.ToLowerInvariant())
     }
   }catch{}
   if($s -match '^(?:[^@/]+@)?(?<host>[^/:]+):(?<path>[^?#]+)$'){
     $path=$Matches.path.TrimStart('/').TrimEnd('/')
-    if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){
-      $path=$path.Substring(0,$path.Length-4)
-    }
+    if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$path=$path.Substring(0,$path.Length-4)}
     return ($Matches.host.ToLowerInvariant()+'/'+$path.ToLowerInvariant())
   }
   return 'UNPARSEABLE'
 }
 
-$exists=Test-Path -LiteralPath $checkoutRoot -PathType Container
-$gitPath=Join-Path $checkoutRoot '.git'
-$gitItem=$null
-if($exists){$gitItem=Get-Item -LiteralPath $gitPath -Force -ErrorAction SilentlyContinue}
+$dotGit=Join-Path $checkoutRoot '.git'
+$dotGitItem=Get-Item -LiteralPath $dotGit -Force -ErrorAction SilentlyContinue
 $gitKind='MISSING'
 $gitDir=''
 $gitPointer=''
-if($gitItem){
-  if($gitItem.PSIsContainer){
+if($dotGitItem){
+  if($dotGitItem.PSIsContainer){
     $gitKind='DIRECTORY'
-    $gitDir=$gitPath
+    $gitDir=$dotGit
   }else{
     $gitKind='FILE'
-    $pointerLines=@(Get-Content -LiteralPath $gitPath -TotalCount 1 -ErrorAction SilentlyContinue)
+    $pointerLines=@(Get-Content -LiteralPath $dotGit -TotalCount 1 -ErrorAction SilentlyContinue)
     if($pointerLines.Count -gt 0){$gitPointer=[string]$pointerLines[0]}
     if($gitPointer -match '^gitdir:\s*(.+)$'){
       $gitDir=$Matches[1]
-      if(!(Split-Path -IsAbsolute $gitDir)){
-        $gitDir=[IO.Path]::GetFullPath((Join-Path $checkoutRoot $gitDir))
-      }
+      if(!(Split-Path -IsAbsolute $gitDir)){$gitDir=[IO.Path]::GetFullPath((Join-Path $checkoutRoot $gitDir))}
     }
   }
 }
+$root=Invoke-GitRead @('-c','core.hooksPath=NUL','-c','protocol.ext.allow=never','-c','protocol.file.allow=never','rev-parse','--show-toplevel')
+$branch=Invoke-GitRead @('-c','core.hooksPath=NUL','-c','protocol.ext.allow=never','-c','protocol.file.allow=never','branch','--show-current')
+$head=Invoke-GitRead @('-c','core.hooksPath=NUL','-c','protocol.ext.allow=never','-c','protocol.file.allow=never','rev-parse','HEAD')
+$status=Invoke-GitRead @('-c','core.hooksPath=NUL','-c','protocol.ext.allow=never','-c','protocol.file.allow=never','status','--porcelain=v1','--untracked-files=all')
+$remote=Invoke-GitRead @('-c','core.hooksPath=NUL','-c','protocol.ext.allow=never','-c','protocol.file.allow=never','remote','get-url','origin')
+
+$statusLines=@()
+if($status.Stdout){$statusLines=@($status.Stdout -split "\r?\n" | Where-Object { $_ })}
+$topLevelNames=@(Get-ChildItem -LiteralPath $checkoutRoot -Force | Select-Object -First 20 -ExpandProperty Name)
 $configPath=''
 if($gitDir){$configPath=Join-Path $gitDir 'config'}
-$stored=''
+$configRemote=''
 if($configPath -and (Test-Path -LiteralPath $configPath -PathType Leaf)){
   $inOrigin=$false
   foreach($line in (Get-Content -LiteralPath $configPath)){
     if($line -match '^\s*\[remote\s+"origin"\]\s*$'){$inOrigin=$true;continue}
     if($line -match '^\s*\['){$inOrigin=$false}
-    if($inOrigin -and $line -match '^\s*url\s*=\s*(.+?)\s*$'){$stored=$Matches[1];break}
+    if($inOrigin -and $line -match '^\s*url\s*=\s*(.+?)\s*$'){$configRemote=$Matches[1];break}
   }
 }
-
-$root=$null
-$branch=$null
-$head=$null
-$status=$null
-$remote=$null
-if($exists){
-  $root=Git @('-C',$checkoutRoot,'rev-parse','--show-toplevel')
-  $branch=Git @('-C',$checkoutRoot,'branch','--show-current')
-  $head=Git @('-C',$checkoutRoot,'rev-parse','HEAD')
-  $status=Git @('-C',$checkoutRoot,'status','--porcelain=v1','--untracked-files=all')
-  $remote=Git @('-C',$checkoutRoot,'remote','get-url','origin')
-}
-$statusLines=@()
-if($null -ne $status -and $status.Output){
-  $statusLines=@($status.Output -split "\r?\n" | Where-Object { $_ })
-}
-$children=@()
-if($exists){$children=@(Get-ChildItem -LiteralPath $checkoutRoot -Force | Select-Object -First 20 -ExpandProperty Name)}
-
-$effectiveRemoteIdentity=''
-$remoteExitCode=$null
-if($null -ne $remote){
-  $effectiveRemoteIdentity=RemoteIdentity $remote.Output
-  $remoteExitCode=$remote.ExitCode
-}
-$gitTopLevel=''
-$gitTopLevelExitCode=$null
-if($null -ne $root){$gitTopLevel=$root.Output;$gitTopLevelExitCode=$root.ExitCode}
-$branchValue=''
-$branchExitCode=$null
-if($null -ne $branch){$branchValue=$branch.Output;$branchExitCode=$branch.ExitCode}
-$headValue=''
-$headExitCode=$null
-if($null -ne $head){$headValue=$head.Output;$headExitCode=$head.ExitCode}
 $gitDirExists=$false
 if($gitDir){$gitDirExists=Test-Path -LiteralPath $gitDir -PathType Container}
 $configExists=$false
 if($configPath){$configExists=Test-Path -LiteralPath $configPath -PathType Leaf}
-$gitPointerIsGitDir=($gitPointer -match '^gitdir:\s*')
-$worktreeClean=($statusLines.Count -eq 0 -and $null -ne $status)
 [pscustomobject]@{
   Result='PR132_RELEASE_CHECKOUT_INSPECT_READ_ONLY'
-  CheckoutExists=$exists
+  CheckoutExists=$true
   CheckoutRoot=$checkoutRoot
   GitMetadataKind=$gitKind
-  GitPointerIsGitDir=$gitPointerIsGitDir
   GitDirExists=$gitDirExists
   ConfigExists=$configExists
-  StoredOriginIdentity=(RemoteIdentity $stored)
-  EffectiveOriginIdentity=$effectiveRemoteIdentity
-  RemoteExitCode=$remoteExitCode
-  GitTopLevel=$gitTopLevel
-  GitTopLevelExitCode=$gitTopLevelExitCode
-  Branch=$branchValue
-  BranchExitCode=$branchExitCode
-  Head=$headValue
-  HeadExitCode=$headExitCode
+  StoredOriginIdentity=(RemoteIdentity $configRemote)
+  EffectiveOriginIdentity=(RemoteIdentity $remote.Stdout)
+  RemoteExitCode=$remote.ExitCode
+  GitTopLevel=$root.Stdout
+  GitTopLevelExitCode=$root.ExitCode
+  Branch=$branch.Stdout
+  BranchExitCode=$branch.ExitCode
+  BranchMatchesExpected=($branch.ExitCode -eq 0 -and $branch.Stdout -ceq $expectedBranch)
+  Head=$head.Stdout
+  HeadExitCode=$head.ExitCode
+  HeadMatchesExpected=($head.ExitCode -eq 0 -and $head.Stdout -ceq $expectedHead)
   WorktreeStatusLines=$statusLines
-  WorktreeClean=$worktreeClean
-  TopLevelNames=$children
+  WorktreeClean=($status.ExitCode -eq 0 -and $statusLines.Count -eq 0)
+  TopLevelNames=$topLevelNames
   NoWrites=$true
   LabChanged=$false
   ProductionChanged=$false
