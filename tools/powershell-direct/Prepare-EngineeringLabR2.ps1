@@ -1,4 +1,5 @@
-# Create-only isolated R2 staging. Never overwrites the live R1 service, tunnel, or credentials.
+# Create-only isolated R2 staging from Git-tracked source files.
+# Never overwrites R1, its supervisor, tunnel, credentials, or production.
 [CmdletBinding()]
 param(
  [ValidateSet('Inspect','Prepare')][string]$Mode='Inspect',
@@ -60,6 +61,8 @@ function Get-RemoteIdentity([string]$Value){
 
 if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_MISSING'}
 
+# Resolve both ordinary checkouts and detached Git worktrees without following
+# an untrusted workspace outside this checkout.
 $dotGit=Join-Path $repo '.git'
 if(!(Test-Path -LiteralPath $dotGit)){throw 'GIT_METADATA_MISSING'}
 if(Test-Path -LiteralPath $dotGit -PathType Container){
@@ -83,116 +86,14 @@ if(Test-Path -LiteralPath $dotGit -PathType Container){
   $commonDir=$gitDir
  }
 }
-
 $headFile=Join-Path $gitDir 'HEAD'
 if(!(Test-Path -LiteralPath $headFile -PathType Leaf)){throw 'GIT_HEAD_MISSING'}
+
+# Git resolves symbolic HEADs and detached HEADs to the same immutable commit.
 $head=(& $git -C $repo rev-parse --verify HEAD 2>$null | Out-String).Trim()
-if($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}
-$config=Join-Path $commonDir 'config'
-if(!(Test-Path -LiteralPath $config -PathType Leaf)){throw 'GIT_CONFIG_MISSING'}
-$origin=''
-$inOrigin=$false
-foreach($line in (Get-Content -LiteralPath $config)){
- if($line -match '^\s*\[remote\s+"origin"\]\s*$'){
-  $inOrigin=$true
-  continue
- }
- if($line -match '^\s*\['){$inOrigin=$false}
- if($inOrigin -and $line -match '^\s*url\s*=\s*(.+?)\s*$'){
-  $origin=$Matches[1]
-  break
- }
+if($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$'){
+ throw 'GIT_HEAD_RESOLVE_FAILED'
 }
-if((Get-RemoteIdentity $origin) -cne $expectedRemote){throw 'GIT_REMOTE_MISMATCH'}
-
-$topRaw=(& $git -C $repo rev-parse --show-toplevel 2>$null | Out-String).Trim()
-if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($topRaw)){throw 'GIT_TOPLEVEL_QUERY_FAILED'}
-$top=[IO.Path]::GetFullPath($topRaw.Replace('/','\')).TrimEnd('\')
-$repoCanonical=[IO.Path]::GetFullPath($repo).TrimEnd('\')
-if($top -ine $repoCanonical){throw 'GIT_TOPLEVEL_MISMATCH'}
-$dirty=@(& $git -C $repo status --porcelain=v1 --untracked-files=all)
-if($LASTEXITCODE -ne 0 -or $dirty.Count){throw 'SOURCE_WORKTREE_NOT_CLEAN'}
-
-foreach($rel in ($required+$tests)){
- if(!(Test-Path -LiteralPath (Join-Path $repo $rel) -PathType Leaf)){
-  throw ('SOURCE_MISSING_'+$rel)
- }
-}
-
-# Inventory every copied source file before any staging write. Reject reparse
-# points so a junction/symlink cannot pull content from outside the pinned tree.
-$hashFiles=@()
-foreach($relativeRoot in @('tools\powershell-direct','tools\ai_collaboration')){
- $sourceRoot=Join-Path $repo $relativeRoot
- $entries=@(Get-ChildItem -LiteralPath $sourceRoot -Force -Recurse)
- foreach($entry in $entries){
-  if(($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
-   throw 'SOURCE_REPARSE_POINT_DENIED'
-  }
-  if(!$entry.PSIsContainer){
-   $relative=$entry.FullName.Substring($repo.Length).TrimStart('\').Replace('\','/')
-   if($hashFiles -notcontains $relative){$hashFiles+= $relative}
-  }
- }
-}
-$hashFiles=@($hashFiles | Sort-Object -Unique)
-
-if($Mode -eq 'Inspect'){
- [pscustomobject]@{
-  Result='R2_CREATE_ONLY_PREFLIGHT'
-  CandidateSha=$head
-  TargetExists=(Test-Path -LiteralPath $stage)
-  RequiredSourceCount=$required.Count
-  RegressionTestCount=$tests.Count
-  InventoriedFileCount=$hashFiles.Count
-  ExistingR1Untouched=$true
-  ProductionUntouched=$true
- } | ConvertTo-Json -Compress
- return
-}
-
-if(!(Test-Path -LiteralPath $node -PathType Leaf)){throw 'TRUSTED_NODE_MISSING'}
-if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_EXISTS_NO_OVERWRITE'}
-
-$created=$false
-try{
- $null=New-Item -ItemType Directory -Path $stage -ErrorAction Stop
- $created=$true
- $null=New-Item -ItemType Directory -Path (Join-Path $stage 'tools') -ErrorAction Stop
- Copy-Item -LiteralPath (Join-Path $repo 'tools\powershell-direct') -Destination (Join-Path $stage 'tools\powershell-direct') -Recurse -ErrorAction Stop
- Copy-Item -LiteralPath (Join-Path $repo 'tools\ai_collaboration') -Destination (Join-Path $stage 'tools\ai_collaboration') -Recurse -ErrorAction Stop
-
- $rows=@()
- foreach($rel in $hashFiles){
-  $src=Join-Path $repo $rel
-  $dest=Join-Path $stage $rel
-  $sourceHash=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
-  if($sourceHash -cne (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash){
-   throw ('HASH_MISMATCH_'+$rel)
-  }
-  $rows+= [pscustomobject]@{File=$rel;Sha256=$sourceHash}
- }
- $manifest=Join-Path $stage 'source-hashes.json'
- ConvertTo-Json -InputObject $rows -Depth 4 | Set-Content -LiteralPath $manifest -Encoding UTF8
- if(!(Test-Path -LiteralPath $manifest -PathType Leaf)){throw 'MANIFEST_MISSING'}
-
- [pscustomobject]@{
-  Result='R2_STAGED_UNTESTED'
-  Target=$stage
-  VerifiedFileCount=$rows.Count
-  RuntimeSourceSha=$head
-  LiveR1Restarted=$false
-  ProductionTouched=$false
-  TunnelTouched=$false
-  CutoverPerformed=$false
-  TestsPending=$true
- } | ConvertTo-Json -Compress
-}catch{
- # Remove only the new, isolated R2 directory created by THIS invocation.
- if($created){Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue}
- throw
-}
-){throw 'GIT_HEAD_RESOLVE_FAILED'}
 if($head -cne $expectedCommit){throw 'UNEXPECTED_CANDIDATE_COMMIT'}
 
 $config=Join-Path $commonDir 'config'
@@ -213,36 +114,40 @@ foreach($line in (Get-Content -LiteralPath $config)){
 if((Get-RemoteIdentity $origin) -cne $expectedRemote){throw 'GIT_REMOTE_MISMATCH'}
 
 $topRaw=(& $git -C $repo rev-parse --show-toplevel 2>$null | Out-String).Trim()
-if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($topRaw)){throw 'GIT_TOPLEVEL_QUERY_FAILED'}
-$top=[IO.Path]::GetFullPath($topRaw.Replace('/','\')).TrimEnd('\')
-$repoCanonical=[IO.Path]::GetFullPath($repo).TrimEnd('\')
-if($top -ine $repoCanonical){throw 'GIT_TOPLEVEL_MISMATCH'}
+if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($topRaw)){
+ throw 'GIT_TOPLEVEL_QUERY_FAILED'
+}
+$top=[IO.Path]::GetFullPath($topRaw)
+$repoCanonical=[IO.Path]::GetFullPath($repo)
+if($top.TrimEnd('\') -ine $repoCanonical.TrimEnd('\')){
+ throw 'GIT_TOPLEVEL_MISMATCH'
+}
 $dirty=@(& $git -C $repo status --porcelain=v1 --untracked-files=all)
 if($LASTEXITCODE -ne 0 -or $dirty.Count){throw 'SOURCE_WORKTREE_NOT_CLEAN'}
 
-foreach($rel in ($required+$tests)){
- if(!(Test-Path -LiteralPath (Join-Path $repo $rel) -PathType Leaf)){
-  throw ('SOURCE_MISSING_'+$rel)
- }
-}
+# Copy only tracked files. Local ignored/private files must never enter R2.
+$tracked=@(& $git -C $repo ls-files -- 'tools/powershell-direct' 'tools/ai_collaboration')
+if($LASTEXITCODE -ne 0){throw 'GIT_TRACKED_FILE_LIST_FAILED'}
+$hashFiles=@($tracked | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
+if($hashFiles.Count -lt 17){throw 'TRACKED_SOURCE_INVENTORY_TOO_SMALL'}
 
-# Inventory every copied source file before any staging write. Reject reparse
-# points so a junction/symlink cannot pull content from outside the pinned tree.
-$hashFiles=@()
-foreach($relativeRoot in @('tools\powershell-direct','tools\ai_collaboration')){
- $sourceRoot=Join-Path $repo $relativeRoot
- $entries=@(Get-ChildItem -LiteralPath $sourceRoot -Force -Recurse)
- foreach($entry in $entries){
-  if(($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
-   throw 'SOURCE_REPARSE_POINT_DENIED'
-  }
-  if(!$entry.PSIsContainer){
-   $relative=$entry.FullName.Substring($repo.Length).TrimStart('\').Replace('\','/')
-   if($hashFiles -notcontains $relative){$hashFiles+= $relative}
-  }
+foreach($relative in ($required+$tests)){
+ if($hashFiles -notcontains $relative){throw ('TRACKED_SOURCE_MISSING_'+($relative -replace '[\\/ ]','_'))}
+}
+foreach($relative in $hashFiles){
+ if($relative -notmatch '^tools/(powershell-direct|ai_collaboration)/[a-zA-Z0-9_./ -]+$'){
+  throw 'TRACKED_SOURCE_PATH_UNSAFE'
+ }
+ if($relative.Split('/') -contains '..' -or $relative.Split('/') -contains '.'){
+  throw 'TRACKED_SOURCE_PATH_TRAVERSAL'
+ }
+ $sourcePath=Join-Path $repo ($relative.Replace('/','\'))
+ if(!(Test-Path -LiteralPath $sourcePath -PathType Leaf)){throw 'TRACKED_SOURCE_FILE_MISSING'}
+ $sourceItem=Get-Item -LiteralPath $sourcePath -Force
+ if($sourceItem.PSIsContainer -or (($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)){
+  throw 'SOURCE_REPARSE_POINT_DENIED'
  }
 }
-$hashFiles=@($hashFiles | Sort-Object -Unique)
 
 if($Mode -eq 'Inspect'){
  [pscustomobject]@{
@@ -252,6 +157,7 @@ if($Mode -eq 'Inspect'){
   RequiredSourceCount=$required.Count
   RegressionTestCount=$tests.Count
   InventoriedFileCount=$hashFiles.Count
+  TrackedFilesOnly=$true
   ExistingR1Untouched=$true
   ProductionUntouched=$true
  } | ConvertTo-Json -Compress
@@ -263,21 +169,21 @@ if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_EXISTS_NO_OVERWRITE'}
 
 $created=$false
 try{
- $null=New-Item -ItemType Directory -Path $stage -ErrorAction Stop
- $created=$true
  $null=New-Item -ItemType Directory -Path (Join-Path $stage 'tools') -ErrorAction Stop
- Copy-Item -LiteralPath (Join-Path $repo 'tools\powershell-direct') -Destination (Join-Path $stage 'tools\powershell-direct') -Recurse -ErrorAction Stop
- Copy-Item -LiteralPath (Join-Path $repo 'tools\ai_collaboration') -Destination (Join-Path $stage 'tools\ai_collaboration') -Recurse -ErrorAction Stop
-
+ $created=$true
  $rows=@()
- foreach($rel in $hashFiles){
-  $src=Join-Path $repo $rel
-  $dest=Join-Path $stage $rel
-  $sourceHash=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
-  if($sourceHash -cne (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash){
-   throw ('HASH_MISMATCH_'+$rel)
+ foreach($relative in $hashFiles){
+  $sourcePath=Join-Path $repo ($relative.Replace('/','\'))
+  $targetPath=Join-Path $stage ($relative.Replace('/','\'))
+  $targetDirectory=Split-Path -Parent $targetPath
+  if(!(Test-Path -LiteralPath $targetDirectory -PathType Container)){
+   $null=New-Item -ItemType Directory -Path $targetDirectory -Force -ErrorAction Stop
   }
-  $rows+= [pscustomobject]@{File=$rel;Sha256=$sourceHash}
+  Copy-Item -LiteralPath $sourcePath -Destination $targetPath -ErrorAction Stop
+  $sourceHash=(Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
+  $targetHash=(Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash
+  if($sourceHash -cne $targetHash){throw 'R2_SOURCE_HASH_MISMATCH'}
+  $rows+= [pscustomobject]@{File=$relative;Sha256=$sourceHash}
  }
  $manifest=Join-Path $stage 'source-hashes.json'
  ConvertTo-Json -InputObject $rows -Depth 4 | Set-Content -LiteralPath $manifest -Encoding UTF8
@@ -288,6 +194,7 @@ try{
   Target=$stage
   VerifiedFileCount=$rows.Count
   RuntimeSourceSha=$head
+  TrackedFilesOnly=$true
   LiveR1Restarted=$false
   ProductionTouched=$false
   TunnelTouched=$false
