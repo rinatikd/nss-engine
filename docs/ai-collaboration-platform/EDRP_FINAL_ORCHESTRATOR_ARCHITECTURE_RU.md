@@ -1133,3 +1133,26 @@ Follow-up diagnostics were added to the platform branch:
 **Parallel execution rule:** failure/blockage in one workstream must not suspend any independent branch. Keep each task's exact SHA, state, evidence and dependency links separate; a shared infrastructure blocker blocks only tasks that actually require that infrastructure. Continue code review, documentation, CI remediation, AGPT/AutoCAD work and offline Workbench work while Lab staging/agent dispatch is being repaired.
 
 No PR in this table is merged or marked Ready. No Lab/Production service, credentials, browser profile, AutoCAD installation, or working DWG was changed by these parallel source/document updates.
+
+### 22.16. Free AI Workbench P0 independent security/code review — 2026-11-23
+
+Reviewed exact PR #111 source files: `ledger.mjs`, `ui/viewer.mjs`, `ui/app.mjs`, `ui/index.html`, `ledger.test.mjs`, `viewer.test.mjs`, and README.
+
+**Positive findings confirmed from source:**
+- Browser viewer imports the chosen local file through `fileInput.files[0].text()`; the viewer module contains no `fetch`, XMLHttpRequest, localStorage/sessionStorage or `innerHTML`.
+- The HTML Content-Security-Policy defaults to deny, permits only same-origin local script/style, and sets `connect-src 'none'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'none'`.
+- Imported strings are rendered through DOM `textContent`; no dynamic HTML execution path was found in the reviewed UI.
+- V2 event payload fingerprints and chain links are verified before projection. Legacy-only data is explicitly labelled `LEGACY_UNCHAINED`; torn tail, invalid transition, duplicate requestId and modified hashes reject the file.
+- Writer uses a single-writer exclusive lock file, refuses to steal an existing lock, fsyncs the appended file before acknowledging, and does not auto-truncate/repair a damaged ledger.
+- Exact PR #111 CI at `9ee6e02fbc6a0796985bc3756cfda5e4e3823323`: Source checks and CCTV guard passed; ledger/viewer suite 17/17 PASS (CI record in #111 history).
+
+**Accepted limitations / security boundary:**
+- Actor and role are caller-supplied strings, not authenticated identity or signed authorization. Any local process able to write the event file can impersonate planner/developer/reviewer roles.
+- SHA-256 hash chaining detects accidental or partial tampering, but is not a signature and does not prevent a privileged actor from rewriting the entire file and recomputing the chain.
+- The local lock is intentionally fail-closed; stale-lock ownership/recovery is a manual operator procedure. There is no authenticated cross-process actor model or crash-recovery protocol for external effects.
+- The viewer validates integrity and projects records; it does not prove the truth of an evidence URI/path or validate the content of external evidence files.
+- There is no multi-agent dispatch, browser integration, Git execution, PowerShell execution, Windows service or LLM invocation in this P0 implementation.
+
+**Decision:** Workbench P0 source prototype is suitable for further offline UX/ledger evaluation; it is **not** an authoritative EDRP ledger, approval service, multi-agent coordinator or execution gate. Keep it single-operator/offline. P1 requires exact target-folder baseline and browser E2E; any authenticated multi-agent/network integration requires externally authenticated actor identity, signed/one-shot approvals, durable nonce/replay storage, independent authorization, lock recovery tests and a separate security review.
+
+No local installation, network exposure, provider call, Windows command or DWG mutation was performed by this review.
