@@ -164,7 +164,8 @@ foreach($relative in @(
  'deployment\verify-candidate-source.ps1',
  'deployment\upgrade-pr102-lab-server.ps1',
  'deployment\upgrade-pr102-lab.ps1',
- 'extension\manifest.json',
+ 'extension\background.js',
+ 'extension\control.js',
  'extension\session-authorization.js',
  'consilium-control-room\consilium\control-room.mjs'
 )){
