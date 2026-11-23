@@ -5,31 +5,73 @@ $ErrorActionPreference='Stop'
 $repo=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath
 $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
 $node='C:\Program Files\nodejs\node.exe'
-$branch='feat/psdirect-per-job-workspace-approval-20261123'
+$expectedCommit='e4a3e47f17a48e1acc731bc4249551bb43537b70'
+$expectedRemote='github.com/rinatikd/nss-engine'
+$git='C:\Program Files\Git\cmd\git.exe'
 $tests=@(
- 'tools/powershell-direct/tests/engineering.test.mjs',
- 'tools/ai_collaboration/engineering-runner.test.mjs',
- 'tools/powershell-direct/tests/named-suites.test.mjs',
+ 'tools/ai_collaboration/workspace-policy.test.mjs',
+ 'tools/ai_collaboration/local_test_runner.test.mjs',
  'tools/ai_collaboration/local_job_service.test.mjs',
- 'tools/ai_collaboration/local_mcp_dispatch.test.mjs',
+ 'tools/ai_collaboration/engineering-runner.test.mjs',
  'tools/powershell-direct/tests/service.test.mjs',
- 'tools/powershell-direct/tests/chat-approval-config.test.mjs',
- 'tools/ai_collaboration/chat-approval-attestation.test.mjs',
- 'tools/ai_collaboration/chat-approval-redemption.test.mjs',
- 'tools/ai_collaboration/chat-approval-replay-store.test.mjs',
- 'tools/ai_collaboration/chat-approval-service.test.mjs',
- 'tools/ai_collaboration/workspace-policy.test.mjs'
+ 'tools/powershell-direct/tests/named-suites.test.mjs',
+ 'tools/powershell-direct/tests/engineering.test.mjs'
 )
 $required=@(
  'tools/powershell-direct/service.mjs',
  'tools/powershell-direct/stack-supervisor.mjs',
+ 'tools/powershell-direct/runner.mjs',
  'tools/ai_collaboration/engineering-plan.mjs',
  'tools/ai_collaboration/engineering-runner.mjs',
  'tools/ai_collaboration/engineering-mcp.mjs',
  'tools/ai_collaboration/local_job_service.mjs',
+ 'tools/ai_collaboration/local_test_runner.mjs',
  'tools/ai_collaboration/workspace-policy.mjs',
  'tools/powershell-direct/tests/engineering-smoke.mjs'
 )
+if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_MISSING'}
+$dotGit=Join-Path $repo '.git'
+if(!(Test-Path -LiteralPath $dotGit)){throw 'GIT_METADATA_MISSING'}
+if(Test-Path -LiteralPath $dotGit -PathType Container){
+ $gitDir=$dotGit;$commonDir=$dotGit
+}else{
+ $pointer=(Get-Content -LiteralPath $dotGit -Raw).Trim()
+ if($pointer -notmatch '^gitdir:\s*(.+)$'){throw 'GIT_POINTER_INVALID'}
+ $gitDir=$Matches[1]
+ if(![IO.Path]::IsPathRooted($gitDir)){$gitDir=[IO.Path]::GetFullPath((Join-Path $repo $gitDir))}
+ $commonFile=Join-Path $gitDir 'commondir'
+ if(Test-Path -LiteralPath $commonFile){
+  $commonValue=(Get-Content -LiteralPath $commonFile -Raw).Trim()
+  if(![IO.Path]::IsPathRooted($commonValue)){$commonValue=[IO.Path]::GetFullPath((Join-Path $gitDir $commonValue))}
+  $commonDir=$commonValue
+ }else{$commonDir=$gitDir}
+}
+$headFile=Join-Path $gitDir 'HEAD'
+if(!(Test-Path -LiteralPath $headFile -PathType Leaf)){throw 'GIT_HEAD_MISSING'}
+$head=(Get-Content -LiteralPath $headFile -Raw).Trim()
+if($head -cne $expectedCommit){throw 'UNEXPECTED_CANDIDATE_COMMIT'}
+$config=Join-Path $commonDir 'config'
+if(!(Test-Path -LiteralPath $config -PathType Leaf)){throw 'GIT_CONFIG_MISSING'}
+$origin='';$inOrigin=$false
+foreach($line in (Get-Content -LiteralPath $config)){
+ if($line -match '^\s*\[remote\s+"origin"\]\s*$'){$inOrigin=$true;continue}
+ if($line -match '^\s*\['){$inOrigin=$false}
+ if($inOrigin -and $line -match '^\s*url\s*=\s*(.+?)\s*$'){$origin=$Matches[1];break}
+}
+$identity=''
+try{
+ $uri=[Uri]$origin
+ if($uri.IsAbsoluteUri -and $uri.Host){
+  $remotePath=$uri.AbsolutePath.TrimEnd('/')
+  if($remotePath.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$remotePath=$remotePath.Substring(0,$remotePath.Length-4)}
+  $identity=$uri.Host.ToLowerInvariant()+$remotePath.ToLowerInvariant()
+ }
+}catch{}
+if($identity -cne $expectedRemote){throw 'GIT_REMOTE_MISMATCH'}
+$top=(& $git -C $repo rev-parse --show-toplevel 2>$null|Out-String).Trim()
+if($LASTEXITCODE -ne 0 -or $top -ine $repo){throw 'GIT_TOPLEVEL_MISMATCH'}
+$dirty=@(& $git -C $repo status --porcelain=v1 --untracked-files=all)
+if($LASTEXITCODE -ne 0 -or $dirty.Count){throw 'SOURCE_WORKTREE_NOT_CLEAN'}
 foreach($exe in @($node)){
  if(!(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'TRUSTED_BINARY_MISSING'}
 }
