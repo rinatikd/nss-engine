@@ -1,5 +1,5 @@
 # Read-only inspection of PR132's fresh staging destination.
-# Does not write, clean, checkout, fetch or change Git configuration.
+# No fetch, checkout, cleanup, config changes or file writes.
 [CmdletBinding()]
 param()
 Set-StrictMode -Version Latest
@@ -26,13 +26,17 @@ function RemoteIdentity([string]$Value){
     $u=[Uri]$s
     if($u.IsAbsoluteUri -and $u.Host){
       $path=$u.AbsolutePath.TrimEnd('/')
-      if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$path=$path.Substring(0,$path.Length-4)}
+      if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){
+        $path=$path.Substring(0,$path.Length-4)
+      }
       return ($u.Host.ToLowerInvariant()+$path.ToLowerInvariant())
     }
   }catch{}
   if($s -match '^(?:[^@/]+@)?(?<host>[^/:]+):(?<path>[^?#]+)$'){
     $path=$Matches.path.TrimStart('/').TrimEnd('/')
-    if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$path=$path.Substring(0,$path.Length-4)}
+    if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){
+      $path=$path.Substring(0,$path.Length-4)
+    }
     return ($Matches.host.ToLowerInvariant()+'/'+$path.ToLowerInvariant())
   }
   return 'UNPARSEABLE'
@@ -40,7 +44,8 @@ function RemoteIdentity([string]$Value){
 
 $exists=Test-Path -LiteralPath $checkoutRoot -PathType Container
 $gitPath=Join-Path $checkoutRoot '.git'
-$gitItem=if($exists){Get-Item -LiteralPath $gitPath -Force -ErrorAction SilentlyContinue}else{$null}
+$gitItem=$null
+if($exists){$gitItem=Get-Item -LiteralPath $gitPath -Force -ErrorAction SilentlyContinue}
 $gitKind='MISSING'
 $gitDir=''
 $gitPointer=''
@@ -50,14 +55,18 @@ if($gitItem){
     $gitDir=$gitPath
   }else{
     $gitKind='FILE'
-    $gitPointer=(Get-Content -LiteralPath $gitPath -TotalCount 1 -ErrorAction SilentlyContinue | Select-Object -First 1)
+    $pointerLines=@(Get-Content -LiteralPath $gitPath -TotalCount 1 -ErrorAction SilentlyContinue)
+    if($pointerLines.Count -gt 0){$gitPointer=[string]$pointerLines[0]}
     if($gitPointer -match '^gitdir:\s*(.+)$'){
       $gitDir=$Matches[1]
-      if(!(Split-Path -IsAbsolute $gitDir)){$gitDir=[IO.Path]::GetFullPath((Join-Path $checkoutRoot $gitDir))}
+      if(!(Split-Path -IsAbsolute $gitDir)){
+        $gitDir=[IO.Path]::GetFullPath((Join-Path $checkoutRoot $gitDir))
+      }
     }
   }
 }
-$configPath=if($gitDir){Join-Path $gitDir 'config'}else{''}
+$configPath=''
+if($gitDir){$configPath=Join-Path $gitDir 'config'}
 $stored=''
 if($configPath -and (Test-Path -LiteralPath $configPath -PathType Leaf)){
   $inOrigin=$false
@@ -68,7 +77,11 @@ if($configPath -and (Test-Path -LiteralPath $configPath -PathType Leaf)){
   }
 }
 
-$root=$branch=$head=$status=$remote=$null
+$root=$null
+$branch=$null
+$head=$null
+$status=$null
+$remote=$null
 if($exists){
   $root=Git @('-C',$checkoutRoot,'rev-parse','--show-toplevel')
   $branch=Git @('-C',$checkoutRoot,'branch','--show-current')
@@ -77,28 +90,52 @@ if($exists){
   $remote=Git @('-C',$checkoutRoot,'remote','get-url','origin')
 }
 $statusLines=@()
-if($status){$statusLines=@($status.Output -split "\r?\n" | Where-Object { $_ })}
+if($null -ne $status -and $status.Output){
+  $statusLines=@($status.Output -split "\r?\n" | Where-Object { $_ })
+}
 $children=@()
 if($exists){$children=@(Get-ChildItem -LiteralPath $checkoutRoot -Force | Select-Object -First 20 -ExpandProperty Name)}
+
+$effectiveRemoteIdentity=''
+$remoteExitCode=$null
+if($null -ne $remote){
+  $effectiveRemoteIdentity=RemoteIdentity $remote.Output
+  $remoteExitCode=$remote.ExitCode
+}
+$gitTopLevel=''
+$gitTopLevelExitCode=$null
+if($null -ne $root){$gitTopLevel=$root.Output;$gitTopLevelExitCode=$root.ExitCode}
+$branchValue=''
+$branchExitCode=$null
+if($null -ne $branch){$branchValue=$branch.Output;$branchExitCode=$branch.ExitCode}
+$headValue=''
+$headExitCode=$null
+if($null -ne $head){$headValue=$head.Output;$headExitCode=$head.ExitCode}
+$gitDirExists=$false
+if($gitDir){$gitDirExists=Test-Path -LiteralPath $gitDir -PathType Container}
+$configExists=$false
+if($configPath){$configExists=Test-Path -LiteralPath $configPath -PathType Leaf}
+$gitPointerIsGitDir=($gitPointer -match '^gitdir:\s*')
+$worktreeClean=($statusLines.Count -eq 0 -and $null -ne $status)
 [pscustomobject]@{
   Result='PR132_RELEASE_CHECKOUT_INSPECT_READ_ONLY'
   CheckoutExists=$exists
   CheckoutRoot=$checkoutRoot
   GitMetadataKind=$gitKind
-  GitPointerIsGitDir=($gitPointer -match '^gitdir:\s*')
-  GitDirExists=($gitDir -and (Test-Path -LiteralPath $gitDir -PathType Container))
-  ConfigExists=($configPath -and (Test-Path -LiteralPath $configPath -PathType Leaf))
+  GitPointerIsGitDir=$gitPointerIsGitDir
+  GitDirExists=$gitDirExists
+  ConfigExists=$configExists
   StoredOriginIdentity=(RemoteIdentity $stored)
-  EffectiveOriginIdentity=(if($remote){RemoteIdentity $remote.Output}else{''})
-  RemoteExitCode=$(if($remote){$remote.ExitCode}else{$null})
-  GitTopLevel=$(if($root){$root.Output}else{''})
-  GitTopLevelExitCode=$(if($root){$root.ExitCode}else{$null})
-  Branch=$(if($branch){$branch.Output}else{''})
-  BranchExitCode=$(if($branch){$branch.ExitCode}else{$null})
-  Head=$(if($head){$head.Output}else{''})
-  HeadExitCode=$(if($head){$head.ExitCode}else{$null})
+  EffectiveOriginIdentity=$effectiveRemoteIdentity
+  RemoteExitCode=$remoteExitCode
+  GitTopLevel=$gitTopLevel
+  GitTopLevelExitCode=$gitTopLevelExitCode
+  Branch=$branchValue
+  BranchExitCode=$branchExitCode
+  Head=$headValue
+  HeadExitCode=$headExitCode
   WorktreeStatusLines=$statusLines
-  WorktreeClean=($statusLines.Count -eq 0 -and $null -ne $status)
+  WorktreeClean=$worktreeClean
   TopLevelNames=$children
   NoWrites=$true
   LabChanged=$false
