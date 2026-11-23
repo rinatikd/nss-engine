@@ -7,9 +7,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-e59f3cd6-release-clean'
+$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-37f23d30-release-clean'
 $candidateRoot=Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
-$expectedSha='e59f3cd640a32868f78264eb85b6dbcdeff0b6fe'
+$expectedSha='37f23d307d41c25475926d60d9cdfe4f9969d8ac'
 $expectedBranch='feat/chat-approved-session-auth-20261122'
 $remoteExpected='https://github.com/rinatikd/nss-engine'
 $labServerRoot='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
@@ -334,6 +334,7 @@ try{
     CandidateRoot=$candidateRoot
     LabPort=$labPort
     ExpectedSourceSha=$expectedSha
+    NodeExe=$nodeExe
   }
   $extensionOutput=@(& $extensionScript @extensionParams 2>&1)
   $extensionText=[string]::Join([Environment]::NewLine,[string[]]@($extensionOutput|ForEach-Object {[string]$_}))
