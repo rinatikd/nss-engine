@@ -14,7 +14,7 @@ async function withPlan(fn){
   const plan=await resolveEngineeringPlan({
    requestId:'engineering-exec-0001',
    operation:'node-script',workspace:root,target:'probe.js'
-  },[root]);
+  });
   await fn(plan,root);
  }finally{await rm(root,{recursive:true,force:true});}
 }
@@ -65,7 +65,7 @@ test('git pull only uses fixed fast-forward arguments after clean branch preflig
  try{
   const plan=await resolveEngineeringPlan({
    requestId:'eng-git-pull-001',operation:'git-pull-ff-only',workspace:root
-  },[root]);
+  });
   assert.equal(plan.risk,'workspace-write');
   assert.ok(plan.args.includes('--ff-only'));
   assert.ok(plan.args.includes('--no-rebase'));
@@ -105,7 +105,7 @@ test('git pull refuses dirty, detached or missing-upstream worktrees without dis
  try{
   const plan=await resolveEngineeringPlan({
    requestId:'eng-git-deny-001',operation:'git-pull-ff-only',workspace:root
-  },[root]);
+  });
   for(const responses of [
    [null],
    ['main',null],
