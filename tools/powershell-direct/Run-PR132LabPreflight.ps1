@@ -1,0 +1,253 @@
+# Consolidated PR #132 / PR102 Lab preflight.
+# One bounded PowerShell Direct operation: normalize only proven EOL-only staging differences,
+# inspect exact Lab process/config identity, then dry-run both server and extension updaters.
+# Does NOT apply deployment, send provider messages, touch Production, or print credentials.
+[CmdletBinding()]
+param()
+Set-StrictMode -Version Latest
+$ErrorActionPreference='Stop'
+
+$workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
+$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-fb2c27a8-release-clean'
+$candidateRoot=Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
+$expectedSha='fb2c27a843d04e08b97dae876226751d9f3685fd'
+$expectedBranch='feat/chat-approved-session-auth-20261122'
+$remoteExpected='https://github.com/rinatikd/nss-engine'
+$labRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
+$labExtensionId='nhflbnfcaicihaepdcjacdmaddagcmcj'
+$labPort=17484
+$git='C:\Program Files\Git\cmd\git.exe'
+
+$workspace=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
+if($workspace -ine $workspaceExpected){throw 'UNEXPECTED_APPROVED_WORKSPACE'}
+if(!(Test-Path -LiteralPath $repo -PathType Container)){throw 'PINNED_CHECKOUT_NOT_FOUND'}
+if(!(Test-Path -LiteralPath $git -PathType Leaf)){throw 'TRUSTED_GIT_NOT_FOUND'}
+if(!(Test-Path -LiteralPath $candidateRoot -PathType Container)){throw 'PINNED_CANDIDATE_NOT_FOUND'}
+if(!(Test-Path -LiteralPath $labRoot -PathType Container)){throw 'PR102_LAB_ROOT_NOT_FOUND'}
+
+function InvokeGit([string[]]$GitArguments){
+  $global:LASTEXITCODE=0
+  $raw=@(& $git -C $repo @GitArguments 2>&1)
+  $exitCode=$global:LASTEXITCODE
+  $output=[string]::Join([Environment]::NewLine,[string[]]@($raw|ForEach-Object {[string]$_}))
+  return [pscustomobject]@{ExitCode=$exitCode;Output=$output}
+}
+function GitValue([string[]]$GitArguments){
+  $r=InvokeGit $GitArguments
+  if($r.ExitCode -ne 0){throw ('GIT_READ_FAILED: '+($GitArguments -join ' '))}
+  return $r.Output.Trim()
+}
+function FullPath([string]$Path){return [IO.Path]::GetFullPath($Path).TrimEnd('\')}
+function IsInside([string]$Child,[string]$Parent){
+  $c=(FullPath $Child)+'\'
+  $p=(FullPath $Parent)+'\'
+  return $c.StartsWith($p,[StringComparison]::OrdinalIgnoreCase)
+}
+function RemoteIdentity([string]$Value){
+  if([string]::IsNullOrWhiteSpace($Value)){return ''}
+  $s=$Value.Trim()
+  try{
+    $u=[Uri]$s
+    if($u.IsAbsoluteUri -and $u.Host){
+      $path=$u.AbsolutePath.TrimEnd('/')
+      if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$path=$path.Substring(0,$path.Length-4)}
+      return ($u.Host.ToLowerInvariant()+$path.ToLowerInvariant())
+    }
+  }catch{}
+  if($s -match '^(?:[^@/]+@)?(?<host>[^/:]+):(?<path>[^?#]+)$'){
+    $path=$Matches.path.TrimStart('/').TrimEnd('/')
+    if($path.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$path=$path.Substring(0,$path.Length-4)}
+    return ($Matches.host.ToLowerInvariant()+'/'+$path.ToLowerInvariant())
+  }
+  return ''
+}
+
+# Gate 1: exact repository, branch and immutable source commit.
+$remote=GitValue @('remote','get-url','origin')
+$branch=GitValue @('branch','--show-current')
+$head=GitValue @('rev-parse','HEAD')
+if((RemoteIdentity $remote) -cne (RemoteIdentity $remoteExpected)){throw 'CANDIDATE_REMOTE_MISMATCH'}
+if($branch -cne $expectedBranch){throw 'CANDIDATE_BRANCH_MISMATCH'}
+if($head -cne $expectedSha){throw 'CANDIDATE_COMMIT_MISMATCH'}
+
+# Gate 2: normalize only tracked, unstaged, EOL-only differences in this disposable checkout.
+$status=InvokeGit @('status','--porcelain=v1','--untracked-files=all')
+if($status.ExitCode -ne 0){throw 'CANDIDATE_STATUS_READ_FAILED'}
+$normalizationCount=0
+if(-not [string]::IsNullOrWhiteSpace($status.Output)){
+  $cached=InvokeGit @('diff','--cached','--quiet')
+  $eolOnly=InvokeGit @('diff','--quiet','--ignore-space-at-eol')
+  $untracked=GitValue @('ls-files','--others','--exclude-standard')
+  if($cached.ExitCode -ne 0 -or $eolOnly.ExitCode -ne 0 -or -not [string]::IsNullOrWhiteSpace($untracked)){
+    throw 'CANDIDATE_WORKTREE_HAS_NON_EOL_OR_UNTRACKED_CHANGES'
+  }
+  $rows=@($status.Output -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  foreach($line in $rows){
+    if($line.Length -lt 4 -or $line.Substring(0,2) -cne ' M'){throw 'CANDIDATE_NON_WORKTREE_STATUS_REFUSED'}
+    $relativePath=$line.Substring(3)
+    if($relativePath -notmatch '^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+$'){throw 'CANDIDATE_UNSAFE_RELATIVE_PATH'}
+    $fullPath=[IO.Path]::GetFullPath((Join-Path $repo ($relativePath.Replace('/','\'))))
+    if(-not (IsInside $fullPath $repo)){throw 'CANDIDATE_PATH_ESCAPES_CHECKOUT'}
+    $null=GitValue @('-c','core.autocrlf=true','-c','core.safecrlf=false','checkout-index','--force','--',$relativePath)
+    $normalizationCount++
+  }
+}
+$after=GitValue @('status','--porcelain=v1','--untracked-files=all')
+if(-not [string]::IsNullOrWhiteSpace($after)){throw 'CANDIDATE_WORKTREE_NOT_CLEAN'}
+if((GitValue @('rev-parse','HEAD')) -cne $expectedSha){throw 'CANDIDATE_HEAD_CHANGED_DURING_NORMALIZATION'}
+
+# Gate 3: verify required source files and source tree integrity.
+foreach($relative in @(
+ 'server\bridge.mjs',
+ 'server\tools.mjs',
+ 'deployment\process-identity.ps1',
+ 'deployment\verify-candidate-source.ps1',
+ 'deployment\upgrade-pr102-lab-server.ps1',
+ 'deployment\upgrade-pr102-lab.ps1',
+ 'extension\manifest.json',
+ 'extension\session-authorization.js',
+ 'consilium-control-room\consilium\control-room.mjs'
+)){
+  if(!(Test-Path -LiteralPath (Join-Path $candidateRoot $relative) -PathType Leaf)){
+    throw ('PINNED_CANDIDATE_FILE_MISSING: '+$relative)
+  }
+}
+. (Join-Path $candidateRoot 'deployment\verify-candidate-source.ps1')
+$sourceInputsServer=@('server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab-server.ps1')
+$sourceInputsExtension=@('extension','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab.ps1')
+$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths $sourceInputsServer
+$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths $sourceInputsExtension
+
+# Gate 4: exact owner and process identity for the one loopback Lab listener.
+. (Join-Path $candidateRoot 'deployment\process-identity.ps1')
+$listeners=@([BridgeNativeMetadata]::Listeners($labPort))
+if($listeners.Count -ne 1){throw ('LAB_LISTENER_COUNT_MISMATCH: '+$listeners.Count)}
+$listenerParts=([string]$listeners[0]).Split('|')
+if($listenerParts.Count -ne 2 -or $listenerParts[0] -cne '127.0.0.1'){throw 'LAB_LISTENER_ADDRESS_MISMATCH'}
+$expectedPid=0
+if(![int]::TryParse($listenerParts[1],[ref]$expectedPid) -or $expectedPid -le 0){throw 'LAB_LISTENER_PID_INVALID'}
+$proc=[Diagnostics.Process]::GetProcessById($expectedPid)
+try{
+  $null=$proc.Handle
+  $identity=Get-BridgeHandleIdentity $proc
+}finally{$proc.Dispose()}
+if($identity.executable -notmatch '(?i)\\node\.exe$'){throw 'LAB_OWNER_NOT_NODE'}
+$nodeExe=(Get-Command node.exe -ErrorAction Stop).Source
+if($identity.executable -ine $nodeExe){throw 'LAB_NODE_EXECUTABLE_MISMATCH'}
+
+# Identify exactly one existing Lab config without printing token material.
+$configPaths=@(
+ (Join-Path $labRoot 'config.json'),
+ (Join-Path $labRoot 'state\config.json'),
+ (Join-Path $labRoot 'data\config.json'),
+ (Join-Path $labRoot '.state\config.json')
+)
+$configMatches=@()
+foreach($path in $configPaths){
+  if(Test-Path -LiteralPath $path -PathType Leaf){
+    $cfg=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json
+    if($cfg.extensionId -ceq $labExtensionId -and
+       $cfg.agentToken -is [string] -and $cfg.agentToken.Length -ge 32 -and
+       $cfg.browserToken -is [string] -and $cfg.browserToken.Length -ge 32){
+      $configMatches += [pscustomobject]@{
+        Path=$path
+        StateRoot=(Split-Path -Parent $path)
+        ConfigSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+      }
+    }
+  }
+}
+if($configMatches.Count -ne 1){throw ('LAB_CONFIG_IDENTITY_NOT_UNIQUE: '+$configMatches.Count)}
+$configEvidence=$configMatches[0]
+
+# Require the process command line to be pinned either directly to this Lab's bridge.mjs
+# or to a same-Lab cutover transaction whose job pins source/state/port/config hash.
+$command=([string]$identity.command).Replace('/','\')
+$expectedBridge=(Join-Path $labRoot 'server\bridge.mjs').Replace('/','\')
+$directServer=$command.IndexOf($expectedBridge,[StringComparison]::OrdinalIgnoreCase) -ge 0
+$transactionValid=$false
+$commandKind='UNMATCHED'
+$match=[regex]::Match($command,'^"(?<exe>[^"]+)"\s+"(?<script>[^"]+\\cutover-start\.mjs)"\s+"(?<job>[^"]+\\start-[0-9a-f]{32}\.json)"$',[Text.RegularExpressions.RegexOptions]::IgnoreCase)
+if($match.Success){
+  $exePath=FullPath $match.Groups['exe'].Value
+  $scriptPath=FullPath $match.Groups['script'].Value
+  $jobPath=FullPath $match.Groups['job'].Value
+  if($exePath -ieq (FullPath $nodeExe) -and (IsInside $scriptPath $labRoot) -and (IsInside $jobPath $labRoot) -and
+     (Test-Path -LiteralPath $scriptPath -PathType Leaf) -and (Test-Path -LiteralPath $jobPath -PathType Leaf)){
+    $job=Get-Content -LiteralPath $jobPath -Raw -Encoding UTF8|ConvertFrom-Json
+    $jobSource=FullPath ([string]$job.source)
+    $jobState=FullPath ([string]$job.state)
+    $scriptDir=FullPath (Split-Path -Parent $scriptPath)
+    $jobDir=FullPath (Split-Path -Parent $jobPath)
+    $runLeaf=Split-Path -Leaf $scriptDir
+    $transactionValid=(
+      $jobSource -ieq (FullPath $labRoot) -and
+      $jobState -ieq (FullPath $configEvidence.StateRoot) -and
+      [int]$job.port -eq $labPort -and
+      [string]$job.configHash -ceq $configEvidence.ConfigSha256 -and
+      $scriptDir -ieq $jobDir -and
+      $runLeaf -match '^\.server-upgrade-[0-9a-f]{32}$' -and
+      (Split-Path -Leaf $scriptPath) -ceq 'cutover-start.mjs'
+    )
+    if($transactionValid){$commandKind='transaction-launcher'}
+  }
+}
+if($directServer){$commandKind='direct-bridge'}
+if(-not ($directServer -or $transactionValid)){throw 'LAB_PROCESS_COMMAND_LINE_NOT_PINNED_TO_EXPECTED_LAB_SERVER'}
+$expectedStartUtc=[DateTime]::Parse($identity.created).ToUniversalTime().ToString('o')
+
+# Gate 5: server dry-run, then extension dry-run, both pinned to source SHA and Lab 17484.
+$serverScript=Join-Path $candidateRoot 'deployment\upgrade-pr102-lab-server.ps1'
+$extensionScript=Join-Path $candidateRoot 'deployment\upgrade-pr102-lab.ps1'
+$serverParams=@{
+  LabRoot=$labRoot
+  StateRoot=$configEvidence.StateRoot
+  ExpectedPid=$expectedPid
+  ExpectedStartUtc=$expectedStartUtc
+  CandidateRoot=$candidateRoot
+  ExpectedSourceSha=$expectedSha
+}
+$serverOutput=@(& $serverScript @serverParams 2>&1)
+$serverText=[string]::Join([Environment]::NewLine,[string[]]@($serverOutput|ForEach-Object {[string]$_}))
+if($serverText -notmatch '\[DRY_RUN\] Server and isolated MCP registry validated'){throw ('SERVER_DRY_RUN_FAILED: '+$serverText)}
+$extensionParams=@{
+  LabRoot=$labRoot
+  CandidateRoot=$candidateRoot
+  LabPort=$labPort
+  ExpectedSourceSha=$expectedSha
+}
+$extensionOutput=@(& $extensionScript @extensionParams 2>&1)
+$extensionText=[string]::Join([Environment]::NewLine,[string[]]@($extensionOutput|ForEach-Object {[string]$_}))
+if($extensionText -notmatch '\[DRY_RUN\] No installed files changed'){throw ('EXTENSION_DRY_RUN_FAILED: '+$extensionText)}
+
+# Reconfirm immutable checkout and unchanged process identity after dry-runs.
+if((GitValue @('rev-parse','HEAD')) -cne $expectedSha){throw 'CANDIDATE_HEAD_CHANGED_AFTER_DRY_RUN'}
+if(-not [string]::IsNullOrWhiteSpace((GitValue @('status','--porcelain=v1','--untracked-files=all')))){throw 'CANDIDATE_WORKTREE_CHANGED_AFTER_DRY_RUN'}
+$currentListener=@([BridgeNativeMetadata]::Listeners($labPort))
+if($currentListener.Count -ne 1 -or [string]$currentListener[0] -cne ('127.0.0.1|'+$expectedPid)){throw 'LAB_LISTENER_CHANGED_DURING_PREFLIGHT'}
+if((Get-FileHash -LiteralPath $configEvidence.Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $configEvidence.ConfigSha256){throw 'LAB_CONFIG_CHANGED_DURING_PREFLIGHT'}
+
+[pscustomobject]@{
+  Result='PR132_LAB_PREFLIGHT_READY'
+  SourceCommit=$expectedSha
+  SourceBranch=$expectedBranch
+  SourceRemoteIdentity=(RemoteIdentity $remote)
+  CandidateRoot=$candidateRoot
+  CandidateWorktreeClean=$true
+  EolOnlyFilesNormalized=$normalizationCount
+  LabRoot=$labRoot
+  LabPort=$labPort
+  LabExtensionId=$labExtensionId
+  LabProcessId=$expectedPid
+  LabProcessStartUtc=$expectedStartUtc
+  LabCommandKind=$commandKind
+  LabStateRoot=$configEvidence.StateRoot
+  LabConfigSha256=$configEvidence.ConfigSha256
+  ServerDryRun='PASS'
+  ExtensionDryRun='PASS'
+  NoProviderMessagesSent=$true
+  NoSessionAuthorized=$true
+  ProductionChanged=$false
+  CredentialsPrinted=$false
+  DeploymentApplied=$false
+}|ConvertTo-Json -Depth 5
