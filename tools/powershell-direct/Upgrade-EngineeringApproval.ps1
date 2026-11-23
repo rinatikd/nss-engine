@@ -25,6 +25,7 @@ $relative=@(
  'tools\ai_collaboration\engineering-mcp.mjs',
  'tools\ai_collaboration\local_job_service.mjs',
  'tools\ai_collaboration\workspace-policy.mjs'
+ 'tools\ai_collaboration\local_test_runner.mjs'
 )
 function Get-Listener([int]$port){
  $s=@(Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
