@@ -31,18 +31,18 @@ function RunGit([string]$Args){
   [pscustomobject]@{ExitCode=$p.ExitCode;Output=([string]$o.Result).Trim();ErrorPresent=(![string]::IsNullOrWhiteSpace([string]$e.Result))}
 }
 $headBefore=RunGit 'rev-parse HEAD'
-$indexBefore=RunGit ('rev-parse :'+$path)
+$indexBefore=RunGit ('ls-files -s -- '+$path)
 $eolBefore=RunGit ('ls-files --eol -- '+$path)
 $statusBefore=RunGit ('status --porcelain=v1 -- '+$path)
 if($headBefore.ExitCode -ne 0 -or $indexBefore.ExitCode -ne 0){throw 'PINNED_HEAD_OR_INDEX_UNAVAILABLE'}
-if($statusBefore.ExitCode -ne 0 -or $statusBefore.Output -notmatch '^ M '){throw 'TARGET_FILE_NOT_EXPECTED_UNSTAGED_MODIFICATION'}
+if($statusBefore.ExitCode -ne 0 -or $statusBefore.Output -notmatch '^M '){throw 'TARGET_FILE_NOT_EXPECTED_UNSTAGED_MODIFICATION'}
 
 $restore=RunGit ('-c core.autocrlf=true -c core.safecrlf=false checkout-index --force -- '+$path)
 if($restore.ExitCode -ne 0){throw 'EXPLICIT_EOL_CHECKOUT_FAILED'}
 $eolAfter=RunGit ('ls-files --eol -- '+$path)
 $statusAfter=RunGit ('status --porcelain=v1 -- '+$path)
 $headAfter=RunGit 'rev-parse HEAD'
-$indexAfter=RunGit ('rev-parse :'+$path)
+$indexAfter=RunGit ('ls-files -s -- '+$path)
 [pscustomobject]@{
  Result='PR132_SINGLE_FILE_EOL_CHECKOUT_PROBE'
  Path=$path
