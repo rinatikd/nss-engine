@@ -134,6 +134,15 @@ public static class BridgeNativeMetadata {
 }
 '@
 }
+function Get-BridgeCanonicalPath([string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) { throw 'Path is required' }
+  $full = [IO.Path]::GetFullPath($Value.Trim())
+  $rootPath = [IO.Path]::GetPathRoot($full)
+  while ($full.Length -gt $rootPath.Length -and ($full.EndsWith('\') -or $full.EndsWith('/'))) {
+    $full = $full.Substring(0, $full.Length - 1)
+  }
+  return $full
+}
 function Get-BridgeIdentity($number) {
   $p=[Diagnostics.Process]::GetProcessById([int]$number)
   try { Get-BridgeHandleIdentity $p } finally { $p.Dispose() }
@@ -145,7 +154,7 @@ function Get-BridgeHandleIdentity($p) {
     id=$p.Id
     executable=[BridgeNativeMetadata]::Image($h)
     command=[BridgeNativeMetadata]::Command($h)
-    workingDirectory=[IO.Path]::GetFullPath([BridgeNativeMetadata]::CurrentDirectory($h)).TrimEnd('\\')
+    workingDirectory=(Get-BridgeCanonicalPath ([BridgeNativeMetadata]::CurrentDirectory($h)))
     bridgeHome=[BridgeNativeMetadata]::EnvironmentVariable($h,'CHROME_BRIDGE_HOME')
     bridgePort=[BridgeNativeMetadata]::EnvironmentVariable($h,'CHROME_BRIDGE_PORT')
     extensionId=[BridgeNativeMetadata]::EnvironmentVariable($h,'CHROME_BRIDGE_EXTENSION_ID')
