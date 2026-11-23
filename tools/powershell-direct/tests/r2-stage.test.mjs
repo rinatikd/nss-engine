@@ -17,12 +17,35 @@ const tests=[
  'tools/powershell-direct/tests/engineering.test.mjs'
 ];
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-test('R2 exists and stage manifest matches pinned source, runtime and regression-test bytes',()=>{
+function treeInventory(base){
+ const roots=['tools/powershell-direct','tools/ai_collaboration'];
+ const files=[];
+ for(const root of roots){
+  const absoluteRoot=path.join(base,root);
+  const visit=directory=>{
+   for(const entry of fs.readdirSync(directory,{withFileTypes:true})){
+    const absolute=path.join(directory,entry.name);
+    if(entry.isSymbolicLink())throw new Error('REPARSE_POINT_NOT_ALLOWED: '+absolute);
+    if(entry.isDirectory())visit(absolute);
+    else if(entry.isFile()){
+     const relative=path.relative(absoluteRoot,absolute).split(path.sep).join('/');
+     files.push(root+'/'+relative);
+    }else throw new Error('UNSUPPORTED_STAGE_ENTRY: '+absolute);
+   }
+  };
+  visit(absoluteRoot);
+ }
+ return files.sort();
+}
+test('R2 exists and manifest covers every copied pinned runtime and test file',()=>{
  assert.ok(fs.statSync(stage).isDirectory(),'R2 must exist before verification');
  const rows=JSON.parse(fs.readFileSync(path.join(stage,'source-hashes.json'),'utf8').replace(/^\uFEFF/,''));
  assert.ok(Array.isArray(rows)&&rows.length>=17);
+ const manifestFiles=rows.map(row=>row.File).sort();
+ assert.deepEqual(manifestFiles,treeInventory(source),'manifest must cover every pinned source file exactly once');
+ assert.deepEqual(manifestFiles,treeInventory(stage),'staged tree must contain exactly the manifest files');
  for(const rel of tests){
-  assert.ok(rows.some(row=>row.File===rel),'regression test is not hash-pinned: '+rel);
+  assert.ok(manifestFiles.includes(rel),'regression test is not hash-pinned: '+rel);
  }
  for(const {File,Sha256} of rows){
   assert.match(File,/^tools\/(?:powershell-direct|ai_collaboration)\/[a-zA-Z0-9_./-]+$/);
