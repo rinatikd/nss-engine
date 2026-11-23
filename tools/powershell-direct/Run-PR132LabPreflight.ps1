@@ -199,8 +199,10 @@ try{
   $identity=Get-BridgeHandleIdentity $proc
 }finally{$proc.Dispose()}
 if($identity.executable -notmatch '(?i)\\node\.exe$'){throw 'LAB_OWNER_NOT_NODE'}
-$nodeExe=(Get-Command node.exe -ErrorAction Stop).Source
-if($identity.executable -ine $nodeExe){throw 'LAB_NODE_EXECUTABLE_MISMATCH'}
+$nodeExe=FullPath ([string]$identity.executable)
+if(!(Test-Path -LiteralPath $nodeExe -PathType Leaf)){throw 'LAB_NODE_EXECUTABLE_NOT_FOUND'}
+$nodeExeDirectory=Split-Path -Parent $nodeExe
+if([string]::IsNullOrWhiteSpace($nodeExeDirectory)){throw 'LAB_NODE_EXECUTABLE_DIRECTORY_INVALID'}
 
 # Identify exactly one existing Lab config without printing token material.
 $configPaths=@(
@@ -274,18 +276,25 @@ $serverParams=@{
   CandidateRoot=$candidateRoot
   ExpectedSourceSha=$expectedSha
 }
-$serverOutput=@(& $serverScript @serverParams 2>&1)
-$serverText=[string]::Join([Environment]::NewLine,[string[]]@($serverOutput|ForEach-Object {[string]$_}))
-if($serverText -notmatch '\[DRY_RUN\] Server and isolated MCP registry validated'){throw ('SERVER_DRY_RUN_FAILED: '+$serverText)}
-$extensionParams=@{
-  LabRoot=$labRoot
-  CandidateRoot=$candidateRoot
-  LabPort=$labPort
-  ExpectedSourceSha=$expectedSha
-}
-$extensionOutput=@(& $extensionScript @extensionParams 2>&1)
-$extensionText=[string]::Join([Environment]::NewLine,[string[]]@($extensionOutput|ForEach-Object {[string]$_}))
-if($extensionText -notmatch '\[DRY_RUN\] No installed files changed'){throw ('EXTENSION_DRY_RUN_FAILED: '+$extensionText)}
+$previousPath=$env:PATH
+try{
+  # Pin both dry-run updaters to the exact node.exe image owning the live Lab listener.
+  $env:PATH=$nodeExeDirectory+';'+$previousPath
+  $selectedNode=(Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
+  if((FullPath $selectedNode) -ine $nodeExe){throw 'LAB_NODE_EXECUTABLE_RESOLUTION_MISMATCH'}
+  $serverOutput=@(& $serverScript @serverParams 2>&1)
+  $serverText=[string]::Join([Environment]::NewLine,[string[]]@($serverOutput|ForEach-Object {[string]$_}))
+  if($serverText -notmatch '\[DRY_RUN\] Server and isolated MCP registry validated'){throw ('SERVER_DRY_RUN_FAILED: '+$serverText)}
+  $extensionParams=@{
+    LabRoot=$labRoot
+    CandidateRoot=$candidateRoot
+    LabPort=$labPort
+    ExpectedSourceSha=$expectedSha
+  }
+  $extensionOutput=@(& $extensionScript @extensionParams 2>&1)
+  $extensionText=[string]::Join([Environment]::NewLine,[string[]]@($extensionOutput|ForEach-Object {[string]$_}))
+  if($extensionText -notmatch '\[DRY_RUN\] No installed files changed'){throw ('EXTENSION_DRY_RUN_FAILED: '+$extensionText)}
+}finally{$env:PATH=$previousPath}
 
 # Reconfirm immutable checkout and unchanged process identity after dry-runs.
 if((GitValue @('rev-parse','HEAD')) -cne $expectedSha){throw 'CANDIDATE_HEAD_CHANGED_AFTER_DRY_RUN'}
