@@ -26,6 +26,8 @@ export function canonicalUserWorkspace(candidate,{
     throw Error('WORKSPACE_NOT_ABSOLUTE');
   if(win&&(candidate.startsWith('\\\\.\\')||candidate.toLowerCase().startsWith('\\\\?\\globalroot')))
     throw Error('WORKSPACE_DEVICE_PATH_DENIED');
+  if(win&&candidate.startsWith('\\\\'))
+    throw Error('WORKSPACE_NETWORK_PATH_DENIED');
   let actual;
   try{actual=realpath(candidate);}catch{throw Error('WORKSPACE_NOT_FOUND');}
   let info;
