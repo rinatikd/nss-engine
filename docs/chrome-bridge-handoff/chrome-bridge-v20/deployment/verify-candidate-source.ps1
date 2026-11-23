@@ -49,7 +49,7 @@ function Assert-BridgeCandidateSource {
   $dirtyArgs=@('status','--porcelain=v1','--untracked-files=all','--') + @($InputPaths)
   $dirty=Invoke-BridgeCandidateGit -CandidateRoot $CandidateRoot -Arguments $dirtyArgs
   if (-not [string]::IsNullOrWhiteSpace($dirty)) {
-    throw 'CANDIDATE_WORKTREE_NOT_CLEAN'
+    throw ('CANDIDATE_WORKTREE_NOT_CLEAN: '+$dirty)
   }
 
   # Git status intentionally omits ignored files. These directories are copied by
