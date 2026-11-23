@@ -148,6 +148,8 @@ export function terminateProcessTree(child, {
 export async function executeTestPlan(plan, { spawnImpl = spawn, terminateImpl = terminateProcessTree } = {}) {
   if (!plan || !Object.hasOwn(SUITES, plan.suite))
     throw new TaskPolicyError('UNRECOGNIZED_PLAN');
+  const currentWorkspace=canonicalUserWorkspace(plan.cwd);
+  if(currentWorkspace!==plan.cwd)throw new TaskPolicyError('WORKSPACE_CHANGED_SINCE_APPROVAL');
   const spec = SUITES[plan.suite];
   if (plan.command !== spec.command ||
       JSON.stringify(plan.args) !== JSON.stringify(spec.args) ||
