@@ -10,7 +10,6 @@ import {PowerShellApprovalService} from '../service.mjs';
 const dir=await mkdtemp(path.join(tmpdir(),'ps-direct-smoke-'));
 const svc=new PowerShellApprovalService({
   root:'C:\\Engineering',port:0,
-  engineeringWorkspaceRoots:[dir],
   engineeringAuditDirectory:path.join(dir,'audits'),
   engineeringRunner:async()=>{throw Error('UNEXPECTED_EXECUTION')}
 });
