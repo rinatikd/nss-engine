@@ -94,6 +94,7 @@ test('named job STATUS does not start a pending job',()=>fixture(async({svc,dir,
   assert.equal(starts(),0);
   const entry=svc.namedPending.get(id);
   await approval(svc,entry,false);
+  await waitFor(async()=>(await svc.namedService.status(id)).state==='DENIED');
 }));
 
 test('model cannot smuggle approval=true',()=>fixture(async({svc,dir,starts})=>{
