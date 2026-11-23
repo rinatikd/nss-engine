@@ -195,7 +195,7 @@ EolOnlyNormalizationPerformed=(![string]::IsNullOrWhiteSpace($status.Stdout))
   $stderrTask=$proc.StandardError.ReadToEndAsync()
   $stream=$null
   try{
-    $stream=New-Object System.IO.FileStream($fullPath,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    $stream=[IO.File]::Open($fullPath,[IO.FileMode]::Create,[IO.FileAccess]::Write,[IO.FileShare]::None)
     $proc.StandardOutput.BaseStream.CopyTo($stream)
     $stream.Flush()
   }finally{
