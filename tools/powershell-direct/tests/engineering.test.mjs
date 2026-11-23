@@ -13,8 +13,7 @@ async function fixture(fn){
   await writeFile(path.join(root,'demo.csproj'),'<Project></Project>');
   let starts=0;
   const svc=new PowerShellApprovalService({
-    root:'C:\\Engineering',port:0,engineeringWorkspaceRoots:[root],
-    engineeringAuditDirectory:path.join(root,'audit'),
+    port:0,engineeringAuditDirectory:path.join(root,'audit'),
     engineeringRunner:async()=>{starts++;return {
       exitCode:0,state:'FINISHED',stdout:'PASS',stderr:'',truncated:false
     }}
@@ -104,19 +103,23 @@ test('arbitrary PowerShell and approval injection rejected before queue',()=>fix
 test('a single real test file inside the workspace can be planned',()=>fixture(async({root})=>{
   const plan=await resolveEngineeringPlan({
     ...req(root,'eng-plan-0007','node-test'),target:'tests/safe.test.mjs'
-  },[root]);
+  });
   assert.equal(plan.args[0],'--test');
   assert.equal(plan.risk,'code-execution');
   assert.equal(verifyEngineeringPlan(plan),plan);
 }));
-test('unknown workspace is rejected by the policy',()=>fixture(async({root})=>{
-  await assert.rejects(resolveEngineeringPlan(req(root,'eng-plan-0008'),[tmpdir()]),
-    /WORKSPACE_NOT_ALLOWLISTED/);
+test('any existing user-selected workspace is accepted per job without a static folder list',()=>fixture(async()=>{
+  const other=await mkdtemp(path.join(tmpdir(),'psdirect-other-'));
+  try{
+    const plan=await resolveEngineeringPlan(req(other,'eng-plan-0008'));
+    assert.equal(plan.cwd,other);
+    assert.equal(plan.risk,'read');
+  }finally{await rm(other,{recursive:true,force:true});}
 }));
 test('read-only process and port diagnostics cannot receive free-form script',()=>fixture(async({root})=>{
-  const processPlan=await resolveEngineeringPlan({...req(root,'eng-plan-0009','process-inspect'),pid:4321},[root]);
+  const processPlan=await resolveEngineeringPlan({...req(root,'eng-plan-0009','process-inspect'),pid:4321});
   assert.match(processPlan.args.at(-1),/ProcessId=\$id/);
-  const portPlan=await resolveEngineeringPlan({...req(root,'eng-plan-0010','port-inspect'),port:17486},[root]);
+  const portPlan=await resolveEngineeringPlan({...req(root,'eng-plan-0010','port-inspect'),port:17486});
   assert.match(portPlan.args.at(-1),/17486/);
 }));
 
@@ -126,7 +129,7 @@ test('approved PowerShell diagnostic script binds script path and digest',()=>fi
   const plan=await resolveEngineeringPlan({
     ...req(root,'eng-script-001','powershell-script'),
     target:'tests/check.ps1',scriptArgs:['-Mode','Status']
-  },[root]);
+  });
   assert.equal(plan.risk,'code-execution');
   assert.ok(plan.args.includes('-File'));
   assert.equal(plan.args.at(-2),'-Mode');
@@ -144,7 +147,7 @@ test('modified test path inside workspace remains a pinned file',()=>fixture(asy
   const plan=await resolveEngineeringPlan({
     ...req(root,'eng-script-003','node-script'),target:'tests/safe.test.mjs',
     scriptArgs:['--version']
-  },[root]);
+  });
   assert.equal(plan.args[0],path.join(root,'tests','safe.test.mjs'));
   assert.equal(plan.sourceSha256.length,64);
 }));
