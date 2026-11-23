@@ -24,7 +24,14 @@ $manifestKeyBefore=''
 if($manifestBeforeApply.PSObject.Properties['key']){$manifestKeyBefore=[string]$manifestBeforeApply.key}
 
 
-function FullPath([string]$Path){return [IO.Path]::GetFullPath($Path).TrimEnd('\')}
+function FullPath([string]$Path){
+  $full=[IO.Path]::GetFullPath($Path.Trim())
+  $rootPath=[IO.Path]::GetPathRoot($full)
+  while($full.Length -gt $rootPath.Length -and ($full.EndsWith('\') -or $full.EndsWith('/'))){
+    $full=$full.Substring(0,$full.Length-1)
+  }
+  return $full
+}
 function Require([bool]$Condition,[string]$Message){if(-not $Condition){throw $Message}}
 function GetLiveIdentity([int]$ProcessId){
   $p=[Diagnostics.Process]::GetProcessById($ProcessId)
@@ -80,7 +87,7 @@ function InvokeExtensionRollback([string]$BackupPath){
 }
 
 # Values and strict guards are supplied by Run-PR132LabPreflight.ps1.
-if($expectedSha -cne '4e33b8d34cd5c68b94ee304d4f0c0b502c46d56a'){throw 'UNEXPECTED_PR132_RELEASE_SHA'}
+if($expectedSha -cne '1aa86983fa1bee5b3cf239ca71e4c7d81b76e60b'){throw 'UNEXPECTED_PR132_RELEASE_SHA'}
 $initialPid=[int]$expectedPid
 $initialIdentity=$identity
 $stateBackupRoot=Join-Path $labStateRoot 'backups'
