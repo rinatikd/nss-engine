@@ -469,7 +469,6 @@ if((Get-FileHash -LiteralPath $configEvidence.Path -Algorithm SHA256).Hash.ToLow
   LabProcessId=$expectedPid
   LabProcessStartUtc=$expectedStartUtc
   LabCommandKind=$commandKind
-  LabStateRoot=$configEvidence.StateRoot
   LabConfigSha256=$configEvidence.ConfigSha256
   ServerDryRun='PASS'
   ExtensionDryRun='PASS'
