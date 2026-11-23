@@ -118,6 +118,24 @@ foreach($rel in ($required+$tests)){
  }
 }
 
+# Inventory every copied source file before any staging write. Reject reparse
+# points so a junction/symlink cannot pull content from outside the pinned tree.
+$hashFiles=@()
+foreach($relativeRoot in @('tools\powershell-direct','tools\ai_collaboration')){
+ $sourceRoot=Join-Path $repo $relativeRoot
+ $entries=@(Get-ChildItem -LiteralPath $sourceRoot -Force -Recurse)
+ foreach($entry in $entries){
+  if(($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
+   throw 'SOURCE_REPARSE_POINT_DENIED'
+  }
+  if(!$entry.PSIsContainer){
+   $relative=$entry.FullName.Substring($repo.Length).TrimStart('\').Replace('\','/')
+   if($hashFiles -notcontains $relative){$hashFiles+= $relative}
+  }
+ }
+}
+$hashFiles=@($hashFiles | Sort-Object -Unique)
+
 if($Mode -eq 'Inspect'){
  [pscustomobject]@{
   Result='R2_CREATE_ONLY_PREFLIGHT'
@@ -141,19 +159,6 @@ try{
  Copy-Item -LiteralPath (Join-Path $repo 'tools\powershell-direct') -Destination (Join-Path $stage 'tools\powershell-direct') -Recurse -ErrorAction Stop
  Copy-Item -LiteralPath (Join-Path $repo 'tools\ai_collaboration') -Destination (Join-Path $stage 'tools\ai_collaboration') -Recurse -ErrorAction Stop
 
- $hashFiles=@()
- foreach($relativeRoot in @('tools\powershell-direct','tools\ai_collaboration')){
-  $sourceRoot=Join-Path $repo $relativeRoot
-  $sourceFiles=@(Get-ChildItem -LiteralPath $sourceRoot -File -Force -Recurse)
-  foreach($sourceFile in $sourceFiles){
-   if(($sourceFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){
-    throw 'SOURCE_REPARSE_POINT_DENIED'
-   }
-   $relative=$sourceFile.FullName.Substring($repo.Length).TrimStart('\').Replace('\','/')
-   if($hashFiles -notcontains $relative){$hashFiles+= $relative}
-  }
- }
- $hashFiles=@($hashFiles | Sort-Object -Unique)
  $rows=@()
  foreach($rel in $hashFiles){
   $src=Join-Path $repo $rel
