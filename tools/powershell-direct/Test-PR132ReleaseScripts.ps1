@@ -13,6 +13,7 @@ $targets=@(
   (Join-Path $PSScriptRoot 'Refresh-PR132PinnedWorktree.ps1'),
   (Join-Path $PSScriptRoot 'Run-PR132LabPreflight.ps1'),
   (Join-Path $PSScriptRoot 'Apply-PR132LabRelease.ps1'),
+  (Join-Path $PSScriptRoot 'Create-PR132LabRestorePoint.ps1'),
   (Join-Path $PSScriptRoot 'Test-PR132ReleaseScripts.ps1'),
   (Join-Path $candidateRoot 'deployment\process-identity.ps1'),
   (Join-Path $candidateRoot 'deployment\verify-candidate-source.ps1'),
