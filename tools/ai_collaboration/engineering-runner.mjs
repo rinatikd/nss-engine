@@ -41,7 +41,7 @@ export async function runEngineeringPlan(plan,{
   platform=process.platform
 }={}){
   verifyEngineeringPlan(plan);
-  const currentWorkspace=canonicalUserWorkspace(plan.cwd,{platform,env:process.env});
+  const currentWorkspace=canonicalUserWorkspace(plan.cwd);
   if(currentWorkspace!==plan.cwd)throw Error('WORKSPACE_CHANGED_SINCE_APPROVAL');
   if(platform!=='win32')throw Error('WINDOWS_ONLY_EXECUTION');
   if(!path.win32.isAbsolute(plan.executable)||!executableCheck(plan.executable))
