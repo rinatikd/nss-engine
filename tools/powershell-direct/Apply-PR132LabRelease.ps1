@@ -105,7 +105,7 @@ try{
   # Confirm the new server is healthy and its environment still maps to this Lab only.
   $newPid=GetLabOwner
   $newIdentity=AssertLabOwner $newPid
-  Require ($newPid -ne $initialPid) 'Server cutover did not replace the pinned process'
+  Require ([string]$newIdentity.created -cne [string]$initialIdentity.created -and [string]$newIdentity.command -cne [string]$initialIdentity.command) 'Server cutover did not replace the pinned process epoch'
   Require ((Get-FileHash -LiteralPath (Join-Path $labStateRoot 'config.json') -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $configEvidence.ConfigSha256) 'Server cutover changed Lab credentials/config'
 
   # Extension cutover in the same approved transaction. Its backup lives in the
