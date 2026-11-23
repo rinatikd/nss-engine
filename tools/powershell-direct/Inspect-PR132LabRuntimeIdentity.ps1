@@ -167,17 +167,6 @@ if(Test-Path -LiteralPath $resolvedConfigPath -PathType Leaf){
   }catch{$actualConfig=[pscustomobject]@{ConfigPath=$resolvedConfigPath;ParseError=$_.Exception.Message}}
 }
 [pscustomobject]@{
-      RelativeToUserProfile='.chrome-bridge\config.json'
-      Sha256=(Get-FileHash -LiteralPath $defaultConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
-      AgentTokenLength=if($defaultCfg.agentToken -is [string]){$defaultCfg.agentToken.Length}else{0}
-      BrowserTokenLength=if($defaultCfg.browserToken -is [string]){$defaultCfg.browserToken.Length}else{0}
-      HasExtensionId=($null -ne $defaultCfg.PSObject.Properties['extensionId'])
-      ExtensionIdMatches=([string]$defaultCfg.extensionId -ceq 'nhflbnfcaicihaepdcjacdmaddagcmcj')
-      PropertyNames=@($defaultCfg.PSObject.Properties.Name)
-    }
-  }catch{$defaultConfig=[pscustomobject]@{ParseError=$_.Exception.Message}}
-}
-[pscustomobject]@{
   Result='PR102_LAB_RUNTIME_IDENTITY_READ_ONLY'
   Listener=$listeners[0]
   ProcessId=$identity.id
