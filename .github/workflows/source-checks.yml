@@ -47,3 +47,10 @@ jobs:
               $manifest.providerDispatch -ne $false -or $manifest.production -ne $false -or $manifest.realSecrets -ne $false) {
             throw 'Consilium Lab package manifest failed safety/evidence checks'
           }
+      - name: Upload immutable Consilium Control Room Lab package
+        uses: actions/upload-artifact@v4
+        with:
+          name: consilium-control-room-lab-package
+          path: ${{ runner.temp }}/consilium-control-room-lab-package/**
+          if-no-files-found: error
+          retention-days: 7
