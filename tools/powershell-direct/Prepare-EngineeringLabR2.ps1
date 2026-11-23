@@ -60,11 +60,76 @@ foreach($line in (Get-Content -LiteralPath $config)){
 }
 $identity=''
 try{
- $uri=[Uri]$origin
- if($uri.IsAbsoluteUri -and $uri.Host){
-  $remotePath=$uri.AbsolutePath.TrimEnd('/')
+ if($origin -match '^(?i:https?|ssh|git)://'){
+  $uri=[Uri]$origin
+  if($uri.IsAbsoluteUri -and $uri.Host){
+   $remotePath=$uri.AbsolutePath.Trim('/')
+   if($remotePath.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$remotePath=$remotePath.Substring(0,$remotePath.Length-4)}
+   $identity=$uri.Host.ToLowerInvariant()+'/'+$remotePath.ToLowerInvariant()
+  }
+ }elseif($origin -match '^(?:[^@/]+@)?(?<host>[^/:]+):(?<path>[^?#]+)if($identity -cne $expectedRemote){throw 'GIT_REMOTE_MISMATCH'}
+$top=(& $git -C $repo rev-parse --show-toplevel 2>$null|Out-String).Trim()
+if($LASTEXITCODE -ne 0 -or $top -ine $repo){throw 'GIT_TOPLEVEL_MISMATCH'}
+$dirty=@(& $git -C $repo status --porcelain=v1 --untracked-files=all)
+if($LASTEXITCODE -ne 0 -or $dirty.Count){throw 'SOURCE_WORKTREE_NOT_CLEAN'}
+foreach($exe in @($node)){
+ if(!(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'TRUSTED_BINARY_MISSING'}
+}
+foreach($rel in ($required+$tests)){
+ if(!(Test-Path -LiteralPath (Join-Path $repo $rel) -PathType Leaf)){throw ('SOURCE_MISSING_'+$rel)}
+}
+if($Mode -eq 'Inspect'){
+ [pscustomobject]@{
+  Result='R2_CREATE_ONLY_PREFLIGHT'
+  CandidateSha=$head
+  TargetExists=(Test-Path -LiteralPath $stage)
+  ExistingR1Untouched=$true
+  ProductionUntouched=$true
+ } | ConvertTo-Json -Compress
+ return
+}
+if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_EXISTS_NO_OVERWRITE'}
+# Tests are executed through the separate fixed-operation node-test runner,
+# not launched from a PowerShell script. R2 remains non-active until tests pass.
+if(Test-Path -LiteralPath $stage){throw 'R2_DESTINATION_COLLISION'}
+$created=$false
+try{
+ $null=New-Item -ItemType Directory -Path (Join-Path $stage 'tools') -ErrorAction Stop
+ $created=$true
+ Copy-Item -LiteralPath (Join-Path $repo 'tools\powershell-direct') -Destination (Join-Path $stage 'tools\powershell-direct') -Recurse -ErrorAction Stop
+ Copy-Item -LiteralPath (Join-Path $repo 'tools\ai_collaboration') -Destination (Join-Path $stage 'tools\ai_collaboration') -Recurse -ErrorAction Stop
+ $rows=@()
+ $hashFiles=@($required+$tests | Select-Object -Unique)
+ foreach($rel in $hashFiles){
+  $src=Join-Path $repo $rel
+  $dest=Join-Path $stage $rel
+  $sourceHash=(Get-FileHash -LiteralPath $src -Algorithm SHA256).Hash
+  if($sourceHash -cne (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash){throw ('HASH_MISMATCH_'+$rel)}
+  $rows+= [pscustomobject]@{File=$rel;Sha256=$sourceHash}
+ }
+ # Manifest records hashes; a separate R2 verification job must still pass.
+ $manifest=Join-Path $stage 'source-hashes.json'
+ ConvertTo-Json -InputObject $rows -Depth 4 | Set-Content -LiteralPath $manifest -Encoding UTF8
+ if(!(Test-Path -LiteralPath $manifest -PathType Leaf)){throw 'MANIFEST_MISSING'}
+ [pscustomobject]@{
+  Result='R2_STAGED_UNTESTED'
+  Target=$stage
+  VerifiedFileCount=$rows.Count
+  LiveR1Restarted=$false
+  ProductionTouched=$false
+  TunnelTouched=$false
+  CutoverPerformed=$false
+  TestsPending=$true
+ } | ConvertTo-Json -Compress
+}catch{
+ # Remove only the new, isolated R2 directory created by THIS invocation.
+ if($created){Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue}
+ throw
+}
+){
+  $remotePath=$Matches.path.Trim('/').TrimEnd('/')
   if($remotePath.EndsWith('.git',[StringComparison]::OrdinalIgnoreCase)){$remotePath=$remotePath.Substring(0,$remotePath.Length-4)}
-  $identity=$uri.Host.ToLowerInvariant()+$remotePath.ToLowerInvariant()
+  $identity=$Matches.host.ToLowerInvariant()+'/'+$remotePath.ToLowerInvariant()
  }
 }catch{}
 if($identity -cne $expectedRemote){throw 'GIT_REMOTE_MISMATCH'}
