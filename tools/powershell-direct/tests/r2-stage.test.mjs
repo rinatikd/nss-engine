@@ -37,12 +37,21 @@ function treeInventory(base){
  }
  return files.sort();
 }
+function trackedInventory(base){
+ const git='C:/Program Files/Git/cmd/git.exe';
+ const result=spawnSync(git,['-C',base,'ls-files','--',
+  'tools/powershell-direct','tools/ai_collaboration'],{
+   cwd:base,encoding:'utf8',timeout:15000,windowsHide:true
+  });
+ assert.equal(result.status,0,'Git tracked-file inventory failed: '+(result.stderr||result.error||''));
+ return result.stdout.split(/\r?\n/).filter(Boolean).sort();
+}
 test('R2 exists and manifest covers every copied pinned runtime and test file',()=>{
  assert.ok(fs.statSync(stage).isDirectory(),'R2 must exist before verification');
  const rows=JSON.parse(fs.readFileSync(path.join(stage,'source-hashes.json'),'utf8').replace(/^\uFEFF/,''));
  assert.ok(Array.isArray(rows)&&rows.length>=17);
  const manifestFiles=rows.map(row=>row.File).sort();
- assert.deepEqual(manifestFiles,treeInventory(source),'manifest must cover every pinned source file exactly once');
+ assert.deepEqual(manifestFiles,trackedInventory(source),'manifest must cover every Git-tracked source file exactly once');
  assert.deepEqual(manifestFiles,treeInventory(stage),'staged tree must contain exactly the manifest files');
  for(const rel of tests){
   assert.ok(manifestFiles.includes(rel),'regression test is not hash-pinned: '+rel);
