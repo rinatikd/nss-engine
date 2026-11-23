@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$oldRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-313c33e6-release-clean'
+$oldRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-fb2c27a8-release-clean'
 $newRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-b77d6752-release-clean'
 $expectedSha='b77d67521090c799d0db544694ee9cf00c177ea7'
 $expectedBranch='feat/chat-approved-session-auth-20261122'
