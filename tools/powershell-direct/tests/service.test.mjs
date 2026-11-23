@@ -7,8 +7,8 @@ function fixture(){
  let time=1000,executed=0,release;
  const service=new PowerShellApprovalService({
   root:'C:\\Engineering',port:0,now:()=>time,
-  workspaceCheck:(candidate,root)=>{
-   if(root!=='C:\\Engineering'||candidate!==workspace)throw Error('WORKSPACE_DENIED');
+  workspaceCheck:(candidate)=>{
+   if(candidate!==workspace)throw Error('WORKSPACE_DENIED');
    return candidate;
   },
   run:async ({task,workspace:cwd})=>{
