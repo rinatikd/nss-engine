@@ -45,10 +45,36 @@ foreach($file in $configFiles){
 }
 $parent=$null
 try{
-  $ppid=(Get-CimInstance Win32_Process -Filter ("ProcessId="+$identity.id)).ParentProcessId
-  $p=Get-Process -Id $ppid -ErrorAction Stop
-  $parent=[pscustomobject]@{ProcessId=$ppid;Name=$p.ProcessName}
+  $processRecord=Get-CimInstance Win32_Process -Filter ("ProcessId="+$identity.id)
+  $ppid=[int]$processRecord.ParentProcessId
+  $parentRecord=Get-CimInstance Win32_Process -Filter ("ProcessId="+$ppid)
+  $parentCommand=[string]$parentRecord.CommandLine
+  $parentCommand=[regex]::Replace($parentCommand,'(?i)(bearer\s+)[A-Za-z0-9._~+/-]{16,}','$1[REDACTED]')
+  $parentCommand=[regex]::Replace($parentCommand,'(?i)((?:token|secret|password|api[_-]?key)(?:\s+|=|:))("[^"]+"|\S+)','$1[REDACTED]')
+  $parentCommand=[regex]::Replace($parentCommand,'(?i)\b(?:[a-f0-9]{40,}|[A-Za-z0-9_-]{48,})\b','[REDACTED]')
+  if($parentCommand.Length -gt 1600){$parentCommand=$parentCommand.Substring(0,1600)+'...[TRUNCATED]'}
+  $parent=[pscustomobject]@{
+    ProcessId=$ppid
+    ExecutablePath=[string]$parentRecord.ExecutablePath
+    CommandLine=$parentCommand
+  }
 }catch{}
+$defaultConfigPath=Join-Path $env:USERPROFILE '.chrome-bridge\config.json'
+$defaultConfig=$null
+if(Test-Path -LiteralPath $defaultConfigPath -PathType Leaf){
+  try{
+    $defaultCfg=Get-Content -LiteralPath $defaultConfigPath -Raw -Encoding UTF8|ConvertFrom-Json
+    $defaultConfig=[pscustomobject]@{
+      RelativeToUserProfile='.chrome-bridge\config.json'
+      Sha256=(Get-FileHash -LiteralPath $defaultConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
+      AgentTokenLength=if($defaultCfg.agentToken -is [string]){$defaultCfg.agentToken.Length}else{0}
+      BrowserTokenLength=if($defaultCfg.browserToken -is [string]){$defaultCfg.browserToken.Length}else{0}
+      HasExtensionId=($null -ne $defaultCfg.PSObject.Properties['extensionId'])
+      ExtensionIdMatches=([string]$defaultCfg.extensionId -ceq 'nhflbnfcaicihaepdcjacdmaddagcmcj')
+      PropertyNames=@($defaultCfg.PSObject.Properties.Name)
+    }
+  }catch{$defaultConfig=[pscustomobject]@{ParseError=$_.Exception.Message}}
+}
 [pscustomobject]@{
   Result='PR102_LAB_RUNTIME_IDENTITY_READ_ONLY'
   Listener=$listeners[0]
@@ -63,6 +89,7 @@ try{
   CommandHasStartJob=($command -match '(?i)start-[0-9a-f]{32}\.json')
   CommandRedacted=$safeCommand
   ConfigFiles=$configReports
+  DefaultUserConfig=$defaultConfig
   ProductionPathsTouched=$false
   CredentialsPrinted=$false
 }|ConvertTo-Json -Depth 8
