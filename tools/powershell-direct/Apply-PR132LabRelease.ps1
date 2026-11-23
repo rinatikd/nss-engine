@@ -18,6 +18,10 @@ if(!(Test-Path -LiteralPath $preflightScript -PathType Leaf)){throw 'CONSOLIDATE
 $preflightJson=. $preflightScript
 $preflight=[string]$preflightJson|ConvertFrom-Json
 if($preflight.Result -cne 'PR132_LAB_PREFLIGHT_READY'){throw 'PR132_LAB_PREFLIGHT_NOT_READY'}
+$manifestBeforeApply=Get-Content -LiteralPath (Join-Path $labExtensionRoot 'manifest.json') -Raw -Encoding UTF8|ConvertFrom-Json
+$manifestKeyBefore=''
+if($manifestBeforeApply.PSObject.Properties['key']){$manifestKeyBefore=[string]$manifestBeforeApply.key}
+
 
 function FullPath([string]$Path){return [IO.Path]::GetFullPath($Path).TrimEnd('\')}
 function Require([bool]$Condition,[string]$Message){if(-not $Condition){throw $Message}}
@@ -27,6 +31,9 @@ function GetLiveIdentity([int]$ProcessId){
     $null=$p.Handle
     return (Get-BridgeHandleIdentity $p)
   }finally{$p.Dispose()}
+}
+function ListenerSignature([int]$Port){
+  return ((@([BridgeNativeMetadata]::Listeners($Port) | Sort-Object)) -join ';')
 }
 function GetLabOwner {
   $items=@([BridgeNativeMetadata]::Listeners($labPort))
@@ -85,6 +92,10 @@ $serverApplied=$false
 $extensionApplied=$false
 $serverApplyOutput=''
 $extensionApplyOutput=''
+$production17381Before=ListenerSignature 17381
+$production17382Before=ListenerSignature 17382
+if([string]::IsNullOrWhiteSpace($production17381Before)){throw 'PRODUCTION_17381_BASELINE_NOT_FOUND'}
+
 
 try{
   # Server cutover: server updater performs PID fencing, backup, health/tools registry
@@ -146,6 +157,9 @@ try{
   $finalIdentity=AssertLabOwner $finalPid
   Require ($finalPid -eq $newPid -and $finalIdentity.command -ceq $newIdentity.command) 'Lab server process changed during extension installation'
   Require ((Get-FileHash -LiteralPath (Join-Path $labStateRoot 'config.json') -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $configEvidence.ConfigSha256) 'Extension installation changed Lab credentials/config'
+  Require ((ListenerSignature 17381) -ceq $production17381Before) 'PRODUCTION_17381_LISTENER_CHANGED'
+  Require ((ListenerSignature 17382) -ceq $production17382Before) 'PRODUCTION_17382_LISTENER_CHANGED'
+  Require ([string]$finalIdentity.created -ceq [string]$newIdentity.created) 'Lab server process epoch changed during extension installation'
 
   [pscustomobject]@{
     Result='PR132_LAB_RELEASE_APPLIED'
@@ -161,6 +175,7 @@ try{
     ServerHealth='PASS'
     SessionProviderRegistry='PASS'
     ExtensionManifest='PASS'
+    ProductionListenersUnchanged=$true
     ProductionChanged=$false
     ProviderMessagesSent=$false
     SessionAuthorized=$false
