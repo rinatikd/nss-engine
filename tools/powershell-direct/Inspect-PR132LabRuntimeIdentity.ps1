@@ -160,12 +160,51 @@ if(Test-Path -LiteralPath $resolvedConfigPath -PathType Leaf){
       AgentTokenLength=if($actualCfg.agentToken -is [string]){$actualCfg.agentToken.Length}else{0}
       BrowserTokenLength=if($actualCfg.browserToken -is [string]){$actualCfg.browserToken.Length}else{0}
       HasExtensionId=($null -ne $actualCfg.PSObject.Properties['extensionId'])
+      ExtensionId=if($null -ne $actualCfg.PSObject.Properties['extensionId']){[string]$actualCfg.extensionId}else{''}
       ExtensionIdMatches=if($null -ne $actualCfg.PSObject.Properties['extensionId']){([string]$actualCfg.extensionId -ceq 'nhflbnfcaicihaepdcjacdmaddagcmcj')}else{$false}
       PropertyNames=@($actualCfg.PSObject.Properties.Name)
       StateRootInsideLab=$insideLab
     }
   }catch{$actualConfig=[pscustomobject]@{ConfigPath=$resolvedConfigPath;ParseError=$_.Exception.Message}}
 }
+
+$gitExe='C:\Program Files\Git\cmd\git.exe'
+function ReadGitValue([string[]]$Arguments){
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName=$gitExe
+  $quoted=@($Arguments|ForEach-Object { '"'+($_.Replace('"','\"'))+'"' })
+  $psi.Arguments=[string]::Join(' ',$quoted)
+  $psi.WorkingDirectory=$processCwd
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $p=New-Object System.Diagnostics.Process
+  $p.StartInfo=$psi
+  try{
+    if(!$p.Start()){return ''}
+    $out=$p.StandardOutput.ReadToEnd();$err=$p.StandardError.ReadToEnd()
+    $p.WaitForExit()
+    if($p.ExitCode -ne 0){return ''}
+    return $out.Trim()
+  }finally{$p.Dispose()}
+}
+$currentRepoRoot=ReadGitValue @('-C',$processCwd,'rev-parse','--show-toplevel')
+$currentRepoHead=ReadGitValue @('-C',$processCwd,'rev-parse','HEAD')
+$targetLabRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
+$targetServerExists=Test-Path -LiteralPath (Join-Path $targetLabRoot 'server\bridge.mjs') -PathType Leaf
+$targetExtensionManifest=Join-Path $targetLabRoot 'extension\manifest.json'
+$targetManifestExists=Test-Path -LiteralPath $targetExtensionManifest -PathType Leaf
+$targetExtensionId=''
+if($targetManifestExists){
+  try{
+    $targetManifest=Get-Content -LiteralPath $targetExtensionManifest -Raw -Encoding UTF8|ConvertFrom-Json
+    if($targetManifest.PSObject.Properties['key']){
+      $targetExtensionId='MANIFEST_KEY_PRESENT'
+    }
+  }catch{}
+}
+
 [pscustomobject]@{
   Result='PR102_LAB_RUNTIME_IDENTITY_READ_ONLY'
   Listener=$listeners[0]
@@ -181,6 +220,11 @@ if(Test-Path -LiteralPath $resolvedConfigPath -PathType Leaf){
   CommandRedacted=$safeCommand
   ConfigFiles=$configReports
   ProcessWorkingDirectory=$processCwd
+  CurrentRepoRoot=$currentRepoRoot
+  CurrentRepoHead=$currentRepoHead
+  TargetLabServerExists=$targetServerExists
+  TargetLabExtensionManifestExists=$targetManifestExists
+  TargetLabExtensionKey=$targetExtensionId
   ProcessBridgeHome=$processHome
   ProcessBridgePort=$processPort
   ProcessExtensionIdPresent=(![string]::IsNullOrWhiteSpace($processExtensionId))
