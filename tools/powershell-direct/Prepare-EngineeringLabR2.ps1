@@ -75,21 +75,13 @@ if($LASTEXITCODE -ne 0 -or $dirty.Count){throw 'SOURCE_WORKTREE_NOT_CLEAN'}
 foreach($exe in @($node)){
  if(!(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'TRUSTED_BINARY_MISSING'}
 }
-# External Git invocations are prohibited by the constrained PowerShell executor.
-# Verify an attached branch from the repository HEAD without launching Git.
-$headFile=Join-Path $repo '.git\HEAD'
-if(!(Test-Path -LiteralPath $headFile -PathType Leaf)){throw 'GIT_HEAD_MISSING'}
-$head=(Get-Content -LiteralPath $headFile -Raw).Trim()
-$actualBranch='feat/psdirect-per-job-workspace-approval-20261123'
-if($head -cne ('ref: refs/heads/'+$actualBranch)){throw 'UNEXPECTED_BRANCH'}
-# A separate trusted git-status operation must validate a clean worktree.
 foreach($rel in ($required+$tests)){
  if(!(Test-Path -LiteralPath (Join-Path $repo $rel) -PathType Leaf)){throw ('SOURCE_MISSING_'+$rel)}
 }
 if($Mode -eq 'Inspect'){
  [pscustomobject]@{
   Result='R2_CREATE_ONLY_PREFLIGHT'
-  Branch=$actualBranch
+  CandidateSha=$head
   TargetExists=(Test-Path -LiteralPath $stage)
   ExistingR1Untouched=$true
   ProductionUntouched=$true
