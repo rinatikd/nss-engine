@@ -106,3 +106,39 @@ if ((Get-FileHash $manifestPath -Algorithm SHA256).Hash -ne $beforeManifest) { t
 if ([IO.File]::ReadAllText((Join-Path $installed 'control.js')) -ne $beforeControl) { throw 'Rollback did not restore original extension source' }
 Write-Output '[PASS] PR102 Lab dry-run/apply/rollback; identity/endpoint/permissions; dirty and ignored source rejection'
 Remove-Item -LiteralPath $root -Recurse -Force
+
+
+# Split-layout fixture mirrors the real Lab topology: unpacked extension root and
+# state/rollback root are separate directories on the same volume.
+$splitRoot = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-TestFixture'
+$splitState = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-State-TestFixture'
+if (Test-Path -LiteralPath $splitRoot) { Remove-Item -LiteralPath $splitRoot -Recurse -Force }
+if (Test-Path -LiteralPath $splitState) { Remove-Item -LiteralPath $splitState -Recurse -Force }
+New-Item -ItemType Directory -Path $splitRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $splitState -Force | Out-Null
+Copy-Item -Path (Join-Path $sourceExtension '*') -Destination $splitRoot -Recurse -Force
+[IO.File]::WriteAllText((Join-Path $splitRoot 'manifest.json'),($manifest | ConvertTo-Json -Depth 20),(New-Object System.Text.UTF8Encoding($false)))
+$splitManifest = Join-Path $splitRoot 'manifest.json'
+$splitManifestBefore = (Get-FileHash $splitManifest -Algorithm SHA256).Hash
+$splitControlBefore = [IO.File]::ReadAllText((Join-Path $splitRoot 'control.js'))
+
+$splitDry = & $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha
+if (($splitDry -join ' ') -notmatch '\[DRY_RUN\]') { throw 'Split-layout Lab dry-run failed' }
+if ((Get-FileHash $splitManifest -Algorithm SHA256).Hash -ne $splitManifestBefore) { throw 'Split-layout dry-run changed installed manifest' }
+if ([IO.File]::ReadAllText((Join-Path $splitRoot 'control.js')) -ne $splitControlBefore) { throw 'Split-layout dry-run changed installed extension source' }
+if (Test-Path -LiteralPath (Join-Path $splitState 'backups')) { throw 'Split-layout dry-run created a persistent backup' }
+
+& $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha -Apply
+$splitUpdated = Get-Content -LiteralPath $splitManifest -Raw | ConvertFrom-Json
+if ($splitUpdated.key -ne $manifest.key) { throw 'Split-layout extension identity key changed' }
+if (@($splitUpdated.host_permissions) -notcontains 'http://127.0.0.1:17484/*') { throw 'Split-layout exact Lab host permission missing' }
+$splitBackups = @(Get-ChildItem -LiteralPath (Join-Path $splitState 'backups') -Directory)
+if ($splitBackups.Count -ne 1 -or -not (Test-Path (Join-Path $splitBackups[0].FullName 'lab-backup.json'))) {
+  throw 'Split-layout rollback backup missing from state root'
+}
+& $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha -RollbackFrom $splitBackups[0].FullName -Apply
+if ((Get-FileHash $splitManifest -Algorithm SHA256).Hash -ne $splitManifestBefore) { throw 'Split-layout rollback did not restore manifest exactly' }
+if ([IO.File]::ReadAllText((Join-Path $splitRoot 'control.js')) -ne $splitControlBefore) { throw 'Split-layout rollback did not restore extension source' }
+Remove-Item -LiteralPath $splitRoot -Recurse -Force
+Remove-Item -LiteralPath $splitState -Recurse -Force
+Write-Output '[PASS] Split-layout PR102 Lab extension/state dry-run/apply/rollback'
