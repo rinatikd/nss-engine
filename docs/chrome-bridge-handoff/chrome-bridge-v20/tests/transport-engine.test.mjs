@@ -175,7 +175,7 @@ test('extension origin rejection 403 fails closed without retry', async () => {
   let polls=0;
   let sleeps=0;
   const t=new BridgeTransport({
-    fetchImpl:async()=>{polls++;return jsonResponse({},403);},
+    fetchImpl:async()=>{polls++;return jsonResponse({error:'Extension Origin denied'},403);},
     execute:async()=>{},
     sleepImpl:async()=>{sleeps++;}
   });
@@ -243,5 +243,27 @@ test('stop while dispatch is awaiting approval suppresses result and next poll',
   } finally {
     t.stop();
     releaseExecution?.();
+  }
+});
+
+test('all classified and unknown 403 responses fail closed without retry', async () => {
+  for (const [payload, expected] of [
+    [{error:'Invalid Host'}, 'BRIDGE_HOST_REJECTED_403'],
+    [{error:'Extension ID is not pinned'}, 'EXTENSION_ID_NOT_PINNED_403'],
+    [{error:'unrecognized'}, 'BRIDGE_FORBIDDEN_403']
+  ]) {
+    let polls=0, sleeps=0;
+    const transport=new BridgeTransport({
+      fetchImpl:async()=>{polls++;return jsonResponse(payload,403);},
+      execute:async()=>{},
+      sleepImpl:async()=>{sleeps++;}
+    });
+    await transport.start('synthetic-token');
+    for(let i=0;i<30 && transport.active;i++) await tick();
+    assert.equal(transport.active,false);
+    assert.equal(transport.lastStatus.state,'auth-failed');
+    assert.equal(transport.lastStatus.error,expected);
+    assert.equal(polls,1);
+    assert.equal(sleeps,0);
   }
 });
