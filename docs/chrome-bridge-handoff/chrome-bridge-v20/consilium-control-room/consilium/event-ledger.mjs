@@ -13,6 +13,7 @@ const MAX_EVENT_BYTES = 128 * 1024;
 const MAX_LEDGER_BYTES = 64 * 1024 * 1024;
 const ZERO_HASH = '0'.repeat(64);
 const ACTOR_ROLES = { owner: 'owner', chatgpt: 'ai_member', claude: 'ai_member', deepseek: 'ai_member', qwen: 'ai_member', kimi: 'ai_member', grok: 'ai_member', gemini: 'ai_member' };
+const AI_MEMBER_IDS = new Set(Object.entries(ACTOR_ROLES).filter(([, role]) => role === 'ai_member').map(([id]) => id));
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -276,6 +277,7 @@ export function projectEvents(events) {
         const d = decisionById.get(p.decisionId);
         if (!d || d.status !== 'ACCEPTED') throw Error('TASK_REQUIRES_ACCEPTED_DECISION');
         if (taskById.has(p.taskId)) throw Error('DUPLICATE_TASK_ID');
+        if (!AI_MEMBER_IDS.has(p.assignee)) throw Error('TASK_ASSIGNEE_UNKNOWN');
         const t = { id: p.taskId, title: p.title, assignee: p.assignee, decisionId: p.decisionId, status: 'READY', evidence: [] };
         taskById.set(t.id, t); state.tasks.push(t); break;
       }
@@ -293,7 +295,7 @@ export function projectEvents(events) {
       }
       case 'artifact.linked': {
         requireOwnerOrAiMember(event.actor, 'ARTIFACT_PUBLISHER_REQUIRED');
-        if (artifactById.has(p.artifactId) || !/^[a-f0-9]{64}$/.test(p.sha256 || '') || !Array.isArray(p.recipients) || !p.recipients.length) throw Error('INVALID_ARTIFACT_MANIFEST');
+        if (artifactById.has(p.artifactId) || !/^[a-f0-9]{64}$/.test(p.sha256 || '') || !Array.isArray(p.recipients) || !p.recipients.length || p.recipients.some(id => !AI_MEMBER_IDS.has(id)) || new Set(p.recipients).size !== p.recipients.length) throw Error('INVALID_ARTIFACT_MANIFEST');
         const artifact = { id: p.artifactId, name: p.name, sha256: p.sha256, sourceCommit: p.sourceCommit, uri: p.uri, recipients: p.recipients, receipts: [] };
         artifactById.set(artifact.id, artifact); state.artifacts.push(artifact); break;
       }
