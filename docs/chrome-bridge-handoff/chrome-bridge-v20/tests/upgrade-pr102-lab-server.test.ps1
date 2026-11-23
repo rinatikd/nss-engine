@@ -12,10 +12,10 @@ $node = (Get-Command node.exe -ErrorAction Stop).Source
 $sourceSha = (& git -C $packageRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve source SHA' }
 
-$preStatus = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -Arguments @('status','--porcelain=v1','--untracked-files=all','--','server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab-server.ps1')
+$preStatus = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -GitArgList @('status','--porcelain=v1','--untracked-files=all','--','server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab-server.ps1')
 if (-not [string]::IsNullOrWhiteSpace($preStatus)) {
-  $identityDiff = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -Arguments @('diff','--no-ext-diff','--','deployment/process-identity.ps1')
-  $identitySummary = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -Arguments @('diff','--numstat','--','deployment/process-identity.ps1')
+  $identityDiff = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -GitArgList @('diff','--no-ext-diff','--','deployment/process-identity.ps1')
+  $identitySummary = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -GitArgList @('diff','--numstat','--','deployment/process-identity.ps1')
   Write-Output ('[PROCESS_IDENTITY_DIFF_NUMSTAT] '+$identitySummary)
   Write-Output ('[PROCESS_IDENTITY_DIFF] '+$identityDiff)
 }
