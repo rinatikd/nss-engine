@@ -16,6 +16,7 @@ $targets=@(
   (Join-Path $PSScriptRoot 'Apply-PR132LabRelease.ps1'),
   (Join-Path $PSScriptRoot 'Create-PR132LabRestorePoint.ps1'),
   (Join-Path $PSScriptRoot 'Create-PR145LabPreDeployBackup.ps1'),
+  (Join-Path $PSScriptRoot 'Inspect-Consilium17484Runtime.ps1'),
   (Join-Path $PSScriptRoot 'Inspect-PR102LabRuntime.ps1'),
   (Join-Path $PSScriptRoot 'Inspect-PR102LabRoots.ps1'),
   (Join-Path $PSScriptRoot 'Test-PR132ReleaseScripts.ps1'),
