@@ -54,10 +54,11 @@ async function shutdown(signal='STOP'){
  stopping=true;
  shutdownPromise=(async()=>{
   process.stdout.write('STOPPING_STACK '+signal+'\n');
-  let serviceDrained=false;
+  let serviceDrained=false,backgroundJobFailures=0;
   try{
    const result=await service.stop();
    serviceDrained=result?.drained===true;
+   backgroundJobFailures=Number.isSafeInteger(result?.backgroundJobsFailed)?result.backgroundJobsFailed:0;
   }catch(error){
    process.stderr.write('LOCAL_SERVICE_DRAIN_FAILED '+(error.code||error.message||'UNKNOWN')+'\n');
   }
@@ -70,6 +71,7 @@ async function shutdown(signal='STOP'){
    process.exitCode=0;
   }else{
    process.stderr.write('STACK_STOP_INCOMPLETE serviceDrained='+String(serviceDrained)+
+    ' backgroundJobFailures='+String(backgroundJobFailures)+
     ' tunnelClosed='+String(tunnelClosed)+' unexpectedTunnelExit='+String(tunnelUnexpectedExit)+'\n');
    process.exitCode=1;
   }
