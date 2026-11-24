@@ -55,27 +55,47 @@ function TreeHash([string]$Path){
 function ListenerSignature([int]$Port){
   return ((@([BridgeNativeMetadata]::Listeners($Port)|Sort-Object)) -join ';')
 }
-function InvokeGit([string[]]$Args){
-  $psi=New-Object Diagnostics.ProcessStartInfo
+function QuoteGitArgument([string]$Value){
+  $builder=New-Object System.Text.StringBuilder
+  [void]$builder.Append('"')
+  $slashes=0
+  foreach($character in $Value.ToCharArray()){
+    if($character -eq [char]'\'){$slashes++;continue}
+    if($character -eq [char]'"'){
+      if($slashes -gt 0){[void]$builder.Append(('\' * ($slashes*2)))}
+      [void]$builder.Append('\"');$slashes=0;continue
+    }
+    if($slashes -gt 0){[void]$builder.Append(('\' * $slashes));$slashes=0}
+    [void]$builder.Append($character)
+  }
+  if($slashes -gt 0){[void]$builder.Append(('\' * ($slashes*2)))}
+  [void]$builder.Append('"')
+  return $builder.ToString()
+}
+function InvokeGit([string[]]$GitArgList){
+  $all=@('-C',$repo)+$GitArgList
+  $quoted=@($all|ForEach-Object {QuoteGitArgument ([string]$_)})
+  $psi=New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName=$git
-  $psi.Arguments=('-C "'+$repo+'" '+[string]::Join(' ',@($Args|ForEach-Object {'"'+([string]$_).Replace('"','\"')+'"'})))
   $psi.WorkingDirectory=$repo
+  $psi.Arguments=[string]::Join(' ',$quoted)
   $psi.UseShellExecute=$false
   $psi.CreateNoWindow=$true
   $psi.RedirectStandardOutput=$true
   $psi.RedirectStandardError=$true
-  $p=New-Object Diagnostics.Process
-  $p.StartInfo=$psi
+  $proc=New-Object System.Diagnostics.Process
+  $proc.StartInfo=$psi
   try{
-    Require ($p.Start()) 'Could not start trusted Git'
-    $outTask=$p.StandardOutput.ReadToEndAsync()
-    $errTask=$p.StandardError.ReadToEndAsync()
-    Require ($p.WaitForExit(30000)) 'Trusted Git timed out'
-    $stdout=[string]$outTask.GetAwaiter().GetResult()
-    $stderr=[string]$errTask.GetAwaiter().GetResult()
-    Require ($p.ExitCode -eq 0) ('Git query failed: '+$stderr)
-    return $stdout.Trim()
-  }finally{$p.Dispose()}
+    if(!$proc.Start()){throw 'GIT_START_FAILED'}
+    $outTask=$proc.StandardOutput.ReadToEndAsync()
+    $errTask=$proc.StandardError.ReadToEndAsync()
+    if(!$proc.WaitForExit(30000)){try{$proc.Kill()}catch{};throw 'GIT_TIMEOUT'}
+    $stdout=$outTask.GetAwaiter().GetResult()
+    $stderr=$errTask.GetAwaiter().GetResult()
+    $code=$proc.ExitCode
+  }finally{$proc.Dispose()}
+  if($code -ne 0){throw ('GIT_FAILED '+$code+': '+$stderr.Trim())}
+  return ([string]$stdout).Trim()
 }
 function RemoteIdentity([string]$Value){
   $uri=$null
