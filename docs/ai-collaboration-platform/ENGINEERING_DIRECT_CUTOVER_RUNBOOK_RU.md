@@ -50,13 +50,77 @@
 Постоянные allowlist-переменные `PS_DIRECT_ALLOWED_ROOT`, `PS_DIRECT_ENGINEERING_WORKSPACES` и `PS_DIRECT_NAMED_SUITE_WORKSPACES` удаляются из запуска supervisor. Любой существующий локальный каталог, доступный текущей Windows-учётной записи по ACL, может быть выбран для конкретного задания. Перед показом запроса сервис разрешает его в canonical realpath, запрещает томовые корни, системные каталоги, UNC/device-пути и включает полученный `cwd` в SHA-256 плана. После локального Approve once тот же canonical path сверяется повторно. Это не разрешает произвольные команды, не отключает per-job approval и не даёт дополнительных прав файловой системе. Обновление не считать установленным до Windows E2E и проверки MCP discovery.
 
 
-## PR #138 — отдельная проверенная рабочая копия (2026-11-23)
 
-Целевой исходник для staging — точный `CandidateSha`, который helper выводит на этапе Inspect. Он выбирается как неизменяемый предок текущей feature-ветки; helper проверяет его SHA, ancestry и чистоту основного checkout. Не переключать основной checkout и не выполнять reset.
 
-1. Одноразовый helper `tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1` запускается из отдельной папки `C:\Engineering` (вне Git checkout) через PowerShell Direct с workspace `C:\Engineering`. Сначала `-Mode Inspect`, затем после PASS — `-Mode Prepare`. Он проверяет ожидаемую основную ветку и origin, чистоту checkout и то, что текущий `HEAD` и базовый SHA `f58f44a52c569a4a45e3ffe025dc6d1f62beff58` находятся на одной цепочке предков (строго более ранний или более поздний commit допускается; разветвлённая история отклоняется), а также проверяет удалённый branch HEAD; затем создаёт отдельный detached worktree на неизменяемом pinned runtime SHA без переключения основной ветки:
-   `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-pinned-release-clean`.
-2. Из нового worktree запустить `tools/powershell-direct/Prepare-EngineeringLabR2.ps1` сначала с `-Mode Inspect -ExpectedCommit <CandidateSha из шага 1>`, затем с `-Mode Prepare -ExpectedCommit <тот же CandidateSha>`. Скрипт разрешает detached `.git` pointer и общий Git config, проверяет origin, чистоту и точный commit через `git rev-parse --verify HEAD`. Он получает только Git-tracked файлы из `tools/powershell-direct` и `tools/ai_collaboration`, отвергает reparse points и копирует только эти файлы в `C:\Engineering\PowerShellDirect-Engineering-Lab-R2`; игнорируемые локальные файлы в R2 не переносятся. `source-hashes.json` содержит SHA-256 каждого скопированного файла. SHA передаётся параметром извне, а не зашивается в сам скрипт. Действующие R1, supervisor 17486/18086, туннель и production не перезапускаются.
-3. После подготовки сначала выполнить `tools/powershell-direct/tests/r2-stage.test.mjs` через Node 24 в workspace R2: он сравнивает полный tracked-file inventory detached source и stage с `source-hashes.json`, проверяет SHA-256 каждого файла и запускает целевую регрессию. Затем выполнить отдельные Windows Node 24 jobs для `workspace-policy.test.mjs`, `local_test_runner.test.mjs`, `local_job_service.test.mjs`, `engineering-runner.test.mjs`, `service.test.mjs`, `named-suites.test.mjs`, `engineering.test.mjs`. Каждый job — отдельная одобренная операция; сохранять фактические результаты и сверять полный manifest.
+> **Актуальность — 25.11.2026: NO-GO, не запускать шаги 1–8 выше как инструкцию к действию.** Они отражают исторический срез 14.11.2026: в них указан старый путь supervisor `ChromeBridge-PowerShell-Direct-Validation`, прежний recovery helper и устаревшие переменные allowlist. Фактический R1, зафиксированный в последующей проверке 24.11, расположен в `C:\Engineering\PowerShellDirect-Engineering-Lab-R1`; корректный recovery helper — `tools/powershell-direct/Recover-EngineeringDirect.ps1`. Этот helper предназначен только для запуска R1, когда оба его порта свободны, а не для остановки. Старые PID и старую команду cutover нельзя использовать. `Invoke-EngineeringCutover.ps1 -Mode Cutover` остаётся NO-GO до отдельного исправления путей, graceful shutdown, durable journal и rollback rehearsal.
 
-**Текущий статус:** source/CI PASS; pinned helper и R2 detached-worktree support включены в PR #138. Это ещё не означает, что helper уже скопирован на Work PC, worktree создан или R2 staged. До подтверждения всех Windows E2E результатов не переключать supervisor и не менять конфигурацию службы.
+## PR #138 — отдельная проверенная рабочая копия (актуализация 25.11.2026)
+
+Выбранный runtime-кандидат для воспроизводимого staging: **`35e69e7e58c7e1b054a0771cabce07cc0c4108df`**. Это точный commit, по которому зафиксированы 110 Git-tracked files, hash/inventory проверки, staged MCP smoke и локальные результаты 61/61 по семи основным regression suites. Текущий PR branch может содержать более поздние commits с helper/runbook/CI изменениями; это не должно незаметно менять runtime-кандидат.
+
+**Не использовать прежний pin `5f6837a8f99dd0db23f35ec84e1b4dc8c172886d`:** он на семь commits старше выбранного кандидата и не содержит последних изменений `service.mjs`/`local_job_service.mjs` для `SERVICE_STOPPED`.
+
+### 1. Detached worktree — точный commit
+
+Новая версия `Prepare-PR138PinnedWorktree.ps1` требует явный параметр `-CandidateCommit`. Helper проверяет, что:
+- primary checkout остаётся на ожидаемой ветке, имеет правильный origin и чистое дерево;
+- его HEAD и защищённый base commit находятся на одной ancestry chain;
+- после fetch удалённой feature branch кандидат является её предком;
+- кандидат является потомком защищённого base commit;
+- detached worktree создан именно на переданном SHA и остаётся чистым.
+
+Пример из локальной папки вне checkout:
+
+```powershell
+$CandidateCommit = '35e69e7e58c7e1b054a0771cabce07cc0c4108df'
+$Helper = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114\tools\powershell-direct\Prepare-PR138PinnedWorktree.ps1'
+
+& $Helper -Mode Inspect -CandidateCommit $CandidateCommit
+# Продолжать только при Result=PR138_WORKTREE_PREFLIGHT,
+# CandidateCommit=$CandidateCommit, DestinationExists=False,
+# FetchPerformed=False и WorktreeCreated=False.
+
+& $Helper -Mode Prepare -CandidateCommit $CandidateCommit
+# Продолжать только при Result=PR138_PINNED_WORKTREE_READY,
+# CandidateSha=$CandidateCommit, WorktreeClean=True,
+# ProductionChanged=False.
+```
+
+Worktree создаётся отдельно:
+`C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-pinned-release-clean`.
+Основной checkout не переключается и не reset-ится.
+
+### 2. R2 stage — не перезаписывать legacy directory
+
+На 24.11 существовавший `C:\Engineering\PowerShellDirect-Engineering-Lab-R2` был read-only проинвентаризирован: 1,244 файла и manifest старого формата; он не соответствует 110 tracked files кандидата. Его нельзя очищать или использовать под новый stage. Скрипт `Prepare-EngineeringLabR2.ps1` в runtime commit `35e69e7` по умолчанию указывает именно этот старый путь и отказывает при его существовании. Поэтому **не запускать его Prepare с этим default target**.
+
+Для кандидата уже зафиксирован отдельный stage:
+`C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-35e69e7`.
+По записи от 24.11 его 110 tracked files прошли пофайловую SHA-256 проверку, inventory/manifest, syntax и selected regression проверки. Перед дальнейшим использованием stage нужно подтверждать его manifest и source SHA относительно worktree `35e69e7`; не доверять одному лишь имени каталога. Если этот отдельный stage отсутствует или manifest не совпадает, staging остановить — сначала требуется отдельный helper с параметром уникального `StageDirectory`, без удаления или замены legacy R2.
+
+### 3. Regression и smoke
+
+Для commit `35e69e7` записаны результаты локального Windows run по отдельным одобренным jobs:
+- `workspace-policy.test.mjs`: 5/5;
+- `local_job_service.test.mjs`: 7/7;
+- `engineering-runner.test.mjs`: 5/5;
+- `local_mcp_dispatch.test.mjs`: 4/4;
+- `service.test.mjs`: 19/19;
+- `named-suites.test.mjs`: 6/6;
+- `engineering.test.mjs`: 15/15.
+
+Итого: **61/61 PASS**; независимые stage-integrity проверки: 2/2. Отдельный `local_test_runner.test.mjs` дал 16/18: обе ошибки `TRUSTED_EXECUTABLE_NOT_CONFIGURED` связаны с отсутствующим явным `PS_DIRECT_TRUSTED_PYTHON`; не задавать Python через PATH и не обходить эту проверку. Composite PowerShell rehearsal-wrapper вернул Node child exit code 1 без диагностического вывода и **не считается доказательством PASS**.
+
+### 4. Cutover gate
+
+Source CI для PR commit `35e69e7` прошёл три workflow: Source checks, AI collaboration protocol checks, CCTV CLI input/output guards. Это не заменяет on-device acceptance и не является разрешением на stop/start.
+
+До cutover остаются блокеры:
+- согласовать фактический путь и identity существующего R1 с `Prepare-EngineeringCutover.ps1`/`Invoke-EngineeringCutover.ps1` (в них остался исторический путь `ChromeBridge-PowerShell-Direct-Validation`);
+- заменить ссылку на старый `Recover-PowerShellDirect.ps1` правильным R1 recovery helper;
+- реализовать graceful drain и ожидание закрытия exact child process вместо немедленного `Stop-Process -Force`;
+- добавить durable transaction journal с терминальной записью каждой фазы и идемпотентным recovery;
+- испытать failure injection и подтверждённый rollback на изолированном окружении;
+- закрыть вопрос с unique R2 stage path и повторно подтвердить manifest на реальном Work PC.
+
+До закрытия этих пунктов: **не выполнять cutover, не останавливать R1 и не менять production Bridge 17381/17382, credentials или туннели**.
