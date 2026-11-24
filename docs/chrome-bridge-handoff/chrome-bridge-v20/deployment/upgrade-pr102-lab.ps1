@@ -6,7 +6,7 @@ param(
   [Parameter(Mandatory=$true)][string]$LabRoot,
   [string]$StateRoot,
   [string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
-  [ValidateSet(17484)][int]$LabPort = 17484,
+  [ValidateSet(17485)][int]$LabPort = 17485,
   [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSourceSha,
   [string]$NodeExe,
   [switch]$Apply,
@@ -125,7 +125,7 @@ if ($TestFixture) {
   Require (-not [string]::IsNullOrWhiteSpace($runnerTemp)) 'TestFixture requires RUNNER_TEMP'
   $tempRoot = (FullPath $runnerTemp) + '\'
   Require ($root.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'TestFixture path must remain below RUNNER_TEMP'
-  Require ((Split-Path $root -Leaf) -eq 'ChromeBridge-PR102-17484-Lab-TestFixture') 'Unexpected synthetic Lab fixture name'
+  Require ((Split-Path $root -Leaf) -eq 'ChromeBridge-PR102-17485-Lab-TestFixture') 'Unexpected synthetic Lab fixture name'
   if ([string]::IsNullOrWhiteSpace($StateRoot)) {
     $state = $root
     $installed = Join-Path $root 'extension'
@@ -157,7 +157,7 @@ if (-not [string]::IsNullOrWhiteSpace($RollbackFrom)) {
   Require (Test-Path -LiteralPath $markerPath -PathType Leaf) 'Lab backup marker missing'
   $marker = Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8 | ConvertFrom-Json
   Require ($marker.schema -eq 'chrome-bridge-pr102-lab-backup-v1') 'Unknown Lab backup schema'
-  Require ($marker.target -eq 'PR102_LAB' -and $marker.port -eq 17484) 'Lab backup target/port mismatch'
+  Require ($marker.target -eq 'PR102_LAB' -and $marker.port -eq 17485) 'Lab backup target/port mismatch'
   Require ((FullPath ([string]$marker.labRoot)) -ieq $root) 'Backup belongs to a different Lab extension root'
   if ($marker.PSObject.Properties['stateRoot']) { Require ((FullPath ([string]$marker.stateRoot)) -ieq $state) 'Backup belongs to a different Lab state root' }
   $backupExtension = Join-Path $backupRoot 'extension'
@@ -210,10 +210,10 @@ try {
     $original = [IO.File]::ReadAllText($target)
     if ($original.Contains('127.0.0.1:17382')) { throw ('Production tunnel endpoint retained in ' + $name) }
     if ($original.Contains('127.0.0.1:17381')) {
-      $converted = $original.Replace('http://127.0.0.1:17381','http://127.0.0.1:17484')
-      $converted = $converted.Replace('127.0.0.1:17381','127.0.0.1:17484')
+      $converted = $original.Replace('http://127.0.0.1:17381','http://127.0.0.1:17485')
+      $converted = $converted.Replace('127.0.0.1:17381','127.0.0.1:17485')
       WriteUtf8NoBom $target $converted
-    } elseif (-not $original.Contains('127.0.0.1:17484')) {
+    } elseif (-not $original.Contains('127.0.0.1:17485')) {
       throw ('No approved Lab or legacy endpoint found in ' + $name)
     }
   }
@@ -230,7 +230,7 @@ try {
   # Keep all non-loopback remote origins; remove every loopback wildcard/port grant,
   # then add only the exact PR102 Lab endpoint.
   $loopbackPattern = '^http://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/\*$'
-  $labHost = 'http://127.0.0.1:17484/*'
+  $labHost = 'http://127.0.0.1:17485/*'
   $hosts = @($m.host_permissions | Where-Object { $_ -notmatch $loopbackPattern })
   if ($hosts -notcontains $labHost) { $hosts += $labHost }
   $m.host_permissions = @($hosts | Select-Object -Unique)
@@ -240,7 +240,7 @@ try {
   $keyBefore = if ($existingManifest.PSObject.Properties['key']) { [string]$existingManifest.key } else { $null }
   $keyAfter = if ($validated.PSObject.Properties['key']) { [string]$validated.key } else { $null }
   Require ($keyBefore -ceq $keyAfter) 'Extension identity key changed during staging'
-  Write-Output '[READY] Candidate prepared and validated for PR102 Lab port 17484.'
+  Write-Output '[READY] Candidate prepared and validated for PR102 Lab port 17485.'
   Write-Output '[INFO] Existing extension directory, manifest key and extension storage identity are preserved.'
   Write-Output '[INFO] Only extension files/manifest are in scope; no Bridge process, server state, credentials, tunnel or Production paths are touched.'
 
@@ -257,7 +257,7 @@ try {
   $marker = [ordered]@{
     schema = 'chrome-bridge-pr102-lab-backup-v1'
     target = 'PR102_LAB'
-    port = 17484
+    port = $LabPort
     labRoot = $root
     stateRoot = $state
     createdUtc = [DateTime]::UtcNow.ToString('o')
@@ -271,7 +271,7 @@ try {
     Move-Item -LiteralPath $stage -Destination $installed -ErrorAction Stop
     Remove-Item -LiteralPath $displaced -Recurse -Force
     Write-Output ('[INSTALLED] PR102 Lab extension updated at existing path. Chrome reload required. Backup: ' + $backupRoot)
-    Write-Output ('[ROLLBACK] -LabRoot "' + $root + '" -StateRoot "' + $state + '" -LabPort 17484 -RollbackFrom "' + $backupRoot + '" -Apply')
+    Write-Output ('[ROLLBACK] -LabRoot "' + $root + '" -StateRoot "' + $state + '" -LabPort 17485 -RollbackFrom "' + $backupRoot + '" -Apply')
   } catch {
     if (-not (Test-Path -LiteralPath $installed) -and (Test-Path -LiteralPath $displaced)) {
       Move-Item -LiteralPath $displaced -Destination $installed

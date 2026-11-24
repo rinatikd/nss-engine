@@ -97,9 +97,13 @@ try {
   $registry = Get-Content -LiteralPath $expected -Raw -Encoding UTF8 | ConvertFrom-Json
   $requiredTools = @(
     'session_request','session_authorize','session_status','session_revoke',
-    'provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events'
+    'provider_prepare','provider_commit','provider_status','provider_reply_wait','provider_stop','provider_revoke','provider_events'
   )
   $actualToolNames = @($registry.result.tools | ForEach-Object { $_.name })
+  $uniqueToolNames = @($actualToolNames | Sort-Object -Unique)
+  if ($actualToolNames.Count -ne 30 -or $uniqueToolNames.Count -ne 30) {
+    throw ('Expected exactly 30 unique MCP tools; found ' + $actualToolNames.Count)
+  }
   foreach ($name in $requiredTools) {
     if ($actualToolNames -notcontains $name) { throw ('Required MCP tool missing from source registry: ' + $name) }
   }
@@ -123,7 +127,7 @@ try {
     toolCount = @($registry.result.tools).Count
     requiredTools = @(
       'session_request','session_authorize','session_status','session_revoke',
-      'provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events'
+      'provider_prepare','provider_commit','provider_status','provider_reply_wait','provider_stop','provider_revoke','provider_events'
     )
     files = $entries
     exclusions = @('No live Bridge process stopped or replaced','No existing credentials/config copied',

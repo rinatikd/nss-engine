@@ -5,7 +5,7 @@ $packageRoot = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $packageRoot 'deployment\upgrade-pr102-lab-server.ps1'
 . (Join-Path $packageRoot 'deployment\process-identity.ps1')
 . (Join-Path $packageRoot 'deployment\verify-candidate-source.ps1')
-$root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-Server-TestFixture'
+$root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17485-Lab-Server-TestFixture'
 $rootWithTrailingSeparator = $root + [IO.Path]::DirectorySeparatorChar
 if ((Get-BridgeCanonicalPath $rootWithTrailingSeparator) -cne (Get-BridgeCanonicalPath $root)) {
   throw 'Trailing-separator process path normalization failed'
@@ -29,7 +29,7 @@ $node = (Get-Command node.exe -ErrorAction Stop).Source
 $sourceSha = (& git -C $packageRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve source SHA' }
 
-$preStatus = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -GitArgList @('status','--porcelain=v1','--untracked-files=all','--','server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab-server.ps1')
+$preStatus = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -GitArgList @('status','--porcelain=v1','--untracked-files=all','--','server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/bootstrap-pr102-lab-server.ps1','deployment/upgrade-pr102-lab-server.ps1')
 if (-not [string]::IsNullOrWhiteSpace($preStatus)) {
   $identityDiff = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -GitArgList @('diff','--no-ext-diff','--','deployment/process-identity.ps1')
   $identitySummary = Invoke-BridgeCandidateGit -CandidateRoot $packageRoot -GitArgList @('diff','--numstat','--','deployment/process-identity.ps1')
@@ -44,6 +44,7 @@ $sourceInputs = @(
   'deployment/cutover-start.mjs',
   'deployment/process-identity.ps1',
   'deployment/verify-candidate-source.ps1',
+  'deployment/bootstrap-pr102-lab-server.ps1',
   'deployment/upgrade-pr102-lab-server.ps1'
 )
 $dirtyFile = Join-Path $packageRoot 'server\.pr102-candidate-dirty-test.mjs'
@@ -76,7 +77,7 @@ try {
 if (-not $ignoredRejected) { throw 'Ignored server candidate file was not rejected' }
 Write-Output '[PASS] Server candidate ignored-file rejection'
 if (Test-Path -LiteralPath $root) { throw 'Fixture already exists; refusing overwrite' }
-if (@([BridgeNativeMetadata]::Listeners(17484)).Count -ne 0) { throw 'Port 17484 occupied; refusing unrelated process' }
+if (@([BridgeNativeMetadata]::Listeners(17485)).Count -ne 0) { throw 'Port 17485 occupied; refusing unrelated process' }
 
 $activePid = 0
 $activeStart = $null
@@ -88,14 +89,14 @@ $cleanupError = $null
 function WaitPort([int]$ProcessId) {
   $deadline = [DateTime]::UtcNow.AddSeconds(12)
   do {
-    $items = @([BridgeNativeMetadata]::Listeners(17484))
+    $items = @([BridgeNativeMetadata]::Listeners(17485))
     if ($items.Count -eq 1 -and $items[0] -eq ('127.0.0.1|' + $ProcessId)) { return }
     if ([DateTime]::UtcNow -ge $deadline) { throw 'Server listener did not become ready' }
     Start-Sleep -Milliseconds 150
   } while ($true)
 }
 function AssertExtensionOriginAccepted {
-  $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:17484/bridge/poll')
+  $request = [Net.HttpWebRequest]::Create('http://127.0.0.1:17485/bridge/poll')
   $request.Method = 'OPTIONS'
   $request.Headers.Add('Origin', 'chrome-extension://nhflbnfcaicihaepdcjacdmaddagcmcj')
   $request.Timeout = 5000
@@ -151,7 +152,7 @@ function InvokeNodeHealth([string]$ScriptPath,[string]$JobPath,[string]$WorkingD
   }
 }
 function CurrentOwner {
-  $items = @([BridgeNativeMetadata]::Listeners(17484))
+  $items = @([BridgeNativeMetadata]::Listeners(17485))
   if ($items.Count -ne 1 -or $items[0] -notmatch '^127\.0\.0\.1\|[0-9]+$') { throw 'Expected one Lab listener' }
   return [int]($items[0].Split('|')[1])
 }
@@ -181,7 +182,7 @@ try {
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.EnvironmentVariables['CHROME_BRIDGE_HOME'] = $state
-  $psi.EnvironmentVariables['CHROME_BRIDGE_PORT'] = '17484'
+  $psi.EnvironmentVariables['CHROME_BRIDGE_PORT'] = '17485'
   $psi.EnvironmentVariables['CHROME_BRIDGE_EXTENSION_ID'] = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
   $psi.EnvironmentVariables.Remove('CHROME_BRIDGE_CODEX_POLICY')
   $old = New-Object Diagnostics.Process
@@ -199,7 +200,7 @@ try {
   }
   if (([string]$oldMeta.workingDirectory) -ine $root) { throw 'Process working-directory identity mismatch' }
   if (([string]$oldMeta.bridgeHome) -ine $state) { throw 'Process CHROME_BRIDGE_HOME identity mismatch' }
-  if ([string]$oldMeta.bridgePort -cne '17484') { throw 'Process CHROME_BRIDGE_PORT identity mismatch' }
+  if ([string]$oldMeta.bridgePort -cne '17485') { throw 'Process CHROME_BRIDGE_PORT identity mismatch' }
   if ([string]$oldMeta.extensionId -and [string]$oldMeta.extensionId -cne 'nhflbnfcaicihaepdcjacdmaddagcmcj') { throw 'Process extension ID identity mismatch' }
   $activePid = $old.Id
   $activeStart = $oldMeta.created
@@ -240,13 +241,17 @@ try {
   try { & $node --input-type=module -e $code $expectedNew; if ($LASTEXITCODE -ne 0) { throw 'Cannot build expected new registry' } } finally { Pop-Location }
   $health = Join-Path $packageRoot 'deployment\cutover-health.mjs'
   $job = Join-Path $env:RUNNER_TEMP 'pr102-server-upgrade-health.json'
-  [IO.File]::WriteAllText($job,(@{mode='live';source=$root;state=$state;port=17484;expected=$expectedNew} | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
+  [IO.File]::WriteAllText($job,(@{mode='live';source=$root;state=$state;port=17485;expected=$expectedNew} | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
   $healthOutput = InvokeNodeHealth $health $job $packageRoot
   if ($healthOutput -notmatch '"ok":true') { throw ('Upgraded server health returned unexpected output: ' + $healthOutput) }
   AssertExtensionOriginAccepted
   Write-Output '[PASS] Stale State extensionId safely overridden by pinned Lab process environment'
   $newNames = @((Get-Content $expectedNew -Raw | ConvertFrom-Json).result.tools | ForEach-Object { $_.name })
-  foreach ($n in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events')) {
+  $newUniqueNames = @($newNames | Sort-Object -Unique)
+  if ($newNames.Count -ne 30 -or $newUniqueNames.Count -ne 30) {
+    throw ('New registry must contain exactly 30 unique tools; found ' + $newNames.Count)
+  }
+  foreach ($n in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_reply_wait','provider_stop','provider_revoke','provider_events')) {
     if ($newNames -notcontains $n) { throw ('New registry missing ' + $n) }
   }
 
@@ -275,7 +280,7 @@ try {
   Push-Location $root
   try { & $node --input-type=module -e $oldCode $expectedOld; if ($LASTEXITCODE -ne 0) { throw 'Cannot build legacy registry' } } finally { Pop-Location }
   $job2 = Join-Path $env:RUNNER_TEMP 'pr102-server-rollback-health.json'
-  [IO.File]::WriteAllText($job2,(@{mode='live';source=$root;state=$state;port=17484;expected=$expectedOld} | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
+  [IO.File]::WriteAllText($job2,(@{mode='live';source=$root;state=$state;port=17485;expected=$expectedOld} | ConvertTo-Json),(New-Object System.Text.UTF8Encoding($false)))
   $rollbackHealthOutput = InvokeNodeHealth $health $job2 $root
   if ($rollbackHealthOutput -notmatch '"ok":true') { throw ('Rolled-back server health returned unexpected output: ' + $rollbackHealthOutput) }
   AssertExtensionOriginAccepted
@@ -307,7 +312,7 @@ try {
   # An updater can start the automatic-rollback server and then throw before
   # returning its PID. Find only Node processes whose executable command path
   # is beneath this unique synthetic fixture root; never kill an unrelated
-  # listener merely because it uses port 17484.
+  # listener merely because it uses port 17485.
   $fixturePrefix = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
   foreach ($candidate in [Diagnostics.Process]::GetProcesses()) {
     try {
