@@ -78,7 +78,7 @@
 ### Доказательства и ограничения
 
 - На предыдущем кодовом снимке `9edf22e` helper уже прошёл Windows CI против старого 35e-stage: 2/2 проверок. Это историческое доказательство только механики verifier, не подтверждение нового runtime.
-- Текущий workflow run [45486690346](https://github.com/rinatikd/nss-engine/actions/runs/45486690346) прошёл на PR HEAD `01a4f7b`: три job `success`; Node **79/79**; Windows PowerShell 5.1 parser PASS; exact runtime SHA `1ab5b90` staged в CI; 111 tracked files и manifest/SHA-256 parity PASS; read-only verifier `R2_EXISTING_STAGE_VERIFIED` **2/2 PASS**. Включает тест, что rejected background job не может быть скрыт и не даёт `drained=true`.
+- Последний подтверждённый workflow run [45486950100](https://github.com/rinatikd/nss-engine/actions/runs/45486950100) прошёл на PR HEAD `b7f829e`: три job `success`; Node **79/79**; Windows PowerShell 5.1 parser PASS; exact runtime SHA `1ab5b90` staged в CI; 111 tracked files и manifest/SHA-256 parity PASS; read-only verifier `R2_EXISTING_STAGE_VERIFIED` **2/2 PASS**. Включает тест, что rejected background job не может быть скрыт и не даёт `drained=true`.
 - Даже полный CI для нового кандидата не означает, что этот runtime уже установлен на Work PC или что реальный новый R2 stage на Work PC создан.
 - Следующий Work PC шаг — только после разрешённого окна локальной проверки: получить feature-ветку с helper-скриптами, Inspect для нового worktree, Prepare только при совпадении SHA/чистоте/отсутствии destination, затем Inspect/Prepare нового R2 и read-only Verify. Существующие R1, legacy R2 и старый 35e-stage не менять.
 
