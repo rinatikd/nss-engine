@@ -191,7 +191,7 @@ export class ProviderJournal {
     this.#ensureEpoch(identity);
     for(const existing of this.transactions.values()) {
       if(existing.identity.tabId===identity.tabId&&
-         ['PREPARING','PREPARED','COMMITTING','SENT','UNKNOWN','STOP_REQUESTED'].includes(existing.state)) {
+         ['PREPARING','PREPARED','COMMITTING','SENT','UNKNOWN','STOP_REQUESTED','STOP_AFTER_COMMIT'].includes(existing.state)) {
         throw Error('PROVIDER_TAB_QUARANTINED');
       }
     }
