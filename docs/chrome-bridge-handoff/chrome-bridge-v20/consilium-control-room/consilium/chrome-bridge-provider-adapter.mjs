@@ -3,7 +3,6 @@ import { deriveProviderJournalKey, verifyQuiescence } from '../../server/provide
 
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{2,80}$/;
-const DEFAULT_ENDPOINT = 'http://127.0.0.1:17381';
 
 export class ChromeBridgeAdapterError extends Error {
   constructor(code, { dispatchState = null, ambiguous = false } = {}) {
@@ -15,7 +14,8 @@ export class ChromeBridgeAdapterError extends Error {
   }
 }
 
-function normalizeEndpoint(value = DEFAULT_ENDPOINT) {
+function normalizeEndpoint(value) {
+  if (typeof value !== 'string' || !value.trim()) throw new ChromeBridgeAdapterError('BRIDGE_ENDPOINT_REQUIRED');
   let url;
   try { url = new URL(value); } catch { throw new ChromeBridgeAdapterError('BRIDGE_ENDPOINT_INVALID'); }
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' ||
@@ -65,7 +65,7 @@ export function createQuiescenceVerifier(agentToken) {
  * UNKNOWN with a stable quarantine ID. Read-only status/events remain separate.
  */
 export class ChromeBridgeProviderAdapter {
-  constructor({ endpoint = DEFAULT_ENDPOINT, agentToken, fetchImpl = fetch, timeoutMs = 15000 } = {}) {
+  constructor({ endpoint, agentToken, fetchImpl = fetch, timeoutMs = 15000 } = {}) {
     this.version = PROVIDER_TRANSPORT_V1;
     this.endpoint = normalizeEndpoint(endpoint);
     this.agentToken = requiredToken(agentToken);
