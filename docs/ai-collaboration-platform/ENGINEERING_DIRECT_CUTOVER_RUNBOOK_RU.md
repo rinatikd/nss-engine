@@ -54,7 +54,41 @@
 
 > **Актуальность — 25.11.2026: NO-GO, не запускать шаги 1–8 выше как инструкцию к действию.** Они отражают исторический срез 14.11.2026: в них указан старый путь supervisor `ChromeBridge-PowerShell-Direct-Validation`, прежний recovery helper и устаревшие переменные allowlist. Фактический R1, зафиксированный в последующей проверке 24.11, расположен в `C:\Engineering\PowerShellDirect-Engineering-Lab-R1`; корректный recovery helper — `tools/powershell-direct/Recover-EngineeringDirect.ps1`. Этот helper предназначен только для запуска R1, когда оба его порта свободны, а не для остановки. Старые PID и старую команду cutover нельзя использовать. `Invoke-EngineeringCutover.ps1 -Mode Cutover` остаётся NO-GO до отдельного исправления путей, graceful shutdown, durable journal и rollback rehearsal. В feature-ветке дополнительно установлен безусловный кодовый guard `CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED`; даже CLI switches не разрешают остановку. Guard покрыт Node-регрессией, а Windows PowerShell 5.1 parser включён в CI.
 
-## PR #138 — отдельная проверенная рабочая копия (актуализация 25.11.2026)
+## PR #138 — актуальный кандидат после graceful-drain hardening (25.11.2026)
+
+<badge>NO-GO for deployment / cutover</badge>
+
+**Новый immutable runtime SHA:** `e11d587b9046abb3fb5143ede5e73b2a91f6a141`.
+
+Этот кандидат выбран после внесения lifecycle fixes в `service.mjs` и `stack-supervisor.mjs`, регрессий на ожидание активной операции/финального audit record, hard guard для `Cutover`, preflight gates и новых изолированных путей. Workflow теперь закрепляет именно этот SHA, а не старый `35e69e7`.
+
+**Старый кандидат `35e69e7e58c7e1b054a0771cabce07cc0c4108df` не является текущим release candidate:** он не включает последние graceful-drain изменения. Уже существующие каталоги
+`C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-pinned-release-clean` и
+`C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-35e69e7`
+сохранять без изменений; не очищать, не переиспользовать и не переименовывать.
+
+Новый набор путей отделён от старого:
+- Detached worktree: `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-graceful-drain-20261125`.
+- Новый R2 stage: `C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125`.
+
+`Prepare-PR138PinnedWorktree.ps1` принимает `-CandidateCommit e11d587...` и `-WorktreeName PowerShellDirect-PR138-graceful-drain-20261125`. `Prepare-EngineeringLabR2.ps1` принимает отдельный `-StageDirectory`, проверяет, что он не совпадает с R1, legacy R2 или старым 35e-stage, находится под `C:\Engineering` и не перекрывает source checkout. Prepare остаётся create-only: существующий target вызывает отказ, никакой перезаписи.
+
+Для read-only подтверждения уже созданного нового stage использовать `Verify-EngineeringLabR2.ps1` с точными `-ExpectedCommit`, `-SourceWorktree` и `-StageDirectory`. Результат `R2_EXISTING_STAGE_VERIFIED` означает совпадение commit, чистого source, tracked inventory, manifest, SHA-256 и staged syntax/регрессий; helper не меняет stage/source, не запускает сервисы и не трогает туннели.
+
+### Доказательства и ограничения
+
+- На предыдущем кодовом снимке `9edf22e` helper уже прошёл Windows CI против старого 35e-stage: 2/2 проверок. Это историческое доказательство только механики verifier, не подтверждение нового runtime.
+- Новый workflow нацелен на `e11d587` и отдельные новые пути; его актуальный результат будет указан по завершении Actions.
+- Даже полный CI для нового кандидата не означает, что этот runtime уже установлен на Work PC или что реальный новый R2 stage на Work PC создан.
+- Следующий Work PC шаг — только после разрешённого окна локальной проверки: получить feature-ветку с helper-скриптами, Inspect для нового worktree, Prepare только при совпадении SHA/чистоте/отсутствии destination, затем Inspect/Prepare нового R2 и read-only Verify. Существующие R1, legacy R2 и старый 35e-stage не менять.
+
+**Cutover по-прежнему заблокирован:** `Invoke-EngineeringCutover.ps1 -Mode Cutover` немедленно выдаёт `CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED`. `Prepare-EngineeringCutover.ps1` явно выставляет false для Cutover enabled, graceful-stop channel, durable journal и rollback/failure-injection rehearsal. Нужны корректные актуальные пути, отдельный контролируемый graceful-stop entry point, durable phase journal и демонстрация rollback. Не запускать Cutover mode.
+
+---
+
+## PR #138 — исторический кандидат 35e (не использовать для нового release)
+
+
 
 Выбранный runtime-кандидат для воспроизводимого staging: **`35e69e7e58c7e1b054a0771cabce07cc0c4108df`**. Это точный commit, по которому зафиксированы 110 Git-tracked files, hash/inventory проверки, staged MCP smoke и локальные результаты 61/61 по семи основным regression suites. Текущий PR branch может содержать более поздние commits с helper/runbook/CI изменениями; это не должно незаметно менять runtime-кандидат.
 
