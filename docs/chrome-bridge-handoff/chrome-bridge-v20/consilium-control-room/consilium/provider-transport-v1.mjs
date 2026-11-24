@@ -50,7 +50,7 @@ export class ProviderTransport {
     if (!adapter || adapter.version !== PROVIDER_TRANSPORT_V1) throw new TransportContractError('TRANSPORT_VERSION_UNSUPPORTED');
     if (typeof verifyQuiescence !== 'function') throw new TransportContractError('QUIESCENCE_VERIFIER_REQUIRED');
     this.verifyQuiescence = verifyQuiescence;
-    for (const method of ['prepare', 'commit', 'status', 'stop', 'revoke', 'events']) {
+    for (const method of ['prepare', 'commit', 'status', 'replyWait', 'stop', 'revoke', 'events']) {
       if (typeof adapter[method] !== 'function') throw new TransportContractError('TRANSPORT_METHOD_MISSING_' + method.toUpperCase());
     }
     this.adapter = adapter;
@@ -115,6 +115,38 @@ export class ProviderTransport {
         !Number.isFinite(Date.parse(result.clickedAt || '')) || result.clickedSend !== true ||
         !ID.test(result.preparedId || '') || !SHA256.test(result.payloadHash || ''))) {
       throw new TransportContractError('SENT_STATUS_INVALID');
+    }
+    return result;
+  }
+
+  async replyWait(input) {
+    const identity = validateTransportIdentity(input);
+    const timeoutSec = input.timeoutSec === undefined ? 45 : input.timeoutSec;
+    if (!Number.isSafeInteger(timeoutSec) || timeoutSec < 2 || timeoutSec > 55) {
+      throw new TransportContractError('REPLY_TIMEOUT_INVALID');
+    }
+    const result = await this.adapter.replyWait(identity, timeoutSec);
+    validateState(result, identity, ['REPLIED', 'UNKNOWN', 'BLOCKED', 'NOT_PERFORMED']);
+    if (result.state === 'REPLIED') {
+      const receipt = result.replyReceipt;
+      if (!receipt || !receipt.identity || !equalIdentity(receipt.identity, identity) ||
+          receipt.requestId !== identity.requestId || receipt.taskId !== identity.taskId ||
+          receipt.providerId !== identity.providerId || receipt.tabId !== identity.tabId ||
+          receipt.origin !== identity.origin || receipt.conversationId !== identity.conversationId ||
+          receipt.epoch !== identity.epoch || !Number.isSafeInteger(receipt.baseline) || receipt.baseline < 0 ||
+          receipt.replyIndex !== receipt.baseline + 1 || !Number.isFinite(Date.parse(receipt.clickedAt || '')) ||
+          !Number.isFinite(Date.parse(receipt.observedAt || '')) ||
+          Date.parse(receipt.observedAt) < Date.parse(receipt.clickedAt) ||
+          !SHA256.test(receipt.replySha256 || '') || !Number.isSafeInteger(receipt.replyChars) ||
+          receipt.replyChars < 1 || receipt.replyChars > 100000 || receipt.stableSamples !== 2 ||
+          !ID.test(receipt.eventId || '') || !ID.test(receipt.recordHash || '') ||
+          !Number.isSafeInteger(receipt.sequence) || receipt.sequence < 1) {
+        throw new TransportContractError('REPLY_RECEIPT_INVALID');
+      }
+      if (typeof result.reply !== 'string' || result.reply.length !== receipt.replyChars ||
+          crypto.createHash('sha256').update(result.reply, 'utf8').digest('hex') !== receipt.replySha256) {
+        throw new TransportContractError('REPLY_TEXT_RECEIPT_MISMATCH');
+      }
     }
     return result;
   }
