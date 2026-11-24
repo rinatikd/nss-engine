@@ -100,7 +100,7 @@ jobs:
           $git = 'C:\Program Files\Git\cmd\git.exe'
           $node = (Get-Command node.exe -ErrorAction Stop).Source
           $expectedBase = 'f58f44a52c569a4a45e3ffe025dc6d1f62beff58'
-          $expectedPin = '2d0a039e65eb3cb9c1f23fa57254633edc14a8f1'
+          $expectedPin = '1ab5b9098046028eb3b022b91f8e40ca7ff92596'
           $primary = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
           $worktreeName = 'PowerShellDirect-PR138-graceful-drain-20261125'
           $worktree = Join-Path $primary ('work\' + $worktreeName)
