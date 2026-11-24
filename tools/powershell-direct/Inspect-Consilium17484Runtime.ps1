@@ -68,7 +68,6 @@ function GetChromeMappings {
 
 $listeners=ListenerRows $port
 if($listeners.Count -ne 1){throw ('CONSILIUM_LISTENER_COUNT_MISMATCH: '+$listeners.Count)}
-Require-Variable:
 $parts=([string]$listeners[0].Raw).Split('|')
 if($parts.Count -ne 2 -or $parts[0] -cne '127.0.0.1'){throw 'CONSILIUM_LISTENER_NOT_LOOPBACK'}
 $pidValue=0
