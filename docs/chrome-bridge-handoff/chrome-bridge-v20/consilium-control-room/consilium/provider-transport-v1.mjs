@@ -68,7 +68,7 @@ export class ProviderTransport {
     if (!adapter || adapter.version !== PROVIDER_TRANSPORT_V1) throw new TransportContractError('TRANSPORT_VERSION_UNSUPPORTED');
     if (typeof verifyQuiescence !== 'function') throw new TransportContractError('QUIESCENCE_VERIFIER_REQUIRED');
     this.verifyQuiescence = verifyQuiescence;
-    for (const method of ['prepare', 'commit', 'status', 'replyWait', 'stop', 'revoke', 'events']) {
+    for (const method of ['prepare', 'commit', 'status', 'stop', 'revoke', 'events']) {
       if (typeof adapter[method] !== 'function') throw new TransportContractError('TRANSPORT_METHOD_MISSING_' + method.toUpperCase());
     }
     this.adapter = adapter;
@@ -144,6 +144,7 @@ export class ProviderTransport {
     if (!Number.isSafeInteger(timeoutSec) || timeoutSec < 2 || timeoutSec > 55) {
       throw new TransportContractError('REPLY_TIMEOUT_INVALID');
     }
+    if (typeof this.adapter.replyWait !== 'function') throw new TransportContractError('TRANSPORT_METHOD_MISSING_REPLYWAIT');
     const result = await this.adapter.replyWait(identity, timeoutSec);
     validateState(result, identity, ['REPLIED', 'UNKNOWN', 'BLOCKED', 'NOT_PERFORMED']);
     if (result.state === 'REPLIED') {
