@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $packageRoot = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $packageRoot 'deployment\upgrade-pr102-lab.ps1'
 $sourceExtension = Join-Path $packageRoot 'extension'
-$root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-TestFixture'
+$root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17485-Lab-TestFixture'
 $installed = Join-Path $root 'extension'
 $manifestPath = Join-Path $installed 'manifest.json'
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
@@ -69,18 +69,18 @@ $manifest = @{
 $beforeManifest = (Get-FileHash $manifestPath -Algorithm SHA256).Hash
 $beforeControl = [IO.File]::ReadAllText((Join-Path $installed 'control.js'))
 
-$dry = & $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha
+$dry = & $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha
 if (($dry -join ' ') -notmatch '\[DRY_RUN\]') { throw 'PR102 Lab dry-run failed' }
 if ((Get-FileHash $manifestPath -Algorithm SHA256).Hash -ne $beforeManifest) { throw 'Dry-run changed installed manifest' }
 if ([IO.File]::ReadAllText((Join-Path $installed 'control.js')) -ne $beforeControl) { throw 'Dry-run changed installed source' }
 if (Test-Path (Join-Path $root 'backups')) { throw 'Dry-run created a persistent backup' }
 
-& $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha -Apply
+& $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha -Apply
 $updated = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 if ($updated.key -ne $manifest.key) { throw 'Unpacked extension identity key changed' }
-if (@($updated.host_permissions) -notcontains 'http://127.0.0.1:17484/*') { throw 'Exact PR102 Lab host permission missing' }
+if (@($updated.host_permissions) -notcontains 'http://127.0.0.1:17485/*') { throw 'Exact PR102 Lab host permission missing' }
 foreach ($hostPattern in @($updated.host_permissions)) {
-  if ($hostPattern -match '^(http://127[.]0[.]0[.]1|http://localhost|http://\[::1\])(:[0-9]+)?/[*]$' -and $hostPattern -ne 'http://127.0.0.1:17484/*') {
+  if ($hostPattern -match '^(http://127[.]0[.]0[.]1|http://localhost|http://\[::1\])(:[0-9]+)?/[*]$' -and $hostPattern -ne 'http://127.0.0.1:17485/*') {
     throw ('Unexpected additional loopback permission: ' + $hostPattern)
   }
 }
@@ -89,7 +89,7 @@ foreach ($permission in @('activeTab','offscreen','alarms')) {
 }
 foreach ($name in @('control.js','connection-check.js','transport-engine.js')) {
   $source = [IO.File]::ReadAllText((Join-Path $installed $name))
-  if (-not $source.Contains('127.0.0.1:17484')) { throw ('Lab endpoint missing in ' + $name) }
+  if (-not $source.Contains('127.0.0.1:17485')) { throw ('Lab endpoint missing in ' + $name) }
 }
 foreach ($file in Get-ChildItem -LiteralPath $installed -Recurse -File -Filter '*.js') {
   $source = [IO.File]::ReadAllText($file.FullName)
@@ -101,7 +101,7 @@ $backups = @(Get-ChildItem -LiteralPath (Join-Path $root 'backups') -Directory)
 if ($backups.Count -ne 1) { throw 'Exactly one Lab rollback backup expected' }
 if (-not (Test-Path (Join-Path $backups[0].FullName 'lab-backup.json'))) { throw 'Lab rollback marker missing' }
 
-& $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha -RollbackFrom $backups[0].FullName -Apply
+& $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha -RollbackFrom $backups[0].FullName -Apply
 if ((Get-FileHash $manifestPath -Algorithm SHA256).Hash -ne $beforeManifest) { throw 'Rollback did not restore manifest exactly' }
 if ([IO.File]::ReadAllText((Join-Path $installed 'control.js')) -ne $beforeControl) { throw 'Rollback did not restore original extension source' }
 Write-Output '[PASS] PR102 Lab dry-run/apply/rollback; identity/endpoint/permissions; dirty and ignored source rejection'
@@ -110,8 +110,8 @@ Remove-Item -LiteralPath $root -Recurse -Force
 
 # Split-layout fixture mirrors the real Lab topology: unpacked extension root and
 # state/rollback root are separate directories on the same volume.
-$splitRoot = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-TestFixture'
-$splitState = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17484-Lab-State-TestFixture'
+$splitRoot = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17485-Lab-TestFixture'
+$splitState = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17485-Lab-State-TestFixture'
 if (Test-Path -LiteralPath $splitRoot) { Remove-Item -LiteralPath $splitRoot -Recurse -Force }
 if (Test-Path -LiteralPath $splitState) { Remove-Item -LiteralPath $splitState -Recurse -Force }
 New-Item -ItemType Directory -Path $splitRoot -Force | Out-Null
@@ -122,21 +122,21 @@ $splitManifest = Join-Path $splitRoot 'manifest.json'
 $splitManifestBefore = (Get-FileHash $splitManifest -Algorithm SHA256).Hash
 $splitControlBefore = [IO.File]::ReadAllText((Join-Path $splitRoot 'control.js'))
 
-$splitDry = & $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha
+$splitDry = & $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha
 if (($splitDry -join ' ') -notmatch '\[DRY_RUN\]') { throw 'Split-layout Lab dry-run failed' }
 if ((Get-FileHash $splitManifest -Algorithm SHA256).Hash -ne $splitManifestBefore) { throw 'Split-layout dry-run changed installed manifest' }
 if ([IO.File]::ReadAllText((Join-Path $splitRoot 'control.js')) -ne $splitControlBefore) { throw 'Split-layout dry-run changed installed extension source' }
 if (Test-Path -LiteralPath (Join-Path $splitState 'backups')) { throw 'Split-layout dry-run created a persistent backup' }
 
-& $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha -Apply
+& $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha -Apply
 $splitUpdated = Get-Content -LiteralPath $splitManifest -Raw | ConvertFrom-Json
 if ($splitUpdated.key -ne $manifest.key) { throw 'Split-layout extension identity key changed' }
-if (@($splitUpdated.host_permissions) -notcontains 'http://127.0.0.1:17484/*') { throw 'Split-layout exact Lab host permission missing' }
+if (@($splitUpdated.host_permissions) -notcontains 'http://127.0.0.1:17485/*') { throw 'Split-layout exact Lab host permission missing' }
 $splitBackups = @(Get-ChildItem -LiteralPath (Join-Path $splitState 'backups') -Directory)
 if ($splitBackups.Count -ne 1 -or -not (Test-Path (Join-Path $splitBackups[0].FullName 'lab-backup.json'))) {
   throw 'Split-layout rollback backup missing from state root'
 }
-& $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17484 -TestFixture -ExpectedSourceSha $sourceSha -RollbackFrom $splitBackups[0].FullName -Apply
+& $updater -LabRoot $splitRoot -StateRoot $splitState -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha -RollbackFrom $splitBackups[0].FullName -Apply
 if ((Get-FileHash $splitManifest -Algorithm SHA256).Hash -ne $splitManifestBefore) { throw 'Split-layout rollback did not restore manifest exactly' }
 if ([IO.File]::ReadAllText((Join-Path $splitRoot 'control.js')) -ne $splitControlBefore) { throw 'Split-layout rollback did not restore extension source' }
 Remove-Item -LiteralPath $splitRoot -Recurse -Force
