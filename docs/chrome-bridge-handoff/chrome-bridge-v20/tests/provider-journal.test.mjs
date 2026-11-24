@@ -31,10 +31,58 @@ test('provider journal validates identity and persists prepare/commit transition
     assert.throws(()=>j.beginPrepare(identity,'b'.repeat(64)),/PROVIDER_REQUEST_ID_CONFLICT/);
     assert.throws(()=>j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:'0'.repeat(64),payloadHash}),/PROVIDER_FENCING_TOKEN_INVALID/);
     j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash});
-    const sent=j.completeCommit(identity,{clickedAt:new Date().toISOString(),clickedSend:true});
+    const sent=j.completeCommit(identity,{clickedAt:new Date().toISOString(),clickedSend:true,baseline:0});
     assert.equal(sent.state,'SENT');
     assert.equal(j.status(identity).state,'SENT');
     assert.deepEqual(j.events({after:0,limit:20}).map(x=>x.state),['ACCEPTED','ACCEPTED','PREPARED','DISPATCHED','SENT']);
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
+
+test('reply receipt is request-bound, append-only, idempotent and unlocks the tab only after one stable new turn',()=>{
+  const dir=tmp();
+  try {
+    const j=journal(dir);
+    j.beginPrepare(identity,payloadHash);
+    const prepared=j.completePrepare(identity,{preparedId:'prepared_reply_01',expiresAt:new Date(Date.now()+60000).toISOString()});
+    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash});
+    const clickedAt=new Date(Date.now()-1000).toISOString();
+    j.completeCommit(identity,{clickedAt,clickedSend:true,baseline:4});
+    assert.throws(()=>j.beginPrepare({...identity,requestId:'request_0002',taskId:'task_000002'},'c'.repeat(64)),/PROVIDER_TAB_QUARANTINED/);
+    const replySha256=crypto.createHash('sha256').update('synthetic Claude reply','utf8').digest('hex');
+    const observedAt=new Date().toISOString();
+    const receipt=j.recordReply(identity,{replySha256,replyChars:22,replyIndex:5,observedAt,stableSamples:2});
+    assert.equal(receipt.state,'REPLIED');
+    assert.equal(receipt.replyReceipt.baseline,4);
+    assert.equal(receipt.replyReceipt.replyIndex,5);
+    assert.equal(receipt.replyReceipt.replySha256,replySha256);
+    assert.equal(receipt.replyReceipt.stableSamples,2);
+    assert.ok(receipt.replyReceipt.eventId);
+    assert.ok(receipt.replyReceipt.recordHash);
+    const duplicate=j.recordReply(identity,{replySha256,replyChars:22,replyIndex:5,observedAt,stableSamples:2});
+    assert.equal(duplicate.duplicate,true);
+    assert.equal(duplicate.replyReceipt.eventId,receipt.replyReceipt.eventId);
+    assert.equal(j.status(identity).replyReceipt.eventId,receipt.replyReceipt.eventId);
+    assert.deepEqual(j.events({after:0,limit:30}).slice(-1)[0].state,'REPLIED');
+    assert.deepEqual(j.beginPrepare({...identity,requestId:'request_0002',taskId:'task_000002'},'c'.repeat(64)),{duplicate:false});
+    const raw=fs.readFileSync(path.join(dir,'provider-transactions.jsonl'),'utf8');
+    assert.equal(raw.includes('synthetic Claude reply'),false);
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
+
+test('reply receipt rejects wrong identity, missing commit baseline, wrong message index and pre-commit timestamps',()=>{
+  const dir=tmp();
+  try {
+    const j=journal(dir);
+    j.beginPrepare(identity,payloadHash);
+    const prepared=j.completePrepare(identity,{preparedId:'prepared_reply_02',expiresAt:new Date(Date.now()+60000).toISOString()});
+    j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash});
+    const clickedAt=new Date(Date.now()-1000).toISOString();
+    j.completeCommit(identity,{clickedAt,clickedSend:true,baseline:2});
+    const common={replySha256:'f'.repeat(64),replyChars:4,replyIndex:3,observedAt:new Date().toISOString(),stableSamples:2};
+    assert.throws(()=>j.recordReply({...identity,conversationId:'conversation_other'},common),/PROVIDER_REQUEST_ID_CONFLICT/);
+    assert.throws(()=>j.recordReply(identity,{...common,replyIndex:4}),/PROVIDER_REPLY_RECEIPT_INVALID/);
+    assert.throws(()=>j.recordReply(identity,{...common,observedAt:new Date(Date.now()-5000).toISOString()}),/PROVIDER_REPLY_RECEIPT_INVALID/);
+    assert.throws(()=>j.recordReply(identity,{...common,stableSamples:1}),/PROVIDER_REPLY_RECEIPT_INVALID/);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
 
@@ -118,7 +166,7 @@ test('stop after a confirmed commit advances the epoch without claiming cancella
     j.beginPrepare(identity,payloadHash);
     const prepared=j.completePrepare(identity,{preparedId:'prepared_0006',expiresAt:new Date(Date.now()+60000).toISOString()});
     j.beginCommit(identity,{preparedId:prepared.preparedId,fencingToken:prepared.fencingToken,payloadHash});
-    j.completeCommit(identity,{clickedAt:new Date().toISOString(),clickedSend:true});
+    j.completeCommit(identity,{clickedAt:new Date().toISOString(),clickedSend:true,baseline:0});
     const stopped=j.stop(identity);
     assert.equal(stopped.state,'STOP_AFTER_COMMIT');
     assert.equal(stopped.nextEpoch,8);
