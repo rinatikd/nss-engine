@@ -82,7 +82,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $test = Join-Path $env:GITHUB_WORKSPACE 'tools\\powershell-direct\\tests\\cutover-journal.tests.ps1'
+          $test = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\tests\cutover-journal.tests.ps1'
           $result = & powershell.exe -NoProfile -NonInteractive -File $test | Out-String
           if ($LASTEXITCODE -ne 0) { throw 'CUTOVER_JOURNAL_TESTS_FAILED' }
           $summary = ($result | Out-String).Trim() | ConvertFrom-Json
