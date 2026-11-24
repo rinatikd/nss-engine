@@ -113,6 +113,18 @@ test('service stop denies pending approval immediately and clears its timer',()=
   assert.equal(afterStop.result.content[0].text,'SERVICE_STOPPING');
 }));
 
+test('service stop does not report drained when a tracked job fails to finalize',async()=>{
+  const svc=new PowerShellApprovalService();
+  svc.trackBackground(Promise.reject(new Error('AUDIT_PUBLISH_FAILED')));
+  const first=svc.stop();
+  const second=svc.stop();
+  assert.strictEqual(second,first,'stop remains idempotent');
+  const result=await first;
+  assert.equal(result.drained,false);
+  assert.equal(result.backgroundJobsFailed,1);
+  assert.equal(result.backgroundJobsRemaining,0);
+});
+
 test('service stop waits for an approved runner and final audit publication',async()=>{
   const root=await mkdtemp(path.join(tmpdir(),'psdirect-drain-'));
   let markStarted,releaseRunner;
