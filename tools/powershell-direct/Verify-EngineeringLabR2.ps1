@@ -5,8 +5,8 @@ param(
  [Parameter(Mandatory=$true)]
  [ValidatePattern('^[0-9a-fA-F]{40}$')]
  [string]$ExpectedCommit,
- [string]$SourceWorktree='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-pinned-release-clean',
- [string]$StageDirectory='C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-35e69e7',
+ [string]$SourceWorktree='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-graceful-drain-20261125',
+ [string]$StageDirectory='C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125',
  [string]$NodeExecutable='C:\Program Files\nodejs\node.exe',
  [string]$GitExecutable='C:\Program Files\Git\cmd\git.exe'
 )
@@ -37,6 +37,11 @@ if($source -ieq $stage -or
 }
 if(!$stage.StartsWith('C:\Engineering\',[StringComparison]::OrdinalIgnoreCase)){
  throw 'R2_STAGE_OUTSIDE_ENGINEERING_ROOT'
+}
+if($stage -ieq 'C:\Engineering\PowerShellDirect-Engineering-Lab-R1' -or
+   $stage -ieq 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2' -or
+   $stage -ieq 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-35e69e7'){
+ throw 'R2_STAGE_TARGET_PROTECTED'
 }
 $head=(& $GitExecutable -C $source rev-parse --verify HEAD 2>$null | Out-String).Trim()
 if($LASTEXITCODE -ne 0 -or $head -cne $expected){throw 'R2_SOURCE_COMMIT_MISMATCH'}
