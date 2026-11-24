@@ -21,6 +21,16 @@ function baseAdapter(overrides={}) {
     async prepare(input){return {state:'PREPARED',identity,requestId:input.requestId,payloadHash:input.payloadHash,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:expiresAt(),sideEffect:'composer-filled-no-send',clickedSend:false}},
     async commit(input){return {state:'SENT',identity,requestId:input.requestId,preparedId:input.preparedId,payloadHash:input.payloadHash,clickedAt:new Date().toISOString(),clickedSend:true}},
     async status(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001'}},
+    async replyWait(){const clickedAt=new Date(Date.now()-1000).toISOString();const reply='synthetic reply';return {
+      state:'REPLIED',identity,reply,replyReceipt:{
+        identity,requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
+        tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
+        clickedAt,baseline:0,replyIndex:1,observedAt:new Date().toISOString(),
+        replySha256:crypto.createHash('sha256').update(reply,'utf8').digest('hex'),
+        replyChars:reply.length,stableSamples:2,eventId:'event_reply_0001',
+        sequence:4,recordHash:'f'.repeat(64)
+      }
+    }},
     async stop(){return {state:'STOP_REQUESTED',identity}},
     async revoke(){return {state:'REVOKED',identity,nextEpoch:8}},
     async events(){return [{seq:1,eventId:'event_0001',requestId:identity.requestId,state:'UNKNOWN',providerId:'claude',identity,quarantineId:'quarantine_001'}]},
@@ -73,6 +83,39 @@ test('UNKNOWN states require quarantine identity and are never auto-retried',asy
   assert.equal(calls,1);
   const malformed=transport(baseAdapter({async status(){return {state:'UNKNOWN',identity}}}));
   await assert.rejects(()=>malformed.status(identity),e=>e.code==='UNKNOWN_QUARANTINE_ID_REQUIRED');
+});
+
+test('provider reply wait validates a request-bound hash-chained receipt and exact reply bytes',async()=>{
+  const t=transport();
+  const result=await t.replyWait({...identity,timeoutSec:5});
+  assert.equal(result.state,'REPLIED');
+  assert.equal(result.reply,'synthetic reply');
+  assert.equal(result.replyReceipt.requestId,identity.requestId);
+  assert.equal(result.replyReceipt.replyIndex,result.replyReceipt.baseline+1);
+  assert.equal(result.replyReceipt.stableSamples,2);
+  const mismatch=transport(baseAdapter({async replyWait(){return {
+    state:'REPLIED',identity,reply:'altered reply',replyReceipt:{
+      identity,requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
+      tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
+      clickedAt:new Date(Date.now()-1000).toISOString(),baseline:0,replyIndex:1,
+      observedAt:new Date().toISOString(),replySha256:'0'.repeat(64),replyChars:13,
+      stableSamples:2,eventId:'event_reply_0001',sequence:4,recordHash:'f'.repeat(64)
+    }
+  }}}));
+  await assert.rejects(()=>mismatch.replyWait(identity),e=>e.code==='REPLY_TEXT_RECEIPT_MISMATCH');
+  const wrongIdentity=transport(baseAdapter({async replyWait(){return {
+    state:'REPLIED',identity:{...identity,tabId:99},reply:'synthetic reply',
+    replyReceipt:{identity:{...identity,tabId:99},requestId:identity.requestId,taskId:identity.taskId,
+      providerId:identity.providerId,tabId:99,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
+      clickedAt:new Date(Date.now()-1000).toISOString(),baseline:0,replyIndex:1,observedAt:new Date().toISOString(),
+      replySha256:crypto.createHash('sha256').update('synthetic reply').digest('hex'),replyChars:15,
+      stableSamples:2,eventId:'event_reply_0001',sequence:4,recordHash:'f'.repeat(64)}
+  }}}));
+  await assert.rejects(()=>wrongIdentity.replyWait(identity),e=>e.code==='TRANSPORT_IDENTITY_MISMATCH');
+  const unknown=transport(baseAdapter({async replyWait(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001'}}}));
+  assert.equal((await unknown.replyWait(identity)).state,'UNKNOWN');
+  const badUnknown=transport(baseAdapter({async replyWait(){return {state:'UNKNOWN',identity}}}));
+  await assert.rejects(()=>badUnknown.replyWait(identity),e=>e.code==='UNKNOWN_QUARANTINE_ID_REQUIRED');
 });
 
 test('status and events preserve correlation and reject malformed event sequences',async()=>{
