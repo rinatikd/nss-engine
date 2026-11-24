@@ -7,6 +7,8 @@ $workspaceExpected = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $workspace = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
 if ($workspace -ine $workspaceExpected) { throw 'UNEXPECTED_APPROVED_WORKSPACE' }
 
+. (Join-Path (Join-Path $workspaceExpected 'work\ChromeBridge-PR145-4696c1c0-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20\deployment') 'process-identity.ps1')
+
 $serverRoot = 'C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
 $serverPath = Join-Path $serverRoot 'server'
 $extensionRoot = 'C:\Engineering\ChromeBridge-PR102-17484-Lab'
