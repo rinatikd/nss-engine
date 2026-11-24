@@ -319,9 +319,10 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         const result=await enqueue('provider_commit',{...identity,preparedId:args.preparedId,
           fencingToken:args.fencingToken,payloadHash:tx.payloadHash});
         if(result?.clickedSend!==true||result.requestId!==identity.requestId||result.preparedId!==args.preparedId||
-          result.payloadHash!==tx.payloadHash||!Number.isFinite(Date.parse(result.clickedAt||'')))
+          result.payloadHash!==tx.payloadHash||!Number.isFinite(Date.parse(result.clickedAt||''))||
+          !Number.isSafeInteger(result.baseline)||result.baseline<0)
           return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_COMMIT_RECEIPT_INVALID');
-        return providerJournal.completeCommit(identity,{clickedAt:result.clickedAt,clickedSend:true});
+        return providerJournal.completeCommit(identity,{clickedAt:result.clickedAt,clickedSend:true,baseline:result.baseline});
       } catch(error) {
         const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
           error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
@@ -333,6 +334,57 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       const identity=validateProviderIdentity(args);
       return providerJournal?providerJournal.status(identity):
         {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+    },
+    async provider_reply_wait(args) {
+      const identity=validateProviderIdentity(args);
+      if(!providerJournal)return {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+      const initial=providerJournal.status(identity);
+      if(initial.state==='REPLIED'||initial.state==='UNKNOWN')return initial;
+      if(initial.state!=='SENT'||!Number.isSafeInteger(initial.baseline)||!Number.isFinite(Date.parse(initial.clickedAt||'')))
+        return {state:'BLOCKED',identity,reasonCode:'PROVIDER_REPLY_NOT_EXPECTED',transactionState:initial.state};
+      const bound=[...agents.entries()].find(([,entry])=>entry.tabId===identity.tabId);
+      if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
+      const timeoutSec=Number.isSafeInteger(args.timeoutSec)?args.timeoutSec:45;
+      if(timeoutSec<2||timeoutSec>55)throw Error('PROVIDER_REPLY_TIMEOUT_INVALID');
+      const deadline=Date.now()+timeoutSec*1000;
+      let stable=null;
+      try {
+        while(Date.now()<deadline) {
+          const context=await enqueue('agent_context',{tabId:identity.tabId});
+          if(!context?.verified||context.origin!==identity.origin||context.conversationId!==identity.conversationId)
+            return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_CONTEXT_CHANGED');
+          const snapshot=await enqueue('provider_reply_peek',{
+            tabId:identity.tabId,expectedOrigin:identity.origin,
+            expectedConversationId:identity.conversationId
+          });
+          if(!snapshot||snapshot.origin!==identity.origin||snapshot.conversationId!==identity.conversationId||
+             snapshot.url===undefined||!Number.isSafeInteger(snapshot.count)||snapshot.count<initial.baseline)
+            return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_SNAPSHOT_INVALID');
+          if(snapshot.count>initial.baseline+1)
+            return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_AMBIGUOUS_MULTIPLE_TURNS');
+          const text=typeof snapshot.text==='string'?snapshot.text.trim():'';
+          if(snapshot.count===initial.baseline+1&&!snapshot.generating&&text.length>0) {
+            if(findSecret(text))
+              return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_SECRET_PATTERN');
+            const replySha256=crypto.createHash('sha256').update(text,'utf8').digest('hex');
+            if(stable&&stable.replySha256===replySha256&&stable.replyChars===text.length&&
+               Date.now()-stable.at>=750) {
+              const observedAt=new Date().toISOString();
+              const receipt=providerJournal.recordReply(identity,{
+                replySha256,replyChars:text.length,replyIndex:snapshot.count,observedAt,stableSamples:2
+              });
+              return {...receipt,reply:text};
+            }
+            stable={replySha256,replyChars:text.length,at:Date.now()};
+          } else stable=null;
+          await sleep(Math.min(pollMs,Math.max(0,deadline-Date.now())));
+        }
+      } catch(error) {
+        if(error?.message==='PROVIDER_JOURNAL_FULL_FAIL_CLOSED')throw error;
+        return providerJournal.outcome(identity,'UNKNOWN',
+          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_REPLY_OBSERVATION_FAILED');
+      }
+      return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_TIMEOUT_QUARANTINED');
     },
     async provider_stop(args) {
       const identity=validateProviderIdentity(args);
