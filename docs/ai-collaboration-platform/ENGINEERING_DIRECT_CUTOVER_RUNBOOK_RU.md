@@ -71,14 +71,14 @@
 - Detached worktree: `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-graceful-drain-20261125`.
 - Новый R2 stage: `C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125`.
 
-`Prepare-PR138PinnedWorktree.ps1` принимает `-CandidateCommit e11d587...` и `-WorktreeName PowerShellDirect-PR138-graceful-drain-20261125`. `Prepare-EngineeringLabR2.ps1` принимает отдельный `-StageDirectory`, проверяет, что он не совпадает с R1, legacy R2 или старым 35e-stage, находится под `C:\Engineering` и не перекрывает source checkout. Prepare остаётся create-only: существующий target вызывает отказ, никакой перезаписи.
+`Prepare-PR138PinnedWorktree.ps1` принимает `-CandidateCommit 55c397f...` и `-WorktreeName PowerShellDirect-PR138-graceful-drain-20261125`. `Prepare-EngineeringLabR2.ps1` принимает отдельный `-StageDirectory`, проверяет, что он не совпадает с R1, legacy R2 или старым 35e-stage, находится под `C:\Engineering` и не перекрывает source checkout. Prepare остаётся create-only: существующий target вызывает отказ, никакой перезаписи.
 
 Для read-only подтверждения уже созданного нового stage использовать `Verify-EngineeringLabR2.ps1` с точными `-ExpectedCommit`, `-SourceWorktree` и `-StageDirectory`. Результат `R2_EXISTING_STAGE_VERIFIED` означает совпадение commit, чистого source, tracked inventory, manifest, SHA-256 и staged syntax/регрессий; helper не меняет stage/source, не запускает сервисы и не трогает туннели.
 
 ### Доказательства и ограничения
 
 - На предыдущем кодовом снимке `9edf22e` helper уже прошёл Windows CI против старого 35e-stage: 2/2 проверок. Это историческое доказательство только механики verifier, не подтверждение нового runtime.
-- Новый workflow нацелен на `e11d587` и отдельные новые пути; его актуальный результат будет указан по завершении Actions.
+- Новый workflow закрепляет runtime SHA `55c397ff39afe87b93c22031bc0e87df6eaceb32` и отдельные новые пути. CI для предыдущего снимка `e11d587` не считается подтверждением unexpected-exit fix; актуальный Actions run нужно оценивать только по `55c397f` или его следующему финальному HEAD.
 - Даже полный CI для нового кандидата не означает, что этот runtime уже установлен на Work PC или что реальный новый R2 stage на Work PC создан.
 - Следующий Work PC шаг — только после разрешённого окна локальной проверки: получить feature-ветку с helper-скриптами, Inspect для нового worktree, Prepare только при совпадении SHA/чистоте/отсутствии destination, затем Inspect/Prepare нового R2 и read-only Verify. Существующие R1, legacy R2 и старый 35e-stage не менять.
 
