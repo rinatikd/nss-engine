@@ -53,6 +53,14 @@ async function status(svc,id){
   }while(Date.now()<until);
   throw Error('FINAL_TIMEOUT lastState='+String(last?.state));
 }
+test('supervisor treats an unexpected tunnel exit as an incomplete stack stop',async()=>{
+  const supervisor=await readFile(new URL('../stack-supervisor.mjs',import.meta.url),'utf8');
+  assert.ok(supervisor.includes('tunnelUnexpectedExit=false'));
+  assert.ok(supervisor.includes("if(!stopping)tunnelUnexpectedExit=true"));
+  assert.ok(supervisor.includes('serviceDrained&&tunnelClosed&&!tunnelUnexpectedExit'));
+  assert.ok(supervisor.includes("unexpectedTunnelExit='+String(tunnelUnexpectedExit)"));
+});
+
 test('production cutover and its preflight remain NO-GO until lifecycle evidence exists',async()=>{
   const script=await readFile(new URL('../Invoke-EngineeringCutover.ps1',import.meta.url),'utf8');
   const guard=script.indexOf("throw 'CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED'");
