@@ -345,7 +345,7 @@ export class ProviderJournal {
       return {state:'STOPPED_CLEAN',identity,nextEpoch:tx.nextEpoch,quiescence:proof};
     }
     this.#ensureEpoch(identity);
-    if(tx&&tx.state==='SENT') {
+    if(tx&&['SENT','REPLIED'].includes(tx.state)) {
       const nextEpoch=this.#revokeEpoch(identity);
       this.#append('stop.after_commit',identity,{nextEpoch});
       return {state:'STOP_AFTER_COMMIT',identity,nextEpoch};
