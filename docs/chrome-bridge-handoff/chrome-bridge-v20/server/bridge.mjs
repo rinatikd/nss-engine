@@ -340,8 +340,10 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       if(!providerJournal)return {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
       const initial=providerJournal.status(identity);
       if(initial.state==='REPLIED'||initial.state==='UNKNOWN')return initial;
-      if(initial.state!=='SENT'||!Number.isSafeInteger(initial.baseline)||!Number.isFinite(Date.parse(initial.clickedAt||'')))
+      if(initial.state!=='SENT')
         return {state:'BLOCKED',identity,reasonCode:'PROVIDER_REPLY_NOT_EXPECTED',transactionState:initial.state};
+      if(!Number.isSafeInteger(initial.baseline)||!Number.isFinite(Date.parse(initial.clickedAt||'')))
+        return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_COMMIT_BASELINE_MISSING');
       const bound=[...agents.entries()].find(([,entry])=>entry.tabId===identity.tabId);
       if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
       const timeoutSec=Number.isSafeInteger(args.timeoutSec)?args.timeoutSec:45;
@@ -370,15 +372,15 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
             if(findSecret(text))
               return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_SECRET_PATTERN');
             const replySha256=crypto.createHash('sha256').update(text,'utf8').digest('hex');
-            if(stable&&stable.replySha256===replySha256&&stable.replyChars===text.length&&
-               Date.now()-stable.at>=750) {
-              const observedAt=new Date().toISOString();
-              const receipt=providerJournal.recordReply(identity,{
-                replySha256,replyChars:text.length,replyIndex:snapshot.count,observedAt,stableSamples:2
-              });
-              return {...receipt,reply:text};
-            }
-            stable={replySha256,replyChars:text.length,at:Date.now()};
+            if(stable&&stable.replySha256===replySha256&&stable.replyChars===text.length) {
+              if(Date.now()-stable.at>=750) {
+                const observedAt=new Date().toISOString();
+                const receipt=providerJournal.recordReply(identity,{
+                  replySha256,replyChars:text.length,replyIndex:snapshot.count,observedAt,stableSamples:2
+                });
+                return {...receipt,reply:text};
+              }
+            } else stable={replySha256,replyChars:text.length,at:Date.now()};
           } else stable=null;
           await sleep(Math.min(pollMs,Math.max(0,deadline-Date.now())));
         }
