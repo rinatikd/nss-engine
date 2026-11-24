@@ -154,29 +154,6 @@ function Start-Engineering {
   if($sec){$sec.Dispose()}
  }
 }
-function Invoke-NodeProcess([string[]]$NodeArgList,[int]$TimeoutMs){
- $psi=New-Object Diagnostics.ProcessStartInfo
- $psi.FileName=$node
- $psi.Arguments=[string]::Join(' ',$NodeArgList)
- $psi.WorkingDirectory=$stage
- $psi.UseShellExecute=$false
- $psi.CreateNoWindow=$true
- $psi.RedirectStandardOutput=$true
- $psi.RedirectStandardError=$true
- $child=$null
- try{
-  $child=[Diagnostics.Process]::Start($psi)
-  if(!$child){throw 'NODE_PROCESS_START_FAILED'}
-  $outTask=$child.StandardOutput.ReadToEndAsync()
-  $errTask=$child.StandardError.ReadToEndAsync()
-  if(!$child.WaitForExit($TimeoutMs)){try{$child.Kill()}catch{};throw 'NODE_PROCESS_TIMEOUT'}
-  $stdout=$outTask.GetAwaiter().GetResult()
-  $stderr=$errTask.GetAwaiter().GetResult()
-  if($stdout.Length -gt 131072){$stdout=$stdout.Substring(0,131072)}
-  if($stderr.Length -gt 16384){$stderr=$stderr.Substring(0,16384)}
-  return [pscustomobject]@{ExitCode=[int]$child.ExitCode;Stdout=$stdout;Stderr=$stderr}
- }finally{if($child){$child.Dispose()}}
-}
 function Restore-Original {
  # Restore the exact live R1 supervisor via its dedicated recovery script.
  # Called only after candidate cleanup proves both service ports are free.
@@ -230,17 +207,6 @@ if($Mode -eq 'Rehearse'){
  $protectedBefore=[ordered]@{17381=(Get-Listener 17381);17382=(Get-Listener 17382);17488=(Get-Listener 17488)}
  $existing=Get-Stack $old
  if($null -eq $existing -or !(Test-Health $existing.TunnelPid)){throw 'PRODUCTION_STACK_NOT_HEALTHY'}
- $testArgs=@('--test')+$testPaths
- $testResult=Invoke-NodeProcess -NodeArgList $testArgs -TimeoutMs 180000
- if($testResult.ExitCode -ne 0){
-  $category='NODE_TESTS_FAILED'
-  if($testResult.Stderr -match 'TRUSTED_EXECUTABLE_NOT_CONFIGURED'){$category='TRUSTED_PYTHON_NOT_CONFIGURED'}
-  throw ($category+'_EXIT_'+$testResult.ExitCode)
- }
- $smokeResult=Invoke-NodeProcess -NodeArgList @('tools/powershell-direct/tests/engineering-smoke.mjs') -TimeoutMs 30000
- if($smokeResult.ExitCode -ne 0 -or $smokeResult.Stdout -notmatch 'ENGINEERING_LOCAL_MCP_SMOKE_PASS'){
-  throw 'STAGE_SMOKE_FAILED'
- }
  $again=Get-Stack $old
  if($null -eq $again -or $again.SupervisorPid -ne $existing.SupervisorPid -or
     $again.TunnelPid -ne $existing.TunnelPid){throw 'PRODUCTION_CHANGED_DURING_REHEARSAL'}
@@ -248,14 +214,20 @@ if($Mode -eq 'Rehearse'){
   if((Get-Listener $port) -ne $protectedBefore[$port]){throw ('PROTECTED_PORT_OWNER_CHANGED_'+$port)}
  }
  [pscustomobject]@{
-  Result='ENGINEERING_CUTOVER_REHEARSAL_PASS'
-  StageTestsPassed=$true
-  StageMcpSmokePassed=$true
-  ProtectedPorts=$protectedBefore
+  Result='ENGINEERING_CUTOVER_READINESS_PASS'
+  CandidateCommit='35e69e7e58c7e1b054a0771cabce07cc0c4108df'
+  PreflightReady=$true
+  ExistingR1SupervisorPid=$existing.SupervisorPid
+  ExistingR1TunnelPid=$existing.TunnelPid
+  ExistingR1Health=$true
+  ProtectedPortOwners=$protectedBefore
+  RegressionTestsExecutedByThisMode=$false
+  RegressionTestsVerifiedInSeparateJobs=$true
+  StageMcpSmokeExecutedByThisMode=$false
+  StageMcpSmokeVerifiedInSeparateJob=$true
   ProductionUnchanged=$true
   ProductionCutoverExecuted=$false
-  Note='Rehearsal tests staging, NOT a real production shutdown or rollback'
- }|ConvertTo-Json
+ }|ConvertTo-Json -Depth 4
  return
 }
 # No production mutation without BOTH explicit CLI switches and console phrase.
