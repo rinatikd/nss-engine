@@ -19,6 +19,7 @@ $targets=@(
   (Join-Path $PSScriptRoot 'Inspect-Consilium17484Runtime.ps1'),
   (Join-Path $PSScriptRoot 'Inspect-Consilium17484Endpoints.ps1'),
   (Join-Path $PSScriptRoot 'Probe-Consilium17484Mcp.ps1'),
+  (Join-Path $PSScriptRoot 'Inspect-ConsiliumControlRoomDeployment.ps1'),
   (Join-Path $PSScriptRoot 'Inspect-PR102LabRuntime.ps1'),
   (Join-Path $PSScriptRoot 'Inspect-PR102LabRoots.ps1'),
   (Join-Path $PSScriptRoot 'Test-PR132ReleaseScripts.ps1'),
