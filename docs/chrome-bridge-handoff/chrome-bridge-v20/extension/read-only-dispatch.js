@@ -6,7 +6,7 @@ import { mergeAdapters } from './adapters.js';
 const MUTATING = new Set(['browser_open','browser_click','browser_fill','agent_send','provider_prepare','provider_commit','agent_new_chat']);
 const LOCAL = new Set(['localhost','127.0.0.1','[::1]']);
 const ALLOWED = new Set(['browser_tabs','browser_read','control_status',
-  'agent_probe','agent_selftest','agent_context','agent_peek']);
+  'agent_probe','agent_selftest','agent_context','agent_peek','provider_reply_peek']);
 
 export async function permittedTab(chromeApi, tabId) {
   if (!Number.isSafeInteger(tabId) || tabId <= 0) throw Error('INVALID_TAB_ID');
@@ -74,7 +74,7 @@ export async function dispatchReadOnly(command, chromeApi, {getBackgroundControl
     }
     return out;
   }
-  if (['agent_probe','agent_selftest','agent_context','agent_peek'].includes(command.name)) {
+  if (['agent_probe','agent_selftest','agent_context','agent_peek','provider_reply_peek'].includes(command.name)) {
     const tabId=command.args?.tabId;
     const {tab,origin,site}=await permittedTab(chromeApi,tabId);
     // These are diagnosis/read operations only, never a write permission.
@@ -88,9 +88,18 @@ export async function dispatchReadOnly(command, chromeApi, {getBackgroundControl
     const adapter=mergeAdapters(overrides)[site.adapter];
     if (!adapter || adapter.origin!==origin)
       throw Error('ADAPTER_ORIGIN_MISMATCH');
+    if (command.name==='provider_reply_peek' &&
+        (command.args?.expectedOrigin!==origin ||
+         typeof command.args?.expectedConversationId!=='string' ||
+         !/^[A-Za-z0-9_-]{8,160}$/.test(command.args.expectedConversationId))) {
+      throw Error('PROVIDER_REPLY_IDENTITY_INVALID');
+    }
     const action=command.name==='agent_probe'?'agent_selftest':command.name;
+    const actionArgs=command.name==='provider_reply_peek'
+      ? {adapter,expectedOrigin:origin,expectedConversationId:command.args.expectedConversationId}
+      : {adapter};
     const results=await chromeApi.scripting.executeScript({
-      target:{tabId},func:pageAction,args:[action,{adapter},origin]
+      target:{tabId},func:pageAction,args:[action,actionArgs,origin]
     });
     const result=results?.[0]?.result;
     if (!result || result.error) throw Error(result?.error || 'AGENT_DIAGNOSTIC_FAILED');
@@ -114,6 +123,17 @@ export async function dispatchReadOnly(command, chromeApi, {getBackgroundControl
           typeof result.text!=='string' || typeof result.generating!=='boolean')
         throw Error('INVALID_PEEK_RESULT');
       return {...result,text:redact(result.text)};
+    }
+    if (command.name==='provider_reply_peek') {
+      if (!Number.isSafeInteger(result.count) || result.replyIndex!==result.count ||
+          typeof result.text!=='string' || !Number.isSafeInteger(result.chars) ||
+          result.chars!==result.text.length || typeof result.generating!=='boolean' ||
+          result.origin!==origin || result.conversationId!==command.args.expectedConversationId ||
+          typeof result.url!=='string') throw Error('INVALID_PROVIDER_REPLY_SNAPSHOT');
+      const check=await chromeApi.tabs.get(tabId);
+      if (check.url!==tab.url || check.url!==result.url) throw Error('TAB_CHANGED_DURING_PROVIDER_REPLY_READ');
+      const sanitized=redact(result.text);
+      return {...result,text:sanitized,chars:sanitized.length,redacted:sanitized!==result.text};
     }
     return result;
   }
