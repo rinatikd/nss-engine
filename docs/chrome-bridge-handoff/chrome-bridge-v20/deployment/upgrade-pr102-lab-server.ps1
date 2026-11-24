@@ -13,7 +13,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$LabPort = 17484
+$LabPort = 17485
 $LabExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 . (Join-Path $PSScriptRoot 'process-identity.ps1')
 . (Join-Path $PSScriptRoot 'verify-candidate-source.ps1')
@@ -72,8 +72,8 @@ function TreeHash([string]$Path) {
 }
 function AssertListener([int]$ProcessId) {
   $listeners = @([BridgeNativeMetadata]::Listeners($LabPort))
-  Require ($listeners.Count -eq 1) ('Expected one listener on 17484, found ' + $listeners.Count)
-  Require ($listeners[0] -eq ('127.0.0.1|' + $ProcessId)) ('17484 listener does not belong to expected PID; owner=' + $listeners[0])
+  Require ($listeners.Count -eq 1) ('Expected one listener on ' + $LabPort + ', found ' + $listeners.Count)
+  Require ($listeners[0] -eq ('127.0.0.1|' + $ProcessId)) ('PR102 Lab listener does not belong to expected PID; owner=' + $listeners[0])
 }
 function PinProcess([int]$ProcessId,[string]$ExpectedStart,[string]$Root,[string]$State,[string]$ConfigHash) {
   $p = [Diagnostics.Process]::GetProcessById($ProcessId)
@@ -125,7 +125,7 @@ function PinProcess([int]$ProcessId,[string]$ExpectedStart,[string]$Root,[string
           $currentHash = HashFile (Join-Path $State 'config.json')
           $transactionLauncher = ($jobSource -ieq (FullPath $Root)) -and
             ($jobState -ieq (FullPath $State)) -and
-            ([int]$startJob.port -eq 17484) -and
+            ([int]$startJob.port -eq $LabPort) -and
             ($jobHash -eq $ConfigHash) -and ($jobHash -eq $currentHash)
         }
       }
@@ -254,7 +254,7 @@ function CreateBackup([string]$CurrentServer,[string]$Root,[string]$State,[strin
   Copy-Item -LiteralPath $CurrentServer -Destination (Join-Path $backup 'server') -Recurse -Force
   Require ((TreeHash (Join-Path $backup 'server')) -eq $CurrentTreeHash) 'Backup tree hash mismatch'
   WriteJson (Join-Path $backup 'server-backup.json') @{
-    schema='chrome-bridge-pr102-lab-server-backup-v1';target='PR102_LAB';port=17484;
+    schema='chrome-bridge-pr102-lab-server-backup-v1';target='PR102_LAB';port=$LabPort;
     labRoot=$Root;stateRoot=$State;createdUtc=[DateTime]::UtcNow.ToString('o');
     stateConfigSha256=$ConfigHash;serverTreeSha256=$CurrentTreeHash;sourceSha=$SourceSha
   }
@@ -269,7 +269,7 @@ if ($TestFixture) {
   $runnerTemp = [Environment]::GetEnvironmentVariable('RUNNER_TEMP')
   Require (-not [string]::IsNullOrWhiteSpace($runnerTemp)) 'Test fixture requires RUNNER_TEMP'
   Require (Inside $root $runnerTemp) 'Test fixture must be below RUNNER_TEMP'
-  Require ((Split-Path $root -Leaf) -eq 'ChromeBridge-PR102-17484-Lab-Server-TestFixture') 'Unexpected synthetic Lab fixture'
+  Require ((Split-Path $root -Leaf) -eq 'ChromeBridge-PR102-17485-Lab-Server-TestFixture') 'Unexpected synthetic Lab fixture'
   Require (Inside $state $root) 'Test fixture state must remain inside Lab root'
 } else {
   Require ($root -ieq 'C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20') 'Only the exact PR102 Lab server root may be targeted'
@@ -334,7 +334,7 @@ try {
     $markerPath = Join-Path $requestedBackup 'server-backup.json'
     Require (Test-Path -LiteralPath $markerPath -PathType Leaf) 'Server backup marker missing'
     $marker = ReadJson $markerPath
-    Require ($marker.schema -eq 'chrome-bridge-pr102-lab-server-backup-v1' -and $marker.target -eq 'PR102_LAB' -and $marker.port -eq 17484) 'Server backup marker mismatch'
+    Require ($marker.schema -eq 'chrome-bridge-pr102-lab-server-backup-v1' -and $marker.target -eq 'PR102_LAB' -and $marker.port -eq $LabPort) 'Server backup marker mismatch'
     Require ((FullPath ([string]$marker.labRoot)) -ieq $root) 'Server backup belongs to another Lab root'
     Require ((FullPath ([string]$marker.stateRoot)) -ieq $state) 'Server backup belongs to another state directory'
     Require ((HashFile $configPath) -eq [string]$marker.stateConfigSha256) 'Lab config changed since server backup'
@@ -394,7 +394,7 @@ try {
   $null = $oldProc.Handle
   $oldProc.Kill()
   Require ($oldProc.WaitForExit(8000)) 'Original Lab Bridge process did not stop'
-  Require (@([BridgeNativeMetadata]::Listeners($LabPort)).Count -eq 0) 'Port 17484 remained occupied after stopping the pinned owner'
+  Require (@([BridgeNativeMetadata]::Listeners($LabPort)).Count -eq 0) 'PR102 Lab port remained occupied after stopping the pinned owner'
 
   $displaced = Join-Path $root ('.server-displaced-' + [guid]::NewGuid().ToString('N'))
   try {
