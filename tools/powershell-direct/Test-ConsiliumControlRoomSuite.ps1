@@ -5,11 +5,11 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$consiliumRoot='C:\Engineering\ChromeBridge_Consilium_Lab_0.4.0\consilium'
+$candidateRoot=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$consiliumRoot=Join-Path $candidateRoot 'consilium-control-room'
 $nodeExe='C:\Program Files\nodejs\node.exe'
 $workspace=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
 if($workspace -ine $workspaceExpected){throw 'UNEXPECTED_APPROVED_WORKSPACE'}
-$candidateRoot=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
 . (Join-Path $candidateRoot 'deployment\process-identity.ps1')
 if(!(Test-Path -LiteralPath $consiliumRoot -PathType Container)){throw 'CONSILIUM_CONTROL_ROOM_SOURCE_ROOT_MISSING'}
 if(!(Test-Path -LiteralPath $nodeExe -PathType Leaf)){throw 'PINNED_NODE_EXECUTABLE_MISSING'}
