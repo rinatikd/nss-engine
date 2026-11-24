@@ -96,7 +96,7 @@ Worktree создаётся отдельно:
 
 Для кандидата уже зафиксирован отдельный stage:
 `C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-35e69e7`.
-По записи от 24.11 его 110 tracked files прошли пофайловую SHA-256 проверку, inventory/manifest, syntax и selected regression проверки. Перед дальнейшим использованием stage нужно подтверждать его manifest и source SHA относительно worktree `35e69e7`; не доверять одному лишь имени каталога. Если этот отдельный stage отсутствует или manifest не совпадает, staging остановить — сначала требуется отдельный helper с параметром уникального `StageDirectory`, без удаления или замены legacy R2.
+По записи от 24.11 его 110 tracked files прошли пофайловую SHA-256 проверку, inventory/manifest, syntax и selected regression проверки. Для проверки уже существующего каталога добавлен read-only `Verify-EngineeringLabR2.ps1`. Он принимает точный `-ExpectedCommit`, `-SourceWorktree` и `-StageDirectory`; требует чистый source worktree на нужном SHA и правильный Git origin, затем запускает `r2-stage.test.mjs` с явными путями. Проверка подтверждает полный Git-tracked inventory, manifest и SHA-256 source/stage, синтаксис и 7 regression suites. Скрипт не копирует, не удаляет и не изменяет source/stage, не запускает сервисы/туннели и возвращает `R2_EXISTING_STAGE_VERIFIED` только при 2/2 тестах. В CI этот же helper запускается после создания временного stage. Для Work PC использовать его из обновлённой feature-ветки или после контролируемого переноса файла в recovery checkout; не запускать `Prepare` с default target и не удалять существующий stage.
 
 ### 3. Regression и smoke
 
@@ -121,6 +121,6 @@ Source CI для PR commit `35e69e7` прошёл три workflow: Source checks
 - реализовать graceful drain и ожидание закрытия exact child process вместо немедленного `Stop-Process -Force`;
 - добавить durable transaction journal с терминальной записью каждой фазы и идемпотентным recovery;
 - испытать failure injection и подтверждённый rollback на изолированном окружении;
-- закрыть вопрос с unique R2 stage path и повторно подтвердить manifest на реальном Work PC.
+- повторно подтвердить существующий stage на реальном Work PC через `Verify-EngineeringLabR2.ps1` (CI не заменяет эту проверку).
 
 До закрытия этих пунктов: **не выполнять cutover, не останавливать R1 и не менять production Bridge 17381/17382, credentials или туннели**.
