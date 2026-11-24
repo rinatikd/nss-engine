@@ -177,9 +177,10 @@ function New-CutoverJournal {
     [Parameter(Mandatory=$true)][ValidateRange(1,2147483647)][int]$OldTunnelPid,
     [Parameter(Mandatory=$true)][string]$OldSupervisorPath,
     [Parameter(Mandatory=$true)][string]$NewSupervisorPath,
-    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$CandidateCommit
+    [Parameter(Mandatory=$true)][string]$CandidateCommit
   )
   $directory = Assert-CutoverJournalDirectory -Path $JournalDirectory
+  if ($CandidateCommit -notmatch '^[0-9a-fA-F]{40}$') { throw 'JOURNAL_CANDIDATE_COMMIT_INVALID' }
   $parsedGuid = [Guid]::Empty
   if (![Guid]::TryParseExact($TransactionId,'N',[ref]$parsedGuid)) { throw 'JOURNAL_TRANSACTION_ID_INVALID' }
   foreach ($path in @($OldSupervisorPath,$NewSupervisorPath)) {
@@ -240,8 +241,9 @@ function Set-CutoverJournalPhase {
       'ROLLBACK_INTENT','REPLACEMENT_STOPPED','ORIGINAL_RESTORE_INTENT',
       'COMMITTED','ROLLED_BACK','ROLLBACK_FAILED','ABORTED','UNKNOWN'
     )][string]$Phase,
-    [Parameter(Mandatory=$true)][ValidatePattern('^[A-Z0-9_]{1,64}$')][string]$ResultCode
+    [Parameter(Mandatory=$true)][string]$ResultCode
   )
+  if ($ResultCode -notmatch '^[A-Z0-9_]{1,64}$') { throw 'JOURNAL_RESULT_CODE_INVALID' }
   $identity = Assert-CutoverJournalPath -JournalPath $JournalPath
   $lock = Enter-CutoverJournalLock -JournalPath $identity.Path
   try {
