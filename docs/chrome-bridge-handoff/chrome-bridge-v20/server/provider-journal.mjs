@@ -275,6 +275,7 @@ export class ProviderJournal {
       ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
       ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
       ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
+      ...(Number.isSafeInteger(tx.baseline)?{baseline:tx.baseline}:{}),
       ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{}),
       ...(tx.replyReceipt?{replyReceipt:clone(tx.replyReceipt)}:{})};
     return out;
