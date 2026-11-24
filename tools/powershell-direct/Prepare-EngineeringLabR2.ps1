@@ -4,6 +4,7 @@
 param(
  [ValidateSet('Inspect','Prepare')][string]$Mode='Inspect',
  [string]$ExpectedCommit='',
+ [string]$StageDirectory='C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125',
  [string]$NodeExecutable='C:\Program Files\nodejs\node.exe'
 )
 Set-StrictMode -Version Latest
@@ -12,7 +13,25 @@ $ErrorActionPreference='Stop'
 if($ExpectedCommit -notmatch '^[0-9a-f]{40}$'){throw 'EXPECTED_COMMIT_REQUIRED'}
 $expectedCommit=$ExpectedCommit.ToLowerInvariant()
 $repo=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath
-$stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
+$stage=[IO.Path]::GetFullPath($StageDirectory).TrimEnd('\')
+$engineeringRoot='C:\Engineering\'
+if(!$stage.StartsWith($engineeringRoot,[StringComparison]::OrdinalIgnoreCase)){
+ throw 'R2_STAGE_OUTSIDE_ENGINEERING_ROOT'
+}
+$protectedTargets=@(
+ 'C:\Engineering\PowerShellDirect-Engineering-Lab-R1',
+ 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2',
+ 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-35e69e7'
+)
+foreach($protected in $protectedTargets){
+ if($stage -ieq $protected){throw 'R2_STAGE_TARGET_PROTECTED'}
+}
+$repoCanonical=[IO.Path]::GetFullPath($repo).TrimEnd('\')
+if($stage -ieq $repoCanonical -or
+   $stage.StartsWith(($repoCanonical+'\'),[StringComparison]::OrdinalIgnoreCase) -or
+   $repoCanonical.StartsWith(($stage+'\'),[StringComparison]::OrdinalIgnoreCase)){
+ throw 'R2_STAGE_SOURCE_OVERLAP'
+}
 $node=$NodeExecutable
 $git='C:\Program Files\Git\cmd\git.exe'
 $expectedRemote='github.com/rinatikd/nss-engine'
