@@ -28,6 +28,7 @@ if (-not [int]::TryParse($parts[1], [ref]$pidValue) -or $pidValue -le 0) { throw
 $proc = [Diagnostics.Process]::GetProcessById($pidValue)
 try {
   $identity = Get-BridgeHandleIdentity $proc
+  $processName = $proc.ProcessName
 } finally {
   $proc.Dispose()
 }
@@ -43,8 +44,8 @@ if ($command -match '^\s*"[^"]+"\s+"(?<entry>[^"]+)"') {
 }
 $workingDirectory = [string]$identity.workingDirectory
 $bridgeHome = [string]$identity.bridgeHome
-$configPath = Join-Path $bridgeHome 'config.json'
-$configExists = Test-Path -LiteralPath $configPath -PathType Leaf
+$configPath = if ([string]::IsNullOrWhiteSpace($bridgeHome)) { '' } else { Join-Path $bridgeHome 'config.json' }
+$configExists = -not [string]::IsNullOrWhiteSpace($configPath) -and (Test-Path -LiteralPath $configPath -PathType Leaf)
 $configHash = ''
 $agentTokenLength = 0
 $browserTokenLength = 0
@@ -79,7 +80,7 @@ $summary = [ordered]@{
   ListenerAddress = $parts[0]
   ListenerPort = $labPort
   ProcessId = $pidValue
-  ProcessName = $proc.ProcessName
+  ProcessName = $processName
   ExecutablePath = [string]$identity.executable
   CommandKind = $commandKind
   EntryPoint = $entryPoint
