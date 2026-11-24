@@ -61,6 +61,35 @@ test('commit uses a distinct tool and preserves prepared ID plus fencing token',
   assert.equal(request.params.arguments.payloadHash,'b'.repeat(64));
 });
 
+test('replyWait reads the request-correlated receipt without retrying or sending',async()=>{
+  let request;
+  const reply='verified synthetic response';
+  const clickedAt=new Date(Date.now()-1000).toISOString();
+  const receipt={
+    identity,requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
+    tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
+    clickedAt,baseline:3,replyIndex:4,observedAt:new Date().toISOString(),
+    replySha256:crypto.createHash('sha256').update(reply,'utf8').digest('hex'),
+    replyChars:reply.length,stableSamples:2,eventId:'event_reply_0001',sequence:7,recordHash:'f'.repeat(64)
+  };
+  const a=adapter(async(url,init)=>{
+    request={url,body:JSON.parse(init.body)};
+    return response({state:'REPLIED',identity,reply,replyReceipt:receipt},{id:'provider-provider_reply_wait-request_0001'});
+  });
+  const result=await a.replyWait(identity,5);
+  assert.equal(result.state,'REPLIED');
+  assert.equal(request.url,endpoint+'/mcp');
+  assert.equal(request.body.params.name,'provider_reply_wait');
+  assert.equal(request.body.params.arguments.requestId,identity.requestId);
+  assert.equal(request.body.params.arguments.taskId,identity.taskId);
+  assert.equal(request.body.params.arguments.providerId,identity.providerId);
+  assert.equal(request.body.params.arguments.tabId,identity.tabId);
+  assert.equal(request.body.params.arguments.origin,identity.origin);
+  assert.equal(request.body.params.arguments.conversationId,identity.conversationId);
+  assert.equal(request.body.params.arguments.epoch,identity.epoch);
+  assert.equal(request.body.params.arguments.timeoutSec,5);
+});
+
 test('ambiguous prepare acknowledgement is quarantined and never retried',async()=>{
   let calls=0;
   const a=adapter(async()=>{calls++;throw Error('socket closed after request body');});
