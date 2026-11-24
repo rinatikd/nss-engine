@@ -92,7 +92,7 @@ function Assert-Preflight {
  if(!(Test-Path -LiteralPath $prepared -PathType Leaf)){throw 'PREFLIGHT_MISSING'}
  # Invoke the read-only preflight in its own PowerShell script scope.
  # It performs no writes, starts no services and reads no secret values.
- $result=(& $prepared -Mode Inspect | Out-String)
+ $result=(& $prepared | Out-String)
  if($result.Length -gt 65536){throw 'PREFLIGHT_OUTPUT_TOO_LARGE'}
  $object=ConvertFrom-Json -InputObject $result -ErrorAction Stop
  if($object.ReadyToDraftOperatorTransaction -ne $true){throw 'PREFLIGHT_NOT_READY'}
