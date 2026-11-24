@@ -73,6 +73,18 @@ test('engineering DENY never executes',()=>fixture(async({svc,root,starts})=>{
   assert.equal(denied.reason,'OPERATOR_DENIED');
   assert.equal(starts(),0);
 }));
+test('service stop denies pending approval immediately and clears its timer',()=>fixture(async({svc,root,starts})=>{
+  const id='eng-stop-0001';
+  rpc(svc,'powershell_engineering_submit',req(root,id));
+  await pending(svc,id);
+  await svc.stop();
+  const denied=await status(svc,id);
+  assert.equal(denied.state,'DENIED');
+  assert.equal(denied.reason,'SERVICE_STOPPED');
+  assert.equal(svc.namedPending.size,0);
+  assert.equal(starts(),0);
+}));
+
 test('engineering ALLOW runs once, no replay',()=>fixture(async({svc,root,starts})=>{
   const id='eng-allow-0002';
   rpc(svc,'powershell_engineering_submit',req(root,id,'git-diff'));
