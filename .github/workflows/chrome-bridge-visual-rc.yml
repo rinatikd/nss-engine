@@ -261,6 +261,12 @@ jobs:
         run: |
           & ./tests/upgrade-pr102-lab.test.ps1
           if ($LASTEXITCODE -ne 0) { throw 'PR102 Lab updater integration test failed' }
+      - name: Test first-time PR102 Lab bootstrap and rollback on isolated port 17485
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          & ./tests/bootstrap-pr102-lab-server.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PR102 Lab bootstrap integration test failed' }
       - name: Test pinned PR102 Lab server cutover and rollback
         shell: powershell
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
