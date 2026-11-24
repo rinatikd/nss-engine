@@ -257,7 +257,7 @@ try {
   $marker = [ordered]@{
     schema = 'chrome-bridge-pr102-lab-backup-v1'
     target = 'PR102_LAB'
-    port = 17484
+    port = $LabPort
     labRoot = $root
     stateRoot = $state
     createdUtc = [DateTime]::UtcNow.ToString('o')
