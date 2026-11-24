@@ -12,6 +12,7 @@ $candidateRoot=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-re
 $targets=@(
   (Join-Path $PSScriptRoot 'Refresh-PR132PinnedWorktree.ps1'),
   (Join-Path $PSScriptRoot 'Run-PR132LabPreflight.ps1'),
+  (Join-Path $PSScriptRoot 'Prepare-PR145LabPort17485.ps1'),
   (Join-Path $PSScriptRoot 'Apply-PR132LabRelease.ps1'),
   (Join-Path $PSScriptRoot 'Create-PR132LabRestorePoint.ps1'),
   (Join-Path $PSScriptRoot 'Inspect-PR102LabRuntime.ps1'),
