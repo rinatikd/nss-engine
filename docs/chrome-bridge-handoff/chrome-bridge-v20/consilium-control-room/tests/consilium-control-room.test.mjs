@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { ProviderTransport, PROVIDER_TRANSPORT_V1 } from '../consilium/provider-transport-v1.mjs';
 import { createControlRoom, loadActorTokens } from '../consilium/control-room.mjs';
 
 const tokens=[
@@ -17,6 +18,18 @@ const tokens=[
  ,{token:'gemini-token-abcdefghijklmnopqrstuvwxyz-123456',actor:{id:'gemini',role:'ai_member'}}
 ];
 function dir(){return fs.mkdtempSync(path.join(os.tmpdir(),'consilium-room-'));}
+function trustedTransport(replyWait){
+ return new ProviderTransport({
+  version:PROVIDER_TRANSPORT_V1,
+  prepare:async identity=>({state:'NOT_PERFORMED',identity}),
+  commit:async identity=>({state:'NOT_PERFORMED',identity}),
+  status:async identity=>({state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId}),
+  replyWait,
+  stop:async identity=>({state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId}),
+  revoke:async identity=>({state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,nextEpoch:identity.epoch+1}),
+  events:async()=>[]
+ });
+}
 async function request(base, token, route, body, {origin=base,host}={}){
  const headers={Authorization:`Bearer ${token}`,Origin:origin};if(body)headers['Content-Type']='application/json';if(host)headers.Host=host;
  return fetch(base+route,{method:body?'POST':'GET',headers,body:body?JSON.stringify(body):undefined});
@@ -126,10 +139,10 @@ test('provider reply route writes REPLIED only from a validated Bridge transport
   replySha256:crypto.createHash('sha256').update(reply,'utf8').digest('hex'),
   replyChars:reply.length,stableSamples:2,eventId:'bridge_event_0001',sequence:7,recordHash:'f'.repeat(64)};
  const calls=[];
- const providerTransport={replyWait:async input=>{
+ const providerTransport=trustedTransport(async input=>{
    calls.push(input);
    return {state:'REPLIED',identity,reply,replyReceipt:receipt};
- }};
+ });
  const app=createControlRoom({dataDir:dir(),tokens,providerTransport});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const payload={...identity,timeoutSec:5};
@@ -160,8 +173,8 @@ test('provider reply route writes REPLIED only from a validated Bridge transport
 test('provider UNKNOWN route persists quarantine without inventing a reply',async()=>{
  const identity={requestId:'claude_reply_0003',taskId:'task_reply_0003',providerId:'claude',
   tabId:18,origin:'https://claude.ai',conversationId:'conversation_0003',epoch:4};
- const providerTransport={replyWait:async input=>({state:'UNKNOWN',identity,
-  quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_REPLY_TIMEOUT_QUARANTINED'})};
+ const providerTransport=trustedTransport(async input=>({state:'UNKNOWN',identity,
+  quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_REPLY_TIMEOUT_QUARANTINED'}));
  const app=createControlRoom({dataDir:dir(),tokens,providerTransport});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const response=await request(base,tokens[2].token,'/api/provider/reply/wait',{...identity,timeoutSec:4});
@@ -180,7 +193,7 @@ test('provider UNKNOWN route persists quarantine without inventing a reply',asyn
 
 test('provider reply route ignores no caller-supplied receipt, reply or terminal status',async()=>{
  let calls=0;
- const providerTransport={replyWait:async()=>{calls++;throw Error('must not execute');}};
+ const providerTransport=trustedTransport(async()=>{calls++;throw Error('must not execute');});
  const app=createControlRoom({dataDir:dir(),tokens,providerTransport});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{
   const response=await request(base,tokens[1].token,'/api/provider/reply/wait',{
