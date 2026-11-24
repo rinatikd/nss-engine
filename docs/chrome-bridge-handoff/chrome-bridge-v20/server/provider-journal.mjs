@@ -240,7 +240,8 @@ export class ProviderJournal {
   recordReply(input,{replySha256,replyChars,replyIndex,observedAt,stableSamples=2}={}) {
     const identity=validateProviderIdentity(input);
     const tx=this.transactions.get(identity.requestId);
-    if(!tx||!identityEqual(tx.identity,identity))throw Error('PROVIDER_REPLY_TRANSACTION_NOT_FOUND');
+    if(!tx)throw Error('PROVIDER_REPLY_TRANSACTION_NOT_FOUND');
+    if(!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
     if(tx.state==='REPLIED'&&tx.replyReceipt)return {state:'REPLIED',identity,replyReceipt:clone(tx.replyReceipt),duplicate:true};
     if(!['SENT','STOP_AFTER_COMMIT'].includes(tx.state)||!Number.isSafeInteger(tx.baseline)||!Number.isFinite(Date.parse(tx.clickedAt||'')))
       throw Error('PROVIDER_REPLY_NOT_EXPECTED');
