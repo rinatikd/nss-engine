@@ -6,9 +6,11 @@ $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $oldRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-fb2c27a8-release-clean'
-$newRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-16e07aa1-release-clean'
-$expectedSha='16e07aa1a8c7c6f39af20da8a7eec33662fe0b09'
+$newRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-4696c1c0-release-clean'
+$expectedSha='4696c1c0b8fc1c970a003413d267d666faf424a7'
 $expectedBranch='feat/chat-approved-session-auth-20261122'
+$expectedMergeRef='refs/pull/145/merge'
+$trackingRef='refs/remotes/origin/pr145/merge'
 $expectedRemote='github.com/rinatikd/nss-engine'
 $git='C:\Program Files\Git\cmd\git.exe'
 
@@ -87,8 +89,8 @@ $untracked=InvokeGit $oldRepo @('ls-files','--others','--exclude-standard')
 if($cached -ne '' -or $eolOnly -ne '' -or -not [string]::IsNullOrWhiteSpace($untracked)){throw 'OLD_CHECKOUT_HAS_NON_EOL_OR_UNTRACKED_CHANGES'}
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $newRepo) -Force|Out-Null
-$null=InvokeGit $oldRepo @('fetch','--no-tags','origin',("refs/heads/{0}:refs/remotes/origin/{0}" -f $expectedBranch))
-$remoteHead=InvokeGit $oldRepo @('rev-parse',("refs/remotes/origin/{0}" -f $expectedBranch))
+$null=InvokeGit $oldRepo @('fetch','--no-tags','origin',($expectedMergeRef+':'+$trackingRef))
+$remoteHead=InvokeGit $oldRepo @('rev-parse',$trackingRef)
 if($remoteHead -cne $expectedSha){throw ('REMOTE_BRANCH_HEAD_MISMATCH: '+$remoteHead)}
 $null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$oldHead,$expectedSha)
 $null=InvokeGit $oldRepo @('worktree','add','--detach',$newRepo,$expectedSha)
