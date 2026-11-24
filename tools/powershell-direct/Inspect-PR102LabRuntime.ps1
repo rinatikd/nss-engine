@@ -57,18 +57,64 @@ if ($configExists) {
 }
 
 $securePreferenceMatch = $false
+$secureMappings = @()
+$extensionIdsToInspect = @($labExtensionId,'ojkfdjndmcpnphecoadbcnmlnadmmkah')
 $chromeRoots = @((Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data')) | Where-Object { Test-Path -LiteralPath $_ -PathType Container }
 foreach ($chromeRoot in $chromeRoots) {
   $profiles = @('Default') + @((Get-ChildItem -LiteralPath $chromeRoot -Directory -Force -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match '^Profile \d+$' } | ForEach-Object { $_.Name }))
+    Where-Object { $_.Name -match '^Profile \d+
+
+$summary = [ordered]@{
+  Result = 'PR102_LAB_RUNTIME_IDENTITY_READ'
+  ListenerAddress = $parts[0]
+  ListenerPort = $labPort
+  ProcessId = $pidValue
+  ProcessName = $processName
+  ExecutablePath = [string]$identity.executable
+  CommandKind = $commandKind
+  EntryPoint = $entryPoint
+  EntryPointExists = [bool]($entryPoint -and (Test-Path -LiteralPath $entryPoint -PathType Leaf))
+  WorkingDirectory = $workingDirectory
+  WorkingDirectoryExists = [bool](Test-Path -LiteralPath $workingDirectory -PathType Container)
+  ServerBridgeEntryExists = [bool](Test-Path -LiteralPath (Join-Path $workingDirectory 'server\bridge.mjs') -PathType Leaf)
+  ServerToolsRegistryExists = [bool](Test-Path -LiteralPath (Join-Path $workingDirectory 'server\tools.mjs') -PathType Leaf)
+  BridgeHome = $bridgeHome
+  BridgeHomeExists = [bool](Test-Path -LiteralPath $bridgeHome -PathType Container)
+  BridgePortEnvironment = [string]$identity.bridgePort
+  ExtensionIdEnvironment = [string]$identity.extensionId
+  ExpectedExtensionIdMatches = ([string]$identity.extensionId -ceq $labExtensionId)
+  StateConfigExists = $configExists
+  StateConfigSha256 = $configHash
+  AgentTokenLength = $agentTokenLength
+  BrowserTokenLength = $browserTokenLength
+  ChromeSecurePreferencesMapLabExtension = $securePreferenceMatch
+  ChromeExtensionMappings = @($secureMappings)
+  ExpectedExtensionRoot = $extensionRoot
+  ExpectedStateRoot = $stateRoot
+  ProcessCreatedUtc = [string]$identity.created
+}
+$summary | ConvertTo-Json -Depth 5
+ } | ForEach-Object { $_.Name }))
   foreach ($profile in $profiles) {
     $preferencesPath = Join-Path (Join-Path $chromeRoot $profile) 'Secure Preferences'
     if (Test-Path -LiteralPath $preferencesPath -PathType Leaf) {
       try {
         $preferences = Get-Content -LiteralPath $preferencesPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $entry = $preferences.extensions.settings.PSObject.Properties[$labExtensionId]
-        if ($entry -and ([IO.Path]::GetFullPath([string]$entry.Value.path).TrimEnd('\')) -ieq ([IO.Path]::GetFullPath($extensionRoot).TrimEnd('\'))) {
-          $securePreferenceMatch = $true
+        foreach ($inspectId in $extensionIdsToInspect) {
+          $entry = $preferences.extensions.settings.PSObject.Properties[$inspectId]
+          if ($entry) {
+            $mappedPath = [IO.Path]::GetFullPath([string]$entry.Value.path).TrimEnd('\')
+            $secureMappings += [pscustomobject]@{
+              Profile = $profile
+              ExtensionId = $inspectId
+              Path = $mappedPath
+              State = if ($entry.Value.PSObject.Properties['state']) { [int]$entry.Value.state } else { $null }
+              MapsToPR102Root = ($inspectId -ceq $labExtensionId -and $mappedPath -ieq [IO.Path]::GetFullPath($extensionRoot).TrimEnd('\'))
+            }
+            if ($inspectId -ceq $labExtensionId -and $mappedPath -ieq [IO.Path]::GetFullPath($extensionRoot).TrimEnd('\')) {
+              $securePreferenceMatch = $true
+            }
+          }
         }
       } catch {}
     }
