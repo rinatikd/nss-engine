@@ -246,7 +246,11 @@ try {
   AssertExtensionOriginAccepted
   Write-Output '[PASS] Stale State extensionId safely overridden by pinned Lab process environment'
   $newNames = @((Get-Content $expectedNew -Raw | ConvertFrom-Json).result.tools | ForEach-Object { $_.name })
-  foreach ($n in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events')) {
+  $newUniqueNames = @($newNames | Sort-Object -Unique)
+  if ($newNames.Count -ne 30 -or $newUniqueNames.Count -ne 30) {
+    throw ('New registry must contain exactly 30 unique tools; found ' + $newNames.Count)
+  }
+  foreach ($n in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_reply_wait','provider_stop','provider_revoke','provider_events')) {
     if ($newNames -notcontains $n) { throw ('New registry missing ' + $n) }
   }
 
