@@ -13,7 +13,7 @@ const PROVIDERS={
   'https://chat.qwen.ai':'qwen',
   'https://www.kimi.ai':'kimi'
 };
-const STATES=new Set(['PREPARING','PREPARED','COMMITTING','SENT','UNKNOWN','NOT_PERFORMED','BLOCKED','REVOKED','STOP_REQUESTED','STOPPED_CLEAN','STOP_AFTER_COMMIT']);
+const STATES=new Set(['PREPARING','PREPARED','COMMITTING','SENT','REPLIED','UNKNOWN','NOT_PERFORMED','BLOCKED','REVOKED','STOP_REQUESTED','STOPPED_CLEAN','STOP_AFTER_COMMIT']);
 const MAX_BYTES=16*1024*1024;
 const clone=value=>value==null?value:JSON.parse(JSON.stringify(value));
 
@@ -105,7 +105,16 @@ export class ProviderJournal {
       if(old)this.transactions.set(identity.requestId,{...old,state:'COMMITTING'});
     } else if(type==='commit.completed') {
       const old=this.transactions.get(identity.requestId);
-      if(old)this.transactions.set(identity.requestId,{...old,state:'SENT',clickedAt:data.clickedAt,clickedSend:true});
+      if(old)this.transactions.set(identity.requestId,{...old,state:'SENT',clickedAt:data.clickedAt,clickedSend:true,baseline:data.baseline});
+    } else if(type==='reply.observed') {
+      const old=this.transactions.get(identity.requestId);
+      if(old)this.transactions.set(identity.requestId,{...old,state:'REPLIED',replyReceipt:{
+        identity:clone(identity),requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
+        tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
+        clickedAt:data.clickedAt,baseline:data.baseline,replyIndex:data.replyIndex,observedAt:data.observedAt,
+        replySha256:data.replySha256,replyChars:data.replyChars,stableSamples:data.stableSamples,
+        eventId:record.eventId,sequence:record.seq,recordHash:record.hash
+      }});
     } else if(type==='transaction.outcome') {
       const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
       this.transactions.set(identity.requestId,{...old,state:data.state,reasonCode:data.reasonCode||null,
@@ -173,7 +182,7 @@ export class ProviderJournal {
          this.tabEpochs.get(identity.tabId)===identity.epoch) {
         return {duplicate:true,transaction:this.status(identity),fencingToken:this.#fencingToken(old)};
       }
-      if(['PREPARING','COMMITTING','UNKNOWN','SENT','REVOKED','STOPPED_CLEAN',
+      if(['PREPARING','COMMITTING','UNKNOWN','SENT','REPLIED','REVOKED','STOPPED_CLEAN',
           'NOT_PERFORMED','BLOCKED','STOP_REQUESTED','STOP_AFTER_COMMIT'].includes(old.state)) {
         return {duplicate:true,transaction:this.status(identity)};
       }
@@ -182,7 +191,7 @@ export class ProviderJournal {
     this.#ensureEpoch(identity);
     for(const existing of this.transactions.values()) {
       if(existing.identity.tabId===identity.tabId&&
-         ['PREPARING','PREPARED','COMMITTING','UNKNOWN','STOP_REQUESTED'].includes(existing.state)) {
+         ['PREPARING','PREPARED','COMMITTING','SENT','UNKNOWN','STOP_REQUESTED'].includes(existing.state)) {
         throw Error('PROVIDER_TAB_QUARANTINED');
       }
     }
@@ -219,13 +228,32 @@ export class ProviderJournal {
     return clone(tx);
   }
 
-  completeCommit(input,{clickedAt,clickedSend}) {
+  completeCommit(input,{clickedAt,clickedSend,baseline}) {
     const identity=validateProviderIdentity(input);
     const tx=this.transactions.get(identity.requestId);
     if(!tx||tx.state!=='COMMITTING'||!identityEqual(tx.identity,identity)||
-      clickedSend!==true||!Number.isFinite(Date.parse(clickedAt||'')))throw Error('PROVIDER_COMMIT_RECEIPT_INVALID');
-    this.#append('commit.completed',identity,{clickedAt,clickedSend:true});
-    return {state:'SENT',identity,requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt,clickedSend:true};
+      clickedSend!==true||!Number.isFinite(Date.parse(clickedAt||''))||!Number.isSafeInteger(baseline)||baseline<0)throw Error('PROVIDER_COMMIT_RECEIPT_INVALID');
+    this.#append('commit.completed',identity,{clickedAt,clickedSend:true,baseline});
+    return {state:'SENT',identity,requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt,clickedSend:true,baseline};
+  }
+
+  recordReply(input,{replySha256,replyChars,replyIndex,observedAt,stableSamples=2}={}) {
+    const identity=validateProviderIdentity(input);
+    const tx=this.transactions.get(identity.requestId);
+    if(!tx||!identityEqual(tx.identity,identity))throw Error('PROVIDER_REPLY_TRANSACTION_NOT_FOUND');
+    if(tx.state==='REPLIED'&&tx.replyReceipt)return {state:'REPLIED',identity,replyReceipt:clone(tx.replyReceipt),duplicate:true};
+    if(tx.state!=='SENT'||!Number.isSafeInteger(tx.baseline)||!Number.isFinite(Date.parse(tx.clickedAt||'')))
+      throw Error('PROVIDER_REPLY_NOT_EXPECTED');
+    if(!/^[a-f0-9]{64}$/.test(replySha256||'')||!Number.isSafeInteger(replyChars)||replyChars<1||replyChars>100000||
+       !Number.isSafeInteger(replyIndex)||replyIndex!==tx.baseline+1||
+       !Number.isFinite(Date.parse(observedAt||''))||Date.parse(observedAt)<Date.parse(tx.clickedAt)||
+       stableSamples!==2)throw Error('PROVIDER_REPLY_RECEIPT_INVALID');
+    const event=this.#append('reply.observed',identity,{
+      clickedAt:tx.clickedAt,baseline:tx.baseline,replyIndex,observedAt,
+      replySha256,replyChars,stableSamples
+    });
+    const updated=this.transactions.get(identity.requestId);
+    return {state:'REPLIED',identity,replyReceipt:clone(updated.replyReceipt),duplicate:false,eventId:event.eventId,sequence:event.seq};
   }
 
   outcome(input,state,reasonCode='',extra={}) {
@@ -247,13 +275,14 @@ export class ProviderJournal {
       ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
       ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
       ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
-      ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{})};
+      ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{}),
+      ...(tx.replyReceipt?{replyReceipt:clone(tx.replyReceipt)}:{})};
     return out;
   }
 
   #tabOutstanding(tabId) {
     const unresolved=[...this.transactions.values()].filter(tx=>
-      tx.identity.tabId===tabId&&['PREPARING','PREPARED','COMMITTING','UNKNOWN','STOP_REQUESTED'].includes(tx.state));
+      tx.identity.tabId===tabId&&['PREPARING','PREPARED','COMMITTING','SENT','UNKNOWN','STOP_REQUESTED'].includes(tx.state));
     return {
       unresolved:unresolved.length,
       outstandingPrepared:unresolved.filter(tx=>tx.state==='PREPARED').length
@@ -344,7 +373,7 @@ export class ProviderJournal {
     if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>1000)throw Error('PROVIDER_EVENT_WINDOW_INVALID');
     const stateFor=record=>({
       'epoch.initialized':'ACCEPTED','epoch.revoked':'REVOKED','prepare.started':'ACCEPTED',
-      'prepare.completed':'PREPARED','commit.started':'DISPATCHED','commit.completed':'SENT',
+      'prepare.completed':'PREPARED','commit.started':'DISPATCHED','commit.completed':'SENT','reply.observed':'REPLIED',
       'transaction.outcome':record.data.state,'stop.requested':'STOP_REQUESTED','stop.clean':'STOPPED_CLEAN','stop.after_commit':'STOP_AFTER_COMMIT'
     })[record.type]||'UNKNOWN';
     return this.records.filter(e=>e.seq>after).slice(0,limit).map(e=>({
