@@ -8,9 +8,9 @@ $ErrorActionPreference='Stop'
 $repo='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-35e69e7'
 $expectedCommit='35e69e7e58c7e1b054a0771cabce07cc0c4108df'
-$old='C:\Engineering\ChromeBridge-PowerShell-Direct-Validation\tools\powershell-direct\stack-supervisor.mjs'
+$old='C:\Engineering\PowerShellDirect-Engineering-Lab-R1\tools\powershell-direct\stack-supervisor.mjs'
 $new=Join-Path $stage 'tools\powershell-direct\stack-supervisor.mjs'
-$recover=Join-Path $repo 'tools\ai_collaboration\recovery\Recover-PowerShellDirect.ps1'
+$recover=Join-Path $repo 'tools\powershell-direct\Recover-EngineeringDirect.ps1'
 $node='C:\Program Files\nodejs\node.exe'
 $client='C:\Engineering\chrome-bridge\codex-handoff-output\direct-cli-v21\runtime\tunnel-client.exe'
 $credential=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\control-plane.dpapi'
@@ -105,7 +105,7 @@ $checks.PerJobWorkspaceAndNoLegacyAllowlist=$policyPerJob
 
 if($checks.RecoveryScriptPresent){
  $recoverySource=Get-Content -LiteralPath $recover -Raw
- $recoveryTargetsOriginal=$recoverySource.Contains($old)
+ $recoveryTargetsOriginal=($recoverySource.Contains("$stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R1'") -and $recoverySource.Contains("Join-Path $stage 'tools\powershell-direct\stack-supervisor.mjs'") -and $recoverySource.Contains("[ValidateSet('Inspect','Start')]"))
 }
 $checks.RollbackScriptTargetsOriginalSupervisor=$recoveryTargetsOriginal
 
