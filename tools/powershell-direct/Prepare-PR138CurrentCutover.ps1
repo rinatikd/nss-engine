@@ -105,7 +105,7 @@ $checks.PerJobWorkspaceAndNoLegacyAllowlist=$policyPerJob
 
 if($checks.RecoveryScriptPresent){
  $recoverySource=Get-Content -LiteralPath $recover -Raw
- $recoveryTargetsOriginal=($recoverySource.Contains("$stage='C:\Engineering\PowerShellDirect-Engineering-Lab-R1'") -and $recoverySource.Contains("Join-Path $stage 'tools\powershell-direct\stack-supervisor.mjs'") -and $recoverySource.Contains("[ValidateSet('Inspect','Start')]"))
+ $recoveryTargetsOriginal=($recoverySource.Contains('$stage=' + "'C:\Engineering\PowerShellDirect-Engineering-Lab-R1'") -and $recoverySource.Contains('Join-Path $stage ' + "'tools\powershell-direct\stack-supervisor.mjs'") -and $recoverySource.Contains("[ValidateSet('Inspect','Start')]"))
 }
 $checks.RollbackScriptTargetsOriginalSupervisor=$recoveryTargetsOriginal
 
