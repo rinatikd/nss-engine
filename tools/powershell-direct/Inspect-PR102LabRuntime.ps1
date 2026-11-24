@@ -9,7 +9,7 @@ $repo = Join-Path $workspaceExpected 'work\ChromeBridge-PR145-4696c1c0-release-c
 $candidateRoot = Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
 $extensionRoot = 'C:\Engineering\ChromeBridge-PR102-17484-Lab'
 $stateRoot = 'C:\Engineering\ChromeBridge-PR102-17484-State'
-$labPort = 17484
+$labPort = 17485
 $labExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 $consiliumExtensionId = 'ojkfdjndmcpnphecoadbcnmlnadmmkah'
 
