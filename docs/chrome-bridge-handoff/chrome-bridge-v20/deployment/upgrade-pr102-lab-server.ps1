@@ -353,7 +353,9 @@ try {
   WriteExpectedTools $stageRoot $expectedTools $script:NodeExe
   $toolNames = @((ReadJson $expectedTools).result.tools | ForEach-Object { $_.name })
   if (-not $RollbackFrom) {
-    foreach ($required in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_stop','provider_revoke','provider_events')) {
+    $uniqueToolNames = @($toolNames | Sort-Object -Unique)
+    Require ($toolNames.Count -eq 30 -and $uniqueToolNames.Count -eq 30) ('Expected exactly 30 unique MCP tools; found ' + $toolNames.Count)
+    foreach ($required in @('session_request','session_authorize','session_status','session_revoke','provider_prepare','provider_commit','provider_status','provider_reply_wait','provider_stop','provider_revoke','provider_events')) {
       Require ($toolNames -contains $required) ('Required Session/Provider tool missing: ' + $required)
     }
   }
