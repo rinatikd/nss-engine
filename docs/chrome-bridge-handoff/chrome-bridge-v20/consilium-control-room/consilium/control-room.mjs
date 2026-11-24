@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { EventLedger } from './event-ledger.mjs';
+import { createChromeBridgeProviderTransport } from './chrome-bridge-provider-adapter.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.join(ROOT, 'web');
@@ -85,7 +86,7 @@ export function loadActorTokens(env = process.env) {
   return result;
 }
 
-export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1', now } = {}) {
+export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1', now, providerTransport = null } = {}) {
   if (host !== '127.0.0.1') throw Error('LOOPBACK_ONLY');
   if (!Array.isArray(tokens) || !['owner', 'chatgpt', 'claude', 'deepseek', 'qwen', 'kimi', 'grok', 'gemini'].every(id => tokens.some(x => x.actor?.id === id))) throw Error('FULL_COUNCIL_IDENTITIES_REQUIRED');
   const identities = new Set(), secrets = new Set();
@@ -96,6 +97,7 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
     if (!requiredRole || x.actor.role !== requiredRole) throw Error('ACTOR_ROLE_MISMATCH');
     identities.add(x.actor.id); secrets.add(x.token);
   }
+  if (providerTransport !== null && typeof providerTransport.replyWait !== 'function') throw Error('PROVIDER_TRANSPORT_INVALID');
   const ledger = new EventLedger(dataDir, { now });
   let server;
   const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
@@ -173,6 +175,49 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
         if (['REPLIED', 'VERIFIED'].includes(body.deliveryStatus)) throw Error('PROVIDER_REPLY_RECEIPT_REQUIRED');
         if (!validString(body.provider, 32) || !validString(body.text, 40000) || !validString(body.requestId, 100) || !['ACCEPTED', 'DISPATCHED', 'SENT', 'DELIVERED', 'UNKNOWN', 'NOT_PERFORMED', 'BLOCKED', 'FAILED'].includes(body.deliveryStatus || 'UNKNOWN')) throw Error('INVALID_MESSAGE');
         return json(res, 201, { event: append('message.recorded', { provider: body.provider, text: body.text, deliveryStatus: body.deliveryStatus || 'UNKNOWN', providerRequestId: body.requestId, sourceCommit: body.sourceCommit || null, evidenceClass: 'caller-assertion-not-provider-receipt' }) });
+      }
+      if (url.pathname === '/api/provider/reply/wait') {
+        requireRole(actor, ['owner', 'ai_member']);
+        if (!providerTransport) return json(res, 503, { error: 'PROVIDER_TRANSPORT_NOT_CONFIGURED' });
+        if (Object.hasOwn(body, 'providerReplyReceipt') || Object.hasOwn(body, 'reply') ||
+            Object.hasOwn(body, 'deliveryStatus') || Object.hasOwn(body, 'text')) {
+          throw Error('CALLER_REPLY_EVIDENCE_NOT_ACCEPTED');
+        }
+        const identity = {
+          requestId: body.requestId, taskId: body.taskId, providerId: body.providerId,
+          tabId: body.tabId, origin: body.origin, conversationId: body.conversationId,
+          epoch: body.epoch
+        };
+        const result = await providerTransport.replyWait({ ...identity, timeoutSec: body.timeoutSec });
+        if (result?.state === 'REPLIED') {
+          const receipt = result.replyReceipt;
+          if (!receipt || typeof result.reply !== 'string' ||
+              receipt.requestId !== identity.requestId || receipt.taskId !== identity.taskId ||
+              receipt.providerId !== identity.providerId || receipt.tabId !== identity.tabId ||
+              receipt.origin !== identity.origin || receipt.conversationId !== identity.conversationId ||
+              receipt.epoch !== identity.epoch) throw Error('PROVIDER_REPLY_RECEIPT_INVALID');
+          const eventRequestId = 'reply_' + crypto.createHash('sha256').update(identity.requestId).digest('hex').slice(0, 32);
+          const event = ledger.append({ type: 'message.recorded', actor, requestId: eventRequestId, payload: {
+            provider: identity.providerId, text: result.reply, deliveryStatus: 'REPLIED',
+            providerRequestId: identity.requestId, evidenceClass: 'bridge-provider-receipt',
+            providerReplyReceipt: receipt
+          }});
+          return json(res, 200, { state: 'REPLIED', event, replyReceipt: receipt });
+        }
+        if (result?.state === 'UNKNOWN') {
+          const eventRequestId = 'reply_' + crypto.createHash('sha256').update(identity.requestId).digest('hex').slice(0, 32);
+          const event = ledger.append({ type: 'message.recorded', actor, requestId: eventRequestId, payload: {
+            provider: identity.providerId, text: 'Provider reply could not be uniquely verified.',
+            deliveryStatus: 'UNKNOWN', providerRequestId: identity.requestId,
+            evidenceClass: 'bridge-provider-unknown',
+            quarantineId: result.quarantineId, reasonCode: result.reasonCode || 'PROVIDER_REPLY_UNKNOWN'
+          }});
+          return json(res, 200, { state: 'UNKNOWN', event, quarantineId: result.quarantineId });
+        }
+        if (result?.state === 'BLOCKED' || result?.state === 'NOT_PERFORMED') {
+          return json(res, 409, { state: result.state, reasonCode: result.reasonCode || 'PROVIDER_REPLY_NOT_AVAILABLE' });
+        }
+        throw Error('PROVIDER_REPLY_RESULT_INVALID');
       }
       if (url.pathname === '/api/rounds/propose') {
         requireRole(actor, ['ai_member']);
@@ -258,7 +303,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const dataDir = process.env.CONSILIUM_DATA_DIR || path.resolve('data/consilium');
   const port = Number(process.env.CONSILIUM_PORT || 18765);
   const tokens = loadActorTokens();
-  const app = createControlRoom({ dataDir, tokens, port });
+  const bridgeEndpoint = process.env.CONSILIUM_CHROME_BRIDGE_ENDPOINT;
+  const bridgeToken = process.env.CONSILIUM_CHROME_BRIDGE_AGENT_TOKEN;
+  if (!!bridgeEndpoint !== !!bridgeToken) throw Error('CHROME_BRIDGE_ENDPOINT_AND_TOKEN_REQUIRED');
+  const providerTransport = bridgeEndpoint && bridgeToken
+    ? createChromeBridgeProviderTransport({ endpoint: bridgeEndpoint, agentToken: bridgeToken })
+    : null;
+  const app = createControlRoom({ dataDir, tokens, port, providerTransport });
   const address = await app.listen();
   process.stdout.write(`CONSILIUM_CONTROL_ROOM_READY http://${address.host}:${address.port}/\\n`);
   const shutdown = async () => { await app.close(); process.exit(0); };
