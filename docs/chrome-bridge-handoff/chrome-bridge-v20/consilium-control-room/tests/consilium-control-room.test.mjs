@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { createControlRoom, loadActorTokens } from '../consilium/control-room.mjs';
 
 const tokens=[
@@ -122,7 +123,7 @@ test('provider reply route writes REPLIED only from a validated Bridge transport
  const reply='A synthetic correlated Claude response.';
  const clickedAt=new Date(Date.now()-1500).toISOString();
  const receipt={...identity,identity,clickedAt,baseline:4,replyIndex:5,observedAt:new Date().toISOString(),
-  replySha256:(await import('node:crypto')).default.createHash('sha256').update(reply,'utf8').digest('hex'),
+  replySha256:crypto.createHash('sha256').update(reply,'utf8').digest('hex'),
   replyChars:reply.length,stableSamples:2,eventId:'bridge_event_0001',sequence:7,recordHash:'f'.repeat(64)};
  const calls=[];
  const providerTransport={replyWait:async input=>{
