@@ -83,6 +83,9 @@ test('service stop denies pending approval immediately and clears its timer',()=
   assert.equal(denied.reason,'SERVICE_STOPPED');
   assert.equal(svc.namedPending.size,0);
   assert.equal(starts(),0);
+  const afterStop=rpc(svc,'powershell_engineering_submit',req(root,'eng-stop-late-01'));
+  assert.equal(afterStop.result.isError,true);
+  assert.equal(afterStop.result.content[0].text,'SERVICE_STOPPING');
 }));
 
 test('service stop waits for an approved runner and final audit publication',async()=>{
