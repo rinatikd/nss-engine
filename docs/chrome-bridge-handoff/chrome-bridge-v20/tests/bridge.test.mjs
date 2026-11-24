@@ -42,7 +42,7 @@ test('auth, origin, host and tool validation', async () => {
     assert.ok(list.result.tools.some(({ name }) => name === 'agent_send'));
     for (const name of [
       'session_request', 'session_authorize', 'session_revoke', 'session_status',
-      'provider_prepare', 'provider_commit', 'provider_status', 'provider_stop',
+      'provider_prepare', 'provider_commit', 'provider_status', 'provider_reply_wait', 'provider_stop',
       'provider_revoke', 'provider_events'
     ])
       assert.ok(list.result.tools.some((tool) => tool.name === name), `missing ${name}`);
@@ -366,7 +366,12 @@ test('Chrome Bridge ProviderTransport adapter completes a synthetic prepare/comm
       };
       else if (command.name === 'provider_commit') result = {
         clickedSend: true, requestId: command.args.requestId, preparedId: command.args.preparedId,
-        payloadHash: command.args.payloadHash, clickedAt: new Date().toISOString(), confirmed: true
+        payloadHash: command.args.payloadHash, clickedAt: new Date().toISOString(), baseline: 0, confirmed: true
+      else if (command.name === 'provider_reply_peek') result = {
+        count:1, replyIndex:1, text:'Synthetic Claude reply for correlated request.',
+        chars:42, generating:false, origin:'https://claude.ai',
+        conversationId:'conversation_001', url:'https://claude.ai/chat/conversation_001'
+      };
       };
       else throw Error('Unexpected synthetic Bridge command: ' + command.name);
       const ack = await s.post('/bridge/result', { id: command.id, result }, 'b'.repeat(64));
@@ -394,7 +399,22 @@ test('Chrome Bridge ProviderTransport adapter completes a synthetic prepare/comm
     });
     assert.equal(sent.state, 'SENT');
     assert.equal(sent.clickedSend, true);
+    assert.equal(sent.baseline, 0);
     assert.equal((await transport.status(identity)).state, 'SENT');
+    const replied = await s.rpc('provider_reply_wait', { ...identity, timeoutSec: 5 });
+    assert.equal(replied.result.isError, undefined);
+    const reply = JSON.parse(replied.result.content[0].text);
+    assert.equal(reply.state, 'REPLIED');
+    assert.equal(reply.reply, 'Synthetic Claude reply for correlated request.');
+    assert.equal(reply.replyReceipt.requestId, identity.requestId);
+    assert.equal(reply.replyReceipt.providerId, identity.providerId);
+    assert.equal(reply.replyReceipt.conversationId, identity.conversationId);
+    assert.equal(reply.replyReceipt.baseline, 0);
+    assert.equal(reply.replyReceipt.replyIndex, 1);
+    assert.equal(reply.replyReceipt.stableSamples, 2);
+    assert.ok(reply.replyReceipt.replySha256);
+    assert.ok(reply.replyReceipt.eventId);
+    assert.equal((await transport.status(identity)).state, 'REPLIED');
     const stoppedAfterCommit = await transport.stop(identity);
     assert.equal(stoppedAfterCommit.state, 'STOP_AFTER_COMMIT');
     assert.equal(stoppedAfterCommit.nextEpoch, 8);
