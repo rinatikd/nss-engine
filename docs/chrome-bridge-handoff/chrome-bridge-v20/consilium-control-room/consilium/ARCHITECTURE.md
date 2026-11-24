@@ -4,7 +4,8 @@
 
 - `consilium/control-room.mjs`: loopback HTTP server, bearer authentication, origin/host guards, API routes and process lifecycle.
 - `consilium/event-ledger.mjs`: append-only JSONL event log, single-writer lock, sequence/hash validation, idempotent append, projections and state-transition validation.
-- `consilium/provider-transport-v1.mjs`: versioned transport boundary for prepare/commit/status/stop/revoke/events, bound to provider origin, tab, conversation and fencing epoch.
+- `consilium/provider-transport-v1.mjs`: versioned transport boundary for prepare/commit/status/reply-wait/stop/revoke/events, bound to provider origin, tab, conversation and fencing epoch.
+- `consilium/chrome-bridge-provider-adapter.mjs`: concrete loopback MCP adapter. It requires an explicit endpoint and agent token; it never defaults to Production.
 - `consilium/web/index.html`, `app.js`, `style.css`: browser interface, event timeline, session controls, decision review, task creation and contributor comments.
 - `tests/`: Node built-in test suite. No real provider account or live browser is used.
 
@@ -24,7 +25,7 @@ Tasks can be created only from accepted decisions. Any of the seven AI identitie
 
 Any of the seven AI identities may propose and launch a previously proposed round while the session is RUNNING. Both proposal and launch are separate immutable journal events. ChatGPT and Claude remain the mandatory independent review pair, not an execution-authority tier.
 
-`ProviderTransport` v1 defines prepare / commit / status / stop / revoke / events. It validates the exact provider-origin-tab-conversation-epoch identity, requires a prepared no-send side effect and fencing token, requires click evidence for SENT, preserves UNKNOWN with a quarantine ID, and refuses STOPPED_CLEAN without an independently verified epoch-bound quiescence attestation. The module is a contract wrapper only; a concrete live Chrome Bridge adapter is not attached yet.
+`ProviderTransport` v1 defines prepare / commit / status / stop / revoke / events. It validates the exact provider-origin-tab-conversation-epoch identity, requires a prepared no-send side effect and fencing token, requires click evidence for SENT, preserves UNKNOWN with a quarantine ID, and refuses STOPPED_CLEAN without an independently verified epoch-bound quiescence attestation. The transport can be injected into Control Room as `providerTransport`. The optional `/api/provider/reply/wait` route accepts only the transaction identity, calls the transport's read-only correlated reply operation, validates the result via ProviderTransport, and appends the trusted receipt to the event ledger. It never initiates a send. CLI configuration requires both `CONSILIUM_CHROME_BRIDGE_ENDPOINT` and `CONSILIUM_CHROME_BRIDGE_AGENT_TOKEN`; the endpoint is explicit loopback and must be a disposable Lab port. If either setting is absent, the reply route remains disabled with HTTP 503.
 
 ## Stop contract
 
