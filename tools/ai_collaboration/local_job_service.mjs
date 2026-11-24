@@ -162,6 +162,7 @@ export function createLocalJobService({
             approved?.planSha256 !== digest) {
           const reason=approved?.reason==='APPROVAL_EXPIRED'?'APPROVAL_EXPIRED':
             approved?.reason==='OPERATOR_DENIED'?'OPERATOR_DENIED':
+            approved?.reason==='SERVICE_STOPPED'?'SERVICE_STOPPED':
             'APPROVAL_INVALID_OR_DECLINED';
           await publish(requestId,{
             requestId,suite,state:'DENIED',reason,planSha256:digest
