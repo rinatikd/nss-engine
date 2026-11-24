@@ -2,7 +2,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $packageRoot = Split-Path $PSScriptRoot -Parent
-$updater = Join-Path $packageRoot 'deployment\bootstrap-pr102-lab-server.ps1','deployment\upgrade-pr102-lab-server.ps1'
+$updater = Join-Path $packageRoot 'deployment\upgrade-pr102-lab-server.ps1'
 . (Join-Path $packageRoot 'deployment\process-identity.ps1')
 . (Join-Path $packageRoot 'deployment\verify-candidate-source.ps1')
 $root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17485-Lab-Server-TestFixture'
@@ -44,7 +44,8 @@ $sourceInputs = @(
   'deployment/cutover-start.mjs',
   'deployment/process-identity.ps1',
   'deployment/verify-candidate-source.ps1',
-  'deployment/bootstrap-pr102-lab-server.ps1','deployment/upgrade-pr102-lab-server.ps1'
+  'deployment/bootstrap-pr102-lab-server.ps1',
+  'deployment/upgrade-pr102-lab-server.ps1'
 )
 $dirtyFile = Join-Path $packageRoot 'server\.pr102-candidate-dirty-test.mjs'
 [IO.File]::WriteAllText($dirtyFile,'synthetic untracked candidate source')
