@@ -354,7 +354,21 @@ export class PowerShellApprovalService {
   }catch(e){return send(res,400,{error:/^[A-Z0-9_]+$/.test(e.message)?e.message:'INVALID_REQUEST'});}
  }
  start(){return new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(this.port,'127.0.0.1',()=>{this.port=this.server.address().port;resolve(this);});});}
- stop(){return new Promise(resolve=>this.server.close(resolve));}
+ stop(){
+  if(this.stopPromise)return this.stopPromise;
+  // A stopped approval UI can no longer receive an operator decision. Deny
+  // every outstanding request immediately and release its expiry timer.
+  const pending=[...this.namedPending.values()];
+  this.namedPending.clear();
+  for(const item of pending){
+   clearTimeout(item.timer);
+   item.resolve({approved:false,reason:'SERVICE_STOPPED',
+    requestId:item.requestId,planSha256:item.planSha256});
+  }
+  if(!this.server.listening){this.stopPromise=Promise.resolve();return this.stopPromise;}
+  this.stopPromise=new Promise(resolve=>this.server.close(()=>resolve()));
+  return this.stopPromise;
+ }
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const svc=new PowerShellApprovalService({chatReadonlyEnabled:process.env.PS_DIRECT_CHAT_READONLY_ENABLED==='1'});await svc.start();
