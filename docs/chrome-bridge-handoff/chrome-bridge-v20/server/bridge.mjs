@@ -340,7 +340,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       if(!providerJournal)return {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
       const initial=providerJournal.status(identity);
       if(initial.state==='REPLIED'||initial.state==='UNKNOWN')return initial;
-      if(initial.state!=='SENT')
+      if(!['SENT','STOP_AFTER_COMMIT'].includes(initial.state))
         return {state:'BLOCKED',identity,reasonCode:'PROVIDER_REPLY_NOT_EXPECTED',transactionState:initial.state};
       if(!Number.isSafeInteger(initial.baseline)||!Number.isFinite(Date.parse(initial.clickedAt||'')))
         return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_COMMIT_BASELINE_MISSING');
