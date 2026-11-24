@@ -148,6 +148,165 @@ function Read-CutoverJournalRecord {
   if ([string]$record.status -cne (Get-CutoverJournalStatus -Phase ([string]$record.phase))) {
     throw 'JOURNAL_STATUS_PHASE_MISMATCH'
   }
+  $history = @($record.events)
+  for ($index=0; $index -lt $history.Count; $index++) {
+    if ([int]$history[$index].sequence -ne $index) { throw 'JOURNAL_EVENT_SEQUENCE_INVALID' }
+    if ([string]$history[$index].resultCode -notmatch '^[A-Z0-9_]{1,64}
+}
+
+function Get-CutoverJournalStatus {
+  param([Parameter(Mandatory=$true)][string]$Phase)
+  switch ($Phase) {
+    'COMMITTED' { return 'COMMITTED' }
+    'ROLLED_BACK' { return 'ROLLED_BACK' }
+    'ABORTED' { return 'ABORTED' }
+    'ROLLBACK_FAILED' { return 'FAILED' }
+    'STOP_FAILED' { return 'FAILED' }
+    'START_FAILED' { return 'FAILED' }
+    'UNKNOWN' { return 'UNKNOWN' }
+    default { return 'IN_PROGRESS' }
+  }
+}
+
+function New-CutoverJournal {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)][string]$JournalDirectory,
+    [Parameter(Mandatory=$true)][string]$TransactionId,
+    [Parameter(Mandatory=$true)][ValidateRange(1,2147483647)][int]$OldSupervisorPid,
+    [Parameter(Mandatory=$true)][ValidateRange(1,2147483647)][int]$OldTunnelPid,
+    [Parameter(Mandatory=$true)][string]$OldSupervisorPath,
+    [Parameter(Mandatory=$true)][string]$NewSupervisorPath,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$CandidateCommit
+  )
+  $directory = Assert-CutoverJournalDirectory -Path $JournalDirectory
+  $parsedGuid = [Guid]::Empty
+  if (![Guid]::TryParseExact($TransactionId,'N',[ref]$parsedGuid)) { throw 'JOURNAL_TRANSACTION_ID_INVALID' }
+  foreach ($path in @($OldSupervisorPath,$NewSupervisorPath)) {
+    if ([string]::IsNullOrWhiteSpace($path) -or ![IO.Path]::IsPathRooted($path)) {
+      throw 'JOURNAL_STACK_PATH_INVALID'
+    }
+  }
+  $id = $parsedGuid.ToString('N')
+  $journalPath = Join-Path $directory ($id + '.json')
+  if ([IO.File]::Exists($journalPath)) { throw 'JOURNAL_TRANSACTION_ALREADY_EXISTS' }
+
+  $now = [DateTime]::UtcNow.ToString('o')
+  $initialEvent = [ordered]@{ sequence=0; phase='CREATED'; resultCode='TRANSACTION_CREATED'; atUtc=$now }
+  $record = [ordered]@{
+    schemaVersion = 1
+    transactionId = $id
+    createdAtUtc = $now
+    updatedAtUtc = $now
+    sequence = 0
+    phase = 'CREATED'
+    status = 'IN_PROGRESS'
+    candidateCommit = $CandidateCommit.ToLowerInvariant()
+    oldStack = [ordered]@{
+      supervisorPid = $OldSupervisorPid
+      tunnelPid = $OldTunnelPid
+      supervisorPath = [IO.Path]::GetFullPath($OldSupervisorPath)
+    }
+    newStack = [ordered]@{
+      supervisorPath = [IO.Path]::GetFullPath($NewSupervisorPath)
+      supervisorPid = $null
+      tunnelPid = $null
+    }
+    events = @($initialEvent)
+  }
+  $lock = Enter-CutoverJournalLock -JournalPath $journalPath
+  try {
+    Write-CutoverJournalEnvelope -JournalPath $journalPath -Record $record -CreateOnly
+  } finally {
+    $lock.Dispose()
+  }
+  return [pscustomobject]@{ JournalPath=$journalPath; TransactionId=$id; Sequence=0; Phase='CREATED'; Status='IN_PROGRESS' }
+}
+
+function Get-CutoverJournal {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$JournalPath)
+  return Read-CutoverJournalRecord -JournalPath $JournalPath
+}
+
+function Set-CutoverJournalPhase {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory=$true)][string]$JournalPath,
+    [Parameter(Mandatory=$true)][ValidateRange(0,2147483646)][int]$ExpectedSequence,
+    [Parameter(Mandatory=$true)][ValidateSet(
+      'PREFLIGHT_VERIFIED','OLD_STOP_INTENT','OLD_STOPPED','STOP_FAILED',
+      'NEW_START_INTENT','NEW_STARTED','START_FAILED','NEW_HEALTH_VERIFIED',
+      'ROLLBACK_INTENT','REPLACEMENT_STOPPED','ORIGINAL_RESTORE_INTENT',
+      'COMMITTED','ROLLED_BACK','ROLLBACK_FAILED','ABORTED','UNKNOWN'
+    )][string]$Phase,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[A-Z0-9_]{1,64}$')][string]$ResultCode
+  )
+  $identity = Assert-CutoverJournalPath -JournalPath $JournalPath
+  $lock = Enter-CutoverJournalLock -JournalPath $identity.Path
+  try {
+    $record = Read-CutoverJournalRecord -JournalPath $identity.Path
+    if ([int]$record.sequence -ne $ExpectedSequence) { throw 'JOURNAL_SEQUENCE_CONFLICT' }
+    if ($script:TerminalCutoverPhases -contains [string]$record.phase) { throw 'JOURNAL_TERMINAL_NO_TRANSITIONS' }
+    $allowed = @($script:CutoverTransitions[[string]$record.phase])
+    if ($allowed -notcontains $Phase) { throw 'JOURNAL_PHASE_TRANSITION_INVALID' }
+
+    $nextSequence = [int]$record.sequence + 1
+    $now = [DateTime]::UtcNow.ToString('o')
+    $event = [ordered]@{ sequence=$nextSequence; phase=$Phase; resultCode=$ResultCode; atUtc=$now }
+    $record.sequence = $nextSequence
+    $record.phase = $Phase
+    $record.status = Get-CutoverJournalStatus -Phase $Phase
+    $record.updatedAtUtc = $now
+    $record.events = @($record.events) + @($event)
+    Write-CutoverJournalEnvelope -JournalPath $identity.Path -Record $record
+    return [pscustomobject]@{
+      JournalPath=$identity.Path
+      TransactionId=[string]$record.transactionId
+      Sequence=$nextSequence
+      Phase=$Phase
+      Status=[string]$record.status
+    }
+  } finally {
+    $lock.Dispose()
+  }
+}
+
+function Get-CutoverJournalRecoveryAssessment {
+  [CmdletBinding()]
+  param([Parameter(Mandatory=$true)][string]$JournalPath)
+  $record = Read-CutoverJournalRecord -JournalPath $JournalPath
+  $phase = [string]$record.phase
+  if ($script:TerminalCutoverPhases -contains $phase) {
+    $action = 'TERMINAL_NO_REPLAY'
+  } elseif ($phase -in @('CREATED','PREFLIGHT_VERIFIED')) {
+    $action = 'SAFE_TO_ABORT_NO_DESTRUCTIVE_INTENT_RECORDED'
+  } else {
+    $action = 'MANUAL_RECONCILIATION_REQUIRED_NO_AUTO_REPLAY'
+  }
+  return [pscustomobject]@{
+    TransactionId=[string]$record.transactionId
+    Sequence=[int]$record.sequence
+    Phase=$phase
+    Status=[string]$record.status
+    RecoveryAction=$action
+    AutomaticActionTaken=$false
+  }
+}
+
+Export-ModuleMember -Function New-CutoverJournal,Get-CutoverJournal,Set-CutoverJournalPhase,Get-CutoverJournalRecoveryAssessment
+) { throw 'JOURNAL_EVENT_RESULT_INVALID' }
+    if ($index -eq 0) {
+      if ([string]$history[$index].phase -cne 'CREATED') { throw 'JOURNAL_INITIAL_EVENT_INVALID' }
+    } else {
+      $previousPhase = [string]$history[$index-1].phase
+      if (!$script:CutoverTransitions.ContainsKey($previousPhase) -or
+          @($script:CutoverTransitions[$previousPhase]) -notcontains [string]$history[$index].phase) {
+        throw 'JOURNAL_EVENT_TRANSITION_INVALID'
+      }
+    }
+  }
+  if ([string]$history[-1].phase -cne [string]$record.phase) { throw 'JOURNAL_LAST_EVENT_PHASE_MISMATCH' }
   return $record
 }
 
