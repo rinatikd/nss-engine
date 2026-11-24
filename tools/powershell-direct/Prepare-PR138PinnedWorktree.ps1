@@ -83,7 +83,13 @@ function AssertPrimaryCheckout {
   $branch=InvokeGit $oldRepo @('branch','--show-current')
   if($branch -cne 'platform/ai-windows-control-release-20261114'){throw 'PRIMARY_BRANCH_MISMATCH'}
   $head=InvokeGit $oldRepo @('rev-parse','HEAD')
-  if($head -cne $expectedBase){throw 'PRIMARY_HEAD_MISMATCH'}
+  # Preserve the user's current branch. Accept only a clean checkout whose
+  # HEAD and pinned base lie on the same ancestor chain; the detached target
+  # is still the immutable PR138 runtime SHA and is created separately.
+  $mergeBase=InvokeGit $oldRepo @('merge-base',$expectedBase,$head)
+  if($mergeBase -cne $expectedBase -and $mergeBase -cne $head){
+    throw 'PRIMARY_HISTORY_MISMATCH'
+  }
   $remote=InvokeGit $oldRepo @('remote','get-url','origin')
   if((RemoteIdentity $remote) -cne $expectedRemote){throw 'PRIMARY_REMOTE_MISMATCH'}
   $status=InvokeGit $oldRepo @('status','--porcelain=v1','--untracked-files=all')
