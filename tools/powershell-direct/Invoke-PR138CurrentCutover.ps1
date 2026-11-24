@@ -90,39 +90,15 @@ function Stop-ExactStack($stack){
 }
 function Assert-Preflight {
  if(!(Test-Path -LiteralPath $prepared -PathType Leaf)){throw 'PREFLIGHT_MISSING'}
- $psi=New-Object Diagnostics.ProcessStartInfo
- $psi.FileName='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
- $psi.Arguments='-NoProfile -NonInteractive -File "'+$prepared+'" -Mode Inspect'
- $psi.WorkingDirectory=Split-Path $prepared -Parent
- $psi.UseShellExecute=$false
- $psi.CreateNoWindow=$true
- $psi.RedirectStandardOutput=$true
- $psi.RedirectStandardError=$true
- $child=$null
- try{
-  $child=[Diagnostics.Process]::Start($psi)
-  if(!$child){throw 'PREFLIGHT_PROCESS_START_FAILED'}
-  $outTask=$child.StandardOutput.ReadToEndAsync()
-  $errTask=$child.StandardError.ReadToEndAsync()
-  if(!$child.WaitForExit(30000)){try{$child.Kill()}catch{};throw 'PREFLIGHT_TIMEOUT'}
-  $result=$outTask.GetAwaiter().GetResult()
-  $childError=$errTask.GetAwaiter().GetResult()
-  if($child.ExitCode -ne 0){
-   $category='CHILD_NONZERO_EXIT'
-   if($childError -match '(?i)cannot find path|path.*not found'){$category='CHILD_PATH_ERROR'}
-   elseif($childError -match '(?i)access is denied|unauthorizedaccess'){$category='CHILD_ACCESS_ERROR'}
-   elseif($childError -match '(?i)parsererror|parser error|missing terminator'){$category='CHILD_SYNTAX_ERROR'}
-   elseif($childError -match '(?i)execution policy|running scripts is disabled'){$category='CHILD_EXECUTION_POLICY'}
-   elseif($childError -match '(?i)PREFLIGHT_'){$category='CHILD_PREFLIGHT_ERROR'}
-   throw ('PREFLIGHT_PROCESS_FAILED_EXIT_'+$child.ExitCode+'_'+$category)
-  }
-  if($result.Length -gt 65536){throw 'PREFLIGHT_OUTPUT_TOO_LARGE'}
-  $object=ConvertFrom-Json -InputObject $result -ErrorAction Stop
-  if($object.ReadyToDraftOperatorTransaction -ne $true){throw 'PREFLIGHT_NOT_READY'}
-  if(!(Test-Path -LiteralPath $recover -PathType Leaf) -or
-     !(Test-Path -LiteralPath $credential -PathType Leaf)){throw 'RECOVERY_PREREQUISITE_MISSING'}
-  return $object
- }finally{if($child){$child.Dispose()}}
+ # Invoke the read-only preflight in its own PowerShell script scope.
+ # It performs no writes, starts no services and reads no secret values.
+ $result=(& $prepared -Mode Inspect | Out-String)
+ if($result.Length -gt 65536){throw 'PREFLIGHT_OUTPUT_TOO_LARGE'}
+ $object=ConvertFrom-Json -InputObject $result -ErrorAction Stop
+ if($object.ReadyToDraftOperatorTransaction -ne $true){throw 'PREFLIGHT_NOT_READY'}
+ if(!(Test-Path -LiteralPath $recover -PathType Leaf) -or
+    !(Test-Path -LiteralPath $credential -PathType Leaf)){throw 'RECOVERY_PREREQUISITE_MISSING'}
+ return $object
 }
 function Test-Health([int]$TunnelPid){
  # ProcessStartInfo avoids Windows PowerShell 5.1 native executable pipeline issues.
