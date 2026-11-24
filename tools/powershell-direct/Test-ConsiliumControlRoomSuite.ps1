@@ -15,6 +15,7 @@ if(!(Test-Path -LiteralPath $consiliumRoot -PathType Container)){throw 'CONSILIU
 if(!(Test-Path -LiteralPath $nodeExe -PathType Leaf)){throw 'PINNED_NODE_EXECUTABLE_MISSING'}
 $sourceRoot=Join-Path $consiliumRoot 'consilium'
 $testRoot=Join-Path $consiliumRoot 'tests'
+$smokeScript=Join-Path $consiliumRoot 'deployment\consilium-lab-smoke.mjs'
 foreach($file in @(
   (Join-Path $sourceRoot 'control-room.mjs'),
   (Join-Path $sourceRoot 'event-ledger.mjs'),
@@ -22,7 +23,8 @@ foreach($file in @(
   (Join-Path $testRoot 'chrome-bridge-provider-adapter.test.mjs'),
   (Join-Path $testRoot 'consilium-control-room.test.mjs'),
   (Join-Path $testRoot 'consilium-event-ledger.test.mjs'),
-  (Join-Path $testRoot 'provider-transport.test.mjs')
+  (Join-Path $testRoot 'provider-transport.test.mjs'),
+  $smokeScript
 )){
   if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw ('CONSILIUM_TEST_INPUT_MISSING: '+$file)}
 }
@@ -70,11 +72,28 @@ foreach($file in $syntaxFiles){
 }
 $testFiles=@(Get-ChildItem -LiteralPath $testRoot -Filter '*.test.mjs' -File -Force|ForEach-Object {$_.FullName})
 if($testFiles.Count -lt 4){throw ('CONSILIUM_TEST_FILE_COUNT_LOW: '+$testFiles.Count)}
-$args=@('--test')+$testFiles
-$tests=RunNode $args $consiliumRoot 180000
+$nodeTestArguments=@('--test')+$testFiles
+$tests=RunNode $nodeTestArguments $consiliumRoot 180000
+if($smoke.ExitCode -ne 0){
+  [pscustomobject]@{
+    Result='CONSILIUM_CONTROL_ROOM_SMOKE_FAILED'
+    NodeVersion=$version.Stdout.Trim()
+    SyntaxFilesChecked=$syntaxFiles.Count
+    TestFiles=$testFiles.Count
+    TestExitCode=$tests.ExitCode
+    SmokeExitCode=$smoke.ExitCode
+    SmokeOutput=$smokeOutput
+    ControlRoomPortUnchanged=($portAfter -ceq $portBefore)
+  }|ConvertTo-Json -Depth 4
+  exit $smoke.ExitCode
+}
+if($tests.ExitCode -ne 0){throw ('CONSILIUM_NODE_TESTS_FAILED: '+$tests.Stderr)}
+$smoke=RunNode @($smokeScript) $consiliumRoot 60000
 $portAfter=ListenerSignature 18765
 if($portAfter -cne $portBefore){throw 'CONTROL_ROOM_PORT_18765_CHANGED_DURING_TESTS'}
 $testOutput=$tests.Stdout+$tests.Stderr
+$smokeOutput=$smoke.Stdout+$smoke.Stderr
+if($smokeOutput.Length -gt 3000){$smokeOutput=$smokeOutput.Substring($smokeOutput.Length-3000)}
 if($testOutput.Length -gt 12000){$testOutput=$testOutput.Substring($testOutput.Length-12000)}
 if($tests.ExitCode -ne 0){
   [pscustomobject]@{
@@ -95,6 +114,8 @@ if($tests.ExitCode -ne 0){
   TestFiles=$testFiles.Count
   TestExitCode=0
   TestOutputTail=$testOutput
+  SmokeOutput=$smokeOutput
+  SmokeExitCode=$smoke.ExitCode
   ControlRoomPort18765Unchanged=$true
   LiveProvidersTouched=$false
   RealTokensUsed=$false
