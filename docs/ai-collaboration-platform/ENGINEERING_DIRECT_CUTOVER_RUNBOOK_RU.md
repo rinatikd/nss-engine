@@ -78,7 +78,7 @@
 ### Доказательства и ограничения
 
 - На предыдущем кодовом снимке `9edf22e` helper уже прошёл Windows CI против старого 35e-stage: 2/2 проверок. Это историческое доказательство только механики verifier, не подтверждение нового runtime.
-- Новый workflow закрепляет runtime SHA `55c397ff39afe87b93c22031bc0e87df6eaceb32` и отдельные новые пути. CI для предыдущего снимка `e11d587` не считается подтверждением unexpected-exit fix; актуальный Actions run нужно оценивать только по `55c397f` или его следующему финальному HEAD.
+- Последний workflow run для текущего PR HEAD `ac792107` — [45485482824](https://github.com/rinatikd/nss-engine/actions/runs/45485482824): три job успешны; Node 78/78; Windows PowerShell 5.1 parse PASS; точный runtime SHA `55c397f` staged на CI в новый путь, 111 tracked files прошли manifest/SHA-256 parity, `R2_EXISTING_STAGE_VERIFIED` 2/2 PASS.
 - Даже полный CI для нового кандидата не означает, что этот runtime уже установлен на Work PC или что реальный новый R2 stage на Work PC создан.
 - Следующий Work PC шаг — только после разрешённого окна локальной проверки: получить feature-ветку с helper-скриптами, Inspect для нового worktree, Prepare только при совпадении SHA/чистоте/отсутствии destination, затем Inspect/Prepare нового R2 и read-only Verify. Существующие R1, legacy R2 и старый 35e-stage не менять.
 
