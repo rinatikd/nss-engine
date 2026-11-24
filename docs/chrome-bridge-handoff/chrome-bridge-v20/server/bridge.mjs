@@ -358,8 +358,11 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
             expectedConversationId:identity.conversationId
           });
           if(!snapshot||snapshot.origin!==identity.origin||snapshot.conversationId!==identity.conversationId||
-             snapshot.url===undefined||!Number.isSafeInteger(snapshot.count)||snapshot.count<initial.baseline)
+             snapshot.url===undefined||new URL(snapshot.url).origin!==identity.origin||
+             !Number.isSafeInteger(snapshot.count)||snapshot.count<initial.baseline)
             return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_SNAPSHOT_INVALID');
+          if(snapshot.redacted===true)
+            return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_REDACTED_SECRET_PATTERN');
           if(snapshot.count>initial.baseline+1)
             return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_REPLY_AMBIGUOUS_MULTIPLE_TURNS');
           const text=typeof snapshot.text==='string'?snapshot.text.trim():'';
