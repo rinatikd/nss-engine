@@ -106,8 +106,16 @@ function Assert-Preflight {
   $errTask=$child.StandardError.ReadToEndAsync()
   if(!$child.WaitForExit(30000)){try{$child.Kill()}catch{};throw 'PREFLIGHT_TIMEOUT'}
   $result=$outTask.GetAwaiter().GetResult()
-  $null=$errTask.GetAwaiter().GetResult()
-  if($child.ExitCode -ne 0){throw 'PREFLIGHT_PROCESS_FAILED'}
+  $childError=$errTask.GetAwaiter().GetResult()
+  if($child.ExitCode -ne 0){
+   $category='CHILD_NONZERO_EXIT'
+   if($childError -match '(?i)cannot find path|path.*not found'){$category='CHILD_PATH_ERROR'}
+   elseif($childError -match '(?i)access is denied|unauthorizedaccess'){$category='CHILD_ACCESS_ERROR'}
+   elseif($childError -match '(?i)parsererror|parser error|missing terminator'){$category='CHILD_SYNTAX_ERROR'}
+   elseif($childError -match '(?i)execution policy|running scripts is disabled'){$category='CHILD_EXECUTION_POLICY'}
+   elseif($childError -match '(?i)PREFLIGHT_'){$category='CHILD_PREFLIGHT_ERROR'}
+   throw ('PREFLIGHT_PROCESS_FAILED_EXIT_'+$child.ExitCode+'_'+$category)
+  }
   if($result.Length -gt 65536){throw 'PREFLIGHT_OUTPUT_TOO_LARGE'}
   $object=ConvertFrom-Json -InputObject $result -ErrorAction Stop
   if($object.ReadyToDraftOperatorTransaction -ne $true){throw 'PREFLIGHT_NOT_READY'}
