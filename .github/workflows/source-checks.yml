@@ -64,7 +64,8 @@ jobs:
             'tools/powershell-direct/Prepare-EngineeringCutover.ps1',
             'tools/powershell-direct/Stage-EngineeringDirect.ps1',
             'tools/powershell-direct/Prepare-EngineeringLabR2.ps1',
-            'tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1'
+            'tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1',
+            'tools/powershell-direct/Verify-EngineeringLabR2.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -139,10 +140,12 @@ jobs:
             $prepared = ($r2Prepared | Out-String).Trim() | ConvertFrom-Json
             if ($prepared.Result -cne 'R2_STAGED_UNTESTED' -or $prepared.RuntimeSourceSha -cne $expectedPin) { throw 'R2_PREPARE_RESULT_OR_PIN_INVALID' }
             if ($prepared.VerifiedFileCount -ne $preflight.InventoriedFileCount -or $prepared.TrackedFilesOnly -ne $true) { throw 'R2_PREPARE_INVENTORY_INVALID' }
-            $verify = Join-Path $worktree 'tools\powershell-direct\tests\r2-stage.test.mjs'
-            & $node --test $verify
-            if ($LASTEXITCODE -ne 0) { throw 'R2_STAGE_REGRESSION_FAILED' }
-            Write-Output ('[PASS] Outer helper + pinned detached worktree + R2 Inspect/Prepare + full manifest/regression: sha=' + $expectedPin + ' files=' + $prepared.VerifiedFileCount)
+            $verifyScript = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Verify-EngineeringLabR2.ps1'
+            $verifiedResult = & $verifyScript -ExpectedCommit $expectedPin -SourceWorktree $worktree -StageDirectory $stage -NodeExecutable $node -GitExecutable $git
+            $verified = ($verifiedResult | Out-String).Trim() | ConvertFrom-Json
+            if ($verified.Result -cne 'R2_EXISTING_STAGE_VERIFIED' -or $verified.RuntimeSourceSha -cne $expectedPin) { throw 'R2_EXISTING_STAGE_VERIFY_RESULT_INVALID' }
+            if ($verified.Tests -ne 2 -or $verified.Passed -ne 2 -or $verified.Failed -ne 0 -or $verified.ProductionTouched -ne $false) { throw 'R2_EXISTING_STAGE_VERIFY_SUMMARY_INVALID' }
+            Write-Output ('[PASS] Outer helper + pinned detached worktree + R2 Inspect/Prepare + read-only existing-stage verifier: sha=' + $expectedPin + ' files=' + $prepared.VerifiedFileCount)
           } finally {
             if (Test-Path -LiteralPath $stage) {
               Remove-Item -LiteralPath $stage -Recurse -Force
