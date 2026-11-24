@@ -170,8 +170,9 @@ export function createControlRoom({ dataDir, tokens, port = 0, host = '127.0.0.1
         return json(res, 201, { event: append('comment.added', { text: body.text.trim(), replyTo: body.replyTo || null }) });
       }
       if (url.pathname === '/api/messages') {
-        if (!validString(body.provider, 32) || !validString(body.text, 40000) || !validString(body.requestId, 100) || !['ACCEPTED', 'DISPATCHED', 'SENT', 'DELIVERED', 'REPLIED', 'VERIFIED', 'UNKNOWN', 'NOT_PERFORMED', 'BLOCKED', 'FAILED'].includes(body.deliveryStatus || 'UNKNOWN')) throw Error('INVALID_MESSAGE');
-        return json(res, 201, { event: append('message.recorded', { provider: body.provider, text: body.text, deliveryStatus: body.deliveryStatus || 'UNKNOWN', providerRequestId: body.requestId, sourceCommit: body.sourceCommit || null }) });
+        if (['REPLIED', 'VERIFIED'].includes(body.deliveryStatus)) throw Error('PROVIDER_REPLY_RECEIPT_REQUIRED');
+        if (!validString(body.provider, 32) || !validString(body.text, 40000) || !validString(body.requestId, 100) || !['ACCEPTED', 'DISPATCHED', 'SENT', 'DELIVERED', 'UNKNOWN', 'NOT_PERFORMED', 'BLOCKED', 'FAILED'].includes(body.deliveryStatus || 'UNKNOWN')) throw Error('INVALID_MESSAGE');
+        return json(res, 201, { event: append('message.recorded', { provider: body.provider, text: body.text, deliveryStatus: body.deliveryStatus || 'UNKNOWN', providerRequestId: body.requestId, sourceCommit: body.sourceCommit || null, evidenceClass: 'caller-assertion-not-provider-receipt' }) });
       }
       if (url.pathname === '/api/rounds/propose') {
         requireRole(actor, ['ai_member']);
