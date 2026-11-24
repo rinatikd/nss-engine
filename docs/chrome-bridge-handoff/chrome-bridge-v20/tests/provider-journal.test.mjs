@@ -48,6 +48,9 @@ test('reply receipt is request-bound, append-only, idempotent and unlocks the ta
     const clickedAt=new Date(Date.now()-1000).toISOString();
     j.completeCommit(identity,{clickedAt,clickedSend:true,baseline:4});
     assert.throws(()=>j.beginPrepare({...identity,requestId:'request_0002',taskId:'task_000002'},'c'.repeat(64)),/PROVIDER_TAB_QUARANTINED/);
+    const stopped=j.stop(identity);
+    assert.equal(stopped.state,'STOP_AFTER_COMMIT');
+    assert.equal(stopped.nextEpoch,8);
     const replySha256=crypto.createHash('sha256').update('synthetic Claude reply','utf8').digest('hex');
     const observedAt=new Date().toISOString();
     const receipt=j.recordReply(identity,{replySha256,replyChars:22,replyIndex:5,observedAt,stableSamples:2});
@@ -63,7 +66,8 @@ test('reply receipt is request-bound, append-only, idempotent and unlocks the ta
     assert.equal(duplicate.replyReceipt.eventId,receipt.replyReceipt.eventId);
     assert.equal(j.status(identity).replyReceipt.eventId,receipt.replyReceipt.eventId);
     assert.deepEqual(j.events({after:0,limit:30}).slice(-1)[0].state,'REPLIED');
-    assert.deepEqual(j.beginPrepare({...identity,requestId:'request_0002',taskId:'task_000002'},'c'.repeat(64)),{duplicate:false});
+    assert.deepEqual(j.stop(identity),{state:'STOP_AFTER_COMMIT',identity,nextEpoch:8});
+    assert.deepEqual(j.beginPrepare({...identity,requestId:'request_0002',taskId:'task_000002',epoch:8},'c'.repeat(64)),{duplicate:false});
     const raw=fs.readFileSync(path.join(dir,'provider-transactions.jsonl'),'utf8');
     assert.equal(raw.includes('synthetic Claude reply'),false);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
