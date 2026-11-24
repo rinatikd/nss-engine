@@ -97,6 +97,30 @@ $browserStatus=$null
 try{$browserStatus=$statusText|ConvertFrom-Json}catch{}
 Require ($null -ne $browserStatus) 'CONSILIUM_BROWSER_STATUS_NOT_JSON'
 
+$controlResponse=InvokeMcp ([ordered]@{
+  jsonrpc='2.0'
+  id=4
+  method='tools/call'
+  params=@{name='control_status';arguments=@{}}
+})
+Require ($controlResponse -and $controlResponse.result) 'CONSILIUM_CONTROL_STATUS_RESPONSE_INVALID'
+$controlText=@($controlResponse.result.content|ForEach-Object {[string]$_.text}) -join [Environment]::NewLine
+$controlStatus=$null
+try{$controlStatus=$controlText|ConvertFrom-Json}catch{}
+Require ($null -ne $controlStatus) 'CONSILIUM_CONTROL_STATUS_NOT_JSON'
+
+$agentsResponse=InvokeMcp ([ordered]@{
+  jsonrpc='2.0'
+  id=5
+  method='tools/call'
+  params=@{name='agent_list';arguments=@{}}
+})
+Require ($agentsResponse -and $agentsResponse.result) 'CONSILIUM_AGENT_LIST_RESPONSE_INVALID'
+$agentsText=@($agentsResponse.result.content|ForEach-Object {[string]$_.text}) -join [Environment]::NewLine
+$agentList=$null
+try{$agentList=$agentsText|ConvertFrom-Json}catch{}
+Require ($null -ne $agentList) 'CONSILIUM_AGENT_LIST_NOT_JSON'
+
 Require ((HashFile $configPath) -ceq $configHash) 'CONSILIUM_CONFIG_CHANGED_DURING_MCP_PROBE'
 $finalListeners=@([BridgeNativeMetadata]::Listeners($port))
 Require ($finalListeners.Count -eq 1 -and [string]$finalListeners[0] -ceq [string]$listeners[0]) 'CONSILIUM_LISTENER_CHANGED_DURING_MCP_PROBE'
@@ -115,6 +139,14 @@ Require ($finalListeners.Count -eq 1 -and [string]$finalListeners[0] -ceq [strin
   Queued=[int]$browserStatus.queued
   AgentCount=@($browserStatus.agents).Count
   AgentNames=@($browserStatus.agents|ForEach-Object {[string]$_.name})
+  GlobalControlEnabled=[bool]$controlStatus.globalEnabled
+  ControlMode=[string]$controlStatus.controlMode
+  PendingApprovals=[int]$controlStatus.approvalPending
+  ActiveGrantCount=[int]$controlStatus.backgroundControl.activeCount
+  SessionAuthorizationActive=[bool]$controlStatus.backgroundControl.sessionAuthorization.active
+  SessionAuthorizationReason=[string]$controlStatus.backgroundControl.sessionAuthorization.reason
+  AgentListTabCount=@($agentList.chatTabs).Count
+  BoundAgents=@($agentList.bound|ForEach-Object {[pscustomobject]@{Name=[string]$_.name;Alive=[bool]$_.alive}})
   ConfigSha256=$configHash
   ConfigUnchanged=$true
   ListenerUnchanged=$true
