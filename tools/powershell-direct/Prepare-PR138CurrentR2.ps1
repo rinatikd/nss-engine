@@ -21,8 +21,8 @@ function Quote-Argument([string]$Value){
  if($slashes -gt 0){[void]$b.Append(('\'*($slashes*2)))}
  [void]$b.Append('"');return $b.ToString()
 }
-function Git([string]$Root,[string[]]$Args){
- $quoted=@((@('-C',$Root)+$Args)|ForEach-Object{Quote-Argument ([string]$_)})
+function Git([string]$Root,[string[]]$GitArguments){
+ $quoted=@((@('-C',$Root)+$GitArguments)|ForEach-Object{Quote-Argument ([string]$_)})
  $psi=New-Object System.Diagnostics.ProcessStartInfo;$psi.FileName=$git
  $psi.WorkingDirectory=$Root;$psi.Arguments=[string]::Join(' ',$quoted)
  $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
