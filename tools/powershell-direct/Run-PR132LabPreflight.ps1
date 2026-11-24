@@ -7,10 +7,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-16e07aa1-release-clean'
+$repo=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-4696c1c0-release-clean'
 $candidateRoot=Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
-$expectedSha='16e07aa1a8c7c6f39af20da8a7eec33662fe0b09'
-$expectedBranch='feat/chat-approved-session-auth-20261122'
+$expectedSha='4696c1c0b8fc1c970a003413d267d666faf424a7'
+$expectedBranch='PR145_MERGE_REF'
+$expectedRemoteRef='refs/remotes/origin/pr145/merge'
 $remoteExpected='https://github.com/rinatikd/nss-engine'
 $labServerRoot='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
 $labExtensionRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
@@ -138,7 +139,7 @@ $remote=GitValue @('remote','get-url','origin')
 $storedRemote=GitValue @('config','--local','--get','remote.origin.url')
 $branch=GitValue @('branch','--show-current')
 $head=GitValue @('rev-parse','HEAD')
-$remoteBranchHead=GitValue @('rev-parse',('refs/remotes/origin/'+$expectedBranch))
+$remoteBranchHead=GitValue @('rev-parse',$expectedRemoteRef)
 $remoteIdentity=RemoteIdentity $remote
 $storedIdentity=RemoteIdentity $storedRemote
 $expectedIdentity=RemoteIdentity $remoteExpected
