@@ -4,15 +4,15 @@
 param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-$expectedPid=3416
-$expectedSourceSha='4696c1c0b8fc1c970a003413d267d666faf424a7'
+$expectedPid=0
+$expectedSourceSha='754b8f5f30663dab9cefcd87b47b51ecb4c0dcdd'
 $expectedConfigSha='cb3bc9bc5ff43559e36185ac130eed56828beac4f27634439476d95f8b33b61b'
 $labServerRoot='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
 $labExtensionRoot='C:\Engineering\ChromeBridge-PR102-17484-Lab'
 $stateRoot='C:\Engineering\ChromeBridge-PR102-17484-State'
-$labPort=17484
+$labPort=17485
 $labExtensionId='nhflbnfcaicihaepdcjacdmaddagcmcj'
-$candidateRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\ChromeBridge-PR145-4696c1c0-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$candidateRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\ChromeBridge-PR145-754b8f5f-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
 . (Join-Path $candidateRoot 'deployment\process-identity.ps1')
 function Require([bool]$Condition,[string]$Message){if(-not $Condition){throw $Message}}
 function FullPath([string]$Path){Get-BridgeCanonicalPath $Path}
@@ -44,7 +44,9 @@ $configHash=(Get-FileHash -LiteralPath (Join-Path $stateRoot 'config.json') -Alg
 Require ($configHash -ceq $expectedConfigSha) 'LAB_CONFIG_HASH_CHANGED_SINCE_PREFLIGHT'
 $listeners=@([BridgeNativeMetadata]::Listeners($labPort))
 Require ($listeners.Count -eq 1) ('LAB_LISTENER_COUNT_MISMATCH: '+$listeners.Count)
-Require ([string]$listeners[0] -ceq ('127.0.0.1|'+$expectedPid)) ('LAB_LISTENER_OWNER_MISMATCH: '+[string]::Join(';',$listeners))
+$listenerParts=([string]$listeners[0]).Split('|')
+Require ($listenerParts.Count -eq 2 -and $listenerParts[0] -ceq '127.0.0.1') 'LAB_LISTENER_ADDRESS_MISMATCH'
+Require ([int]::TryParse($listenerParts[1],[ref]$expectedPid) -and $expectedPid -gt 0) 'LAB_LISTENER_PID_INVALID'
 $proc=[Diagnostics.Process]::GetProcessById($expectedPid)
 try{
   $identity=Get-BridgeHandleIdentity $proc
@@ -77,12 +79,12 @@ try{
 $manifest=Get-Content -LiteralPath (Join-Path $labExtensionRoot 'manifest.json') -Raw -Encoding UTF8|ConvertFrom-Json
 Require ([int]$manifest.manifest_version -eq 3) 'LAB_EXTENSION_NOT_MV3'
 Require ([string]$manifest.background.type -ceq 'module') 'LAB_EXTENSION_BACKGROUND_TYPE_MISMATCH'
-Require (@($manifest.host_permissions) -contains 'http://127.0.0.1:17484/*') 'LAB_EXTENSION_LAB_PERMISSION_MISSING'
+Require (@($manifest.host_permissions) -contains 'http://127.0.0.1:17485/*') 'LAB_EXTENSION_LAB_PERMISSION_MISSING'
 foreach($name in @('control.js','connection-check.js','transport-engine.js')){
   $file=Join-Path $labExtensionRoot $name
   Require (Test-Path -LiteralPath $file -PathType Leaf) ('LAB_EXTENSION_FILE_MISSING: '+$name)
   $source=[IO.File]::ReadAllText($file)
-  Require ($source.Contains('127.0.0.1:17484')) ('LAB_EXTENSION_LAB_ENDPOINT_MISSING: '+$name)
+  Require ($source.Contains('127.0.0.1:17485')) ('LAB_EXTENSION_LAB_ENDPOINT_MISSING: '+$name)
   Require (-not $source.Contains('127.0.0.1:17381') -and -not $source.Contains('127.0.0.1:17382')) ('PRODUCTION_ENDPOINT_FOUND_IN_EXTENSION: '+$name)
 }
 $serverSource=Join-Path $labServerRoot 'server'
