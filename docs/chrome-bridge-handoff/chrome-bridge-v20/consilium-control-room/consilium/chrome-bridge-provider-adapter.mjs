@@ -153,6 +153,14 @@ export class ChromeBridgeProviderAdapter {
     }
   }
 
+  async replyWait(identity, timeoutSec = 45) {
+    try { return await this.callTool('provider_reply_wait', { ...identity, timeoutSec }, identity.requestId); }
+    catch (error) {
+      return { state: 'UNKNOWN', identity, quarantineId: 'quarantine-' + identity.requestId,
+        reasonCode: SAFE_CODE.test(error?.code || '') ? error.code : 'BRIDGE_REPLY_UNKNOWN' };
+    }
+  }
+
   stop(identity) {
     return this.mutation('provider_stop', identity);
   }
