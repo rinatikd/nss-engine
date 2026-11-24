@@ -113,9 +113,13 @@ export class PowerShellApprovalService {
    state:'SIGNED_APPROVAL_ACCEPTED_FOR_PENDING_JOB'};
  }
  trackBackground(promise){
-  const tracked=Promise.resolve(promise).catch(()=>{});
+  const tracked=Promise.resolve(promise);
   this.backgroundJobs.add(tracked);
-  void tracked.then(()=>this.backgroundJobs.delete(tracked));
+  // Attach a rejection observer without converting failure into success.
+  void tracked.then(
+   ()=>this.backgroundJobs.delete(tracked),
+   ()=>this.backgroundJobs.delete(tracked)
+  );
   return tracked;
  }
  pruneJobs(){
@@ -398,11 +402,18 @@ export class PowerShellApprovalService {
    // Stop accepting HTTP requests, then wait for every detached submit/runner
    // promise to publish its terminal audit state before reporting drained.
    await closeServer;
+   let backgroundJobFailures=0;
    while(this.backgroundJobs.size>0){
-    await Promise.all([...this.backgroundJobs]);
+    const batch=[...this.backgroundJobs];
+    const settled=await Promise.allSettled(batch);
+    for(const result of settled){
+     if(result.status==='rejected')backgroundJobFailures++;
+    }
+    for(const promise of batch)this.backgroundJobs.delete(promise);
    }
-   return {drained:true,pendingDenied:pending.length,
-     backgroundJobsRemaining:this.backgroundJobs.size};
+   return {drained:backgroundJobFailures===0,pendingDenied:pending.length,
+     backgroundJobsRemaining:this.backgroundJobs.size,
+     backgroundJobsFailed:backgroundJobFailures};
   })();
   return this.stopPromise;
  }
