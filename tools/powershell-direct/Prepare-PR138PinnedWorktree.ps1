@@ -14,7 +14,7 @@ $ErrorActionPreference='Stop'
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $expectedBase='f58f44a52c569a4a45e3ffe025dc6d1f62beff58'
 $candidateSha=$CandidateCommit.ToLowerInvariant()
-if($candidateSha -ceq $expectedBase){throw 'CANDIDATE_SHA_MUST_ADVANCE_BASE'}'
+if($candidateSha -ceq $expectedBase){throw 'CANDIDATE_SHA_MUST_ADVANCE_BASE'}
 $expectedBranch='feat/psdirect-per-job-workspace-approval-20261123'
 $expectedRemote='github.com/rinatikd/nss-engine'
 $oldRepo=$workspaceExpected
