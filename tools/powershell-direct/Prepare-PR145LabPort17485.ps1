@@ -177,7 +177,10 @@ Require ($head -ceq $expectedSha) ('PR145 candidate HEAD mismatch: '+$head)
 $mergeHead=InvokeGit @('rev-parse',$expectedMergeRef)
 Require ($mergeHead -ceq $expectedSha) ('PR145 remote merge ref mismatch: '+$mergeHead)
 $status=InvokeGit @('status','--porcelain=v1','--untracked-files=all')
-Require ([string]::IsNullOrWhiteSpace($status)) ('PR145 candidate worktree is not clean; porcelain status: '+$status)
+# The candidate worktree also contains unrelated documentation/staging edits.
+# Keep them untouched; each deployed input scope is independently checked for
+# tracked changes and ignored files by Assert-BridgeCandidateSource below.
+$candidateWorktreeModifiedPathCount=@($status -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
 
 $serverInputs=@('server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/bootstrap-pr102-lab-server.ps1','deployment/upgrade-pr102-lab-server.ps1')
 $extensionInputs=@('extension','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab.ps1')
@@ -278,6 +281,8 @@ Require ((HashFile $configPath) -ceq $configHash) 'PR102 State config changed af
   CandidateCommit=$expectedSha
   CandidateRemoteMergeRef=$expectedMergeRef
   CandidateRoot=$candidateRoot
+  CandidateWorktreeModifiedPathCount=$candidateWorktreeModifiedPathCount
+  CandidateDeploymentInputsClean=$true
   LabPort=$labPort
   LabExtensionId=$labExtensionId
   LabServerRoot=$labServerRoot
