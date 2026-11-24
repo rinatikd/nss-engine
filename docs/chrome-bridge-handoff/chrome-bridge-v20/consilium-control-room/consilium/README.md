@@ -1,6 +1,6 @@
 # Consilium Control Room — MVP 0.2.0
 
-This folder contains a standalone, loopback-only control room for the Chrome Bridge multi-agent council. It is separate from the provider Bridge and **does not dispatch browser messages yet**.
+This folder contains a standalone, loopback-only control room for the Chrome Bridge multi-agent council. It does not initiate provider sends. When an explicit Bridge loopback endpoint and agent token are configured, it can perform read-only, request-correlated reply observation for a transaction that was already committed through the Bridge.
 
 ## Identity and authority
 
@@ -35,10 +35,12 @@ $env:CONSILIUM_KIMI_TOKEN = '<different unique random secret>'
 $env:CONSILIUM_GROK_TOKEN = '<different unique random secret>'
 $env:CONSILIUM_GEMINI_TOKEN = '<different unique random secret>'
 $env:CONSILIUM_DATA_DIR = 'C:\Engineering\Consilium-Control-Room-Lab\data'
+$env:CONSILIUM_CHROME_BRIDGE_ENDPOINT = 'http://127.0.0.1:17484' # explicit disposable Lab endpoint only
+$env:CONSILIUM_CHROME_BRIDGE_AGENT_TOKEN = '<Bridge agent token for this Lab>'
 node consilium/control-room.mjs
 ```
 
-Open the printed `http://127.0.0.1:18765/` address. Tokens remain in the current page memory; they are not stored in localStorage or sessionStorage. Never put credentials in GitHub, prompts, event payloads or logs.
+Open the printed `http://127.0.0.1:18765/` address. Tokens remain in the current page memory; they are not stored in localStorage or sessionStorage. The Bridge integration is optional and remains disabled unless both `CONSILIUM_CHROME_BRIDGE_ENDPOINT` and `CONSILIUM_CHROME_BRIDGE_AGENT_TOKEN` are explicitly set. The endpoint must be an exact `http://127.0.0.1:<port>` loopback address; there is no default endpoint and no fallback to Production port 17381. For Lab use the pinned disposable endpoint only. Never put credentials in GitHub, prompts, event payloads or logs.
 
 ## What is implemented
 
@@ -47,7 +49,8 @@ Open the printed `http://127.0.0.1:18765/` address. Tokens remain in the current
 - Human-readable timeline with sequence, timestamp, actor, event type and original payload.
 - Authenticated full journal export as newline-delimited JSON (`consilium-events.ndjson`) and paginated event API.
 - Session start/pause/resume/stop-request controls are available equally to all seven AI members; owner remains separate.
-- Discussion comments and attributed message records with explicit delivery state.
+- Discussion comments and attributed message records with explicit delivery state. Caller-supplied `REPLIED` / `VERIFIED` claims are rejected.
+- Optional read-only `/api/provider/reply/wait` route. It obtains the reply only through the injected, versioned ProviderTransport and records `REPLIED` with its request-bound Bridge receipt; `UNKNOWN` is stored with quarantine metadata. It never sends or retries a provider message.
 - Decision proposals, mandatory independent ChatGPT/Claude verdicts, reviews by all seven AI members, visible disagreement, review revisions linked to prior events and owner approval of consequential decisions.
 - Round proposals and launch are available equally to all seven AI members.
 - Tasks only from accepted decisions; all seven AI identities can update tasks regardless of assignee.
@@ -65,12 +68,12 @@ Open the printed `http://127.0.0.1:18765/` address. Tokens remain in the current
 - A stale `events.lock` is not automatically stolen after a crash; owner recovery is required, preventing two writers from silently corrupting the ledger.
 - `STOP_REQUESTED` only closes future Orchestrator dispatch. It is **not** proof that a committed browser click or in-flight provider request was cancelled.
 - `/api/session/stop-confirmed` intentionally returns `BRIDGE_QUIESCENCE_ADAPTER_NOT_CONFIGURED`. Do not enable it until a signed, nonce-bound, epoch-bound Bridge quiescence attestation is implemented.
-- The MVP is not installed in Windows Lab and is not connected to Chrome Bridge or any live provider account.
+- The Control Room source now supports an explicitly injected Bridge reply adapter, but the current Lab runtime has not yet been deployed with the new registry and credentials. This source/CI capability is not evidence of a live provider connection.
 
 ## Next integration gates
 
-1. Attach a concrete Chrome Bridge adapter to the existing versioned `ProviderTransport` v1 contract; keep council concepts out of Bridge.
-2. Implement/verify Bridge single-writer per-tab lanes, prepare/commit, conversation binding and fencing tokens.
+1. Deploy and verify the explicit loopback Bridge endpoint, token scope and full `provider_reply_wait` tool registry in disposable Windows Lab; keep council concepts out of Bridge.
+2. Complete the owner-approved Lab prepare/commit/reply/stop/revoke transaction and verify its receipt appears in the Control Room hash-chained ledger.
 3. Keep ambiguous sends in `UNKNOWN` quarantine; never retry automatically under a fresh request ID.
 4. Add restart reconciliation and a durable cursor such as `last_decided_id`.
 5. Verify stop-before-commit and accurately classify stop-after-commit hazard windows before opening the stop-confirmation endpoint.
