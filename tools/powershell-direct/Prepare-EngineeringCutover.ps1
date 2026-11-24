@@ -63,9 +63,20 @@ $envFeatures=if(Test-Path -LiteralPath $replacement -PathType Leaf){
  $plan.Contains('canonicalUserWorkspace') -and
  $policy.Contains('WORKSPACE_VOLUME_ROOT_DENIED')
 }else{$false}
+$cutoverScript=Join-Path $PSScriptRoot 'Invoke-EngineeringCutover.ps1'
+$cutoverGuarded=$false
+if(Test-Path -LiteralPath $cutoverScript -PathType Leaf){
+ $cutoverSource=Get-Content -LiteralPath $cutoverScript -Raw
+ $cutoverGuarded=$cutoverSource.Contains('CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED')
+}
 $checks=[ordered]@{
  VerifiedOriginalSupervisor=[bool]$originalOwner
  VerifiedOriginalTunnel=[bool]$tunnelOwner
+ CutoverCodeGuardPresent=[bool]$cutoverGuarded
+ CutoverModeEnabled=$false
+ GracefulStopChannelImplemented=$false
+ DurableTransactionJournalImplemented=$false
+ RollbackFailureInjectionRehearsalVerified=$false
  ExistingRecoveryScriptTargetsOriginal=[bool]$restoreTargetsOld
  StageSupervisorExists=(Test-Path -LiteralPath $replacement -PathType Leaf)
  StagedEngineeringOptInSupported=[bool]$envFeatures
