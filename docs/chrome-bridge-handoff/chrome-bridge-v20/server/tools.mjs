@@ -65,4 +65,4 @@ for (const tool of tools) {
 export const toolByName = (n) => tools.find((t) => t.name === n);
 
 // Р’СЂРµРјСЏ РѕР¶РёРґР°РЅРёСЏ СЂРµР·СѓР»СЊС‚Р°С‚Р° РѕС‚ СЂР°СЃС€РёСЂРµРЅРёСЏ (РјСЃ). РљР»РёРєРё Рё РІРІРѕРґ Р¶РґСѓС‚ СЂСѓС‡РЅРѕРіРѕ РѕРґРѕР±СЂРµРЅРёСЏ.
-export const EXT_TIMEOUTS = { browser_click: 120000, browser_fill: 120000, agent_send: 45000, provider_prepare: 120000, provider_commit: 120000, agent_new_chat: 30000, browser_wait: 30000 };
+export const EXT_TIMEOUTS = { browser_click: 120000, browser_fill: 120000, agent_send: 45000, provider_prepare: 120000, provider_commit: 120000, agent_new_chat: 30000, browser_wait: 30000, provider_reply_peek: 10000 };
