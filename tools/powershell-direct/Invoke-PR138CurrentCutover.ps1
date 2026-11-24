@@ -220,6 +220,7 @@ if($Mode -eq 'Inspect'){
 }
 if($Mode -eq 'Rehearse'){
  $null=Assert-Preflight
+ $protectedBefore=[ordered]@{17381=(Get-Listener 17381);17382=(Get-Listener 17382);17488=(Get-Listener 17488)}
  $existing=Get-Stack $old
  if($null -eq $existing -or !(Test-Health $existing.TunnelPid)){throw 'PRODUCTION_STACK_NOT_HEALTHY'}
  Push-Location $stage
@@ -232,10 +233,14 @@ if($Mode -eq 'Rehearse'){
  $again=Get-Stack $old
  if($null -eq $again -or $again.SupervisorPid -ne $existing.SupervisorPid -or
     $again.TunnelPid -ne $existing.TunnelPid){throw 'PRODUCTION_CHANGED_DURING_REHEARSAL'}
+ foreach($port in @(17381,17382,17488)){
+  if((Get-Listener $port) -ne $protectedBefore[$port]){throw ('PROTECTED_PORT_OWNER_CHANGED_'+$port)}
+ }
  [pscustomobject]@{
   Result='ENGINEERING_CUTOVER_REHEARSAL_PASS'
   StageTestsPassed=$true
   StageMcpSmokePassed=$true
+  ProtectedPorts=$protectedBefore
   ProductionUnchanged=$true
   ProductionCutoverExecuted=$false
   Note='Rehearsal tests staging, NOT a real production shutdown or rollback'
@@ -247,6 +252,7 @@ if(!$EnableProductionCutover -or !$RemoteAuthenticationVerified -or !$ConfirmExa
  throw 'PRODUCTION_CUTOVER_REQUIRES_EXPLICIT_SWITCHES_AND_HOST_APPROVAL'
 }
 $null=Assert-Preflight
+$protectedBefore=[ordered]@{17381=(Get-Listener 17381);17382=(Get-Listener 17382);17488=(Get-Listener 17488)}
 $oldStack=Get-Stack $old
 if($null -eq $oldStack -or !(Test-Health $oldStack.TunnelPid)){throw 'ORIGINAL_NOT_HEALTHY'}
 
@@ -261,6 +267,9 @@ try{
   Start-Sleep -Milliseconds 600
  }
  if($null -eq $newStack -or !(Test-Health $newStack.TunnelPid)){throw 'ENGINEERING_STACK_UNHEALTHY'}
+ foreach($port in @(17381,17382,17488)){
+  if((Get-Listener $port) -ne $protectedBefore[$port]){throw ('PROTECTED_PORT_OWNER_CHANGED_'+$port)}
+ }
  $startedNew=$true
  [pscustomobject]@{
   Result='ENGINEERING_CUTOVER_LOCAL_HEALTH_PASS'
