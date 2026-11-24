@@ -148,12 +148,21 @@ function StartLabServer([string]$State,[string]$RunDir,[string]$ConfigHash) {
   $process=New-Object Diagnostics.Process
   $process.StartInfo=$psi
   Require ($process.Start()) 'Could not start PR102 Lab server process'
+  $stdoutTask=$process.StandardOutput.ReadToEndAsync()
+  $stderrTask=$process.StandardError.ReadToEndAsync()
+  Add-Member -InputObject $process -NotePropertyName BootstrapStdoutTask -NotePropertyValue $stdoutTask
+  Add-Member -InputObject $process -NotePropertyName BootstrapStderrTask -NotePropertyValue $stderrTask
   return $process
 }
 function WaitHealthy($Process,[string]$State,[string]$ExpectedFile,[string]$RunDir) {
   $deadline=[DateTime]::UtcNow.AddSeconds(15)
   do {
-    if ($Process.HasExited) { throw ('PR102 Lab server exited during bootstrap; exitCode='+$Process.ExitCode) }
+    if ($Process.HasExited) {
+      $stdout=''; $stderr=''
+      try { if ($Process.BootstrapStdoutTask) { $stdout=[string]$Process.BootstrapStdoutTask.GetAwaiter().GetResult() } } catch {}
+      try { if ($Process.BootstrapStderrTask) { $stderr=[string]$Process.BootstrapStderrTask.GetAwaiter().GetResult() } } catch {}
+      throw ('PR102 Lab server exited during bootstrap; exitCode='+$Process.ExitCode+'; stdout='+$stdout+'; stderr='+$stderr)
+    }
     $listeners=@([BridgeNativeMetadata]::Listeners($LabPort))
     if ($listeners.Count -eq 1 -and $listeners[0] -eq ('127.0.0.1|'+$Process.Id)) {
       Probe $script:HealthScript $script:LabRoot $State $ExpectedFile $RunDir 'live'
