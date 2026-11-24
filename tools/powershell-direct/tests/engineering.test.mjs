@@ -53,12 +53,21 @@ async function status(svc,id){
   }while(Date.now()<until);
   throw Error('FINAL_TIMEOUT lastState='+String(last?.state));
 }
-test('production cutover remains hard-disabled until graceful drain, journal and rollback exist',async()=>{
+test('production cutover and its preflight remain NO-GO until lifecycle evidence exists',async()=>{
   const script=await readFile(new URL('../Invoke-EngineeringCutover.ps1',import.meta.url),'utf8');
   const guard=script.indexOf("throw 'CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED'");
   const forceStop=script.indexOf('Stop-ExactStack $oldStack');
   assert.ok(guard>=0,'unconditional Cutover NO-GO guard is present');
   assert.ok(forceStop>guard,'NO-GO guard precedes any production stack stop');
+  const preflight=await readFile(new URL('../Prepare-EngineeringCutover.ps1',import.meta.url),'utf8');
+  for(const gate of [
+    'CutoverModeEnabled=$false',
+    'GracefulStopChannelImplemented=$false',
+    'DurableTransactionJournalImplemented=$false',
+    'RollbackFailureInjectionRehearsalVerified=$false'
+  ]){
+    assert.ok(preflight.includes(gate),'preflight must keep the gate closed: '+gate);
+  }
 });
 
 test('feature is opt-in and does not replace five read-only diagnostics',()=>fixture(async({svc})=>{
