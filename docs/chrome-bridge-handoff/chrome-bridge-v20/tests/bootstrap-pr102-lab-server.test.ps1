@@ -38,8 +38,8 @@ function StopFixtureOwner {
   $p = [Diagnostics.Process]::GetProcessById($pidValue)
   try {
     $identity = Get-BridgeHandleIdentity $p
-    if ((FullPath ([string]$identity.workingDirectory)) -ine (FullPath $root) -or
-        (FullPath ([string]$identity.bridgeHome)) -ine (FullPath $state) -or
+    if ((Get-BridgeCanonicalPath ([string]$identity.workingDirectory)) -ine (Get-BridgeCanonicalPath $root) -or
+        (Get-BridgeCanonicalPath ([string]$identity.bridgeHome)) -ine (Get-BridgeCanonicalPath $state) -or
         [string]$identity.bridgePort -cne '17485' -or
         [string]$identity.extensionId -cne 'nhflbnfcaicihaepdcjacdmaddagcmcj') {
       throw 'Cleanup refused to stop a process not owned by this synthetic fixture'
@@ -117,9 +117,7 @@ try {
   }
   $rolledBack = RunScript $updater $rollback
   if (($rolledBack -join ' ') -notmatch '\[ROLLED_BACK\]') { throw 'Bootstrap backup rollback marker missing' }
-  $restoredNames = @((Get-Content (Join-Path $env:RUNNER_TEMP 'pr102-server-upgrade-tools.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json).result.tools | ForEach-Object { $_.name })
-  $health = Join-Path $packageRoot 'deployment\cutover-health.mjs'
-  $expectedOld = Join-Path $env:RUNNER_TEMP 'pr102-bootstrap-rollback-tools.json'
+    $expectedOld = Join-Path $env:RUNNER_TEMP 'pr102-bootstrap-rollback-tools.json'
   $oldCode = "import fs from 'node:fs'; import { tools } from './server/tools.mjs'; fs.writeFileSync(process.argv[1], JSON.stringify({result:{tools:tools.map(({kind,...tool})=>tool)}}));"
   Push-Location $root
   try {
