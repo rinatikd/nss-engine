@@ -15,7 +15,9 @@ $ErrorActionPreference='Stop'
 
 $expected=$ExpectedCommit.ToLowerInvariant()
 foreach($exe in @($NodeExecutable,$GitExecutable)){
- if(!(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'TRUSTED_EXECUTABLE_MISSING'}
+ if(![IO.Path]::IsPathRooted($exe) -or !(Test-Path -LiteralPath $exe -PathType Leaf)){
+  throw 'TRUSTED_EXECUTABLE_MISSING'
+ }
 }
 foreach($directory in @($SourceWorktree,$StageDirectory)){
  if(!(Test-Path -LiteralPath $directory -PathType Container)){throw 'R2_SOURCE_OR_STAGE_MISSING'}
@@ -61,14 +63,14 @@ try{
  $env:R2_STAGE_ROOT=$stage
  $env:R2_NODE_EXE=$NodeExecutable
  $env:R2_GIT_EXE=$GitExecutable
- $output=(& $NodeExecutable --test $verificationTest 2>&1 | Out-String)
+ $output=(& $NodeExecutable --test --test-reporter=tap $verificationTest 2>&1 | Out-String)
  $exit=$LASTEXITCODE
  if($exit -ne 0){
   Write-Output $output
   throw 'R2_STAGE_VERIFICATION_FAILED'
  }
- if($output -notmatch 'ℹ tests 2' -or $output -notmatch 'ℹ pass 2' -or
-    $output -notmatch 'ℹ fail 0'){
+ if($output -notmatch '(?m)^# tests 2\s*$' -or $output -notmatch '(?m)^# pass 2\s*$' -or
+    $output -notmatch '(?m)^# fail 0\s*$'){
   Write-Output $output
   throw 'R2_STAGE_VERIFICATION_SUMMARY_INVALID'
  }
