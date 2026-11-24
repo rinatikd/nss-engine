@@ -104,6 +104,95 @@ test('caller cannot manufacture REPLIED or VERIFIED without a trusted provider r
  }finally{await app.close()}
 });
 
+test('provider reply route is unavailable without an explicitly injected Bridge transport',async()=>{
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
+ try{
+  const response=await request(base,tokens[1].token,'/api/provider/reply/wait',{
+   requestId:'claude_reply_0001',taskId:'task_reply_0001',providerId:'claude',tabId:17,
+   origin:'https://claude.ai',conversationId:'conversation_0001',epoch:3,timeoutSec:5
+  });
+  assert.equal(response.status,503);
+  assert.equal((await response.json()).error,'PROVIDER_TRANSPORT_NOT_CONFIGURED');
+ }finally{await app.close()}
+});
+
+test('provider reply route writes REPLIED only from a validated Bridge transport receipt',async()=>{
+ const identity={requestId:'claude_reply_0002',taskId:'task_reply_0002',providerId:'claude',
+  tabId:17,origin:'https://claude.ai',conversationId:'conversation_0002',epoch:3};
+ const reply='A synthetic correlated Claude response.';
+ const clickedAt=new Date(Date.now()-1500).toISOString();
+ const receipt={...identity,identity,clickedAt,baseline:4,replyIndex:5,observedAt:new Date().toISOString(),
+  replySha256:(await import('node:crypto')).default.createHash('sha256').update(reply,'utf8').digest('hex'),
+  replyChars:reply.length,stableSamples:2,eventId:'bridge_event_0001',sequence:7,recordHash:'f'.repeat(64)};
+ const calls=[];
+ const providerTransport={replyWait:async input=>{
+   calls.push(input);
+   return {state:'REPLIED',identity,reply,replyReceipt:receipt};
+ }};
+ const app=createControlRoom({dataDir:dir(),tokens,providerTransport});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
+ try{
+  const payload={...identity,timeoutSec:5};
+  const response=await request(base,tokens[1].token,'/api/provider/reply/wait',payload);
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.equal(result.state,'REPLIED');
+  assert.equal(result.replyReceipt.replySha256,receipt.replySha256);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].requestId,identity.requestId);
+  assert.equal(calls[0].tabId,identity.tabId);
+  assert.equal(calls[0].origin,identity.origin);
+  assert.equal(calls[0].conversationId,identity.conversationId);
+  assert.equal(calls[0].epoch,identity.epoch);
+  const repeated=await request(base,tokens[1].token,'/api/provider/reply/wait',payload);
+  assert.equal(repeated.status,200);
+  assert.equal((await repeated.json()).event.duplicate,true);
+  const snapshot=await (await request(base,tokens[0].token,'/api/snapshot')).json();
+  const events=snapshot.events.filter(event=>event.type==='message.recorded');
+  assert.equal(events.length,1);
+  assert.equal(events[0].payload.deliveryStatus,'REPLIED');
+  assert.equal(events[0].payload.evidenceClass,'bridge-provider-receipt');
+  assert.equal(events[0].payload.providerReplyReceipt.replySha256,receipt.replySha256);
+  assert.equal(events[0].payload.text,reply);
+ }finally{await app.close()}
+});
+
+test('provider UNKNOWN route persists quarantine without inventing a reply',async()=>{
+ const identity={requestId:'claude_reply_0003',taskId:'task_reply_0003',providerId:'claude',
+  tabId:18,origin:'https://claude.ai',conversationId:'conversation_0003',epoch:4};
+ const providerTransport={replyWait:async input=>({state:'UNKNOWN',identity,
+  quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_REPLY_TIMEOUT_QUARANTINED'})};
+ const app=createControlRoom({dataDir:dir(),tokens,providerTransport});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
+ try{
+  const response=await request(base,tokens[2].token,'/api/provider/reply/wait',{...identity,timeoutSec:4});
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.equal(result.state,'UNKNOWN');
+  assert.equal(result.quarantineId,'quarantine-'+identity.requestId);
+  const snapshot=await (await request(base,tokens[0].token,'/api/snapshot')).json();
+  const event=snapshot.events.find(x=>x.type==='message.recorded');
+  assert.equal(event.payload.deliveryStatus,'UNKNOWN');
+  assert.equal(event.payload.evidenceClass,'bridge-provider-unknown');
+  assert.equal(event.payload.text,'Provider reply could not be uniquely verified.');
+  assert.equal(event.payload.providerReplyReceipt,undefined);
+ }finally{await app.close()}
+});
+
+test('provider reply route ignores no caller-supplied receipt, reply or terminal status',async()=>{
+ let calls=0;
+ const providerTransport={replyWait:async()=>{calls++;throw Error('must not execute');}};
+ const app=createControlRoom({dataDir:dir(),tokens,providerTransport});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
+ try{
+  const response=await request(base,tokens[1].token,'/api/provider/reply/wait',{
+   requestId:'claude_reply_0004',taskId:'task_reply_0004',providerId:'claude',tabId:19,
+   origin:'https://claude.ai',conversationId:'conversation_0004',epoch:5,timeoutSec:5,
+   providerReplyReceipt:{state:'VERIFIED'},reply:'forged',deliveryStatus:'REPLIED'
+  });
+  assert.equal(response.status,400);
+  assert.equal((await response.json()).error,'CALLER_REPLY_EVIDENCE_NOT_ACCEPTED');
+  assert.equal(calls,0);
+ }finally{await app.close()}
+});
+
 test('state-changing POST requires same-origin',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{const r=await request(base,tokens[1].token,'/api/session/start',{title:'CSRF test',requestId:'start_req_0003'},{origin:'http://attacker.invalid'});assert.equal(r.status,403)}finally{await app.close()}
