@@ -64,6 +64,8 @@ export class PowerShellApprovalService {
       runner:engineeringRunner,
       operationName:'engineering-operation',
       approveRequest:details=>new Promise(resolve=>{
+        if(this.stopping){resolve({approved:false,reason:'SERVICE_STOPPED',
+          requestId:details.requestId,planSha256:details.planSha256});return;}
         if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
           resolve({approved:false,requestId:details.requestId,
             planSha256:details.planSha256});return;
@@ -167,6 +169,7 @@ export class PowerShellApprovalService {
   return {requestId:id,sha256:j.sha256,state:j.state,result:j.result};
  }
  decide(id,hash,approved){
+  if(this.stopping)throw Error('SERVICE_STOPPING');
   const j=this.jobs.get(id);if(!j)throw Error('JOB_NOT_FOUND');
   if(j.state!=='PENDING')throw Error('NOT_PENDING');
   if(this.now()>=j.payload.expiresAt){j.state='EXPIRED';throw Error('APPROVAL_EXPIRED');}
