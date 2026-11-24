@@ -30,7 +30,7 @@ function Require([bool]$Condition,[string]$Message){if(-not $Condition){throw $M
 function FullPath([string]$Path){Get-BridgeCanonicalPath $Path}
 function AssertRoot([string]$Path){
   Require (Test-Path -LiteralPath $Path -PathType Container) ('REQUIRED_ROOT_MISSING: '+$Path)
-  Require (-not ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) ('ROOT_REPARSE_POINT_REFUSED: '+$Path)
+  Require (-not ((Get-Item -LiteralPath $Path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) ('ROOT_REPARSE_POINT_REFUSED: '+$Path)
 }
 function GetTreeEntries([string]$Root){
   $base=FullPath $Root
