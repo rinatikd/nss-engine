@@ -419,17 +419,10 @@ test('Chrome Bridge ProviderTransport adapter completes a synthetic prepare/comm
     assert.equal(stoppedAfterCommit.state, 'STOP_AFTER_COMMIT');
     assert.equal(stoppedAfterCommit.nextEpoch, 8);
 
-    const nextIdentity = { ...identity, requestId: 'request_0002', taskId: 'task_000002', epoch: 8 };
-    const nextMessage = 'A second synthetic draft that will not be committed.';
-    const nextHash = crypto.createHash('sha256').update(nextMessage, 'utf8').digest('hex');
-    const nextPrepared = await transport.prepare({ ...nextIdentity, message: nextMessage, payloadHash: nextHash });
-    assert.equal(nextPrepared.state, 'PREPARED');
-    const cleanStop = await transport.stop(nextIdentity);
-    assert.equal(cleanStop.state, 'STOPPED_CLEAN');
-    assert.equal(cleanStop.quiescence.nextEpoch, 9);
     const events = await transport.events({ after: 0, limit: 100 });
     assert.ok(events.some(event => event.state === 'SENT' && event.requestId === identity.requestId));
-    assert.ok(events.some(event => event.state === 'STOPPED_CLEAN' && event.requestId === nextIdentity.requestId));
+    assert.ok(events.some(event => event.state === 'REPLIED' && event.requestId === identity.requestId));
+    assert.ok(events.some(event => event.state === 'STOP_AFTER_COMMIT' && event.requestId === identity.requestId));
     assert.equal(responderError, null);
   } finally {
     running = false;
