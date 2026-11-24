@@ -90,10 +90,11 @@ foreach($port in @(17381,17382,17488)){$bridgeBefore[$port]=Get-Listener $port}
 $testArgs=@('--test')+$tests
 $testResult=Invoke-Node $testArgs 180000
 if($testResult.ExitCode -ne 0){
- $failedLines=@([regex]::Matches($testResult.Stdout,'(?m)^(?:not ok|✖)\s*[^\r\n]*') | ForEach-Object {$_.Value} | Select-Object -First 8)
- $failedSummary=[string]::Join(' | ',$failedLines)
- if([string]::IsNullOrWhiteSpace($failedSummary)){$failedSummary='NO_FAILURE_LINE_CAPTURED'}
- throw ('CURRENT_R2_NODE_TESTS_FAILED_'+$testResult.ExitCode+'_'+$failedSummary)
+ $combined=([string]$testResult.Stdout+[Environment]::NewLine+[string]$testResult.Stderr).Trim()
+ $diagnostic=$combined -replace '[\r\n]+',' | '
+ if($diagnostic.Length -gt 900){$diagnostic=$diagnostic.Substring(0,900)}
+ if([string]::IsNullOrWhiteSpace($diagnostic)){$diagnostic='NO_PROCESS_DIAGNOSTIC_CAPTURED'}
+ throw ('CURRENT_R2_NODE_TESTS_FAILED_'+$testResult.ExitCode+'_'+$diagnostic)
 }
 $testSummary=[regex]::Match($testResult.Stdout,'(?m)^ℹ tests (\d+)\s*$').Groups[1].Value
 $testPass=[regex]::Match($testResult.Stdout,'(?m)^ℹ pass (\d+)\s*$').Groups[1].Value
