@@ -187,6 +187,12 @@ if($Mode -eq 'Rehearse'){
  }|ConvertTo-Json
  return
 }
+# Hard fail closed: production cutover is disabled until a supported graceful
+# stop channel, durable phase journal, and demonstrated rollback are implemented.
+if($Mode -eq 'Cutover'){
+ throw 'CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED'
+}
+
 # No production mutation without BOTH explicit CLI switches and console phrase.
 if(!$EnableProductionCutover -or !$RemoteAuthenticationVerified){
  throw 'PRODUCTION_CUTOVER_REQUIRES_EXPLICIT_SWITCHES'
