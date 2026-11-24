@@ -156,6 +156,21 @@ export async function pageAction(name, args, expectedOrigin) {
       };
     }
 
+    // Read-only snapshot used only after the matching provider_commit receipt.
+    // The server persists a digest and identity, never the provider's reply text.
+    if (name === 'provider_reply_peek') {
+      if (args.expectedOrigin !== location.origin || !conversationId() ||
+          args.expectedConversationId !== conversationId()) throw Error('PROVIDER_CONVERSATION_CHANGED');
+      const list = replies();
+      const last = list[list.length - 1];
+      const text = last ? String(last.innerText || '').trim().slice(0, 100000) : '';
+      return {
+        count:list.length, replyIndex:list.length, text, chars:text.length,
+        generating:qa(A.stop).some(vis), origin:location.origin,
+        conversationId:conversationId(), url:location.href
+      };
+    }
+
     if (name === 'provider_prepare') {
       if (args.expectedOrigin !== location.origin || !conversationId() ||
           args.expectedConversationId !== conversationId()) throw Error('PROVIDER_CONVERSATION_CHANGED');
