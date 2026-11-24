@@ -34,16 +34,17 @@ export class SendJournal {
     if (stat.size > this.maxBytes) throw Error('JOURNAL_TOO_LARGE_FAIL_CLOSED');
     try {
       const x = JSON.parse(this.fs.readFileSync(this.file, 'utf8'));
-      if (![1, 2].includes(x?.version) || !x.entries || typeof x.entries !== 'object' || Array.isArray(x.entries)) throw Error();
-      const entries = new Map(Object.entries(x.entries).map(([id, entry]) => [id, x.version === 1
-        ? { ...entry, identityVersion: 1, payloadFingerprint: entry?.fingerprint, origin: null, conversationFingerprint: null }
-        : entry]));
+      if (![1, 2, 3].includes(x?.version) || !x.entries || typeof x.entries !== 'object' || Array.isArray(x.entries)) throw Error();
+      const entries = new Map(Object.entries(x.entries).map(([id, entry]) => [id,
+        x.version === 1
+          ? { ...entry, identityVersion: 1, payloadFingerprint: entry?.fingerprint, origin: null, conversationFingerprint: null, settled: true }
+          : x.version === 2 ? { ...entry, settled: true } : entry]));
       if (entries.size > MAX_ENTRIES) throw Error();
       for (const [id, entry] of entries) {
         if (!ID.test(id) || entry?.requestId !== id || !AGENT.test(entry.agent || '') ||
             !Number.isSafeInteger(entry.tabId) || entry.tabId <= 0 || !FINGERPRINT.test(entry.fingerprint || '') ||
             (entry.identityVersion === 2 && (!ORIGINS.has(entry.origin) || !FINGERPRINT.test(entry.conversationFingerprint || '') || !FINGERPRINT.test(entry.payloadFingerprint || ''))) ||
-            (entry.identityVersion !== 1 && entry.identityVersion !== 2) ||
+            (entry.identityVersion !== 1 && entry.identityVersion !== 2) || typeof entry.settled !== 'boolean' ||
             !STATUS.has(entry.status) || typeof entry.createdAt !== 'string' ||
             !(entry.baseline === null || (Number.isSafeInteger(entry.baseline) && entry.baseline >= 0)) ||
             !(entry.transportConfirmed === null || typeof entry.transportConfirmed === 'boolean')) throw Error();
@@ -53,7 +54,7 @@ export class SendJournal {
   }
   #write(entries) {
     if (entries.size > MAX_ENTRIES) throw Error('JOURNAL_FULL_FAIL_CLOSED');
-    const payload = JSON.stringify({ version: 2, entries: Object.fromEntries(entries) });
+    const payload = JSON.stringify({ version: 3, entries: Object.fromEntries(entries) });
     if (Buffer.byteLength(payload, 'utf8') > this.maxBytes) throw Error('JOURNAL_TOO_LARGE_FAIL_CLOSED');
     const tmp = this.file + '.' + crypto.randomUUID() + '.tmp';
     let fd;
@@ -105,7 +106,7 @@ export class SendJournal {
       }
       if (entries.size >= MAX_ENTRIES) throw Error('JOURNAL_FULL_FAIL_CLOSED');
       const entry = { requestId, agent, tabId, origin, conversationFingerprint, identityVersion: 2,
-        fingerprint, payloadFingerprint, status: 'UNKNOWN', baseline: null, transportConfirmed: null, createdAt: new Date().toISOString() };
+        fingerprint, payloadFingerprint, status: 'UNKNOWN', settled: false, baseline: null, transportConfirmed: null, createdAt: new Date().toISOString() };
       entries.set(requestId, entry);
       return { value: { entry: copy(entry), duplicate: false }, write: true };
     });
@@ -116,8 +117,8 @@ export class SendJournal {
     return this.#transact((entries) => {
       const old = entries.get(requestId);
       if (!old) throw Error('JOURNAL_ID_UNKNOWN');
-      if (old.status !== 'UNKNOWN' && old.status !== status) throw Error('JOURNAL_TERMINAL_STATUS');
-      const entry = { ...old, status,
+      if (old.settled) return { value: copy(old), write: false };
+      const entry = { ...old, status, settled: true,
         ...(metadata.baseline !== undefined ? { baseline: metadata.baseline } : {}),
         ...(metadata.transportConfirmed !== undefined ? { transportConfirmed: metadata.transportConfirmed } : {}) };
       entries.set(requestId, entry);
