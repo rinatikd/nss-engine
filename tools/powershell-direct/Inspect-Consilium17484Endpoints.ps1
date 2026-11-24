@@ -57,6 +57,21 @@ if(Test-Path -LiteralPath $consiliumCodeRoot -PathType Container){
       [pscustomobject]@{Path=$_.FullName.Substring($root.Length).TrimStart('\');Length=[long]$_.Length}
     })
 }
+$authAndProtocol=@()
+$bridgeFile=Join-Path $root 'server\bridge.mjs'
+if(Test-Path -LiteralPath $bridgeFile -PathType Leaf){
+  $lines=[IO.File]::ReadAllLines($bridgeFile)
+  for($i=0;$i -lt $lines.Length;$i++){
+    if($lines[$i] -match '(?i)authorization|Bearer|tools/list|browser_status|unauthorized|agentToken|req\.headers'){
+      $authAndProtocol += [pscustomobject]@{Line=$i+1;Text=($lines[$i].Trim())}
+    }
+  }
+}
+$connectionCheckSource=''
+$connectionCheckPath=Join-Path $root 'connection-check.js'
+if(Test-Path -LiteralPath $connectionCheckPath -PathType Leaf){
+  $connectionCheckSource=[string]::Join([Environment]::NewLine,(Get-Content -LiteralPath $connectionCheckPath -Encoding UTF8|Select-Object -First 100))
+}
 $serverRoutes=@()
 $bridgeFile=Join-Path $root 'server\bridge.mjs'
 if(Test-Path -LiteralPath $bridgeFile -PathType Leaf){
@@ -72,5 +87,7 @@ if(Test-Path -LiteralPath $bridgeFile -PathType Leaf){
   EndpointReferences=$endpointReferences
   PreviousStderr=$stderrSummary
   ConsiliumCodeFiles=$consiliumFiles
+  AuthAndProtocolCode=$authAndProtocol
+  ConnectionCheckSource=$connectionCheckSource
   ServerRouteCandidates=@($serverRoutes|Select-Object -First 80)
 }|ConvertTo-Json -Depth 7
