@@ -88,6 +88,22 @@ test('all seven AI members share session and round control while owner retains c
  }finally{await app.close()}
 });
 
+test('caller cannot manufacture REPLIED or VERIFIED without a trusted provider receipt',async()=>{
+ const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
+ try{
+  for(const deliveryStatus of ['REPLIED','VERIFIED']){
+   const response=await request(base,tokens[1].token,'/api/messages',{
+    provider:'claude',text:'A caller-supplied claim only',deliveryStatus,
+    requestId:`forged_${deliveryStatus.toLowerCase()}_01`
+   });
+   assert.equal(response.status,400);
+   assert.equal((await response.json()).error,'PROVIDER_REPLY_RECEIPT_REQUIRED');
+  }
+  const snapshot=await (await request(base,tokens[0].token,'/api/snapshot')).json();
+  assert.equal(snapshot.events.some(event=>event.type==='message.recorded'),false);
+ }finally{await app.close()}
+});
+
 test('state-changing POST requires same-origin',async()=>{
  const app=createControlRoom({dataDir:dir(),tokens});const a=await app.listen();const base=`http://${a.host}:${a.port}`;
  try{const r=await request(base,tokens[1].token,'/api/session/start',{title:'CSRF test',requestId:'start_req_0003'},{origin:'http://attacker.invalid'});assert.equal(r.status,403)}finally{await app.close()}
