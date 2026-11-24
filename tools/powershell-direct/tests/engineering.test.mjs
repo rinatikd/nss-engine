@@ -61,6 +61,33 @@ test('supervisor treats an unexpected tunnel exit as an incomplete stack stop',a
   assert.ok(supervisor.includes("unexpectedTunnelExit='+String(tunnelUnexpectedExit)"));
 });
 
+test('durable cutover journal is present but is not wired to enable production cutover',async()=>{
+  const module=await readFile(new URL('../EngineeringCutoverJournal.psm1',import.meta.url),'utf8');
+  const powershellTests=await readFile(new URL('./cutover-journal.tests.ps1',import.meta.url),'utf8');
+  const preflight=await readFile(new URL('../Prepare-EngineeringCutover.ps1',import.meta.url),'utf8');
+  const workflow=await readFile(new URL('../../../.github/workflows/source-checks.yml',import.meta.url),'utf8');
+  for(const capability of [
+    'function New-CutoverJournal',
+    'function Set-CutoverJournalPhase',
+    'function Get-CutoverJournalRecoveryAssessment',
+    '[IO.File]::Replace',
+    '.Flush($true)',
+    'JOURNAL_LOCK_BUSY',
+    'MANUAL_RECONCILIATION_REQUIRED_NO_AUTO_REPLAY',
+    'TERMINAL_NO_REPLAY'
+  ]){
+    assert.ok(module.includes(capability),'journal module missing '+capability);
+  }
+  assert.ok(!/Stop-Process|Start-Process|Start-Engineering/.test(module),
+    'journal module must only record state and never control processes');
+  assert.ok(powershellTests.includes('JOURNAL_CHECKSUM_MISMATCH'));
+  assert.ok(powershellTests.includes('ROLLBACK_FAILED'));
+  assert.ok(preflight.includes('DurableJournalModulePresent='));
+  assert.ok(preflight.includes('DurableTransactionJournalImplemented=$false'),
+    'journal is not yet integrated into the cutover execution path');
+  assert.ok(workflow.includes('cutover-journal.tests.ps1'));
+});
+
 test('production cutover and its preflight remain NO-GO until lifecycle evidence exists',async()=>{
   const script=await readFile(new URL('../Invoke-EngineeringCutover.ps1',import.meta.url),'utf8');
   const guard=script.indexOf("throw 'CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED'");
