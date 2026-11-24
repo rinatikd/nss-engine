@@ -89,7 +89,7 @@ $untracked=InvokeGit $oldRepo @('ls-files','--others','--exclude-standard')
 if($cached -ne '' -or $eolOnly -ne '' -or -not [string]::IsNullOrWhiteSpace($untracked)){throw 'OLD_CHECKOUT_HAS_NON_EOL_OR_UNTRACKED_CHANGES'}
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $newRepo) -Force|Out-Null
-$null=InvokeGit $oldRepo @('fetch','--no-tags','origin',($expectedMergeRef+':'+$trackingRef))
+$null=InvokeGit $oldRepo @('fetch','--no-tags','origin',('+'+$expectedMergeRef+':'+$trackingRef))
 $remoteHead=InvokeGit $oldRepo @('rev-parse',$trackingRef)
 if($remoteHead -cne $expectedSha){throw ('REMOTE_BRANCH_HEAD_MISMATCH: '+$remoteHead)}
 $null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$oldHead,$expectedSha)
