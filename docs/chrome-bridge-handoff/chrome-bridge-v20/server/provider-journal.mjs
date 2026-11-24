@@ -108,7 +108,7 @@ export class ProviderJournal {
       if(old)this.transactions.set(identity.requestId,{...old,state:'SENT',clickedAt:data.clickedAt,clickedSend:true,baseline:data.baseline});
     } else if(type==='reply.observed') {
       const old=this.transactions.get(identity.requestId);
-      if(old)this.transactions.set(identity.requestId,{...old,state:'REPLIED',replyReceipt:{
+      if(old)this.transactions.set(identity.requestId,{...old,state:'REPLIED',stopAfterCommit:old.stopAfterCommit===true||Number.isSafeInteger(old.nextEpoch),replyReceipt:{
         identity:clone(identity),requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
         tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
         clickedAt:data.clickedAt,baseline:data.baseline,replyIndex:data.replyIndex,observedAt:data.observedAt,
@@ -242,7 +242,7 @@ export class ProviderJournal {
     const tx=this.transactions.get(identity.requestId);
     if(!tx||!identityEqual(tx.identity,identity))throw Error('PROVIDER_REPLY_TRANSACTION_NOT_FOUND');
     if(tx.state==='REPLIED'&&tx.replyReceipt)return {state:'REPLIED',identity,replyReceipt:clone(tx.replyReceipt),duplicate:true};
-    if(tx.state!=='SENT'||!Number.isSafeInteger(tx.baseline)||!Number.isFinite(Date.parse(tx.clickedAt||'')))
+    if(!['SENT','STOP_AFTER_COMMIT'].includes(tx.state)||!Number.isSafeInteger(tx.baseline)||!Number.isFinite(Date.parse(tx.clickedAt||'')))
       throw Error('PROVIDER_REPLY_NOT_EXPECTED');
     if(!/^[a-f0-9]{64}$/.test(replySha256||'')||!Number.isSafeInteger(replyChars)||replyChars<1||replyChars>100000||
        !Number.isSafeInteger(replyIndex)||replyIndex!==tx.baseline+1||
@@ -329,6 +329,9 @@ export class ProviderJournal {
     if(tx&&!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
     if(tx&&['STOPPED_CLEAN','STOP_REQUESTED','STOP_AFTER_COMMIT'].includes(tx.state)) {
       return {state:tx.state,identity,nextEpoch:tx.nextEpoch,...(tx.quiescence?{quiescence:clone(tx.quiescence)}:{})};
+    }
+    if(tx&&tx.state==='REPLIED'&&Number.isSafeInteger(tx.nextEpoch)) {
+      return {state:'STOP_AFTER_COMMIT',identity,nextEpoch:tx.nextEpoch};
     }
     if(tx&&tx.state==='REVOKED'&&Number.isSafeInteger(tx.nextEpoch)) {
       const counts=this.#tabOutstanding(identity.tabId);
