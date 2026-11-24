@@ -31,6 +31,7 @@ export class PowerShellApprovalService {
   this.stopping=false;
   this.stopPromise=null;
   this.backgroundJobs=new Set();
+  this.backgroundJobFailures=0;
   this.namedService=null;
   this.namedHandlers=null;
   if(namedAuditDirectory){
@@ -118,7 +119,7 @@ export class PowerShellApprovalService {
   // Attach a rejection observer without converting failure into success.
   void tracked.then(
    ()=>this.backgroundJobs.delete(tracked),
-   ()=>this.backgroundJobs.delete(tracked)
+   ()=>{this.backgroundJobFailures++;this.backgroundJobs.delete(tracked);}
   );
   return tracked;
  }
@@ -402,18 +403,13 @@ export class PowerShellApprovalService {
    // Stop accepting HTTP requests, then wait for every detached submit/runner
    // promise to publish its terminal audit state before reporting drained.
    await closeServer;
-   let backgroundJobFailures=0;
    while(this.backgroundJobs.size>0){
     const batch=[...this.backgroundJobs];
-    const settled=await Promise.allSettled(batch);
-    for(const result of settled){
-     if(result.status==='rejected')backgroundJobFailures++;
-    }
-    for(const promise of batch)this.backgroundJobs.delete(promise);
+    await Promise.allSettled(batch);
    }
-   return {drained:backgroundJobFailures===0,pendingDenied:pending.length,
+   return {drained:this.backgroundJobFailures===0,pendingDenied:pending.length,
      backgroundJobsRemaining:this.backgroundJobs.size,
-     backgroundJobsFailed:backgroundJobFailures};
+     backgroundJobsFailed:this.backgroundJobFailures};
   })();
   return this.stopPromise;
  }
