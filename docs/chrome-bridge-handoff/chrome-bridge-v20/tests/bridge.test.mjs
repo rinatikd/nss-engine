@@ -367,11 +367,11 @@ test('Chrome Bridge ProviderTransport adapter completes a synthetic prepare/comm
       else if (command.name === 'provider_commit') result = {
         clickedSend: true, requestId: command.args.requestId, preparedId: command.args.preparedId,
         payloadHash: command.args.payloadHash, clickedAt: new Date().toISOString(), baseline: 0, confirmed: true
+      };
       else if (command.name === 'provider_reply_peek') result = {
         count:1, replyIndex:1, text:'Synthetic Claude reply for correlated request.',
-        chars:42, generating:false, origin:'https://claude.ai',
+        chars:46, generating:false, origin:'https://claude.ai',
         conversationId:'conversation_001', url:'https://claude.ai/chat/conversation_001'
-      };
       };
       else throw Error('Unexpected synthetic Bridge command: ' + command.name);
       const ack = await s.post('/bridge/result', { id: command.id, result }, 'b'.repeat(64));
