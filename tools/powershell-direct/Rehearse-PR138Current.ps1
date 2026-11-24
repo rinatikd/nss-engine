@@ -59,10 +59,10 @@ function Test-Health([int]$TunnelPid){
  }catch{return $false}
  finally{if($p){$p.Dispose()}}
 }
-function Invoke-Node([string[]]$Arguments,[int]$TimeoutMs){
+function Invoke-Node([string[]]$NodeArgList,[int]$TimeoutMs){
  $psi=New-Object Diagnostics.ProcessStartInfo
  $psi.FileName=$node
- $psi.Arguments=[string]::Join(' ',$Arguments)
+ $psi.Arguments=[string]::Join(' ',$NodeArgList)
  $psi.WorkingDirectory=$stage
  $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
  $psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
@@ -90,7 +90,10 @@ foreach($port in @(17381,17382,17488)){$bridgeBefore[$port]=Get-Listener $port}
 $testArgs=@('--test')+$tests
 $testResult=Invoke-Node $testArgs 180000
 if($testResult.ExitCode -ne 0){
- throw ('CURRENT_R2_NODE_TESTS_FAILED_'+$testResult.ExitCode)
+ $failedLines=@([regex]::Matches($testResult.Stdout,'(?m)^(?:not ok|✖)\s*[^\r\n]*') | ForEach-Object {$_.Value} | Select-Object -First 8)
+ $failedSummary=[string]::Join(' | ',$failedLines)
+ if([string]::IsNullOrWhiteSpace($failedSummary)){$failedSummary='NO_FAILURE_LINE_CAPTURED'}
+ throw ('CURRENT_R2_NODE_TESTS_FAILED_'+$testResult.ExitCode+'_'+$failedSummary)
 }
 $testSummary=[regex]::Match($testResult.Stdout,'(?m)^ℹ tests (\d+)\s*$').Groups[1].Value
 $testPass=[regex]::Match($testResult.Stdout,'(?m)^ℹ pass (\d+)\s*$').Groups[1].Value
