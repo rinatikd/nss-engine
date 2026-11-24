@@ -58,9 +58,9 @@
 
 <badge>NO-GO for deployment / cutover</badge>
 
-**Новый immutable runtime SHA:** `e11d587b9046abb3fb5143ede5e73b2a91f6a141`.
+**Новый immutable runtime SHA:** `55c397ff39afe87b93c22031bc0e87df6eaceb32`.
 
-Этот кандидат выбран после внесения lifecycle fixes в `service.mjs` и `stack-supervisor.mjs`, регрессий на ожидание активной операции/финального audit record, hard guard для `Cutover`, preflight gates и новых изолированных путей. Workflow теперь закрепляет именно этот SHA, а не старый `35e69e7`.
+Этот кандидат выбран после внесения lifecycle fixes в `service.mjs` и `stack-supervisor.mjs`, регрессий на ожидание активной операции/финального audit record, различение unexpected tunnel exit, hard guard для `Cutover`, preflight gates и новых изолированных путей. Workflow теперь закрепляет именно этот SHA, а не старые `35e69e7` или `e11d587`.
 
 **Старый кандидат `35e69e7e58c7e1b054a0771cabce07cc0c4108df` не является текущим release candidate:** он не включает последние graceful-drain изменения. Уже существующие каталоги
 `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-pinned-release-clean` и
