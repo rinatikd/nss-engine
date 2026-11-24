@@ -31,7 +31,7 @@ function tree(base){
    else assert.fail('unsupported entry: '+full);
   }
  }
- visit(base);return found.sort();
+ visit(base);return found.filter(x=>x!=='source-hashes.json').sort();
 }
 function tracked(){
  const r=spawnSync(git,['-C',source,'ls-files','--','tools/powershell-direct','tools/ai_collaboration'],{
