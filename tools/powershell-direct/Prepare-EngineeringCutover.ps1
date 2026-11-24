@@ -64,6 +64,8 @@ $envFeatures=if(Test-Path -LiteralPath $replacement -PathType Leaf){
  $policy.Contains('WORKSPACE_VOLUME_ROOT_DENIED')
 }else{$false}
 $cutoverScript=Join-Path $PSScriptRoot 'Invoke-EngineeringCutover.ps1'
+$journalModule=Join-Path $PSScriptRoot 'EngineeringCutoverJournal.psm1'
+$journalTests=Join-Path $PSScriptRoot 'tests\cutover-journal.tests.ps1'
 $cutoverGuarded=$false
 if(Test-Path -LiteralPath $cutoverScript -PathType Leaf){
  $cutoverSource=Get-Content -LiteralPath $cutoverScript -Raw
@@ -75,6 +77,8 @@ $checks=[ordered]@{
  CutoverCodeGuardPresent=[bool]$cutoverGuarded
  CutoverModeEnabled=$false
  GracefulStopChannelImplemented=$false
+ DurableJournalModulePresent=(Test-Path -LiteralPath $journalModule -PathType Leaf)
+ DurableJournalTestHarnessPresent=(Test-Path -LiteralPath $journalTests -PathType Leaf)
  DurableTransactionJournalImplemented=$false
  RollbackFailureInjectionRehearsalVerified=$false
  ExistingRecoveryScriptTargetsOriginal=[bool]$restoreTargetsOld
