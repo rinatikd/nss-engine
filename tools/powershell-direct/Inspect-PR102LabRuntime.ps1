@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $workspaceExpected = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$repo = Join-Path $workspaceExpected 'work\ChromeBridge-PR145-4696c1c0-release-clean'
+$repo = Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-release-clean'
 $candidateRoot = Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
 $extensionRoot = 'C:\Engineering\ChromeBridge-PR102-17484-Lab'
 $stateRoot = 'C:\Engineering\ChromeBridge-PR102-17484-State'
