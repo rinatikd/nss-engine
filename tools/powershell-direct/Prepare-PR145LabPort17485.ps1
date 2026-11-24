@@ -181,6 +181,7 @@ Require ($config.browserToken -is [string] -and $config.browserToken.Length -ge 
 $configHash=HashFile $configPath
 $serverTreeBefore=TreeHash (Join-Path $labServerRoot 'server')
 $extensionManifestBefore=HashFile (Join-Path $labExtensionRoot 'manifest.json')
+$extensionTreeBefore=TreeHash $labExtensionRoot
 $extensionBackupRoot=Join-Path $labStateRoot 'backups'
 $backupListBefore=@()
 if(Test-Path -LiteralPath $extensionBackupRoot -PathType Container){
@@ -235,6 +236,7 @@ Require ($extensionText -match '\[DRY_RUN\] No installed files changed') ('PR102
 Require ((HashFile $configPath) -ceq $configHash) 'PR102 State config changed during dry-run'
 Require ((TreeHash (Join-Path $labServerRoot 'server')) -ceq $serverTreeBefore) 'PR102 installed server changed during dry-run'
 Require ((HashFile (Join-Path $labExtensionRoot 'manifest.json')) -ceq $extensionManifestBefore) 'PR102 installed extension manifest changed during dry-run'
+Require ((TreeHash $labExtensionRoot) -ceq $extensionTreeBefore) 'PR102 installed extension tree changed during dry-run'
 $backupListAfter=@()
 if(Test-Path -LiteralPath $extensionBackupRoot -PathType Container){
   $backupListAfter=@(Get-ChildItem -LiteralPath $extensionBackupRoot -Directory -Force|ForEach-Object {$_.Name}|Sort-Object)
@@ -264,6 +266,7 @@ Require ((HashFile $configPath) -ceq $configHash) 'PR102 State config changed af
   LabStateConfigSha256=$configHash
   LabServerTreeSha256=$serverTreeBefore
   LabExtensionManifestSha256=$extensionManifestBefore
+  LabExtensionTreeSha256=$extensionTreeBefore
   NodeExecutable=$script:NodeExe
   NodeVersion=$version
   ServerBootstrapDryRun='PASS'
