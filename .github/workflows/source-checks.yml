@@ -65,7 +65,9 @@ jobs:
             'tools/powershell-direct/Stage-EngineeringDirect.ps1',
             'tools/powershell-direct/Prepare-EngineeringLabR2.ps1',
             'tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1',
-            'tools/powershell-direct/Verify-EngineeringLabR2.ps1'
+            'tools/powershell-direct/Verify-EngineeringLabR2.ps1',
+            'tools/powershell-direct/EngineeringCutoverJournal.psm1',
+            'tools/powershell-direct/tests/cutover-journal.tests.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -76,6 +78,16 @@ jobs:
             if ($errors.Count -gt 0) { throw ($file + ': ' + ($errors | Out-String)) }
             Write-Output ('[PASS] PowerShell 5.1 parse: ' + $file)
           }
+      - name: Run durable cutover journal failure and recovery tests on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $test = Join-Path $env:GITHUB_WORKSPACE 'tools\\powershell-direct\\tests\\cutover-journal.tests.ps1'
+          $result = & powershell.exe -NoProfile -NonInteractive -File $test | Out-String
+          if ($LASTEXITCODE -ne 0) { throw 'CUTOVER_JOURNAL_TESTS_FAILED' }
+          $summary = ($result | Out-String).Trim() | ConvertFrom-Json
+          if ($summary.Result -cne 'CUTOVER_JOURNAL_TESTS_PASS' -or $summary.Assertions -lt 20 -or $summary.AutomaticProcessActionTaken -ne $false) { throw 'CUTOVER_JOURNAL_TEST_SUMMARY_INVALID' }
+          Write-Output ('[PASS] Durable cutover journal: assertions=' + $summary.Assertions + ' transactions=' + $summary.JournalTransactions)
       - name: Execute read-only R2 preflight on Windows PowerShell 5.1
         shell: powershell
         run: |
