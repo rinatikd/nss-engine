@@ -6,8 +6,8 @@ $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $oldRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-fb2c27a8-release-clean'
-$newRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-4696c1c0-release-clean'
-$expectedSha='4696c1c0b8fc1c970a003413d267d666faf424a7'
+$newRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-release-clean'
+$expectedSha='754b8f5f30663dab9cefcd87b47b51ecb4c0dcdd'
 $expectedBranch='feat/chat-approved-session-auth-20261122'
 $expectedMergeRef='refs/pull/145/merge'
 $trackingRef='refs/remotes/origin/pr145/merge'
@@ -104,7 +104,7 @@ if(!(Test-Path -LiteralPath (Join-Path $candidateRoot 'server\bridge.mjs') -Path
 if(!(Test-Path -LiteralPath (Join-Path $candidateRoot 'extension\session-authorization.js') -PathType Leaf)){throw 'NEW_WORKTREE_EXTENSION_MISSING'}
 
 . (Join-Path $candidateRoot 'deployment\verify-candidate-source.ps1')
-$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths @('server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab-server.ps1')
+$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths @('server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/bootstrap-pr102-lab-server.ps1','deployment/upgrade-pr102-lab-server.ps1')
 $null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths @('extension','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab.ps1')
 $null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths @('consilium-control-room','deployment/verify-candidate-source.ps1')
 
