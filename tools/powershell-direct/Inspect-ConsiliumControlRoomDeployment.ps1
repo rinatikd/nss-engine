@@ -16,10 +16,14 @@ foreach($file in @($controlRoot,$startScript,$readme,$main)){
   if(!(Test-Path -LiteralPath $file)){throw ('CONSILIUM_CONTROL_ROOM_SOURCE_MISSING: '+$file)}
 }
 $startContent=[IO.File]::ReadAllText($startScript)
-$readmeHints=@(Select-String -LiteralPath $readme -Pattern 'CONSILIUM_PORT|18765|127\.0\.0\.1|localhost|loopback|токен|запуск' |
-  ForEach-Object {[pscustomobject]@{Line=$_.LineNumber;Text=$_.Line.Trim()}})
-$mainHints=@(Select-String -LiteralPath $main -Pattern 'CONSILIUM_PORT|18765|server\.listen|listen\(|127\.0\.0\.1|CONSILIUM_.*TOKEN' |
-  ForEach-Object {[pscustomobject]@{Line=$_.LineNumber;Text=$_.Line.Trim()}})
+$readmeHints=@()
+foreach($hit in (Select-String -LiteralPath $readme -Pattern 'CONSILIUM_PORT|18765|127\.0\.0\.1|localhost|loopback|токен|запуск')){
+  $readmeHints += [pscustomobject]@{Line=[int]$hit.LineNumber;Text=[string]($hit.Line.Trim())}
+}
+$mainHints=@()
+foreach($hit in (Select-String -LiteralPath $main -Pattern 'CONSILIUM_PORT|18765|server\.listen|listen\(|127\.0\.0\.1|CONSILIUM_.*TOKEN')){
+  $mainHints += [pscustomobject]@{Line=[int]$hit.LineNumber;Text=[string]($hit.Line.Trim())}
+}
 $expectedPort=18765
 $listeners=@([BridgeNativeMetadata]::Listeners($expectedPort))
 $requiredVariables=@(
@@ -27,9 +31,11 @@ $requiredVariables=@(
   'CONSILIUM_DEEPSEEK_TOKEN','CONSILIUM_QWEN_TOKEN','CONSILIUM_KIMI_TOKEN',
   'CONSILIUM_GROK_TOKEN','CONSILIUM_GEMINI_TOKEN'
 )
-$environmentPresence=@($requiredVariables|ForEach-Object {
-  [pscustomobject]@{Name=$_;Present=[bool](Test-Path -LiteralPath ('Env:'+$_))}
-})
+$environmentPresence=@()
+foreach($variable in $requiredVariables){
+  $present=Test-Path -LiteralPath ('Env:'+$variable)
+  $environmentPresence += [pscustomobject]@{Name=$variable;Present=[bool]$present}
+}
 $report=[ordered]@{
   Result='CONSILIUM_CONTROL_ROOM_DEPLOYMENT_READ_ONLY'
   ControlRoomRoot=$controlRoot
