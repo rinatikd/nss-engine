@@ -284,7 +284,7 @@ export class ProviderJournal {
 
   #tabOutstanding(tabId) {
     const unresolved=[...this.transactions.values()].filter(tx=>
-      tx.identity.tabId===tabId&&['PREPARING','PREPARED','COMMITTING','SENT','UNKNOWN','STOP_REQUESTED'].includes(tx.state));
+      tx.identity.tabId===tabId&&['PREPARING','PREPARED','COMMITTING','SENT','UNKNOWN','STOP_REQUESTED','STOP_AFTER_COMMIT'].includes(tx.state));
     return {
       unresolved:unresolved.length,
       outstandingPrepared:unresolved.filter(tx=>tx.state==='PREPARED').length
