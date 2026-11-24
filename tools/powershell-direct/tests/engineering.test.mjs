@@ -78,12 +78,48 @@ test('service stop denies pending approval immediately and clears its timer',()=
   rpc(svc,'powershell_engineering_submit',req(root,id));
   await pending(svc,id);
   await svc.stop();
-  const denied=await status(svc,id);
+  const denied=await svc.engineeringService.status(id);
   assert.equal(denied.state,'DENIED');
   assert.equal(denied.reason,'SERVICE_STOPPED');
   assert.equal(svc.namedPending.size,0);
   assert.equal(starts(),0);
 }));
+
+test('service stop waits for an approved runner and final audit publication',async()=>{
+  const root=await mkdtemp(path.join(tmpdir(),'psdirect-drain-'));
+  let markStarted,releaseRunner;
+  const started=new Promise(resolve=>{markStarted=resolve;});
+  const svc=new PowerShellApprovalService({
+    port:0,engineeringAuditDirectory:path.join(root,'audit'),
+    engineeringRunner:async()=>{
+      markStarted();
+      await new Promise(resolve=>{releaseRunner=resolve;});
+      return {exitCode:0,state:'FINISHED',stdout:'DRAINED',stderr:'',truncated:false};
+    }
+  });
+  await svc.start();
+  try{
+    const id='eng-drain-0001';
+    rpc(svc,'powershell_engineering_submit',req(root,id));
+    const approval=await pending(svc,id);
+    assert.equal((await approve(svc,approval,true)).status,303);
+    await started;
+    let stopResolved=false;
+    const stop=svc.stop().then(result=>{stopResolved=true;return result;});
+    await new Promise(resolve=>setTimeout(resolve,30));
+    assert.equal(stopResolved,false,'stop must wait for active runner completion');
+    releaseRunner();
+    const drained=await stop;
+    assert.equal(drained.drained,true);
+    assert.equal(drained.backgroundJobsRemaining,0);
+    const final=await svc.engineeringService.status(id);
+    assert.equal(final.state,'FINISHED');
+    assert.equal(final.stdout,'DRAINED');
+  }finally{
+    if(!svc.stopping)await svc.stop();
+    await rm(root,{recursive:true,force:true});
+  }
+});
 
 test('engineering ALLOW runs once, no replay',()=>fixture(async({svc,root,starts})=>{
   const id='eng-allow-0002';
