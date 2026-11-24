@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {PowerShellApprovalService} from '../service.mjs';
@@ -53,6 +53,14 @@ async function status(svc,id){
   }while(Date.now()<until);
   throw Error('FINAL_TIMEOUT lastState='+String(last?.state));
 }
+test('production cutover remains hard-disabled until graceful drain, journal and rollback exist',async()=>{
+  const script=await readFile(new URL('../Invoke-EngineeringCutover.ps1',import.meta.url),'utf8');
+  const guard=script.indexOf("throw 'CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED'");
+  const forceStop=script.indexOf('Stop-ExactStack $oldStack');
+  assert.ok(guard>=0,'unconditional Cutover NO-GO guard is present');
+  assert.ok(forceStop>guard,'NO-GO guard precedes any production stack stop');
+});
+
 test('feature is opt-in and does not replace five read-only diagnostics',()=>fixture(async({svc})=>{
   const names=svc.rpc({jsonrpc:'2.0',id:1,method:'tools/list'}).result.tools.map(x=>x.name);
   assert.ok(names.includes('powershell_engineering_submit'));
