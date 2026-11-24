@@ -6,7 +6,8 @@ param(
  [Parameter(Mandatory=$true)]
  [ValidatePattern('^[0-9a-fA-F]{40}$')]
  [string]$CandidateCommit,
- [string]$RepositoryRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
+ [string]$RepositoryRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114',
+ [string]$WorktreeName='PowerShellDirect-PR138-graceful-drain-20261125'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -19,7 +20,8 @@ $expectedBranch='feat/psdirect-per-job-workspace-approval-20261123'
 $expectedRemote='github.com/rinatikd/nss-engine'
 $oldRepo=$workspaceExpected
 $workRoot=Join-Path $workspaceExpected 'work'
-$newRepo=Join-Path $workRoot 'PowerShellDirect-PR138-pinned-release-clean'
+$newRepo=Join-Path $workRoot $WorktreeName
+if($WorktreeName -notmatch '^PowerShellDirect-PR138-[A-Za-z0-9._-]+$'){throw 'PR138_WORKTREE_NAME_INVALID'}
 $git='C:\Program Files\Git\cmd\git.exe'
 
 $workspace=(Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath.TrimEnd('\')
