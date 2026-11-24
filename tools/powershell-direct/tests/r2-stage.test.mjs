@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-const stage=process.env.R2_STAGE_ROOT||'C:/Engineering/PowerShellDirect-Engineering-Lab-R2';
-const source=process.env.R2_SOURCE_ROOT||'C:/Engineering/ChromeBridge-Recovery-Install-20261114/work/PowerShellDirect-PR138-pinned-release-clean';
+const stage=process.env.R2_STAGE_ROOT||'C:/Engineering/PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125';
+const source=process.env.R2_SOURCE_ROOT||'C:/Engineering/ChromeBridge-Recovery-Install-20261114/work/PowerShellDirect-PR138-graceful-drain-20261125';
 const tests=[
  'tools/ai_collaboration/workspace-policy.test.mjs',
  'tools/ai_collaboration/local_test_runner.test.mjs',
