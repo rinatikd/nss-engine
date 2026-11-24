@@ -19,8 +19,10 @@ $targets=@(
   (Join-Path $PSScriptRoot 'Test-PR132ReleaseScripts.ps1'),
   (Join-Path $candidateRoot 'deployment\process-identity.ps1'),
   (Join-Path $candidateRoot 'deployment\verify-candidate-source.ps1'),
+  (Join-Path $candidateRoot 'deployment\bootstrap-pr102-lab-server.ps1'),
   (Join-Path $candidateRoot 'deployment\upgrade-pr102-lab-server.ps1'),
   (Join-Path $candidateRoot 'deployment\upgrade-pr102-lab.ps1'),
+  (Join-Path $candidateRoot 'tests\bootstrap-pr102-lab-server.test.ps1'),
   (Join-Path $candidateRoot 'tests\upgrade-pr102-lab-server.test.ps1'),
   (Join-Path $candidateRoot 'tests\upgrade-pr102-lab.test.ps1')
 )
