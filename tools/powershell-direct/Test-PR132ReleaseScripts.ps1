@@ -8,7 +8,7 @@ $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $workspace=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
 if($workspace -ine $workspaceExpected){throw 'UNEXPECTED_APPROVED_WORKSPACE'}
 
-$candidateRoot=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-4696c1c0-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$candidateRoot=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
 $targets=@(
   (Join-Path $PSScriptRoot 'Refresh-PR132PinnedWorktree.ps1'),
   (Join-Path $PSScriptRoot 'Run-PR132LabPreflight.ps1'),
@@ -20,11 +20,11 @@ $targets=@(
   (Join-Path $candidateRoot 'deployment\process-identity.ps1'),
   (Join-Path $candidateRoot 'deployment\verify-candidate-source.ps1'),
   (Join-Path $candidateRoot 'deployment\bootstrap-pr102-lab-server.ps1'),
-  (Join-Path $candidateRoot 'deployment\bootstrap-pr102-lab-server.ps1'),
+
   (Join-Path $candidateRoot 'deployment\upgrade-pr102-lab-server.ps1'),
   (Join-Path $candidateRoot 'deployment\upgrade-pr102-lab.ps1'),
   (Join-Path $candidateRoot 'tests\bootstrap-pr102-lab-server.test.ps1'),
-  (Join-Path $candidateRoot 'tests\bootstrap-pr102-lab-server.test.ps1'),
+
   (Join-Path $candidateRoot 'tests\upgrade-pr102-lab-server.test.ps1'),
   (Join-Path $candidateRoot 'tests\upgrade-pr102-lab.test.ps1')
 )
