@@ -26,6 +26,7 @@ function adapter(fetchImpl) {
 
 test('adapter is versioned and accepts only a loopback MCP endpoint',()=>{
   assert.equal(adapter(async()=>response({})).version,PROVIDER_TRANSPORT_V1);
+  assert.throws(()=>new ChromeBridgeProviderAdapter({agentToken:token}),e=>e instanceof ChromeBridgeAdapterError && e.code==='BRIDGE_ENDPOINT_REQUIRED');
   for(const bad of ['https://127.0.0.1:17484','http://localhost:17484','http://192.168.1.4:17484','http://127.0.0.1:17484/other']) {
     assert.throws(()=>new ChromeBridgeProviderAdapter({endpoint:bad,agentToken:token}),e=>
       e instanceof ChromeBridgeAdapterError && ['BRIDGE_ENDPOINT_MUST_BE_LOOPBACK'].includes(e.code));
