@@ -98,7 +98,7 @@ jobs:
           $git = 'C:\Program Files\Git\cmd\git.exe'
           $node = (Get-Command node.exe -ErrorAction Stop).Source
           $expectedBase = 'f58f44a52c569a4a45e3ffe025dc6d1f62beff58'
-          $expectedPin = '5f6837a8f99dd0db23f35ec84e1b4dc8c172886d'
+          $expectedPin = '35e69e7e58c7e1b054a0771cabce07cc0c4108df'
           $primary = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
           $worktree = Join-Path $primary 'work\PowerShellDirect-PR138-pinned-release-clean'
           $stage = 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2'
@@ -116,12 +116,12 @@ jobs:
             $baseHead = (& $git -C $primary rev-parse HEAD 2>$null | Out-String).Trim()
             if ($LASTEXITCODE -ne 0 -or $baseHead -cne $expectedBase) { throw 'PRIMARY_BASE_SHA_MISMATCH' }
             $outer = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-PR138PinnedWorktree.ps1'
-            $inspect = & $outer -Mode Inspect -RepositoryRoot $primary
+            $inspect = & $outer -Mode Inspect -RepositoryRoot $primary -CandidateCommit $expectedPin
             $outerPreflight = ($inspect | Out-String).Trim() | ConvertFrom-Json
             if ($outerPreflight.Result -cne 'PR138_WORKTREE_PREFLIGHT') { throw 'OUTER_PREFLIGHT_RESULT_INVALID' }
             if ($outerPreflight.PrimaryHead -cne $expectedBase -or $outerPreflight.CandidateCommit -cne $expectedPin) { throw 'OUTER_PREFLIGHT_PIN_MISMATCH' }
             if ($outerPreflight.DestinationExists -or $outerPreflight.FetchPerformed -or $outerPreflight.WorktreeCreated) { throw 'OUTER_PREFLIGHT_SIDE_EFFECT' }
-            $preparedWorktree = & $outer -Mode Prepare -RepositoryRoot $primary
+            $preparedWorktree = & $outer -Mode Prepare -RepositoryRoot $primary -CandidateCommit $expectedPin
             $worktreeResult = ($preparedWorktree | Out-String).Trim() | ConvertFrom-Json
             if ($worktreeResult.Result -cne 'PR138_PINNED_WORKTREE_READY') { throw 'PINNED_WORKTREE_RESULT_INVALID' }
             if ($worktreeResult.CandidateSha -cne $expectedPin -or $worktreeResult.Worktree -cne $worktree) { throw 'PINNED_WORKTREE_SHA_OR_PATH_MISMATCH' }
