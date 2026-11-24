@@ -29,16 +29,52 @@ const service=new PowerShellApprovalService({
   chatReadonlyEnabled:true,namedAuditDirectory,
   engineeringAuditDirectory,engineeringChatVerifier
 });
-let child,stopping=false;
+let child,stopping=false,shutdownPromise=null,childClosed=false;
+function waitForTunnelClose(timeoutMs=10000){
+ if(!child||childClosed)return Promise.resolve(true);
+ return new Promise(resolve=>{
+  let settled=false;
+  const finish=closed=>{
+   if(settled)return;
+   settled=true;clearTimeout(timer);
+   child.removeListener('close',onClose);
+   resolve(closed);
+  };
+  const onClose=()=>{childClosed=true;finish(true);};
+  const timer=setTimeout(()=>finish(false),timeoutMs);
+  child.once('close',onClose);
+  // A signal request is not proof of exit; only the child's close event is.
+  if(!child.killed){
+   try{child.kill();}catch{}
+  }
+ });
+}
 async function shutdown(signal='STOP'){
- if(stopping)return;
+ if(shutdownPromise)return shutdownPromise;
  stopping=true;
- process.stdout.write('STOPPING_STACK '+signal+'\n');
- if(child&&!child.killed)child.kill();
- try{await service.stop();}catch{}
- // A tunnel that does not exit promptly must be stopped manually via its verified PID.
- process.stdout.write('STOPPED_LOCAL_SERVICE\n');
- process.exitCode=0;
+ shutdownPromise=(async()=>{
+  process.stdout.write('STOPPING_STACK '+signal+'\n');
+  let serviceDrained=false;
+  try{
+   const result=await service.stop();
+   serviceDrained=result?.drained===true;
+  }catch(error){
+   process.stderr.write('LOCAL_SERVICE_DRAIN_FAILED '+(error.code||error.message||'UNKNOWN')+'\n');
+  }
+  // Never terminate the tunnel while the local service still has an
+  // unconfirmed active job or an unpublished terminal audit record.
+  const tunnelClosed=serviceDrained?await waitForTunnelClose():false;
+  if(serviceDrained&&tunnelClosed){
+   process.stdout.write('STOPPED_LOCAL_SERVICE\n');
+   process.stdout.write('STOPPED_STACK\n');
+   process.exitCode=0;
+  }else{
+   process.stderr.write('STACK_STOP_INCOMPLETE serviceDrained='+String(serviceDrained)+
+    ' tunnelClosed='+String(tunnelClosed)+'\n');
+   process.exitCode=1;
+  }
+ })();
+ return shutdownPromise;
 }
 process.on('SIGINT',()=>{void shutdown('SIGINT');});
 process.on('SIGTERM',()=>{void shutdown('SIGTERM');});
@@ -68,7 +104,8 @@ try{
  child.stdout.on('data',()=>{});
  child.stderr.on('data',()=>{});
  child.on('error',e=>{process.stderr.write('TUNNEL_START_FAILED '+(e.code||'ERROR')+'\n');void shutdown('TUNNEL_ERROR');});
- child.on('exit',(code,signal)=>{process.stderr.write('TUNNEL_EXIT '+String(code??signal)+'\n');void shutdown('TUNNEL_EXIT');});
+ child.on('exit',(code,signal)=>{process.stderr.write('TUNNEL_EXIT '+String(code??signal)+'\n');});
+  child.on('close',(code,signal)=>{childClosed=true;process.stderr.write('TUNNEL_CLOSED '+String(code??signal)+'\n');if(!stopping)void shutdown('TUNNEL_EXIT');});
  process.stdout.write('STACK_STARTED tunnel_profile=powershell-direct-work health=http://127.0.0.1:18086/ui\n');
  process.stdout.write('ChatGPT permission MUST remain Always ask; local approval still required by powershell_propose.\n');
  process.stdout.write('Ctrl+C stops this supervised stack. No plaintext token is printed.\n');
