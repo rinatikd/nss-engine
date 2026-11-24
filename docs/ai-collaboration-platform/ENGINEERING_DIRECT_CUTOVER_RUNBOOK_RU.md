@@ -58,9 +58,9 @@
 
 <badge>NO-GO for deployment / cutover</badge>
 
-**Новый immutable runtime SHA:** `2d0a039e65eb3cb9c1f23fa57254633edc14a8f1`.
+**Новый immutable runtime SHA:** `1ab5b9098046028eb3b022b91f8e40ca7ff92596`.
 
-Этот кандидат выбран после внесения lifecycle fixes в `service.mjs` и `stack-supervisor.mjs`, регрессий на ожидание активной операции/финального audit record, отказ `drained=true` при rejected background Promise, различение unexpected tunnel exit, hard guard для `Cutover`, preflight gates и новых изолированных путей. Workflow теперь закрепляет именно этот SHA, а не старые `35e69e7`, `e11d587` или `55c397f`.
+Этот кандидат выбран после внесения lifecycle fixes в `service.mjs` и `stack-supervisor.mjs`, регрессий на ожидание активной операции/финального audit record, fail-closed учёта rejected background Promise, различение unexpected tunnel exit, hard guard для `Cutover`, preflight gates и новых изолированных путей. Workflow теперь закрепляет именно этот SHA, а не старые `35e69e7`, `e11d587`, `55c397f` или `2d0a039`.
 
 **Старый кандидат `35e69e7e58c7e1b054a0771cabce07cc0c4108df` не является текущим release candidate:** он не включает последние graceful-drain изменения. Уже существующие каталоги
 `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-pinned-release-clean` и
@@ -71,14 +71,14 @@
 - Detached worktree: `C:\Engineering\ChromeBridge-Recovery-Install-20261114\work\PowerShellDirect-PR138-graceful-drain-20261125`.
 - Новый R2 stage: `C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125`.
 
-`Prepare-PR138PinnedWorktree.ps1` принимает `-CandidateCommit 2d0a039...` и `-WorktreeName PowerShellDirect-PR138-graceful-drain-20261125`. `Prepare-EngineeringLabR2.ps1` принимает отдельный `-StageDirectory`, проверяет, что он не совпадает с R1, legacy R2 или старым 35e-stage, находится под `C:\Engineering` и не перекрывает source checkout. Prepare остаётся create-only: существующий target вызывает отказ, никакой перезаписи.
+`Prepare-PR138PinnedWorktree.ps1` принимает `-CandidateCommit 1ab5b90...` и `-WorktreeName PowerShellDirect-PR138-graceful-drain-20261125`. `Prepare-EngineeringLabR2.ps1` принимает отдельный `-StageDirectory`, проверяет, что он не совпадает с R1, legacy R2 или старым 35e-stage, находится под `C:\Engineering` и не перекрывает source checkout. Prepare остаётся create-only: существующий target вызывает отказ, никакой перезаписи.
 
 Для read-only подтверждения уже созданного нового stage использовать `Verify-EngineeringLabR2.ps1` с точными `-ExpectedCommit`, `-SourceWorktree` и `-StageDirectory`. Результат `R2_EXISTING_STAGE_VERIFIED` означает совпадение commit, чистого source, tracked inventory, manifest, SHA-256 и staged syntax/регрессий; helper не меняет stage/source, не запускает сервисы и не трогает туннели.
 
 ### Доказательства и ограничения
 
 - На предыдущем кодовом снимке `9edf22e` helper уже прошёл Windows CI против старого 35e-stage: 2/2 проверок. Это историческое доказательство только механики verifier, не подтверждение нового runtime.
-- Предыдущий runtime `55c397f` прошёл CI run [45485482824](https://github.com/rinatikd/nss-engine/actions/runs/45485482824): Node 78/78; Windows parser PASS; staging 111 files; verifier 2/2. После этого исправлена обработка rejected background Promise; этот результат не переносить на новый runtime `2d0a039` — требуется актуальный CI.
+- Текущий workflow run [45486515040](https://github.com/rinatikd/nss-engine/actions/runs/45486515040) прошёл на PR HEAD `a72e9ed`: три job `success`; Node **79/79**; Windows PowerShell 5.1 parser PASS; exact runtime SHA `1ab5b90` staged в CI; 111 tracked files и manifest/SHA-256 parity PASS; read-only verifier `R2_EXISTING_STAGE_VERIFIED` **2/2 PASS**. Включает тест, что rejected background job не может быть скрыт и не даёт `drained=true`.
 - Даже полный CI для нового кандидата не означает, что этот runtime уже установлен на Work PC или что реальный новый R2 stage на Work PC создан.
 - Следующий Work PC шаг — только после разрешённого окна локальной проверки: получить feature-ветку с helper-скриптами, Inspect для нового worktree, Prepare только при совпадении SHA/чистоте/отсутствии destination, затем Inspect/Prepare нового R2 и read-only Verify. Существующие R1, legacy R2 и старый 35e-stage не менять.
 
