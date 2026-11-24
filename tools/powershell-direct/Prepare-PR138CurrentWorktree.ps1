@@ -5,7 +5,7 @@ param([ValidateSet('Inspect','Prepare')][string]$Mode='Inspect')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $root='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$expectedPrimary='64a24ca8f395b1c7944f9136c6fc3fb30ca86545'
+$minimumPrimary='64a24ca8f395b1c7944f9136c6fc3fb30ca86545'
 $expectedBase='f58f44a52c569a4a45e3ffe025dc6d1f62beff58'
 $expectedCandidate='35e69e7e58c7e1b054a0771cabce07cc0c4108df'
 $branch='feat/psdirect-per-job-workspace-approval-20261123'
@@ -65,7 +65,7 @@ if(!(Test-Path -LiteralPath (Join-Path $root '.git'))){throw 'PRIMARY_REPOSITORY
 $primary=(Resolve-Path -LiteralPath $root).ProviderPath.TrimEnd('\')
 if($primary -ine $root){throw 'UNEXPECTED_PRIMARY_ROOT'}
 $primaryHead=Git $root @('rev-parse','--verify','HEAD')
-if($primaryHead -cne $expectedPrimary){throw 'PRIMARY_HEAD_MISMATCH'}
+$null=Git $root @('merge-base','--is-ancestor',$minimumPrimary,$primaryHead)
 $primaryBranch=Git $root @('branch','--show-current')
 if($primaryBranch -cne 'platform/ai-windows-control-release-20261114'){throw 'PRIMARY_BRANCH_MISMATCH'}
 $origin=Git $root @('remote','get-url','origin')
