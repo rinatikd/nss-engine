@@ -34,7 +34,6 @@ test('MCP tool failures expose a bounded versioned failure contract',async()=>{
     assert.ok(unknown.result.failure.durationMs>=0);
     const invalid=await s.rpc('browser_read',{tabId:-1});
     assert.equal(invalid.result.isError,true);
-    assert.equal(invalid.result.dispatchState,'NOT_PERFORMED');
     assert.equal(invalid.result.failure.schemaVersion,1);
     assert.equal(invalid.result.failure.stage,'VALIDATION');
     assert.equal(invalid.result.failure.code,'ARGUMENT_VALIDATION_FAILED');

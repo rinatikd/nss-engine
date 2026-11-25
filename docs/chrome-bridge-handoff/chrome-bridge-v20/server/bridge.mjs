@@ -178,6 +178,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       [SendState.NOT_PERFORMED]: 'NOT_PERFORMED', [SendState.BLOCKED]: 'BLOCKED' })[outcome.state] || 'UNKNOWN';
   }
   async function agentSend(name, text, suppliedRequestId = null) {
+    const sendStartedAt=Date.now();
     const a = agent(name);
     const secret = findSecret(text);
     if (secret) throw Error(`Refusing to send: the text looks like it contains a secret (${secret}). Remove it first.`);
@@ -232,7 +233,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         // Only stable diagnostic codes, never arbitrary provider text.
         failureCode:safeFailureCode(error?.message,'AGENT_SEND_FAILED'),
         failure:normalizeFailure(error?.failure,{stage:'TRANSPORT',
-          code:safeFailureCode(error?.message,'AGENT_SEND_FAILED')}),requestId,
+          code:safeFailureCode(error?.message,'AGENT_SEND_FAILED'),startedAt:sendStartedAt}),requestId,
         hint: deliveryStatus === 'UNKNOWN' ? 'Dispatch result is unknown. Inspect the chat before any new submission; do not retry automatically.' : 'No browser dispatch occurred. This requestId remains consumed; a new explicit request is required.' };
     }
     const outcome = classifySend({ dispatched: true }); // Transport response is not attributed delivery evidence.
@@ -504,7 +505,9 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     else if (method === 'tools/call') {
       const callStartedAt=Date.now();
       try {
-        const t = toolByName(params.name);
+        let t;
+        try { t=toolByName(params.name); }
+        catch { const error=Error('UNKNOWN_TOOL'); error.failure=makeFailure('VALIDATION','UNKNOWN_TOOL',callStartedAt); throw error; }
         if (!t) { const error=Error('UNKNOWN_TOOL'); error.failure=makeFailure('VALIDATION','UNKNOWN_TOOL',callStartedAt); throw error; }
         const args = params.arguments || {};
         try { validateArgs(t, args); }
@@ -537,6 +540,8 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
           code:safeFailureCode(e?.message,'TOOL_CALL_FAILED'),startedAt:callStartedAt
         });
         const publicMessage=failure.code==='COMMAND_EXPIRED'?'Command expired before dispatch.':
+          failure.code==='COMMAND_TIMEOUT_AFTER_DISPATCH'?'Command expired after dispatch; execution remains quarantined. Do not retry.':
+          failure.code==='PREVIOUS_REQUEST_PENDING'?'Previous request is still pending: call agent_wait first.':
           failure.code==='CHROME_DISCONNECTED'?'Chrome disconnected.':failure.code;
         result = { isError: true, failure, ...(dispatchState ? { dispatchState } : {}),
           content: [{ type: 'text', text: publicMessage }] };

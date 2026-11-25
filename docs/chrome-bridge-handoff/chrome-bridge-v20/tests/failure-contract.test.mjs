@@ -20,4 +20,6 @@ test('untrusted failure objects are normalized and stripped of extra fields',()=
   });
   assert.equal(safeFailureCode('Command expired before dispatch.'),'COMMAND_EXPIRED');
   assert.equal(safeFailureCode('Chrome disconnected: detail'),'CHROME_DISCONNECTED');
+  assert.equal(safeFailureCode('Previous request is still pending: call agent_wait first.'),'PREVIOUS_REQUEST_PENDING');
+  assert.equal(safeFailureCode('Command expired after dispatch; execution remains quarantined.'),'COMMAND_TIMEOUT_AFTER_DISPATCH');
 });

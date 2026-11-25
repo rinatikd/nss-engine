@@ -22,8 +22,7 @@ export function normalizeFailure(candidate, fallback={}) {
     return {schemaVersion:1,stage:candidate.stage,code:candidate.code,durationMs:candidate.durationMs};
   }
   const stage=STAGES.has(fallback.stage)?fallback.stage:'BRIDGE';
-  const code=typeof candidate?.code==='string'&&CODE.test(candidate.code)?candidate.code:
-    typeof fallback.code==='string'&&CODE.test(fallback.code)?fallback.code:stage+'_FAILED';
+  const code=typeof fallback.code==='string'&&CODE.test(fallback.code)?fallback.code:stage+'_FAILED';
   return makeFailure(stage,code,
     Number.isFinite(fallback.startedAt)?fallback.startedAt:Date.now(),
     typeof fallback.now==='function'?fallback.now:Date.now);

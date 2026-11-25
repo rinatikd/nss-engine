@@ -8,6 +8,8 @@ const MAX_DURATION_MS = 300000;
 export function safeFailureCode(value, fallback='BRIDGE_FAILURE') {
   if (typeof value === 'string' && CODE.test(value)) return value;
   const message = typeof value === 'string' ? value : value?.message;
+  if (/expired after dispatch/i.test(message || '')) return 'COMMAND_TIMEOUT_AFTER_DISPATCH';
+  if (/previous request is still pending/i.test(message || '')) return 'PREVIOUS_REQUEST_PENDING';
   if (/expired/i.test(message || '')) return 'COMMAND_EXPIRED';
   if (/disconnect/i.test(message || '')) return 'CHROME_DISCONNECTED';
   if (/timeout/i.test(message || '')) return 'COMMAND_TIMEOUT';
@@ -32,7 +34,7 @@ export function normalizeFailure(candidate, fallback={}) {
     return {schemaVersion:1,stage:candidate.stage,code:candidate.code,durationMs:candidate.durationMs};
   }
   const stage=STAGES.has(fallback.stage)?fallback.stage:'BRIDGE';
-  const code=safeFailureCode(candidate?.code || fallback.code,stage+'_FAILED');
+  const code=safeFailureCode(fallback.code,stage+'_FAILED');
   return makeFailure(stage,code,
     Number.isFinite(fallback.startedAt)?fallback.startedAt:Date.now(),
     typeof fallback.now==='function'?fallback.now:Date.now);
