@@ -14,6 +14,10 @@ TITLES = {
     'SELF_RETURNING_SPAN': 'Участок возвращается к тому же узлу',
     'SPAN_OVER_120M': 'Длина участка превышает 120 м',
     'PROTECTED_WELL_DELETED': 'Закреплённый колодец отсутствует',
+    'WELL_SPACING_BELOW_RESOLUTION': 'Колодцы ближе разрешения трассы',
+    'ZERO_LENGTH_SEGMENT': 'Нулевой сегмент трассы в XY',
+    'SELF_INTERSECTION': 'Самопересечение трассы в XY',
+    'WELL_PAIR_REVIEW_LIMIT': 'Слишком много близких пар колодцев',
 }
 REASONS = {
     'OPEN_ENDPOINT': 'Свободный конец трассы; соединение требует проверки.',
@@ -39,9 +43,10 @@ def enrich_warnings(warnings, wells, routes, numbering):
         code = issue['code']
         issue['title'] = TITLES.get(code, code)
         source_ids = set(issue.get('routes', []))
-        for field in ('id', 'start', 'end'):
-            if issue.get(field) in wells:
-                source_ids.add(issue[field])
+        for field in ('id', 'other_id', 'start', 'end'):
+            identity = issue.get(field)
+            if identity in wells or identity in lines:
+                source_ids.add(identity)
         points = list(issue.pop('review_points', []))
         if code == 'WELL_OFF_ROUTE':
             points = [wells[issue['id']]['xyz'][:2]]
@@ -87,6 +92,8 @@ def enrich_warnings(warnings, wells, routes, numbering):
         # source handles and actual geometry, never transient node names.
         identity = dict(code=code, sources=issue['source_ids'], missing_id=issue.get('id'),
                         ends=sorted([list(map(lambda n: round(n, 6), e['xy'])) for e in issue.get('endpoints', [])]),
+                        review_points=sorted([list(map(lambda n: round(n, 6), p[:2])) for p in points]),
+                        details={key: issue.get(key) for key in ('other_id', 'segment_index') if key in issue},
                         bounds=[round(n, 6) for n in issue['bounds']] if issue['bounds'] else None)
         issue['issue_id'] = 'NSS-' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16].upper()
         result.append(issue)
@@ -95,10 +102,13 @@ def enrich_warnings(warnings, wells, routes, numbering):
     return sorted(result, key=lambda item: (item['code'], item['source_ids'], item['issue_id']))
 
 
-def summary(warnings):
+def summary(warnings, well_pair_review_tolerance_m=0.005, zero_xy_segment_tolerance_m=1e-12):
     return dict(schema_version=1, total=len(warnings), by_code=dict(sorted(Counter(w['code'] for w in warnings).items())),
                 coordinate_system='Drawing WCS XY, meters',
-                tolerances_m=dict(well_to_route=1.1, endpoint_merge=.2, minimum_segment=.005),
+                tolerances_m=dict(well_to_route=1.1, endpoint_merge=.2,
+                                  minimum_segment=.005,
+                                  well_pair_review=well_pair_review_tolerance_m,
+                                  zero_xy_segment=zero_xy_segment_tolerance_m),
                 connectivity_inferred=False)
 
 

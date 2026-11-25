@@ -26,6 +26,29 @@ class EditorTests(unittest.TestCase):
     def test_xy_crossing_not_connected_without_well(self):
         data=dict(protected={'A':1},wells=[dict(id=k,xyz=p) for k,p in [('A',[-60,0,0]),('B',[60,0,0]),('C',[0,-60,0]),('D',[0,60,0])]],routes=[dict(id='h',points=[[-60,0,0],[60,0,0]]),dict(id='v',points=[[0,-60,0],[0,60,0]])])
         r=analyze(data);self.assertEqual(lengths(r),[120,120]);self.assertEqual(len(r['leaders']),4)
+    def test_xy_crossing_stays_disconnected_when_route_z_differs(self):
+        data=dict(protected={'A':1},wells=[dict(id=k,xyz=p) for k,p in [('A',[-60,0,0]),('B',[60,0,0]),('C',[0,-60,40]),('D',[0,60,40])]],routes=[dict(id='h',points=[[-60,0,0],[60,0,0]]),dict(id='v',points=[[0,-60,40],[0,60,40]])])
+        r=analyze(data);self.assertEqual(lengths(r),[120,120]);self.assertEqual(len(r['spans']),2)
+    def test_zero_xy_segment_is_located_without_changing_source_geometry(self):
+        data=fixture();data['routes'][0]['points'].insert(1,[0,0,0]);before=copy.deepcopy(data)
+        r=analyze(data);issue=next(i for i in r['warnings'] if i['code']=='ZERO_LENGTH_SEGMENT')
+        self.assertEqual(issue['source_ids'],['r']);self.assertEqual(issue['segment_index'],0)
+        self.assertEqual(issue['bounds'],[0,0,0,0]);self.assertEqual(lengths(r),[60,60]);self.assertEqual(data,before)
+        self.assertEqual(analyze(data,zero_xy_segment_tolerance_m=0)['diagnostics']['tolerances_m']['zero_xy_segment'],0)
+    def test_near_duplicate_wells_are_reported_with_explicit_tolerance(self):
+        data=dict(protected={'A':1},wells=[dict(id='A',xyz=[50,20,0]),dict(id='B',xyz=[50.004,20,0])],routes=[dict(id='r',points=[[0,0,0],[20,0,0]])])
+        r=analyze(data);issue=next(i for i in r['warnings'] if i['code']=='WELL_SPACING_BELOW_RESOLUTION')
+        self.assertEqual(issue['source_ids'],['A','B']);self.assertAlmostEqual(issue['distance_m'],.004)
+        self.assertEqual(r['diagnostics']['tolerances_m']['well_pair_review'],.005)
+        self.assertEqual(analyze(data,well_pair_review_tolerance_m=.003)['diagnostics']['by_code'].get('WELL_SPACING_BELOW_RESOLUTION'),None)
+    def test_coincident_well_coordinates_are_reported_as_distinct_handles(self):
+        data=dict(protected={'A':1},wells=[dict(id='A',xyz=[50,20,0]),dict(id='B',xyz=[50,20,0])],routes=[dict(id='r',points=[[0,0,0],[20,0,0]])])
+        result=analyze(data);issue=next(i for i in result['warnings'] if i['code']=='WELL_SPACING_BELOW_RESOLUTION')
+        self.assertEqual(issue['source_ids'],['A','B']);self.assertEqual(issue['distance_m'],0)
+    def test_self_intersection_is_reported_at_xy_crossing(self):
+        data=dict(protected={'A':1},wells=[dict(id='A',xyz=[0,0,0]),dict(id='B',xyz=[10,0,0])],routes=[dict(id='r',points=[[0,0,0],[10,10,0],[0,10,0],[10,0,0]])])
+        issue=next(i for i in analyze(data)['warnings'] if i['code']=='SELF_INTERSECTION')
+        self.assertEqual(issue['source_ids'],['r']);self.assertEqual(issue['bounds'],[5,5,5,5])
     def test_deleted_protected_number_is_not_reused(self):
         data=fixture();data['protected']['B']=2;data['wells']=[w for w in data['wells'] if w['id']!='B'];r=analyze(data)
         self.assertNotIn(2,r['numbering'].values());self.assertIn('PROTECTED_WELL_DELETED',[x['code'] for x in r['warnings']])

@@ -54,6 +54,15 @@ class TkkBlockIntegrityTests(unittest.TestCase):
             self.doc.saveas(path)
             verify_tkk_blocks(ezdxf.readfile(path), TKK, self.expected)
 
+    def test_nested_block_change_after_dxf_roundtrip_is_detected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "blocks.dxf"
+            self.doc.saveas(path)
+            loaded = ezdxf.readfile(path)
+            loaded.blocks["leaf"].query("LINE").first.dxf.end = (7, 0, 0)
+            with self.assertRaisesRegex(RuntimeError, "leaf"):
+                verify_tkk_blocks(loaded, TKK, self.expected)
+
     def test_unrelated_block_change_ignored(self):
         self.unrelated_line.dxf.end = (99, 99, 0)
         self.doc.blocks.new("new_unrelated").add_circle((0, 0), 42)

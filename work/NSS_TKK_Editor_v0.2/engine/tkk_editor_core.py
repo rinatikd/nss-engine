@@ -3,18 +3,119 @@ import json,math,sys,hashlib
 from pathlib import Path
 import networkx as nx
 from shapely.geometry import Point,LineString
+from shapely.strtree import STRtree
 from shapely.ops import substring
 from leader_layout import place_leaders
 from span_labels import caption_pair
 from snapshot_validation import validate_snapshot
 from diagnostics import enrich_warnings, summary, write_reports
 
-def analyze(data):
+ZERO_XY_SEGMENT_TOLERANCE_M = 1e-12
+WELL_PAIR_REVIEW_TOLERANCE_M = .005
+MAX_WELL_PAIR_WARNINGS = 10000
+
+
+def _intersection_points(geometry):
+    if geometry.is_empty:
+        return []
+    if geometry.geom_type == 'Point':
+        return [list(geometry.coords[0])]
+    if geometry.geom_type in ('LineString', 'LinearRing'):
+        coords = list(geometry.coords)
+        return [list(coords[0]), list(coords[-1])] if coords else []
+    if hasattr(geometry, 'geoms'):
+        return [point for part in geometry.geoms for point in _intersection_points(part)]
+    return []
+
+
+def _self_intersections(route, zero_xy_segment_tolerance_m):
+    points = [point[:2] for point in route['points']]
+    segments = []
+    segment_indexes = []
+    for index, (start, end) in enumerate(zip(points, points[1:])):
+        if math.dist(start, end) <= zero_xy_segment_tolerance_m:
+            continue
+        segments.append(LineString([start, end]))
+        segment_indexes.append(index)
+    if len(segments) < 3:
+        return []
+    tree = STRtree(segments)
+    closed = points[0] == points[-1]
+    intersections = {}
+    for local_index, segment in enumerate(segments):
+        original_index = segment_indexes[local_index]
+        for candidate in tree.query(segment, predicate='intersects'):
+            other_local = int(candidate)
+            if other_local <= local_index:
+                continue
+            other_index = segment_indexes[other_local]
+            if other_index - original_index <= 1:
+                continue
+            if closed and original_index == 0 and other_index == len(points) - 2:
+                continue
+            for point in _intersection_points(segment.intersection(segments[other_local])):
+                key = tuple(round(value, 9) for value in point[:2])
+                intersections[key] = list(key)
+    return [intersections[key] for key in sorted(intersections)]
+
+
+def _near_well_pairs(wells, tolerance_m):
+    """Find close XY pairs with a grid, bounding work and report size for dense input."""
+    cells = {}
+    pairs = []
+    truncated = False
+    for well in sorted(wells, key=lambda item: item['id']):
+        x, y = well['xyz'][:2]
+        cell = (math.floor(x / tolerance_m), math.floor(y / tolerance_m))
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for other in cells.get((cell[0] + dx, cell[1] + dy), []):
+                    distance = math.dist((x, y), other['xyz'][:2])
+                    if distance <= tolerance_m:
+                        if len(pairs) == MAX_WELL_PAIR_WARNINGS:
+                            truncated = True
+                            return pairs, truncated
+                        pairs.append((other['id'], well['id'], distance, (x, y), other['xyz'][:2]))
+        cells.setdefault(cell, []).append(well)
+    return pairs, truncated
+
+
+def analyze(data, *, well_pair_review_tolerance_m=WELL_PAIR_REVIEW_TOLERANCE_M,
+            zero_xy_segment_tolerance_m=ZERO_XY_SEGMENT_TOLERANCE_M):
     validate_snapshot(data)
+    if (isinstance(well_pair_review_tolerance_m, bool)
+            or not isinstance(well_pair_review_tolerance_m, (int, float))
+            or not math.isfinite(well_pair_review_tolerance_m)
+            or well_pair_review_tolerance_m <= 0):
+        raise ValueError('Well-pair review tolerance must be positive and finite')
+    if (isinstance(zero_xy_segment_tolerance_m, bool)
+            or not isinstance(zero_xy_segment_tolerance_m, (int, float))
+            or not math.isfinite(zero_xy_segment_tolerance_m)
+            or zero_xy_segment_tolerance_m < 0):
+        raise ValueError('Zero-XY-segment tolerance must be finite and non-negative')
     wells={w['id']:w for w in sorted(data['wells'],key=lambda w:w['id'])};protected=data.get('protected',{});warnings=[]
     routes=sorted(data['routes'],key=lambda route:route['id'])
     if len(wells)!=len(data['wells']):raise ValueError('Duplicate well identities')
     if len({r['id'] for r in data['routes']})!=len(data['routes']):raise ValueError('Duplicate route identities')
+    for route in routes:
+        for index, (start, end) in enumerate(zip(route['points'], route['points'][1:])):
+            if math.dist(start[:2], end[:2]) <= zero_xy_segment_tolerance_m:
+                warnings.append(dict(code='ZERO_LENGTH_SEGMENT', id=route['id'], routes=[route['id']],
+                                     segment_index=index, review_points=[start[:2]],
+                                     xy_tolerance_m=zero_xy_segment_tolerance_m,
+                                     message='Соседние вершины совпадают в XY; Z не используется для топологии.'))
+        crossings = _self_intersections(route, zero_xy_segment_tolerance_m)
+        if crossings:
+            warnings.append(dict(code='SELF_INTERSECTION', id=route['id'], routes=[route['id']],
+                                 review_points=crossings,
+                                 message='Самопересечение в XY отмечено для просмотра; связность в точке пересечения не выводится.'))
+    close_pairs, pair_warnings_truncated = _near_well_pairs(data['wells'], well_pair_review_tolerance_m)
+    for first, second, distance, first_xy, second_xy in close_pairs:
+        warnings.append(dict(code='WELL_SPACING_BELOW_RESOLUTION', id=first, other_id=second,
+                             distance_m=distance, review_points=[first_xy, second_xy],
+                             message='Расстояние меньше явного допуска проверки; автоматическое объединение запрещено.'))
+    if pair_warnings_truncated:
+        warnings.append(dict(code='WELL_PAIR_REVIEW_LIMIT', message='Количество близких пар превышает лимит отчёта; перечислены первые 10000.'))
     coords={key:w['xyz'][:2] for key,w in wells.items()};fixed=set(coords)
     for route in routes:
         if route.get('building_entry'):
@@ -122,7 +223,7 @@ def analyze(data):
         if key not in graph:warnings.append(dict(code='WELL_OFF_ROUTE',id=key))
     leaders,layout=place_leaders(placed,routes,captions)
     warnings=enrich_warnings(warnings,wells,routes,numbers)
-    return dict(phase='READY',job_id=data.get('job_id'),fingerprint=data.get('fingerprint'),numbering=numbers,spans=spans,captions=captions,leaders=leaders,well_rotations=well_rotations,layout_checks=layout,warnings=warnings,diagnostics=summary(warnings),source_geometry_changed=bool(well_rotations))
+    return dict(phase='READY',job_id=data.get('job_id'),fingerprint=data.get('fingerprint'),numbering=numbers,spans=spans,captions=captions,leaders=leaders,well_rotations=well_rotations,layout_checks=layout,warnings=warnings,diagnostics=summary(warnings,well_pair_review_tolerance_m,zero_xy_segment_tolerance_m),source_geometry_changed=bool(well_rotations))
 
 def main():
     source,target=map(Path,sys.argv[1:3])
