@@ -51,14 +51,17 @@ export class ProviderJournal {
     this.file=path.join(stateDir,'provider-transactions.jsonl');
     this.lockFile=this.file+'.lock';
     this.records=[];this.transactions=new Map();this.tabEpochs=new Map();this.lastHash='0'.repeat(64);
-    this.#load();
-    // A restart invalidates every in-flight/prepared transaction. Never infer
-    // that a prior browser click did not happen merely because its ACK is gone.
-    for(const tx of this.transactions.values()) {
-      if(['PREPARING','PREPARED','COMMITTING'].includes(tx.state)) {
-        this.outcome(tx.identity,'UNKNOWN','BRIDGE_RESTART');
+    // Recovery is itself a state transition. Acquire the inter-process lock
+    // before loading the journal and deciding which transactions were in flight;
+    // otherwise a stale constructor snapshot could downgrade a later SENT state
+    // to UNKNOWN after another instance completed the commit.
+    this.#withLock(()=>{
+      for(const tx of [...this.transactions.values()]) {
+        if(['PREPARING','PREPARED','COMMITTING'].includes(tx.state)) {
+          this.outcome(tx.identity,'UNKNOWN','BRIDGE_RESTART');
+        }
       }
-    }
+    });
   }
 
   #recordHash(record) {
@@ -293,20 +296,22 @@ export class ProviderJournal {
     });
   }
   status(input) {
-    const identity=validateProviderIdentity(input);
-    const tx=this.transactions.get(identity.requestId);
-    if(!tx)return {state:'NOT_PERFORMED',identity,reasonCode:'REQUEST_NOT_FOUND'};
-    if(!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
-    const publicState=tx.state==='PREPARING'?'ACCEPTED':tx.state==='COMMITTING'?'DISPATCHED':tx.state;
-    const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
-      ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
-      ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
-      ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
-      ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
-      ...(Number.isSafeInteger(tx.baseline)?{baseline:tx.baseline}:{}),
-      ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{}),
-      ...(tx.replyReceipt?{replyReceipt:clone(tx.replyReceipt)}:{})};
-    return out;
+    return this.#withLock(()=>{
+      const identity=validateProviderIdentity(input);
+      const tx=this.transactions.get(identity.requestId);
+      if(!tx)return {state:'NOT_PERFORMED',identity,reasonCode:'REQUEST_NOT_FOUND'};
+      if(!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
+      const publicState=tx.state==='PREPARING'?'ACCEPTED':tx.state==='COMMITTING'?'DISPATCHED':tx.state;
+      const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
+        ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
+        ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
+        ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
+        ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
+        ...(Number.isSafeInteger(tx.baseline)?{baseline:tx.baseline}:{}),
+        ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{}),
+        ...(tx.replyReceipt?{replyReceipt:clone(tx.replyReceipt)}:{})};
+      return out;
+    });
   }
 
   #tabOutstanding(tabId) {
@@ -404,16 +409,18 @@ export class ProviderJournal {
     });
   }
   events({after=0,limit=100}={}) {
-    if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>1000)throw Error('PROVIDER_EVENT_WINDOW_INVALID');
-    const stateFor=record=>({
-      'epoch.initialized':'ACCEPTED','epoch.revoked':'REVOKED','prepare.started':'ACCEPTED',
-      'prepare.completed':'PREPARED','commit.started':'DISPATCHED','commit.completed':'SENT','reply.observed':'REPLIED',
-      'transaction.outcome':record.data.state,'stop.requested':'STOP_REQUESTED','stop.clean':'STOPPED_CLEAN','stop.after_commit':'STOP_AFTER_COMMIT'
-    })[record.type]||'UNKNOWN';
-    return this.records.filter(e=>e.seq>after).slice(0,limit).map(e=>({
-      seq:e.seq,eventId:e.eventId,requestId:e.identity.requestId,providerId:e.identity.providerId,
-      state:stateFor(e),identity:clone(e.identity),
-      ...(e.data.quarantineId?{quarantineId:e.data.quarantineId}:{})
-    }));
+    return this.#withLock(()=>{
+      if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>1000)throw Error('PROVIDER_EVENT_WINDOW_INVALID');
+      const stateFor=record=>({
+        'epoch.initialized':'ACCEPTED','epoch.revoked':'REVOKED','prepare.started':'ACCEPTED',
+        'prepare.completed':'PREPARED','commit.started':'DISPATCHED','commit.completed':'SENT','reply.observed':'REPLIED',
+        'transaction.outcome':record.data.state,'stop.requested':'STOP_REQUESTED','stop.clean':'STOPPED_CLEAN','stop.after_commit':'STOP_AFTER_COMMIT'
+      })[record.type]||'UNKNOWN';
+      return this.records.filter(e=>e.seq>after).slice(0,limit).map(e=>({
+        seq:e.seq,eventId:e.eventId,requestId:e.identity.requestId,providerId:e.identity.providerId,
+        state:stateFor(e),identity:clone(e.identity),
+        ...(e.data.quarantineId?{quarantineId:e.data.quarantineId}:{})
+      }));
+    });
   }
 }
