@@ -54,6 +54,14 @@ test('provider_prepare failures after injection remain no-send outcomes while pr
   const prepareCatch=bridge.slice(bridge.indexOf("const state=error?.dispatchState==='BLOCKED'?"),
     bridge.indexOf("async provider_commit",bridge.indexOf("const state=error?.dispatchState==='BLOCKED'?")));
   assert.match(prepareCatch,/error\?\.sideEffect/);
+  const commitCatch=bridge.slice(bridge.indexOf("const state=error?.dispatchState==='BLOCKED'?",bridge.indexOf("async provider_commit")),
+    bridge.indexOf("async provider_status",bridge.indexOf("async provider_commit")));
+  assert.match(commitCatch,/error\?\.sideEffect/);
+  assert.match(page,/providerPrepareMutationStarted = true/);
+  assert.match(page,/failure\.sideEffect = providerPrepareMutationStarted \? 'composer-draft-state-unverified' : 'none'/);
+  assert.match(page,/providerCommitClickStarted = true;\s*sendButtons\[0\]\.click\(\)/);
+  assert.match(page,/failure\.dispatchState = providerCommitClickStarted \? 'UNKNOWN' : 'NOT_PERFORMED'/);
+  assert.match(page,/send-click-may-have-fired/);
   assert.match(journal,/typeof data\.sideEffect==='string'\?\{sideEffect:data\.sideEffect\}:\{\}/);
   assert.match(journal,/tx\.sideEffect\?\{sideEffect:tx\.sideEffect\}:\{\}/);
 });
