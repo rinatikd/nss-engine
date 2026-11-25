@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Version>1.1.0-preview.14</Version>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../src/RoomGasPolicy.cs" Link="RoomGasPolicy.cs" />
+    <Compile Include="../src/AxonometricProjection.cs" Link="AxonometricProjection.cs" />
+    <Compile Include="../src/SpecificationPageLayout.cs" Link="SpecificationPageLayout.cs" />
+    <Compile Include="../src/RoomOpeningsPolicy.cs" Link="RoomOpeningsPolicy.cs" />
+    <Compile Include="../src/RoomTemperaturePolicy.cs" Link="RoomTemperaturePolicy.cs" />
+    <Compile Include="../src/RoomTextFacts.cs" Link="RoomTextFacts.cs" />
+    <Compile Include="../src/RoomUnitInference.cs" Link="RoomUnitInference.cs" />
+    <Compile Include="../src/RoomPolygon.cs" Link="RoomPolygon.cs" />
+    <Compile Include="../src/GasZoneInput.cs" Link="GasZoneInput.cs" />
+    <Compile Include="../src/PluginData.cs" Link="PluginData.cs" />
+    <Compile Include="../src/ProjectGeometry.cs" Link="ProjectGeometry.cs" />
+    <Compile Include="../src/Pagination.cs" Link="Pagination.cs" />
+    <Compile Include="../src/ProjectMetadata.cs" Link="ProjectMetadata.cs" />
+    <Compile Include="../src/TaggingPolicy.cs" Link="TaggingPolicy.cs" />
+  </ItemGroup>
+</Project>
