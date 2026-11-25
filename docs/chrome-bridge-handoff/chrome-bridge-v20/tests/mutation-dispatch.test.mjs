@@ -428,21 +428,42 @@ test('provider_prepare failures after a lost no-send receipt stay NOT_PERFORMED'
   }
 });
 
-test('provider_commit lost response after injection remains UNKNOWN rather than NOT_PERFORMED',async()=>{
+test('provider_commit page receipt classifies pre-click failure as NOT_PERFORMED',async()=>{
   const f=providerFixture();
   const original=f.chromeApi.scripting.executeScript;
   f.chromeApi.scripting.executeScript=async payload=>{
-    if(payload.args[0]==='provider_commit') throw Error('INJECTION_RESPONSE_LOST');
+    if(payload.args[0]==='provider_commit') return [{result:{
+      error:'PROVIDER_PREPARED_DRAFT_MISMATCH',
+      dispatchState:'NOT_PERFORMED'
+    }}];
     return original(payload);
   };
   await assert.rejects(dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{
-    approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'commit-unknown'
+    approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'commit-preclick'
   }),error=>{
-    assert.equal(error.message,'INJECTION_RESPONSE_LOST');
-    assert.equal(error.dispatchState,undefined,
-      'absence of an explicit pre-dispatch receipt must remain ambiguous for commit');
+    assert.equal(error.message,'PROVIDER_PREPARED_DRAFT_MISMATCH');
+    assert.equal(error.dispatchState,'NOT_PERFORMED');
     return true;
   });
-  assert.equal(f.state.injections.includes('provider_commit'),false,
-    'the synthetic transport lost the response; no second injection is attempted');
+});
+
+test('provider_commit page receipt after click boundary remains UNKNOWN and carries side effect',async()=>{
+  const f=providerFixture();
+  const original=f.chromeApi.scripting.executeScript;
+  f.chromeApi.scripting.executeScript=async payload=>{
+    if(payload.args[0]==='provider_commit') return [{result:{
+      error:'SEND_CLICK_RESULT_UNVERIFIED',
+      dispatchState:'UNKNOWN',
+      sideEffect:'send-click-may-have-fired'
+    }}];
+    return original(payload);
+  };
+  await assert.rejects(dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{
+    approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'commit-afterclick'
+  }),error=>{
+    assert.equal(error.message,'SEND_CLICK_RESULT_UNVERIFIED');
+    assert.equal(error.dispatchState,'UNKNOWN');
+    assert.equal(error.sideEffect,'send-click-may-have-fired');
+    return true;
+  });
 });
