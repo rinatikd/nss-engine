@@ -6,9 +6,11 @@ $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $oldRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-fb2c27a8-release-clean'
-$newRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR132-37f23d30-release-clean'
-$expectedSha='37f23d307d41c25475926d60d9cdfe4f9969d8ac'
+$newRepo=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-release-clean'
+$expectedSha='754b8f5f30663dab9cefcd87b47b51ecb4c0dcdd'
 $expectedBranch='feat/chat-approved-session-auth-20261122'
+$expectedMergeRef='refs/pull/145/merge'
+$trackingRef='refs/remotes/origin/pr145/merge'
 $expectedRemote='github.com/rinatikd/nss-engine'
 $git='C:\Program Files\Git\cmd\git.exe'
 
@@ -87,8 +89,8 @@ $untracked=InvokeGit $oldRepo @('ls-files','--others','--exclude-standard')
 if($cached -ne '' -or $eolOnly -ne '' -or -not [string]::IsNullOrWhiteSpace($untracked)){throw 'OLD_CHECKOUT_HAS_NON_EOL_OR_UNTRACKED_CHANGES'}
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $newRepo) -Force|Out-Null
-$null=InvokeGit $oldRepo @('fetch','--no-tags','origin',("refs/heads/{0}:refs/remotes/origin/{0}" -f $expectedBranch))
-$remoteHead=InvokeGit $oldRepo @('rev-parse',("refs/remotes/origin/{0}" -f $expectedBranch))
+$null=InvokeGit $oldRepo @('fetch','--no-tags','origin',('+'+$expectedMergeRef+':'+$trackingRef))
+$remoteHead=InvokeGit $oldRepo @('rev-parse',$trackingRef)
 if($remoteHead -cne $expectedSha){throw ('REMOTE_BRANCH_HEAD_MISMATCH: '+$remoteHead)}
 $null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$oldHead,$expectedSha)
 $null=InvokeGit $oldRepo @('worktree','add','--detach',$newRepo,$expectedSha)
@@ -102,7 +104,7 @@ if(!(Test-Path -LiteralPath (Join-Path $candidateRoot 'server\bridge.mjs') -Path
 if(!(Test-Path -LiteralPath (Join-Path $candidateRoot 'extension\session-authorization.js') -PathType Leaf)){throw 'NEW_WORKTREE_EXTENSION_MISSING'}
 
 . (Join-Path $candidateRoot 'deployment\verify-candidate-source.ps1')
-$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths @('server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab-server.ps1')
+$null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths @('server','deployment/cutover-health.mjs','deployment/cutover-start.mjs','deployment/process-identity.ps1','deployment/verify-candidate-source.ps1','deployment/bootstrap-pr102-lab-server.ps1','deployment/upgrade-pr102-lab-server.ps1')
 $null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths @('extension','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab.ps1')
 $null=Assert-BridgeCandidateSource -CandidateRoot $candidateRoot -ExpectedSourceSha $expectedSha -InputPaths @('consilium-control-room','deployment/verify-candidate-source.ps1')
 
