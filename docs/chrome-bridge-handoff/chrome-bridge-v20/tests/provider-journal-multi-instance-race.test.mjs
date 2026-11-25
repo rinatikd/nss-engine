@@ -104,3 +104,23 @@ test('constructor fails closed on an existing lock and never removes it',()=>{
     fs.rmSync(dir,{recursive:true,force:true});
   }
 });
+
+
+test('known no-send cleanup metadata is retained in durable status and event history',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-side-effect-'));
+  try {
+    const writer=makeJournal(dir);
+    const request=identity('request_0006','task_000006');
+    const outcome=writer.outcome(request,'NOT_PERFORMED','PROVIDER_PREPARE_ROLLBACK_UNVERIFIED',{
+      sideEffect:'composer-draft-may-remain'
+    });
+    assert.equal(outcome.sideEffect,'composer-draft-may-remain');
+    const reader=makeJournal(dir);
+    assert.equal(reader.status(request).state,'NOT_PERFORMED');
+    assert.equal(reader.status(request).sideEffect,'composer-draft-may-remain');
+    const event=reader.events({after:0,limit:10}).find(item=>item.requestId===request.requestId);
+    assert.equal(event.sideEffect,'composer-draft-may-remain');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
