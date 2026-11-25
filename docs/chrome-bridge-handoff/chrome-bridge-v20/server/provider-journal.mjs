@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { signQuiescence } from './provider-transport-crypto.mjs';
+import { normalizeFailure } from './failure-contract.mjs';
 
 const ID=/^[A-Za-z0-9_-]{8,100}$/;
 const CONVERSATION_ID=/^[A-Za-z0-9_-]{8,160}$/;
@@ -122,7 +123,8 @@ export class ProviderJournal {
       const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
       this.transactions.set(identity.requestId,{...old,state:data.state,reasonCode:data.reasonCode||null,
         quarantineId:data.quarantineId||null,nextEpoch:data.nextEpoch||null,
-        ...(typeof data.sideEffect==='string'?{sideEffect:data.sideEffect}:{})});
+        ...(typeof data.sideEffect==='string'?{sideEffect:data.sideEffect}:{}),
+        ...(data.failure?{failure:normalizeFailure(data.failure,{stage:'JOURNAL',code:data.reasonCode||'PROVIDER_OUTCOME'})}:{})});
     } else if(type==='stop.clean') {
       const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
       this.transactions.set(identity.requestId,{...old,state:'STOPPED_CLEAN',quiescence:clone(data.quiescence),nextEpoch:data.nextEpoch});
@@ -292,9 +294,15 @@ export class ProviderJournal {
     const identity=validateProviderIdentity(input);
     if(!['UNKNOWN','NOT_PERFORMED','BLOCKED','REVOKED','STOP_AFTER_COMMIT'].includes(state))throw Error('PROVIDER_OUTCOME_STATE_INVALID');
     const quarantineId=state==='UNKNOWN'?'quarantine-'+identity.requestId:null;
-    this.#append('transaction.outcome',identity,{state,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(reasonCode)?reasonCode:'',quarantineId,...extra});
-    return {state,identity,...(quarantineId?{quarantineId}:{}),...(reasonCode?{reasonCode}:{}),
-      ...(typeof extra.sideEffect==='string'?{sideEffect:extra.sideEffect}:{})};
+    const {failure:suppliedFailure,startedAt,...persistedExtra}=extra||{};
+    const safeReason=/^[A-Z][A-Z0-9_]{2,80}$/.test(reasonCode)?reasonCode:'';
+    const inferredStage=/REPLY|OBSERVATION/.test(safeReason)?'OBSERVATION':
+      /PREPARE|COMMIT/.test(safeReason)?'PAGE_ACTION':'JOURNAL';
+    const failure=normalizeFailure(suppliedFailure,{stage:inferredStage,
+      code:safeReason||'PROVIDER_OUTCOME',startedAt:Number.isFinite(startedAt)?startedAt:this.now(),now:this.now});
+    this.#append('transaction.outcome',identity,{state,reasonCode:safeReason,quarantineId,failure,...persistedExtra});
+    return {state,identity,...(quarantineId?{quarantineId}:{}),...(safeReason?{reasonCode:safeReason}:{}),
+      failure,...(typeof persistedExtra.sideEffect==='string'?{sideEffect:persistedExtra.sideEffect}:{})};
     });
   }
   status(input) {
@@ -307,6 +315,7 @@ export class ProviderJournal {
       const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
         ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
         ...(tx.sideEffect?{sideEffect:tx.sideEffect}:{}),
+        ...(tx.failure?{failure:normalizeFailure(tx.failure,{stage:'JOURNAL',code:'PROVIDER_OUTCOME'})}:{}),
         ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
         ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
         ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
@@ -423,7 +432,8 @@ export class ProviderJournal {
         seq:e.seq,eventId:e.eventId,requestId:e.identity.requestId,providerId:e.identity.providerId,
         state:stateFor(e),identity:clone(e.identity),
         ...(e.data.quarantineId?{quarantineId:e.data.quarantineId}:{}),
-        ...(e.data.sideEffect?{sideEffect:e.data.sideEffect}:{})
+        ...(e.data.sideEffect?{sideEffect:e.data.sideEffect}:{}),
+        ...(e.data.failure?{failure:normalizeFailure(e.data.failure,{stage:'JOURNAL',code:'PROVIDER_OUTCOME'})}:{})
       }));
     });
   }

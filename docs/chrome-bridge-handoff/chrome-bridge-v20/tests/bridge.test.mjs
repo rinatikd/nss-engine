@@ -21,6 +21,27 @@ async function setup(opts = {}) {
   return { server, base, stateDir, post, rpc, poll, close: () => new Promise((r) => server.close(r)).then(() => { if (cleanupStateDir) fs.rmSync(stateDir, { recursive: true, force: true }); }) };
 }
 
+test('MCP tool failures expose a bounded versioned failure contract',async()=>{
+  const s=await setup();
+  try {
+    const unknown=await s.rpc('missing_tool');
+    assert.equal(unknown.result.isError,true);
+    assert.deepEqual(Object.keys(unknown.result.failure).sort(),['code','durationMs','schemaVersion','stage']);
+    assert.equal(unknown.result.failure.schemaVersion,1);
+    assert.equal(unknown.result.failure.stage,'VALIDATION');
+    assert.equal(unknown.result.failure.code,'UNKNOWN_TOOL');
+    assert.ok(Number.isSafeInteger(unknown.result.failure.durationMs));
+    assert.ok(unknown.result.failure.durationMs>=0);
+    const invalid=await s.rpc('browser_read',{tabId:-1});
+    assert.equal(invalid.result.isError,true);
+    assert.equal(invalid.result.dispatchState,'NOT_PERFORMED');
+    assert.equal(invalid.result.failure.schemaVersion,1);
+    assert.equal(invalid.result.failure.stage,'VALIDATION');
+    assert.equal(invalid.result.failure.code,'ARGUMENT_VALIDATION_FAILED');
+    assert.doesNotMatch(JSON.stringify(invalid.result.failure),/Invalid argument|tabId/);
+  } finally { await s.close(); }
+});
+
 test('auth, origin, host and tool validation', async () => {
   const s = await setup();
   try {

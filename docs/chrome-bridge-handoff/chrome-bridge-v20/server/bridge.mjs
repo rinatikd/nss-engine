@@ -10,6 +10,7 @@ import { SendJournal, conversationFingerprint, legacyRequestFingerprint, request
 import { classifySend, SendState } from './send-outcome.mjs';
 import { ProviderJournal, validateProviderIdentity } from './provider-journal.mjs';
 import { deriveProviderJournalKey } from './provider-transport-crypto.mjs';
+import { makeFailure, normalizeFailure, safeFailureCode } from './failure-contract.mjs';
 
 export { tools };
 export const VERSION = '0.2.0';
@@ -108,8 +109,8 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
   }
   function enqueue(name, args) {
     return new Promise((resolve, reject) => {
-      if (!isConnected()) return reject(Object.assign(Error('Chrome disconnected: open the Chrome Bridge control tab and press Connect.'), { dispatchState: 'NOT_PERFORMED' }));
-      if (pending.size >= 20) return reject(Object.assign(Error('Command queue is full.'), { dispatchState: 'NOT_PERFORMED' }));
+      if (!isConnected()) return reject(Object.assign(Error('Chrome disconnected: open the Chrome Bridge control tab and press Connect.'), { dispatchState: 'NOT_PERFORMED', failure:makeFailure('TRANSPORT','CHROME_DISCONNECTED') }));
+      if (pending.size >= 20) return reject(Object.assign(Error('Command queue is full.'), { dispatchState: 'NOT_PERFORMED', failure:makeFailure('TRANSPORT','COMMAND_QUEUE_FULL') }));
       const id = crypto.randomUUID();
       const limit = timeout ?? EXT_TIMEOUTS[name] ?? 30000;
       const expires = Date.now() + limit;
@@ -123,16 +124,16 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
           // or the Bridge process is deliberately restarted. Releasing it here
           // could overlap a still-running DOM action after a lost ACK.
           entry.expired = true;
-          reject(Object.assign(Error('Command expired after dispatch; execution remains quarantined. Do not retry.'), { dispatchState: 'UNKNOWN' }));
+          reject(Object.assign(Error('Command expired after dispatch; execution remains quarantined. Do not retry.'), { dispatchState: 'UNKNOWN', failure:makeFailure('TRANSPORT','COMMAND_TIMEOUT_AFTER_DISPATCH',entry.startedAt) }));
           return;
         }
         pending.delete(id);
         const i = queue.findIndex((x) => x.id === id);
         if (i >= 0) queue.splice(i, 1);
-        reject(Object.assign(Error('Command expired before dispatch.'), { dispatchState: 'NOT_PERFORMED' }));
+        reject(Object.assign(Error('Command expired before dispatch.'), { dispatchState: 'NOT_PERFORMED', failure:makeFailure('TRANSPORT','COMMAND_EXPIRED',entry.startedAt) }));
         wake();
       }, limit);
-      pending.set(id, { resolve, reject, timer, expired: false });
+      pending.set(id, { resolve, reject, timer, expired: false, startedAt:Date.now(), name });
       queue.push({ id, name, args, expires, bridgeEpoch: epoch });
       wake();
     });
@@ -229,8 +230,9 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       return { sent: false, transportConfirmed: false, deliveryStatus, sendOutcome: outcome.state,
         outcomeReasons: outcome.reasons,
         // Only stable diagnostic codes, never arbitrary provider text.
-        failureCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message || '')
-          ? error.message : null, requestId,
+        failureCode:safeFailureCode(error?.message,'AGENT_SEND_FAILED'),
+        failure:normalizeFailure(error?.failure,{stage:'TRANSPORT',
+          code:safeFailureCode(error?.message,'AGENT_SEND_FAILED')}),requestId,
         hint: deliveryStatus === 'UNKNOWN' ? 'Dispatch result is unknown. Inspect the chat before any new submission; do not retry automatically.' : 'No browser dispatch occurred. This requestId remains consumed; a new explicit request is required.' };
     }
     const outcome = classifySend({ dispatched: true }); // Transport response is not attributed delivery evidence.
@@ -281,8 +283,9 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     },
     async agent_selftest({ name }) { return enqueue('agent_selftest', { tabId: agent(name).tabId }); },
     async provider_prepare(args) {
+      const providerStartedAt=Date.now();
       const identity=validateProviderIdentity(args);
-      if(!providerJournal)return {state:'BLOCKED',identity,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+      if(!providerJournal)return {state:'BLOCKED',identity,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE',failure:makeFailure('JOURNAL','PROVIDER_JOURNAL_UNAVAILABLE',providerStartedAt)};
       const bound=[...agents.values()].some(entry=>entry.tabId===identity.tabId);
       if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
       if(typeof args.message!=='string'||!args.message.trim()||findSecret(args.message))
@@ -291,7 +294,8 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       if(actualHash!==args.payloadHash)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_PAYLOAD_HASH_MISMATCH');
       let begun;
       try { begun=providerJournal.beginPrepare(identity,args.payloadHash); }
-      catch(error) { return {state:'BLOCKED',identity,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_PREPARE_REJECTED'}; }
+      catch(error) { const code=safeFailureCode(error?.message,'PROVIDER_PREPARE_REJECTED');
+        return providerJournal.outcome(identity,'BLOCKED',code,{failure:makeFailure('JOURNAL',code,providerStartedAt)}); }
       if(begun.duplicate) {
         const duplicate=begun.transaction;
         if(['ACCEPTED','DISPATCHED','STOP_REQUESTED'].includes(duplicate.state))
@@ -316,19 +320,23 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       } catch(error) {
         const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
           error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
-        return providerJournal.outcome(identity,state,
-          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_PREPARE_FAILED',
-          ...(error?.sideEffect?{sideEffect:error.sideEffect}:{}));
+        const code=safeFailureCode(error?.message,'PROVIDER_PREPARE_FAILED');
+        return providerJournal.outcome(identity,state,code,{
+          ...(error?.sideEffect?{sideEffect:error.sideEffect}:{}),
+          failure:normalizeFailure(error?.failure,{stage:state==='UNKNOWN'?'TRANSPORT':'PAGE_ACTION',code,startedAt:providerStartedAt})
+        });
       }
     },
     async provider_commit(args) {
+      const providerStartedAt=Date.now();
       const identity=validateProviderIdentity(args);
-      if(!providerJournal)return {state:'BLOCKED',identity,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+      if(!providerJournal)return {state:'BLOCKED',identity,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE',failure:makeFailure('JOURNAL','PROVIDER_JOURNAL_UNAVAILABLE',providerStartedAt)};
       const bound=[...agents.values()].some(entry=>entry.tabId===identity.tabId);
       if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
       let tx;
       try { tx=providerJournal.beginCommit(identity,{preparedId:args.preparedId,fencingToken:args.fencingToken,payloadHash:args.payloadHash}); }
-      catch(error) { return {state:'BLOCKED',identity,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_REJECTED'}; }
+      catch(error) { const code=safeFailureCode(error?.message,'PROVIDER_COMMIT_REJECTED');
+        return providerJournal.outcome(identity,'BLOCKED',code,{failure:makeFailure('JOURNAL',code,providerStartedAt)}); }
       try {
         const result=await enqueue('provider_commit',{...identity,preparedId:args.preparedId,
           fencingToken:args.fencingToken,payloadHash:tx.payloadHash});
@@ -340,9 +348,11 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       } catch(error) {
         const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
           error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
-        return providerJournal.outcome(identity,state,
-          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_FAILED',
-          ...(error?.sideEffect?{sideEffect:error.sideEffect}:{}));
+        const code=safeFailureCode(error?.message,'PROVIDER_COMMIT_FAILED');
+        return providerJournal.outcome(identity,state,code,{
+          ...(error?.sideEffect?{sideEffect:error.sideEffect}:{}),
+          failure:normalizeFailure(error?.failure,{stage:state==='UNKNOWN'?'TRANSPORT':'PAGE_ACTION',code,startedAt:providerStartedAt})
+        });
       }
     },
     async provider_status(args) {
@@ -492,14 +502,16 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
     else if (method === 'tools/list') result = { tools: tools.map(({ kind, ...t }) => t) };
     else if (method === 'ping') result = {};
     else if (method === 'tools/call') {
+      const callStartedAt=Date.now();
       try {
         const t = toolByName(params.name);
-        if (!t) throw Error('Unknown tool');
+        if (!t) { const error=Error('UNKNOWN_TOOL'); error.failure=makeFailure('VALIDATION','UNKNOWN_TOOL',callStartedAt); throw error; }
         const args = params.arguments || {};
         try { validateArgs(t, args); }
         catch (error) {
           // Schema rejection occurs before the provider command reaches Chrome.
           error.dispatchState = 'NOT_PERFORMED';
+          error.failure=makeFailure('VALIDATION',safeFailureCode(error?.message,'ARGUMENT_VALIDATION_FAILED'),callStartedAt);
           throw error;
         }
         if (t.name === 'browser_open' && !['http:', 'https:'].includes(new URL(args.url).protocol)) throw Error('Only HTTP(S) URLs allowed');
@@ -520,8 +532,14 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         const dispatchState = providerMutation
           ? (validDispatchState || (params.name === 'provider_prepare' ? 'NOT_PERFORMED' : 'UNKNOWN'))
           : null;
-        result = { isError: true, ...(dispatchState ? { dispatchState } : {}),
-          content: [{ type: 'text', text: e.message }] };
+        const failure=normalizeFailure(e?.failure,{
+          stage:e?.dispatchState?'TRANSPORT':'BRIDGE',
+          code:safeFailureCode(e?.message,'TOOL_CALL_FAILED'),startedAt:callStartedAt
+        });
+        const publicMessage=failure.code==='COMMAND_EXPIRED'?'Command expired before dispatch.':
+          failure.code==='CHROME_DISCONNECTED'?'Chrome disconnected.':failure.code;
+        result = { isError: true, failure, ...(dispatchState ? { dispatchState } : {}),
+          content: [{ type: 'text', text: publicMessage }] };
       }
     } else return { jsonrpc: '2.0', id: id ?? null, error: { code: -32601, message: 'Method not found' } };
     return { jsonrpc: '2.0', id: id ?? null, result };
@@ -599,7 +617,10 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
           // Only an explicit pre-DOM acknowledgement can mark the command
           // not performed. Absent/ambiguous metadata is always UNKNOWN.
           dispatchState:['BLOCKED','NOT_PERFORMED'].includes(body.dispatchState)
-            ? body.dispatchState : 'UNKNOWN'
+            ? body.dispatchState : 'UNKNOWN',
+          failure:normalizeFailure(body.failure,{stage:'PAGE_ACTION',
+            code:safeFailureCode(body.error,'PAGE_ACTION_FAILED'),startedAt:p.startedAt}),
+          ...(typeof body.sideEffect==='string'?{sideEffect:body.sideEffect}:{})
         })) : p.resolve(body.result);
         json(res, 200, { ok: true });
         wake();
