@@ -10,7 +10,7 @@ import { SendJournal, conversationFingerprint, legacyRequestFingerprint, request
 import { classifySend, SendState } from './send-outcome.mjs';
 import { ProviderJournal, validateProviderIdentity } from './provider-journal.mjs';
 import { deriveProviderJournalKey } from './provider-transport-crypto.mjs';
-import { makeFailure, normalizeFailure, safeFailureCode } from './failure-contract.mjs';
+import { makeFailure, normalizeFailure, normalizeProviderSideEffect, safeFailureCode } from './failure-contract.mjs';
 
 export { tools };
 export const VERSION = '0.2.0';
@@ -33,6 +33,14 @@ const COUNCIL_ORIGINS = Object.freeze({
 const CHAT_ORIGINS = new Set(Object.keys(COUNCIL_ORIGINS));
 const SESSION_DURATIONS = new Set([60,180,240]);
 const SESSION_CHALLENGE_TTL_MS = 120000;
+const PROVIDER_JOURNAL_LOCK_BUSY = 'PROVIDER_JOURNAL_LOCK_BUSY';
+function providerJournalLockBusyResult(identity,state,startedAt,sideEffect=null) {
+  const safeSideEffect=normalizeProviderSideEffect(sideEffect);
+  return {state,identity,...(state==='UNKNOWN'?{quarantineId:'quarantine-'+identity.requestId}:{}),
+    reasonCode:PROVIDER_JOURNAL_LOCK_BUSY,
+    failure:makeFailure('JOURNAL',PROVIDER_JOURNAL_LOCK_BUSY,startedAt),
+    ...(safeSideEffect?{sideEffect:safeSideEffect}:{})};
+}
 export function resolveSessionScope(providers, tabs) {
   if (!Array.isArray(providers) || providers.length < 1 || providers.length > 6)
     throw Error('SESSION_PROVIDERS_INVALID');
@@ -295,8 +303,11 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       if(actualHash!==args.payloadHash)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_PAYLOAD_HASH_MISMATCH');
       let begun;
       try { begun=providerJournal.beginPrepare(identity,args.payloadHash); }
-      catch(error) { const code=safeFailureCode(error?.message,'PROVIDER_PREPARE_REJECTED');
-        return providerJournal.outcome(identity,'BLOCKED',code,{failure:makeFailure('JOURNAL',code,providerStartedAt)}); }
+      catch(error) {
+        const code=safeFailureCode(error?.message,'PROVIDER_PREPARE_REJECTED');
+        if(error?.code===PROVIDER_JOURNAL_LOCK_BUSY)return providerJournalLockBusyResult(identity,'NOT_PERFORMED',providerStartedAt);
+        return providerJournal.outcome(identity,'BLOCKED',code,{failure:makeFailure('JOURNAL',code,providerStartedAt)});
+      }
       if(begun.duplicate) {
         const duplicate=begun.transaction;
         if(['ACCEPTED','DISPATCHED','STOP_REQUESTED'].includes(duplicate.state))
@@ -304,17 +315,18 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         if(['PREPARED','UNKNOWN','BLOCKED','NOT_PERFORMED'].includes(duplicate.state))return duplicate;
         return {state:'BLOCKED',identity,reasonCode:'PROVIDER_REQUEST_ALREADY_TERMINAL'};
       }
+      let pageResult=null;
       try {
         const context=await enqueue('agent_context',{tabId:identity.tabId});
         if(!context?.verified||context.origin!==identity.origin||context.conversationId!==identity.conversationId)
           return providerJournal.outcome(identity,'NOT_PERFORMED','PROVIDER_CONTEXT_MISMATCH');
         const preparedId=crypto.randomUUID();
         const expiresAt=new Date(Date.now()+90000).toISOString();
-        const result=await enqueue('provider_prepare',{...identity,message:args.message,
+        pageResult=await enqueue('provider_prepare',{...identity,message:args.message,
           payloadHash:args.payloadHash,preparedId,expiresAt});
-        if(result?.prepared!==true||result.clickedSend!==false||result.requestId!==identity.requestId||
-          result.sideEffect!=='composer-filled-no-send'||result.preparedId!==preparedId||
-          result.payloadHash!==args.payloadHash) {
+        if(pageResult?.prepared!==true||pageResult.clickedSend!==false||pageResult.requestId!==identity.requestId||
+          pageResult.sideEffect!=='composer-filled-no-send'||pageResult.preparedId!==preparedId||
+          pageResult.payloadHash!==args.payloadHash) {
           return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_PREPARE_RECEIPT_INVALID');
         }
         return providerJournal.completePrepare(identity,{preparedId,expiresAt});
@@ -322,10 +334,19 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
           error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
         const code=safeFailureCode(error?.message,'PROVIDER_PREPARE_FAILED');
-        return providerJournal.outcome(identity,state,code,{
-          ...(error?.sideEffect?{sideEffect:error.sideEffect}:{}),
-          failure:normalizeFailure(error?.failure,{stage:state==='UNKNOWN'?'TRANSPORT':'PAGE_ACTION',code,startedAt:providerStartedAt})
-        });
+        if(error?.code===PROVIDER_JOURNAL_LOCK_BUSY)
+          return providerJournalLockBusyResult(identity,pageResult?.prepared===true?'UNKNOWN':'NOT_PERFORMED',
+            providerStartedAt,pageResult?.prepared===true?'composer-filled-no-send':error?.sideEffect);
+        const failure=normalizeFailure(error?.failure,{stage:state==='UNKNOWN'?'TRANSPORT':'PAGE_ACTION',code,startedAt:providerStartedAt});
+        try {
+          return providerJournal.outcome(identity,state,code,{
+            ...(normalizeProviderSideEffect(error?.sideEffect)?{sideEffect:error.sideEffect}:{}),failure
+          });
+        }catch(journalError){
+          if(journalError?.code!==PROVIDER_JOURNAL_LOCK_BUSY)throw journalError;
+          return providerJournalLockBusyResult(identity,pageResult?.prepared===true?'UNKNOWN':state,
+            providerStartedAt,pageResult?.prepared===true?'composer-filled-no-send':error?.sideEffect);
+        }
       }
     },
     async provider_commit(args) {
@@ -336,24 +357,37 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
       let tx;
       try { tx=providerJournal.beginCommit(identity,{preparedId:args.preparedId,fencingToken:args.fencingToken,payloadHash:args.payloadHash}); }
-      catch(error) { const code=safeFailureCode(error?.message,'PROVIDER_COMMIT_REJECTED');
-        return providerJournal.outcome(identity,'BLOCKED',code,{failure:makeFailure('JOURNAL',code,providerStartedAt)}); }
+      catch(error) {
+        const code=safeFailureCode(error?.message,'PROVIDER_COMMIT_REJECTED');
+        if(error?.code===PROVIDER_JOURNAL_LOCK_BUSY)return providerJournalLockBusyResult(identity,'NOT_PERFORMED',providerStartedAt);
+        return providerJournal.outcome(identity,'BLOCKED',code,{failure:makeFailure('JOURNAL',code,providerStartedAt)});
+      }
+      let pageResult=null;
       try {
-        const result=await enqueue('provider_commit',{...identity,preparedId:args.preparedId,
+        pageResult=await enqueue('provider_commit',{...identity,preparedId:args.preparedId,
           fencingToken:args.fencingToken,payloadHash:tx.payloadHash});
-        if(result?.clickedSend!==true||result.requestId!==identity.requestId||result.preparedId!==args.preparedId||
-          result.payloadHash!==tx.payloadHash||!Number.isFinite(Date.parse(result.clickedAt||''))||
-          !Number.isSafeInteger(result.baseline)||result.baseline<0)
+        if(pageResult?.clickedSend!==true||pageResult.requestId!==identity.requestId||pageResult.preparedId!==args.preparedId||
+          pageResult.payloadHash!==tx.payloadHash||!Number.isFinite(Date.parse(pageResult.clickedAt||''))||
+          !Number.isSafeInteger(pageResult.baseline)||pageResult.baseline<0)
           return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_COMMIT_RECEIPT_INVALID');
-        return providerJournal.completeCommit(identity,{clickedAt:result.clickedAt,clickedSend:true,baseline:result.baseline});
+        return providerJournal.completeCommit(identity,{clickedAt:pageResult.clickedAt,clickedSend:true,baseline:pageResult.baseline});
       } catch(error) {
         const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
           error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
         const code=safeFailureCode(error?.message,'PROVIDER_COMMIT_FAILED');
-        return providerJournal.outcome(identity,state,code,{
-          ...(error?.sideEffect?{sideEffect:error.sideEffect}:{}),
-          failure:normalizeFailure(error?.failure,{stage:state==='UNKNOWN'?'TRANSPORT':'PAGE_ACTION',code,startedAt:providerStartedAt})
-        });
+        if(error?.code===PROVIDER_JOURNAL_LOCK_BUSY)
+          return providerJournalLockBusyResult(identity,pageResult?.clickedSend===true?'UNKNOWN':'NOT_PERFORMED',
+            providerStartedAt,pageResult?.clickedSend===true?'send-click-may-have-fired':error?.sideEffect);
+        const failure=normalizeFailure(error?.failure,{stage:state==='UNKNOWN'?'TRANSPORT':'PAGE_ACTION',code,startedAt:providerStartedAt});
+        try {
+          return providerJournal.outcome(identity,state,code,{
+            ...(normalizeProviderSideEffect(error?.sideEffect)?{sideEffect:error.sideEffect}:{}),failure
+          });
+        }catch(journalError){
+          if(journalError?.code!==PROVIDER_JOURNAL_LOCK_BUSY)throw journalError;
+          return providerJournalLockBusyResult(identity,pageResult?.clickedSend===true?'UNKNOWN':state,
+            providerStartedAt,pageResult?.clickedSend===true?'send-click-may-have-fired':error?.sideEffect);
+        }
       }
     },
     async provider_status(args) {
@@ -544,6 +578,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
           failure.code==='PREVIOUS_REQUEST_PENDING'?'Previous request is still pending: call agent_wait first.':
           failure.code==='CHROME_DISCONNECTED'?'Chrome disconnected.':failure.code;
         result = { isError: true, failure, ...(dispatchState ? { dispatchState } : {}),
+          ...(normalizeProviderSideEffect(e?.sideEffect)?{sideEffect:normalizeProviderSideEffect(e.sideEffect)}:{}),
           content: [{ type: 'text', text: publicMessage }] };
       }
     } else return { jsonrpc: '2.0', id: id ?? null, error: { code: -32601, message: 'Method not found' } };

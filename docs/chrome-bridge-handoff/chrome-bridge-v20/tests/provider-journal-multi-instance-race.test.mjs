@@ -95,7 +95,7 @@ test('constructor fails closed on an existing lock and never removes it',()=>{
     const lockPath=journalPath+'.lock';
     const before=fs.readFileSync(journalPath,'utf8');
     fs.writeFileSync(lockPath,'owner=another-process');
-    assert.throws(()=>makeJournal(dir),error=>error?.code==='EEXIST');
+    assert.throws(()=>makeJournal(dir),error=>error?.code==='PROVIDER_JOURNAL_LOCK_BUSY'&&error?.message==='PROVIDER_JOURNAL_LOCK_BUSY');
     assert.equal(fs.readFileSync(journalPath,'utf8'),before,
       'failed recovery must not mutate the journal while another owner holds the lock');
     assert.equal(fs.readFileSync(lockPath,'utf8'),'owner=another-process',
@@ -123,4 +123,23 @@ test('known no-send cleanup metadata is retained in durable status and event his
   } finally {
     fs.rmSync(dir,{recursive:true,force:true});
   }
+});
+
+
+test('journal lock acquisition retries transient EEXIST and releases its acquired lock',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-lock-retry-'));
+  const lockPath=path.join(dir,'provider-transactions.jsonl.lock');let collisions=0;
+  const fsOps=Object.create(fs);
+  fsOps.openSync=(file,flags,mode)=>{
+    if(path.resolve(String(file))===path.resolve(lockPath)&&flags==='wx'&&collisions<2){
+      collisions++;const error=Error('simulated lock contention');error.code='EEXIST';throw error;
+    }
+    return fs.openSync(file,flags,mode);
+  };
+  try{
+    const journal=new ProviderJournal(dir,{hmacKey:key,bridgeEpoch:'bridge_epoch_0001',fsOps});
+    const result=journal.outcome(identity('request_retry_01','task_retry_0001'),'BLOCKED','LOCK_RETRY_TEST');
+    assert.equal(result.state,'BLOCKED');assert.equal(collisions,2);
+    assert.equal(fs.existsSync(lockPath),false);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

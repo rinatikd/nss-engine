@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { signQuiescence } from './provider-transport-crypto.mjs';
-import { normalizeFailure } from './failure-contract.mjs';
+import { normalizeFailure, normalizeProviderSideEffect } from './failure-contract.mjs';
 
 const ID=/^[A-Za-z0-9_-]{8,100}$/;
 const CONVERSATION_ID=/^[A-Za-z0-9_-]{8,160}$/;
@@ -40,6 +40,22 @@ function hash(key,value) {
   return crypto.createHmac('sha256',key).update(value,'utf8').digest('hex');
 }
 function tokenHash(token) { return crypto.createHash('sha256').update(token,'utf8').digest('hex'); }
+const LOCK_RETRY_DELAYS_MS = Object.freeze([2,4,8,16,32]);
+const LOCK_WAIT_CELL = new Int32Array(new SharedArrayBuffer(4));
+function acquireJournalLock(fsOps,lockFile) {
+  for(let attempt=0;;attempt++){
+    try{return fsOps.openSync(lockFile,'wx',0o600);}
+    catch(error){
+      if(error?.code!=='EEXIST')throw error;
+      if(attempt>=LOCK_RETRY_DELAYS_MS.length){
+        const busy=new Error('PROVIDER_JOURNAL_LOCK_BUSY');
+        busy.code='PROVIDER_JOURNAL_LOCK_BUSY';
+        throw busy;
+      }
+      Atomics.wait(LOCK_WAIT_CELL,0,0,LOCK_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
 
 export class ProviderJournal {
   constructor(stateDir,{hmacKey,bridgeEpoch=crypto.randomUUID(),fsOps=fs,now=Date.now,maxBytes=MAX_BYTES}={}) {
@@ -139,7 +155,7 @@ export class ProviderJournal {
 
   #withLock(fn) {
     if(this.lockDepth>0)return fn();
-    const lock=this.fs.openSync(this.lockFile,'wx',0o600);
+    const lock=acquireJournalLock(this.fs,this.lockFile);
     try {
       this.fs.writeFileSync(lock,JSON.stringify({pid:process.pid,at:new Date(this.now()).toISOString()}));
       this.fs.fsyncSync(lock);
@@ -300,9 +316,12 @@ export class ProviderJournal {
       /PREPARE|COMMIT/.test(safeReason)?'PAGE_ACTION':'JOURNAL';
     const failure=normalizeFailure(suppliedFailure,{stage:inferredStage,
       code:safeReason||'PROVIDER_OUTCOME',startedAt:Number.isFinite(startedAt)?startedAt:this.now(),now:this.now});
-    this.#append('transaction.outcome',identity,{state,reasonCode:safeReason,quarantineId,failure,...persistedExtra});
+    const {sideEffect:rawSideEffect,...otherExtra}=persistedExtra;
+    const sideEffect=normalizeProviderSideEffect(rawSideEffect);
+    this.#append('transaction.outcome',identity,{state,reasonCode:safeReason,quarantineId,failure,
+      ...otherExtra,...(sideEffect?{sideEffect}:{})});
     return {state,identity,...(quarantineId?{quarantineId}:{}),...(safeReason?{reasonCode:safeReason}:{}),
-      failure,...(typeof persistedExtra.sideEffect==='string'?{sideEffect:persistedExtra.sideEffect}:{})};
+      failure,...(sideEffect?{sideEffect}:{})};
     });
   }
   status(input) {

@@ -4,6 +4,13 @@ const STAGES = new Set([
 ]);
 const CODE = /^[A-Z][A-Z0-9_]{2,80}$/;
 const MAX_DURATION_MS = 300000;
+const PROVIDER_SIDE_EFFECTS = new Set([
+  'none','composer-cleared','composer-draft-may-remain','composer-filled-no-send',
+  'composer-draft-state-unverified','send-click-may-have-fired','send-click-receipt-unpersisted'
+]);
+export function normalizeProviderSideEffect(value) {
+  return PROVIDER_SIDE_EFFECTS.has(value) ? value : null;
+}
 
 export function safeFailureCode(value, fallback='BRIDGE_FAILURE') {
   if (typeof value === 'string' && CODE.test(value)) return value;

@@ -14,10 +14,11 @@ const identity={
   requestId:'request_0001',taskId:'task_000001',providerId:'claude',
   tabId:42,origin:'https://claude.ai',conversationId:'conversation_001',epoch:7
 };
-function response(data,{status=200,isError=false,id='provider-provider_prepare-request_0001'}={}) {
+function response(data,{status=200,isError=false,id='provider-provider_prepare-request_0001',failure=null,dispatchState=null,sideEffect=null}={}) {
   return {ok:status>=200&&status<300,status,json:async()=>({
     jsonrpc:'2.0',id,
-    result:{isError,content:[{type:'text',text:isError?String(data):JSON.stringify(data)}]}
+    result:{isError,content:[{type:'text',text:isError?String(data):JSON.stringify(data)}],
+      ...(failure?{failure}:{}),...(dispatchState?{dispatchState}:{}),...(sideEffect?{sideEffect}:{})}
   })};
 }
 function adapter(fetchImpl) {
@@ -145,4 +146,24 @@ test('quiescence verifier authenticates the exact epoch-bound proof',async()=>{
   assert.equal(await verify(proof,identity),true);
   assert.equal(await verify({...proof,nextEpoch:9},identity),false);
   assert.equal(await verify(proof,{...identity,tabId:99}),false);
+});
+
+
+test('adapter preserves bounded failure and safe side-effect metadata from MCP errors without retry',async()=>{
+  let calls=0;const failure={schemaVersion:1,stage:'JOURNAL',code:'PROVIDER_JOURNAL_LOCK_BUSY',durationMs:37};
+  const a=adapter(async()=>{calls++;return response('PROVIDER_JOURNAL_LOCK_BUSY',{isError:true,
+    dispatchState:'NOT_PERFORMED',failure,sideEffect:'composer-filled-no-send'});});
+  const result=await a.prepare({...identity,message:'x',payloadHash:'b'.repeat(64)});
+  assert.equal(calls,1);assert.equal(result.state,'NOT_PERFORMED');
+  assert.equal(result.reasonCode,'PROVIDER_JOURNAL_LOCK_BUSY');assert.deepEqual(result.failure,failure);
+  assert.equal(result.sideEffect,'composer-filled-no-send');
+});
+
+test('adapter removes unrecognized side-effect metadata from MCP error envelopes',async()=>{
+  const a=adapter(async()=>response('PROVIDER_JOURNAL_LOCK_BUSY',{isError:true,
+    dispatchState:'NOT_PERFORMED',
+    failure:{schemaVersion:1,stage:'JOURNAL',code:'PROVIDER_JOURNAL_LOCK_BUSY',durationMs:1},
+    sideEffect:'private prompt or URL'}));
+  const result=await a.prepare({...identity,message:'x',payloadHash:'b'.repeat(64)});
+  assert.equal(result.state,'NOT_PERFORMED');assert.equal(result.sideEffect,undefined);
 });
