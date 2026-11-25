@@ -16,7 +16,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run CCTV CLI guard tests
-        run: python -m unittest discover -s work/NSS_TKK_Editor_v0.2/modules/cctv/tests -p 'test_cli_guards.py' -v
+      - name: Run CCTV CLI guard and end-to-end tests
+        run: python -m unittest discover -s work/NSS_TKK_Editor_v0.2/modules/cctv/tests -p 'test_cli_*.py' -v
+      - name: Run CCTV core tests
+        run: python -m unittest discover -s work/NSS_TKK_Editor_v0.2/modules/cctv -p 'test_cctv_core.py' -v
       - name: Compile Python module
         run: python -m py_compile work/NSS_TKK_Editor_v0.2/modules/cctv/cctv_cli.py

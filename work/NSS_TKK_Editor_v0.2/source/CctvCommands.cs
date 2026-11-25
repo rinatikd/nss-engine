@@ -17,6 +17,18 @@ public sealed class CctvCommands
     const int DefaultTimeoutSeconds=120;
     const int VkEscape=0x1B;
     [DllImport("user32.dll")]static extern short GetAsyncKeyState(int virtualKey);
+    [DllImport("user32.dll")]static extern System.IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(System.IntPtr window,out uint processId);
+
+    // ESC counts only while a window of this (AutoCAD) process is in the foreground, so pressing ESC in another application does not cancel the calculation.
+    static bool EscapePressed()
+    {
+        if((GetAsyncKeyState(VkEscape)&0x8000)==0)return false;
+        System.IntPtr window=GetForegroundWindow();
+        if(window==System.IntPtr.Zero)return false;
+        GetWindowThreadProcessId(window,out uint processId);
+        return processId==(uint)System.Environment.ProcessId;
+    }
 
     // Timeout can be set with NSS_CCTV_TIMEOUT_SECONDS (10..3600); anything else falls back to the default.
     static int TimeoutSeconds()
@@ -102,6 +114,8 @@ public sealed class CctvCommands
             if(unitResult.Status!=PromptStatus.OK&&unitResult.Status!=PromptStatus.None)return;
             string unitName=unitResult.Status==PromptStatus.OK?unitResult.StringResult:"Millimeters";
             double unitToMeters=unitName.Equals("Meters",StringComparison.OrdinalIgnoreCase)?1.0:unitName.Equals("Centimeters",StringComparison.OrdinalIgnoreCase)?0.01:0.001;
+            // "Millimeters" and "Meters" share the first letter, so show which unit AutoCAD actually resolved before the calculation starts.
+            Print(ed,"\nDrawing units: "+unitName+" (1 drawing unit = "+unitToMeters.ToString("R",System.Globalization.CultureInfo.InvariantCulture)+" m).");
 
             var layerOptions=new PromptStringOptions("\nWall layers, comma-separated (Enter = all layers): "){AllowSpaces=true};
             var layerResult=ed.GetString(layerOptions);
@@ -119,7 +133,6 @@ public sealed class CctvCommands
 
             // The script writes to a private temporary file; the real output is replaced only after a verified success.
             string tempOutput=output+"."+Guid.NewGuid().ToString("N")+".tmp";
-            DateTime startedUtc=DateTime.UtcNow;
             var start=new ProcessStartInfo(python)
             {
                 UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,
@@ -143,7 +156,7 @@ public sealed class CctvCommands
                 while(!process.WaitForExit(100))
                 {
                     PumpMessages();
-                    if((GetAsyncKeyState(VkEscape)&0x8000)!=0){stopReason="cancelled";break;}
+                    if(EscapePressed()){stopReason="cancelled";break;}
                     if(DateTime.UtcNow>=deadline){stopReason="timeout";break;}
                 }
                 // If the process finished between the last poll and the stop check, treat it as completed.
@@ -158,9 +171,14 @@ public sealed class CctvCommands
                 string report=Drain(stdout,5000);string errors=Drain(stderr,5000);
                 if(process.ExitCode!=0)throw new InvalidDataException("CCTV calculation failed (exit "+process.ExitCode+"): "+errors+report);
                 var produced=new FileInfo(tempOutput);
-                if(!produced.Exists||produced.Length==0||produced.LastWriteTimeUtc<startedUtc.AddSeconds(-2))
-                    throw new InvalidDataException("Calculation finished without producing a fresh output DXF.");
-                File.Move(tempOutput,output,true);
+                // The temporary name is a fresh GUID, so it cannot be a stale file; existence and non-zero length are enough.
+                if(!produced.Exists||produced.Length==0)
+                    throw new InvalidDataException("Calculation finished without producing an output DXF.");
+                try{File.Move(tempOutput,output,true);}
+                catch(System.Exception e) when(e is IOException or System.UnauthorizedAccessException)
+                {
+                    throw new IOException("The calculation succeeded, but the result could not replace "+output+" (is it open in another program or read-only?). Close it and run the command again. "+e.Message,e);
+                }
                 Print(ed,"\nCCTV calculation complete. Source plan and active drawing were not modified.\nResult: "+output+"\n"+report);
             }
             finally
