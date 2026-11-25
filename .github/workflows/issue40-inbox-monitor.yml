@@ -1,0 +1,27 @@
+name: Issue 40 Inbox Status (read-only)
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan published task comments (no agent execution)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MONITOR_REPO: ${{ github.repository }}
+          MONITOR_ISSUE: '40'
+        run: python3 tools/ai-coordination/issue40_monitor.py
+      - name: Upload read-only status report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue40-inbox-status
+          path: monitor-output/
+          if-no-files-found: warn
