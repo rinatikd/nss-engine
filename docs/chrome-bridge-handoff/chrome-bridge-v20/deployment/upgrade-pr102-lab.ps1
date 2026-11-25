@@ -138,7 +138,7 @@ if ($TestFixture) {
   Require ($root -ieq 'C:\Engineering\ChromeBridge-PR102-17484-Lab') 'Only the exact PR102 unpacked extension root is permitted'
   if ([string]::IsNullOrWhiteSpace($StateRoot)) { throw 'PR102 Lab StateRoot is required' }
   $state = FullPath $StateRoot
-  Require ($state -ieq 'C:\Engineering\ChromeBridge-PR102-17484-State') 'Only the exact PR102 Lab state root is permitted'
+  Require ($state -ieq 'C:\Engineering\ChromeBridge-PR102-17485-State') 'Only the exact PR102 Lab state root is permitted'
   Require (-not ((Get-Item -LiteralPath $root -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'PR102 Lab extension root must not be a reparse point'
   Require (-not ((Get-Item -LiteralPath $state -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'PR102 Lab state root must not be a reparse point'
   Require ([IO.Path]::GetPathRoot($root) -ieq [IO.Path]::GetPathRoot($state)) 'Extension and state roots must share a volume for atomic directory replacement'
