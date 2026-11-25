@@ -341,7 +341,8 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
           error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
         return providerJournal.outcome(identity,state,
-          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_FAILED');
+          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_FAILED',
+          ...(error?.sideEffect?{sideEffect:error.sideEffect}:{}));
       }
     },
     async provider_status(args) {
