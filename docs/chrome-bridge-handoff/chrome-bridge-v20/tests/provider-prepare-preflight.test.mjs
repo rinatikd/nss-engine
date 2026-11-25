@@ -6,19 +6,47 @@ import {fileURLToPath} from 'node:url';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const page=fs.readFileSync(path.join(here,'../extension/page.js'),'utf8');
+const mutation=fs.readFileSync(path.join(here,'../extension/mutation-dispatch.js'),'utf8');
+const bridge=fs.readFileSync(path.join(here,'../server/bridge.mjs'),'utf8');
 
-test('provider_prepare validates exactly one visible enabled Send control before composer mutation',()=>{
+test('provider_prepare identifies one visible actionable Send selector before composer mutation',()=>{
   const start=page.indexOf("if (name === 'provider_prepare')");
   const end=page.indexOf("if (name === 'provider_commit')",start);
   assert.ok(start>=0&&end>start,'provider_prepare implementation must exist');
   const body=page.slice(start,end);
-  const sendCheck=body.indexOf("const sendButtons = qa(A.send).filter(vis)");
-  const sendReject=body.indexOf("throw Error('PROVIDER_SEND_BUTTON_NOT_READY')");
+  const sendCheck=body.indexOf('const initialSendButtons = qa(sendSelector).filter(vis)');
   const composerFocus=body.indexOf('composer.focus()');
   const composerWrite=body.indexOf("set.call(composer, args.message)");
-  assert.ok(sendCheck>=0&&sendReject>sendCheck,'Send selector must be checked');
-  assert.ok(composerFocus>sendReject,'Send preflight must precede composer focus');
-  assert.ok(composerWrite>sendReject,'Send preflight must precede composer write');
-  assert.equal((body.match(/const sendButtons =/g)||[]).length,1,
-    'Send preflight should have one authoritative check before mutation');
+  assert.ok(sendCheck>=0,'Send selector preflight must exist');
+  assert.ok(sendCheck<composerFocus,'Send selector must be checked before composer focus');
+  assert.ok(sendCheck<composerWrite,'Send selector must be checked before composer write');
+  const preMutation=body.slice(sendCheck,composerFocus);
+  assert.match(preMutation,/PROVIDER_SEND_SELECTOR_UNCALIBRATED/);
+  assert.match(preMutation,/PROVIDER_SEND_SELECTOR_NOT_UNIQUE/);
+  assert.match(preMutation,/PROVIDER_SEND_SELECTOR_NOT_ACTIONABLE/);
+  assert.doesNotMatch(preMutation,/\.disabled|aria-disabled/,
+    'a button disabled only because the composer is empty must still calibrate');
+});
+
+test('provider_prepare requires an enabled unique Send control after input and verifies rollback on failure',()=>{
+  const start=page.indexOf("if (name === 'provider_prepare')");
+  const end=page.indexOf("if (name === 'provider_commit')",start);
+  const body=page.slice(start,end);
+  const write=body.indexOf('composer.focus()');
+  const ready=body.indexOf('const readySendButtons = qa(sendSelector).filter(vis)');
+  const disabled=body.indexOf('readySendButtons[0].disabled');
+  const rollback=body.indexOf("PROVIDER_PREPARE_ROLLBACK_UNVERIFIED");
+  assert.ok(write>=0&&ready>write,'post-input Send check must follow composer input');
+  assert.ok(disabled>ready,'post-input Send check must require enabled button');
+  assert.ok(rollback>disabled,'failed readiness must report an unverified rollback');
+  assert.match(body,/dispatchState: 'NOT_PERFORMED'/);
+  assert.match(body,/sideEffect: cleared \? 'composer-cleared' : 'composer-draft-may-remain'/);
+});
+
+test('provider_prepare failures after injection remain no-send outcomes while provider_commit stays conservative',()=>{
+  assert.match(mutation,/cmd\.name==='provider_prepare'[\s\S]*?error\.dispatchState='NOT_PERFORMED'/);
+  assert.match(mutation,/composer-draft-state-unverified/);
+  const rpcCatch=bridge.slice(bridge.indexOf("const providerMutation = params.name === 'provider_prepare'"),bridge.indexOf("    } else return",bridge.indexOf("const providerMutation = params.name === 'provider_prepare'")));
+  assert.match(rpcCatch,/params\.name === 'provider_prepare' \? 'NOT_PERFORMED' : 'UNKNOWN'/);
+  assert.match(rpcCatch,/validDispatchState/);
 });
