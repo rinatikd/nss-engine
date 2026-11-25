@@ -24,6 +24,7 @@ def main():
       (ROOT/'tools',[],['test_repo_guard']),
       (tkk/'tests',[str(tkk/'engine')],['test_editor_core','test_equal_spacing','test_diagnostics','test_fes_numbering','test_span_labels','test_snapshot_validation']),
       (tkk/'modules/cctv',[],['test_cctv_core']),
+      (ROOT/'tools/cctv',[],['test_kpp_plan']),
       (ROOT/'work/NSS_AutoDebug_v0423/tests',[str(ROOT/'work/NSS_AutoDebug_v0423')],['test_analyzer','test_v022','test_v023']),
       (ROOT/'tools/tests',[str(ROOT),str(ROOT/'tools')],['test_repo_guard','test_tkk_integrity','test_thermal_visibility']),
     ]
