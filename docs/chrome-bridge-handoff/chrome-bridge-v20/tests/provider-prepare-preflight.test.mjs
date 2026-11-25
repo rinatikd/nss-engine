@@ -15,13 +15,14 @@ test('provider_prepare identifies one visible actionable Send selector before co
   const end=page.indexOf("if (name === 'provider_commit')",start);
   assert.ok(start>=0&&end>start,'provider_prepare implementation must exist');
   const body=page.slice(start,end);
+  const selectorStart=body.indexOf('const sendSelector =');
   const sendCheck=body.indexOf('const initialSendButtons = qa(sendSelector).filter(vis)');
   const composerFocus=body.indexOf('composer.focus()');
   const composerWrite=body.indexOf("set.call(composer, args.message)");
-  assert.ok(sendCheck>=0,'Send selector preflight must exist');
+  assert.ok(selectorStart>=0&&sendCheck>selectorStart,'Send selector preflight must exist');
   assert.ok(sendCheck<composerFocus,'Send selector must be checked before composer focus');
   assert.ok(sendCheck<composerWrite,'Send selector must be checked before composer write');
-  const preMutation=body.slice(sendCheck,composerFocus);
+  const preMutation=body.slice(selectorStart,composerFocus);
   assert.match(preMutation,/PROVIDER_SEND_SELECTOR_UNCALIBRATED/);
   assert.match(preMutation,/PROVIDER_SEND_SELECTOR_NOT_UNIQUE/);
   assert.match(preMutation,/PROVIDER_SEND_SELECTOR_NOT_ACTIONABLE/);
