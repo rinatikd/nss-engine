@@ -8,6 +8,7 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 const page=fs.readFileSync(path.join(here,'../extension/page.js'),'utf8');
 const mutation=fs.readFileSync(path.join(here,'../extension/mutation-dispatch.js'),'utf8');
 const bridge=fs.readFileSync(path.join(here,'../server/bridge.mjs'),'utf8');
+const journal=fs.readFileSync(path.join(here,'../server/provider-journal.mjs'),'utf8');
 
 test('provider_prepare identifies one visible actionable Send selector before composer mutation',()=>{
   const start=page.indexOf("if (name === 'provider_prepare')");
@@ -49,4 +50,9 @@ test('provider_prepare failures after injection remain no-send outcomes while pr
   const rpcCatch=bridge.slice(bridge.indexOf("const providerMutation = params.name === 'provider_prepare'"),bridge.indexOf("    } else return",bridge.indexOf("const providerMutation = params.name === 'provider_prepare'")));
   assert.match(rpcCatch,/params\.name === 'provider_prepare' \? 'NOT_PERFORMED' : 'UNKNOWN'/);
   assert.match(rpcCatch,/validDispatchState/);
+  const prepareCatch=bridge.slice(bridge.indexOf("const state=error?.dispatchState==='BLOCKED'?"),
+    bridge.indexOf("async provider_commit",bridge.indexOf("const state=error?.dispatchState==='BLOCKED'?")));
+  assert.match(prepareCatch,/error\?\.sideEffect/);
+  assert.match(journal,/typeof data\.sideEffect==='string'\?\{sideEffect:data\.sideEffect\}:\{\}/);
+  assert.match(journal,/tx\.sideEffect\?\{sideEffect:tx\.sideEffect\}:\{\}/);
 });
