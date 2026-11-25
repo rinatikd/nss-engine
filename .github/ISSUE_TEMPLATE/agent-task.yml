@@ -17,6 +17,9 @@ body:
         - Claude
         - Gemini
         - Grok
+        - DeepSeek
+        - Qwen
+        - Cursor
         - Другой, назначит руководитель
     validations:
       required: true
@@ -39,6 +42,14 @@ body:
       label: Основание
       description: Ветка и commit SHA, на которых строится задача (обычно main и последний опубликованный SHA).
       placeholder: main @ <commit SHA>
+    validations:
+      required: true
+  - type: input
+    id: task_id
+    attributes:
+      label: Task ID
+      description: Уникальный идентификатор, например CCTV-AREA-01.
+      placeholder: AREA-SHORT-NN
     validations:
       required: true
   - type: textarea
@@ -85,3 +96,15 @@ body:
           required: true
         - label: В задаче нет секретов или исходных закрытых чертежей.
           required: true
+  - type: textarea
+    id: coordination
+    attributes:
+      label: Проверяющий, зависимости и контрольная точка
+      description: Укажите одного проверяющего, конфликтующие задачи/файлы, зависимости и условие следующего checkpoint. Канал передачи подтверждается отдельно после фактической отправки.
+      placeholder: |
+        Проверяющий:
+        Зависимости и пересечения:
+        Следующая контрольная точка:
+        Подтверждённый канал (если уже проверен):
+    validations:
+      required: true
