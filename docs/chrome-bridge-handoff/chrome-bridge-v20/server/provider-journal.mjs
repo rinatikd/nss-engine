@@ -121,7 +121,8 @@ export class ProviderJournal {
     } else if(type==='transaction.outcome') {
       const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
       this.transactions.set(identity.requestId,{...old,state:data.state,reasonCode:data.reasonCode||null,
-        quarantineId:data.quarantineId||null,nextEpoch:data.nextEpoch||null});
+        quarantineId:data.quarantineId||null,nextEpoch:data.nextEpoch||null,
+        ...(typeof data.sideEffect==='string'?{sideEffect:data.sideEffect}:{})});
     } else if(type==='stop.clean') {
       const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
       this.transactions.set(identity.requestId,{...old,state:'STOPPED_CLEAN',quiescence:clone(data.quiescence),nextEpoch:data.nextEpoch});
@@ -292,7 +293,8 @@ export class ProviderJournal {
     if(!['UNKNOWN','NOT_PERFORMED','BLOCKED','REVOKED','STOP_AFTER_COMMIT'].includes(state))throw Error('PROVIDER_OUTCOME_STATE_INVALID');
     const quarantineId=state==='UNKNOWN'?'quarantine-'+identity.requestId:null;
     this.#append('transaction.outcome',identity,{state,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(reasonCode)?reasonCode:'',quarantineId,...extra});
-    return {state,identity,...(quarantineId?{quarantineId}:{}),...(reasonCode?{reasonCode}:{})};
+    return {state,identity,...(quarantineId?{quarantineId}:{}),...(reasonCode?{reasonCode}:{}),
+      ...(typeof extra.sideEffect==='string'?{sideEffect:extra.sideEffect}:{})};
     });
   }
   status(input) {
@@ -304,6 +306,7 @@ export class ProviderJournal {
       const publicState=tx.state==='PREPARING'?'ACCEPTED':tx.state==='COMMITTING'?'DISPATCHED':tx.state;
       const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
         ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
+        ...(tx.sideEffect?{sideEffect:tx.sideEffect}:{}),
         ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
         ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
         ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
@@ -419,7 +422,8 @@ export class ProviderJournal {
       return this.records.filter(e=>e.seq>after).slice(0,limit).map(e=>({
         seq:e.seq,eventId:e.eventId,requestId:e.identity.requestId,providerId:e.identity.providerId,
         state:stateFor(e),identity:clone(e.identity),
-        ...(e.data.quarantineId?{quarantineId:e.data.quarantineId}:{})
+        ...(e.data.quarantineId?{quarantineId:e.data.quarantineId}:{}),
+        ...(e.data.sideEffect?{sideEffect:e.data.sideEffect}:{})
       }));
     });
   }
