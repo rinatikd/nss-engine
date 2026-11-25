@@ -137,6 +137,14 @@ export class ProviderJournal {
     try {
       this.fs.writeFileSync(lock,JSON.stringify({pid:process.pid,at:new Date(this.now()).toISOString()}));
       this.fs.fsyncSync(lock);
+      // Instances may have loaded the same journal before either one appended.
+      // Rebuild the in-memory projection only after acquiring the inter-process
+      // lock, so seq/prevHash and subsequent projections start from disk truth.
+      this.records=[];
+      this.transactions.clear();
+      this.tabEpochs.clear();
+      this.lastHash='0'.repeat(64);
+      this.#load();
       const record={
         seq:this.records.length+1,eventId:crypto.randomUUID(),type,
         identity:clone(identity),data:clone(data),prevHash:this.lastHash
