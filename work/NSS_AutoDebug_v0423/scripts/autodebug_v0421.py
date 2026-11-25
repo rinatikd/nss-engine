@@ -149,12 +149,21 @@ def make_invoker(run,state):
     run=Path(run).resolve();entry=state.get('entry_name','NSS_AUTOTEST_FILE_V0423_PREBUILT')
     if not entry.startswith('NSS_AUTOTEST_FILE_') or any(not(c.isalnum() or c=='_') for c in entry):raise ValueError('invalid native entry')
     function='nss-debug-fail-'+state['run_id']
+    trace_function='nss-debug-trace-'+state['run_id']
+    trace_path=run/'reports/bootstrap_trace.log'
     error_path=run/'reports/bootstrap_error.json';detail=run/'reports/bootstrap_error.txt'
     # Fixed ASCII JSON fields; arbitrary native error text goes to a separate text file.
     prefix=json.dumps(dict(phase='BOOTSTRAP_FAILED',run_id=state['run_id']),separators=(',',':'))[:-1]+',"code":"'
     lines=[
         '(vl-load-com)',
+        '(defun '+trace_function+' (stage / f)',
+        '  (setq f (open '+lisp_string(trace_path)+' "a"))',
+        '  (if f (progn (write-line (strcat (rtos (getvar "DATE") 2 8) " " stage) f) (close f)))',
+        '  (princ)',
+        ')',
+        '('+trace_function+' "INVOKER_STARTED")',
         '(defun '+function+' (code message / f)',
+        '  ('+trace_function+' "BOOTSTRAP_FAILED")',
         '  (setq f (open '+lisp_string(error_path)+' "w"))',
         '  (if f (progn (write-line (strcat '+lisp_string(prefix)+' code "\\\"}") f) (close f)))',
         '  (setq f (open '+lisp_string(detail)+' "w"))',
@@ -162,13 +171,24 @@ def make_invoker(run,state):
         '  (princ (strcat "\\nNSS bootstrap failed: " code " - " message))',
         ')',
         '(if (not (car (atoms-family 1 (list '+lisp_string(entry)+'))))',
-        '  (vl-catch-all-apply \'(lambda () (command-s "_.NETLOAD" '+lisp_string(state['dll'])+')) nil))',
+        '  (progn',
+        '    ('+trace_function+' "NETLOAD_ATTEMPTED")',
+        '    (setq nss-debug-netload (vl-catch-all-apply \'(lambda () (command-s "_.NETLOAD" '+lisp_string(state['dll'])+')) nil))',
+        '    (if (vl-catch-all-error-p nss-debug-netload)',
+        '      ('+trace_function+' "NETLOAD_EXCEPTION")',
+        '      ('+trace_function+' "NETLOAD_RETURNED"))',
+        '  )',
+        '  ('+trace_function+' "ENTRY_ALREADY_REGISTERED")',
+        ')',
         '(if (not (car (atoms-family 1 (list '+lisp_string(entry)+'))))',
         '  ('+function+' "ASSEMBLY_OR_ENTRY_NOT_LOADED" "Native entry was not registered; inspect NETLOAD error in AutoCAD console.")',
         '  (progn',
+        '    ('+trace_function+' "ENTRY_REGISTERED")',
+        '    ('+trace_function+' "NATIVE_CALL_ATTEMPTED")',
         '    (setq nss-debug-result (vl-catch-all-apply \'(lambda () ('+entry+' '+lisp_string(run/'reports/authorization.json')+')) nil))',
         '    (if (vl-catch-all-error-p nss-debug-result)',
-        '      ('+function+' "NATIVE_BOOTSTRAP_EXCEPTION" (vl-catch-all-error-message nss-debug-result)))',
+        '      ('+function+' "NATIVE_BOOTSTRAP_EXCEPTION" (vl-catch-all-error-message nss-debug-result))',
+        '      ('+trace_function+' "NATIVE_CALL_RETURNED"))',
         '  )',
         ')','(princ)',
     ]
@@ -192,7 +212,7 @@ def artifacts(run):
         report+='</table>'
     if state.get('host_diagnosis'):
         report+='<h2>Host startup diagnosis</h2><pre>'+html.escape(json.dumps(state['host_diagnosis'],ensure_ascii=False,indent=2))+'</pre>'
-    report+='<p><a href="reports/native_results.json">Native JSON</a> | <a href="host.log">Host log</a> | <a href="python-tests.log">Offline test log</a> | <a href="RUN_IN_AUTOCAD.lsp">In-host fallback loader</a></p>'
+    report+='<p><a href="reports/bootstrap_trace.log">LISP bootstrap trace</a> | <a href="reports/bootstrap_error.txt">LISP bootstrap error</a> | <a href="reports/native_results.json">Native JSON</a> | <a href="host.log">Host log</a> | <a href="python-tests.log">Offline test log</a> | <a href="RUN_IN_AUTOCAD.lsp">In-host fallback loader</a></p>'
     (run/'RESULT.html').write_text(report,encoding='utf8')
     zip_path=run.parent/(run.name+'_diagnostics.zip')
     with zipfile.ZipFile(zip_path,'w',zipfile.ZIP_DEFLATED) as z:

@@ -1,0 +1,71 @@
+name: NSS Native Runner static checks
+on:
+  pull_request:
+    paths:
+      - 'work/NSS_AutoDebug_v0423/scripts/run_native.ps1'
+      - '.github/workflows/nss-native-runner-checks.yml'
+  push:
+    paths:
+      - 'work/NSS_AutoDebug_v0423/scripts/run_native.ps1'
+      - '.github/workflows/nss-native-runner-checks.yml'
+permissions:
+  contents: read
+jobs:
+  powershell-static:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell parser (must have zero errors)
+        shell: pwsh
+        run: |
+          $path = 'work/NSS_AutoDebug_v0423/scripts/run_native.ps1'
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'PowerShell AST: PASS'
+      - name: Read-only Inspect mode (no AutoCAD or Python)
+        shell: pwsh
+        run: |
+          & ./work/NSS_AutoDebug_v0423/scripts/run_native.ps1 -Mode Inspect
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: DesktopHost must refuse absent explicit opt-in
+        shell: pwsh
+        run: |
+          # Use a child PowerShell process: the expected error must not fail the CI shell.
+          $scriptPath = (Resolve-Path 'work/NSS_AutoDebug_v0423/scripts/run_native.ps1').Path
+          $stdout = Join-Path $env:RUNNER_TEMP 'native-gate-stdout.txt'
+          $stderr = Join-Path $env:RUNNER_TEMP 'native-gate-stderr.txt'
+          $child = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-File',('"' + $scriptPath + '"'),'-Mode','DesktopHost') -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if ($child.ExitCode -ne 2) { throw "Expected refusal with exit 2, got $($child.ExitCode)" }
+          $details = Get-Content -LiteralPath $stderr -Raw
+          if ($details -notmatch 'AllowAutoCADLaunch') { throw 'Refusal reason not present' }
+          Write-Host 'DesktopHost gate: PASS (expected rejection, no acad.exe started)'
+  bootstrap-trace-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test requirements
+        run: python -m pip install -r requirements-test.txt
+      - name: Compile trace generator and tests
+        run: |
+          python -B - <<'PY'
+          from pathlib import Path
+          for name in (
+              "work/NSS_AutoDebug_v0423/scripts/autodebug_v0421.py",
+              "work/NSS_AutoDebug_v0423/tests/test_bootstrap_trace.py",
+          ):
+              compile(Path(name).read_text(encoding="utf-8-sig"), name, "exec")
+              print("Syntax PASS:", name)
+          PY
+      - name: Run bootstrap trace generator tests
+        env:
+          PYTHONPATH: work/NSS_AutoDebug_v0423
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -B -m unittest discover -s work/NSS_AutoDebug_v0423/tests -p test_bootstrap_trace.py -v
