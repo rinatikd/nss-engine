@@ -163,7 +163,7 @@ export class ProviderJournal {
       identity:clone(identity),data:clone(data),prevHash:this.lastHash
     };
     record.hash=this.#recordHash(record);
-    const line=JSON.stringify(record)+'\\n';
+    const line=JSON.stringify(record)+'\n';
     const current=this.fs.existsSync(this.file)?this.fs.statSync(this.file).size:0;
     if(current+Buffer.byteLength(line,'utf8')>this.maxBytes)throw Error('PROVIDER_JOURNAL_FULL_FAIL_CLOSED');
     const fd=this.fs.openSync(this.file,'a',0o600);
