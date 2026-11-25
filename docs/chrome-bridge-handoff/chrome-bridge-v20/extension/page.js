@@ -202,13 +202,17 @@ export async function pageAction(name, args, expectedOrigin) {
           !Number.isFinite(Date.parse(args.expiresAt || '')) || Date.parse(args.expiresAt) <= Date.now()) {
         throw Error('PROVIDER_PREPARE_INPUT_INVALID');
       }
-      // Complete the read-only preflight before touching the composer. In
-      // particular, an uncalibrated/empty Send selector must never leave a
-      // partially prepared draft in the provider's input field.
-      const sendButtons = qa(A.send).filter(vis);
-      if (sendButtons.length !== 1 || sendButtons[0].disabled ||
-          sendButtons[0].getAttribute('aria-disabled') === 'true') {
-        throw Error('PROVIDER_SEND_BUTTON_NOT_READY');
+      // A calibrated Send target must be identifiable before touching the
+      // composer. Do not require it to be enabled yet: many chat providers
+      // disable Send while the composer is empty and enable it after input.
+      const sendSelector = typeof A.send === 'string' ? A.send.trim() : '';
+      if (!sendSelector) throw Error('PROVIDER_SEND_SELECTOR_UNCALIBRATED');
+      const initialSendButtons = qa(sendSelector).filter(vis);
+      if (initialSendButtons.length !== 1) throw Error('PROVIDER_SEND_SELECTOR_NOT_UNIQUE');
+      const initialSend = initialSendButtons[0];
+      if (initialSend.tagName.toLowerCase() !== 'button' &&
+          initialSend.getAttribute('role') !== 'button') {
+        throw Error('PROVIDER_SEND_SELECTOR_NOT_ACTIONABLE');
       }
       const composer = single(A.composer);
       if (!(composer instanceof HTMLTextAreaElement) && !composer.isContentEditable) throw Error('Unsupported composer');
@@ -241,6 +245,38 @@ export async function pageAction(name, args, expectedOrigin) {
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(textOf(composer)));
       const actualHash = [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, '0')).join('');
       if (actualHash !== args.payloadHash) throw Error('PROVIDER_PREPARE_HASH_MISMATCH');
+
+      // Revalidate readiness after input. If the provider did not activate a
+      // unique Send button, clear only the exact draft we just inserted and
+      // verify the cleanup. Never click Send from the prepare stage.
+      const readySendButtons = qa(sendSelector).filter(vis);
+      if (readySendButtons.length !== 1 || readySendButtons[0].disabled ||
+          readySendButtons[0].getAttribute('aria-disabled') === 'true') {
+        let cleared = false;
+        if (textOf(composer) === args.message.trim()) {
+          if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+            const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            Object.getOwnPropertyDescriptor(proto, 'value').set.call(composer, '');
+          } else {
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(composer);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            document.execCommand('delete');
+          }
+          composer.dispatchEvent(new InputEvent('input', {
+            bubbles: true, inputType: 'deleteContentBackward', data: null
+          }));
+          composer.dispatchEvent(new Event('change', { bubbles: true }));
+          cleared = textOf(composer) === '';
+        }
+        return {
+          error: cleared ? 'PROVIDER_SEND_BUTTON_NOT_READY' : 'PROVIDER_PREPARE_ROLLBACK_UNVERIFIED',
+          dispatchState: 'NOT_PERFORMED',
+          sideEffect: cleared ? 'composer-cleared' : 'composer-draft-may-remain'
+        };
+      }
       control();
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) {
         throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_PREPARE');
