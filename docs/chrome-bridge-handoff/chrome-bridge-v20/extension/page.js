@@ -6,6 +6,8 @@ export async function pageAction(name, args, expectedOrigin) {
   const qa = (s) => { try { return s ? [...document.querySelectorAll(s)] : []; } catch { return []; } };
   const one = (s) => qa(s).find(vis);
   let releaseActionLock = () => {};
+  let providerPrepareMutationStarted = false;
+  let providerCommitClickStarted = false;
   const conversationId = () => {
     const routes = {
       'https://claude.ai': /^\/chat\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
@@ -221,6 +223,7 @@ export async function pageAction(name, args, expectedOrigin) {
       if (qa(A.stop).some(vis)) throw Error('Agent is still generating');
       const baseline = replies().length;
       composer.focus();
+      providerPrepareMutationStarted = true;
       if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
         const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         Object.getOwnPropertyDescriptor(proto, 'value').set.call(composer, args.message);
@@ -319,6 +322,7 @@ export async function pageAction(name, args, expectedOrigin) {
       }
       // Consume the page-side prepare receipt before the irreversible click.
       delete window.__chromeBridgePreparedDraft;
+      providerCommitClickStarted = true;
       sendButtons[0].click();
       const clickedAt = new Date().toISOString();
       await sleep(1200);
@@ -380,6 +384,16 @@ export async function pageAction(name, args, expectedOrigin) {
     }
 
     throw Error('Unknown page command: ' + name);
-  } catch (e) { return { error: e.message }; } finally { releaseActionLock(); }
+  } catch (e) {
+    const failure = { error: e.message };
+    if (name === 'provider_prepare') {
+      failure.dispatchState = 'NOT_PERFORMED';
+      failure.sideEffect = providerPrepareMutationStarted ? 'composer-draft-state-unverified' : 'none';
+    } else if (name === 'provider_commit') {
+      failure.dispatchState = providerCommitClickStarted ? 'UNKNOWN' : 'NOT_PERFORMED';
+      if (providerCommitClickStarted) failure.sideEffect = 'send-click-may-have-fired';
+    }
+    return failure;
+  } finally { releaseActionLock(); }
 }
 
