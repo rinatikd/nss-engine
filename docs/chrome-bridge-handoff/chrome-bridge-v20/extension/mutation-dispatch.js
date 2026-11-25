@@ -17,7 +17,12 @@ async function inject(chromeApi, tabId, origin, name, args) {
     target:{ tabId }, func:pageAction, args:[name,args,origin]
   });
   const result = out?.[0]?.result;
-  if (!result || result.error) throw Error(result?.error || 'INJECTION_FAILED');
+  if (!result || result.error) {
+    const error = Error(result?.error || 'INJECTION_FAILED');
+    if (result?.dispatchState) error.dispatchState = result.dispatchState;
+    if (result?.sideEffect) error.sideEffect = result.sideEffect;
+    throw error;
+  }
   return result;
 }
 function exactCommand(cmd) {
@@ -130,6 +135,12 @@ async function dispatchProviderMutation(cmd, chromeApi, {
       }
       error.dispatchState=/^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|PROVIDER_TAB_BINDING_MISMATCH)$/.test(error.message)
         ? 'BLOCKED':'NOT_PERFORMED';
+    } else if(cmd.name==='provider_prepare' && !['BLOCKED','NOT_PERFORMED'].includes(error?.dispatchState)) {
+      // provider_prepare never clicks Send. Even if its browser response is
+      // lost after injection, submission is known not to have occurred.
+      // Preserve a bounded note about a possibly remaining unsent draft.
+      error.dispatchState='NOT_PERFORMED';
+      error.sideEffect=error.sideEffect||'composer-draft-state-unverified';
     }
     throw error;
   }
