@@ -25,12 +25,15 @@ if ($LASTEXITCODE -ne 0 -or -not $repoRoot) { throw 'Could not resolve repositor
 $candidateRelative=$candidate.Substring($repoRoot.Length).TrimStart('\').Replace('\','/')
 $permissionSource=Join-Path (Split-Path $candidate -Parent) 'extension\permissions.js'
 $cryptoSource=Join-Path (Split-Path $candidate -Parent) 'server\provider-transport-crypto.mjs'
+$failureSource=Join-Path (Split-Path $candidate -Parent) 'server\failure-contract.mjs'
 if (-not (Test-Path -LiteralPath $permissionSource -PathType Leaf)) { throw 'ProviderTransport dependency extension/permissions.js missing' }
 if (-not (Test-Path -LiteralPath $cryptoSource -PathType Leaf)) { throw 'ProviderTransport dependency server/provider-transport-crypto.mjs missing' }
+if (-not (Test-Path -LiteralPath $failureSource -PathType Leaf)) { throw 'ProviderTransport dependency server/failure-contract.mjs missing' }
 $critical=@(
   ($candidateRelative+'/consilium'),($candidateRelative+'/tests'),($candidateRelative+'/scripts'),
   ($candidateRelative+'/deployment'),'docs/chrome-bridge-handoff/chrome-bridge-v20/extension/permissions.js',
-  'docs/chrome-bridge-handoff/chrome-bridge-v20/server/provider-transport-crypto.mjs'
+  'docs/chrome-bridge-handoff/chrome-bridge-v20/server/provider-transport-crypto.mjs',
+  'docs/chrome-bridge-handoff/chrome-bridge-v20/server/failure-contract.mjs'
 )
 & $git.Source -C $repoRoot diff --quiet HEAD -- $critical
 if ($LASTEXITCODE -ne 0) { throw 'Consilium package source differs from committed content' }
@@ -63,6 +66,7 @@ try {
   $serverDir=Join-Path $temp 'server'
   New-Item -ItemType Directory -Path $serverDir -Force | Out-Null
   Copy-Item -LiteralPath $cryptoSource -Destination (Join-Path $serverDir 'provider-transport-crypto.mjs') -Force
+  Copy-Item -LiteralPath $failureSource -Destination (Join-Path $serverDir 'failure-contract.mjs') -Force
   $files=@(Get-ChildItem -LiteralPath $temp -Recurse -File | Sort-Object FullName)
   if ($files.Count -lt 15) { throw 'Consilium Lab package appears incomplete' }
   foreach($file in $files) {

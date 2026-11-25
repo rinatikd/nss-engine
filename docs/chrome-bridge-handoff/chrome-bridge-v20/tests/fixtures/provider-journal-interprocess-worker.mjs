@@ -7,12 +7,23 @@ const identity=(requestId,taskId)=>({requestId,taskId,providerId:'claude',tabId:
   origin:'https://claude.ai',conversationId:'conversation_001',epoch:7});
 const journal=options=>new ProviderJournal(stateDir,{hmacKey:key,bridgeEpoch,...options});
 const send=value=>new Promise((resolve,reject)=>{if(!process.send)return reject(Error('IPC_CHANNEL_REQUIRED'));process.send(value,e=>e?reject(e):resolve());});
+async function journalOnlyOutcomeWithBoundedRetry(journal,requestId,taskId){
+  // This test-only retry is limited to a journal append. Production lock acquisition
+  // still returns PROVIDER_JOURNAL_LOCK_BUSY after its fixed 62ms budget.
+  for(let attempt=0;;attempt++){
+    try{return journal.outcome(identity(requestId,taskId),'BLOCKED','INTERPROCESS_WRITER_TEST');}
+    catch(error){
+      if(error?.code!=='PROVIDER_JOURNAL_LOCK_BUSY'||attempt>=12)throw error;
+      await new Promise(resolve=>setTimeout(resolve,5+attempt*2));
+    }
+  }
+}
 const waitFor=type=>new Promise(resolve=>{const f=v=>{if(v?.type!==type)return;process.off('message',f);resolve(v);};process.on('message',f);});
 async function main(){
  if(mode==='writer'){
   const [tag,nText]=args,n=Number(nText);if(!/^[A-Za-z0-9_-]{1,20}$/.test(tag)||!Number.isSafeInteger(n)||n<1||n>500)throw Error('WRITER_ARGS');
   const j=journal();await send({type:'ready',pid:process.pid});await waitFor('go');
-  for(let i=0;i<n;i++){const x=String(i).padStart(4,'0');j.outcome(identity(tag+'_req_'+x,tag+'_task_'+x),'BLOCKED','INTERPROCESS_WRITER_TEST');await new Promise(r=>setTimeout(r,1));}
+  for(let i=0;i<n;i++){const x=String(i).padStart(4,'0');await journalOnlyOutcomeWithBoundedRetry(j,tag+'_req_'+x,tag+'_task_'+x);await new Promise(r=>setTimeout(r,1));}
   await send({type:'done',count:n});return;
  }
  if(mode==='reader'||mode==='single-writer'){
