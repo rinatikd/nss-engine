@@ -273,7 +273,7 @@ if ($TestFixture) {
   Require (Inside $state $root) 'Test fixture state must remain inside Lab root'
 } else {
   Require ($root -ieq 'C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20') 'Only the exact PR102 Lab server root may be targeted'
-  Require ($state -ieq 'C:\Engineering\ChromeBridge-PR102-17484-State') 'Only the exact PR102 Lab state root may be targeted'
+  Require ($state -ieq 'C:\Engineering\ChromeBridge-PR102-17485-State') 'Only the exact PR102 Lab state root may be targeted'
   Require (-not ((Get-Item -LiteralPath $root -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'PR102 Lab server root must not be a reparse point'
   Require (-not ((Get-Item -LiteralPath $state -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'PR102 Lab state root must not be a reparse point'
 }
