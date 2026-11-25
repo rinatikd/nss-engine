@@ -30,7 +30,8 @@ function Get-CutoverJournalHash {
   try {
     $hash = $sha.ComputeHash($Bytes)
     return ([BitConverter]::ToString($hash)).Replace('-','').ToLowerInvariant()
-  } finally {
+  }
+  finally {
     $sha.Dispose()
   }
 }
@@ -54,13 +55,14 @@ function Assert-CutoverJournalPath {
   $directory = Assert-CutoverJournalDirectory -Path ([IO.Path]::GetDirectoryName($full))
   $name = [IO.Path]::GetFileName($full)
   if ($name -notmatch '^(?<id>[0-9a-fA-F]{32})\.json$') { throw 'JOURNAL_FILENAME_INVALID' }
+  $transactionId = $Matches['id'].ToLowerInvariant()
   if ([IO.File]::Exists($full)) {
     $attributes = [IO.File]::GetAttributes($full)
     if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
       throw 'JOURNAL_FILE_REPARSE_POINT_DENIED'
     }
   }
-  return [pscustomobject]@{ Path=$full; Directory=$directory; TransactionId=$Matches.id.ToLowerInvariant() }
+  return [pscustomobject]@{ Path=$full; Directory=$directory; TransactionId=$transactionId }
 }
 
 function Enter-CutoverJournalLock {
@@ -74,7 +76,8 @@ function Enter-CutoverJournalLock {
   }
   try {
     return [IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
-  } catch [IO.IOException] {
+  }
+  catch [IO.IOException] {
     throw 'JOURNAL_LOCK_BUSY'
   }
 }
@@ -107,12 +110,31 @@ function Write-CutoverJournalEnvelope {
     if ($CreateOnly) {
       # File.Move fails when the destination already exists; no overwrite path.
       [IO.File]::Move($temporaryPath,$JournalPath)
-    } else {
-      if (![IO.File]::Exists($JournalPath)) { throw 'JOURNAL_FILE_MISSING_DURING_UPDATE' }
-      # Same-directory atomic replacement only. No non-atomic fallback is allowed.
-      [IO.File]::Replace($temporaryPath,$JournalPath,$null)
     }
-  } finally {
+    else {
+      if (![IO.File]::Exists($JournalPath)) { throw 'JOURNAL_FILE_MISSING_DURING_UPDATE' }
+      # Use an explicit same-directory backup path; this also retains the old record if replacement fails.
+      # Keep the backup in the same directory so replacement remains atomic.
+      $backupPath = Join-Path ([IO.Path]::GetDirectoryName($JournalPath)) (
+        '.cutover-' + [Guid]::NewGuid().ToString('N') + '.bak'
+      )
+      $replaceCompleted = $false
+      [IO.File]::Replace($temporaryPath,$JournalPath,$backupPath)
+      $replaceCompleted = $true
+
+      # The old file is retained only until the atomic replacement succeeds.
+      # Do not delete a backup left by an exceptional/ambiguous replace failure.
+      if ($replaceCompleted -and [IO.File]::Exists($backupPath)) {
+        try {
+          [IO.File]::Delete($backupPath)
+        }
+        catch {
+          # A cleanup failure must not invalidate the successfully replaced journal.
+        }
+      }
+    }
+  }
+  finally {
     if ($null -ne $stream) { $stream.Dispose() }
     if ([IO.File]::Exists($temporaryPath)) {
       try { [IO.File]::Delete($temporaryPath) } catch { }
@@ -120,52 +142,93 @@ function Write-CutoverJournalEnvelope {
   }
 }
 
+function Get-CutoverJournalStatus {
+  param([Parameter(Mandatory=$true)][string]$Phase)
+  switch ($Phase) {
+    'COMMITTED'       { return 'COMMITTED' }
+    'ROLLED_BACK'     { return 'ROLLED_BACK' }
+    'ABORTED'         { return 'ABORTED' }
+    'ROLLBACK_FAILED' { return 'FAILED' }
+    'STOP_FAILED'     { return 'FAILED' }
+    'START_FAILED'    { return 'FAILED' }
+    'UNKNOWN'         { return 'UNKNOWN' }
+    default           { return 'IN_PROGRESS' }
+  }
+}
+
 function Read-CutoverJournalRecord {
   param([Parameter(Mandatory=$true)][string]$JournalPath)
+
   $identity = Assert-CutoverJournalPath -JournalPath $JournalPath
   if (![IO.File]::Exists($identity.Path)) { throw 'JOURNAL_FILE_MISSING' }
+
   try {
     $bytes = [IO.File]::ReadAllBytes($identity.Path)
     $strictUtf8 = [System.Text.UTF8Encoding]::new($false,$true)
     $envelopeText = $strictUtf8.GetString($bytes)
     $envelope = ConvertFrom-Json -InputObject $envelopeText -ErrorAction Stop
+
     if ($envelope.formatVersion -ne 1) { throw 'JOURNAL_ENVELOPE_VERSION_UNSUPPORTED' }
+
     $payloadBytes = [Convert]::FromBase64String([string]$envelope.payloadBase64)
     $actualHash = Get-CutoverJournalHash -Bytes $payloadBytes
     if ($actualHash -cne [string]$envelope.payloadSha256) { throw 'JOURNAL_CHECKSUM_MISMATCH' }
+
     $payloadText = $strictUtf8.GetString($payloadBytes)
     $record = ConvertFrom-Json -InputObject $payloadText -ErrorAction Stop
-  } catch {
+  }
+  catch {
     if ($_.Exception.Message -match '^JOURNAL_') { throw }
     throw 'JOURNAL_CORRUPT_OR_UNREADABLE'
   }
+
   if ($record.schemaVersion -ne 1) { throw 'JOURNAL_SCHEMA_UNSUPPORTED' }
   if ([string]$record.transactionId -cne $identity.TransactionId) { throw 'JOURNAL_TRANSACTION_ID_MISMATCH' }
-  if (!$script:CutoverTransitions.ContainsKey([string]$record.phase)) { throw 'JOURNAL_PHASE_INVALID' }
-  if ([int]$record.sequence -lt 0 -or @($record.events).Count -ne ([int]$record.sequence + 1)) {
+  if ($script:CutoverTransitions.Keys -cnotcontains ([string]$record.phase)) { throw 'JOURNAL_PHASE_INVALID' }
+
+  $history = @($record.events)
+  if (
+    ($record.sequence -isnot [int] -and $record.sequence -isnot [long]) -or
+    [long]$record.sequence -lt 0 -or
+    [long]$record.sequence -gt 2147483646 -or
+    $history.Count -ne ([long]$record.sequence + 1)
+  ) {
     throw 'JOURNAL_SEQUENCE_OR_EVENT_COUNT_INVALID'
   }
+
   if ([string]$record.status -cne (Get-CutoverJournalStatus -Phase ([string]$record.phase))) {
     throw 'JOURNAL_STATUS_PHASE_MISMATCH'
   }
-  $history = @($record.events)
-  for ($index=0; $index -lt $history.Count; $index++) {
-    if ([int]$history[$index].sequence -ne $index) { throw 'JOURNAL_EVENT_SEQUENCE_INVALID' }
-    if ([string]$history[$index].resultCode -notmatch '^[A-Z0-9_]{1,64}
-}
 
-function Get-CutoverJournalStatus {
-  param([Parameter(Mandatory=$true)][string]$Phase)
-  switch ($Phase) {
-    'COMMITTED' { return 'COMMITTED' }
-    'ROLLED_BACK' { return 'ROLLED_BACK' }
-    'ABORTED' { return 'ABORTED' }
-    'ROLLBACK_FAILED' { return 'FAILED' }
-    'STOP_FAILED' { return 'FAILED' }
-    'START_FAILED' { return 'FAILED' }
-    'UNKNOWN' { return 'UNKNOWN' }
-    default { return 'IN_PROGRESS' }
+  for ($index = 0; $index -lt $history.Count; $index++) {
+    $event = $history[$index]
+    $eventPhase = [string]$event.phase
+
+    if (($event.sequence -isnot [int] -and $event.sequence -isnot [long]) -or [long]$event.sequence -ne $index) { throw 'JOURNAL_EVENT_SEQUENCE_INVALID' }
+    if ([string]$event.resultCode -cnotmatch '\A[A-Z0-9_]{1,64}\z') {
+      throw 'JOURNAL_EVENT_RESULT_CODE_INVALID'
+    }
+    if ($script:CutoverTransitions.Keys -cnotcontains $eventPhase) {
+      throw 'JOURNAL_EVENT_PHASE_INVALID'
+    }
+
+    if ($index -eq 0) {
+      if ($eventPhase -cne 'CREATED') { throw 'JOURNAL_INITIAL_PHASE_INVALID' }
+    }
+    else {
+      $previousPhase = [string]$history[$index - 1].phase
+      $allowed = @($script:CutoverTransitions[$previousPhase])
+      if ($allowed -cnotcontains $eventPhase) { throw 'JOURNAL_EVENT_TRANSITION_INVALID' }
+    }
   }
+
+  if ($history.Count -eq 0) { throw 'JOURNAL_HISTORY_FINAL_PHASE_MISMATCH' }
+  $lastEvent = $history[$history.Count - 1]
+  if ([string]$lastEvent.phase -cne [string]$record.phase) {
+    throw 'JOURNAL_HISTORY_FINAL_PHASE_MISMATCH'
+  }
+
+  return $record
 }
 
 function New-CutoverJournal {
@@ -179,21 +242,26 @@ function New-CutoverJournal {
     [Parameter(Mandatory=$true)][string]$NewSupervisorPath,
     [Parameter(Mandatory=$true)][string]$CandidateCommit
   )
+
   $directory = Assert-CutoverJournalDirectory -Path $JournalDirectory
   if ($CandidateCommit -notmatch '^[0-9a-fA-F]{40}$') { throw 'JOURNAL_CANDIDATE_COMMIT_INVALID' }
+
   $parsedGuid = [Guid]::Empty
   if (![Guid]::TryParseExact($TransactionId,'N',[ref]$parsedGuid)) { throw 'JOURNAL_TRANSACTION_ID_INVALID' }
+
   foreach ($path in @($OldSupervisorPath,$NewSupervisorPath)) {
     if ([string]::IsNullOrWhiteSpace($path) -or ![IO.Path]::IsPathRooted($path)) {
       throw 'JOURNAL_STACK_PATH_INVALID'
     }
   }
+
   $id = $parsedGuid.ToString('N')
   $journalPath = Join-Path $directory ($id + '.json')
   if ([IO.File]::Exists($journalPath)) { throw 'JOURNAL_TRANSACTION_ALREADY_EXISTS' }
 
   $now = [DateTime]::UtcNow.ToString('o')
   $initialEvent = [ordered]@{ sequence=0; phase='CREATED'; resultCode='TRANSACTION_CREATED'; atUtc=$now }
+
   $record = [ordered]@{
     schemaVersion = 1
     transactionId = $id
@@ -215,13 +283,22 @@ function New-CutoverJournal {
     }
     events = @($initialEvent)
   }
+
   $lock = Enter-CutoverJournalLock -JournalPath $journalPath
   try {
     Write-CutoverJournalEnvelope -JournalPath $journalPath -Record $record -CreateOnly
-  } finally {
+  }
+  finally {
     $lock.Dispose()
   }
-  return [pscustomobject]@{ JournalPath=$journalPath; TransactionId=$id; Sequence=0; Phase='CREATED'; Status='IN_PROGRESS' }
+
+  return [pscustomobject]@{
+    JournalPath = $journalPath
+    TransactionId = $id
+    Sequence = 0
+    Phase = 'CREATED'
+    Status = 'IN_PROGRESS'
+  }
 }
 
 function Get-CutoverJournal {
@@ -243,33 +320,41 @@ function Set-CutoverJournalPhase {
     )][string]$Phase,
     [Parameter(Mandatory=$true)][string]$ResultCode
   )
-  if ($ResultCode -notmatch '^[A-Z0-9_]{1,64}$') { throw 'JOURNAL_RESULT_CODE_INVALID' }
+
+  if ($ResultCode -cnotmatch '\A[A-Z0-9_]{1,64}\z') { throw 'JOURNAL_RESULT_CODE_INVALID' }
+
   $identity = Assert-CutoverJournalPath -JournalPath $JournalPath
   $lock = Enter-CutoverJournalLock -JournalPath $identity.Path
+
   try {
     $record = Read-CutoverJournalRecord -JournalPath $identity.Path
     if ([int]$record.sequence -ne $ExpectedSequence) { throw 'JOURNAL_SEQUENCE_CONFLICT' }
     if ($script:TerminalCutoverPhases -contains [string]$record.phase) { throw 'JOURNAL_TERMINAL_NO_TRANSITIONS' }
+
     $allowed = @($script:CutoverTransitions[[string]$record.phase])
-    if ($allowed -notcontains $Phase) { throw 'JOURNAL_PHASE_TRANSITION_INVALID' }
+    if ($allowed -cnotcontains $Phase) { throw 'JOURNAL_PHASE_TRANSITION_INVALID' }
 
     $nextSequence = [int]$record.sequence + 1
     $now = [DateTime]::UtcNow.ToString('o')
     $event = [ordered]@{ sequence=$nextSequence; phase=$Phase; resultCode=$ResultCode; atUtc=$now }
+
     $record.sequence = $nextSequence
     $record.phase = $Phase
     $record.status = Get-CutoverJournalStatus -Phase $Phase
     $record.updatedAtUtc = $now
     $record.events = @($record.events) + @($event)
+
     Write-CutoverJournalEnvelope -JournalPath $identity.Path -Record $record
+
     return [pscustomobject]@{
-      JournalPath=$identity.Path
-      TransactionId=[string]$record.transactionId
-      Sequence=$nextSequence
-      Phase=$Phase
-      Status=[string]$record.status
+      JournalPath = $identity.Path
+      TransactionId = [string]$record.transactionId
+      Sequence = $nextSequence
+      Phase = $Phase
+      Status = [string]$record.status
     }
-  } finally {
+  }
+  finally {
     $lock.Dispose()
   }
 }
@@ -277,22 +362,27 @@ function Set-CutoverJournalPhase {
 function Get-CutoverJournalRecoveryAssessment {
   [CmdletBinding()]
   param([Parameter(Mandatory=$true)][string]$JournalPath)
+
   $record = Read-CutoverJournalRecord -JournalPath $JournalPath
   $phase = [string]$record.phase
+
   if ($script:TerminalCutoverPhases -contains $phase) {
     $action = 'TERMINAL_NO_REPLAY'
-  } elseif ($phase -in @('CREATED','PREFLIGHT_VERIFIED')) {
+  }
+  elseif ($phase -in @('CREATED','PREFLIGHT_VERIFIED')) {
     $action = 'SAFE_TO_ABORT_NO_DESTRUCTIVE_INTENT_RECORDED'
-  } else {
+  }
+  else {
     $action = 'MANUAL_RECONCILIATION_REQUIRED_NO_AUTO_REPLAY'
   }
+
   return [pscustomobject]@{
-    TransactionId=[string]$record.transactionId
-    Sequence=[int]$record.sequence
-    Phase=$phase
-    Status=[string]$record.status
-    RecoveryAction=$action
-    AutomaticActionTaken=$false
+    TransactionId = [string]$record.transactionId
+    Sequence = [int]$record.sequence
+    Phase = $phase
+    Status = [string]$record.status
+    RecoveryAction = $action
+    AutomaticActionTaken = $false
   }
 }
 

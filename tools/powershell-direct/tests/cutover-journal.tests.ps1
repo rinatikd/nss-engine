@@ -8,6 +8,7 @@ $oldPath=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.e
 $newPath=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $candidate='1ab5b9098046028eb3b022b91f8e40ca7ff92596'
 $script:passed=0
+$script:journalTransactions=0
 
 function Assert-True {
  param([bool]$Condition,[string]$Message)
@@ -33,11 +34,30 @@ function Assert-Throws {
 }
 function New-TestJournal {
  $id=[Guid]::NewGuid().ToString('N')
- return New-CutoverJournal -JournalDirectory $root -TransactionId $id -OldSupervisorPid 1234 -OldTunnelPid 5678 -OldSupervisorPath $oldPath -NewSupervisorPath $newPath -CandidateCommit $candidate
+ $created=New-CutoverJournal -JournalDirectory $root -TransactionId $id -OldSupervisorPid 1234 -OldTunnelPid 5678 -OldSupervisorPath $oldPath -NewSupervisorPath $newPath -CandidateCommit $candidate
+ $script:journalTransactions++
+ return $created
 }
 function Move-Phase {
  param($Journal,[int]$Sequence,[string]$Phase,[string]$Code='TEST_PHASE')
  return Set-CutoverJournalPhase -JournalPath $Journal.JournalPath -ExpectedSequence $Sequence -Phase $Phase -ResultCode $Code
+}
+function Set-TestJournalPayload {
+ param([string]$JournalPath,[scriptblock]$Mutation)
+ $utf8=[System.Text.UTF8Encoding]::new($false)
+ $envelope=Get-Content -LiteralPath $JournalPath -Raw | ConvertFrom-Json
+ $payloadBytes=[Convert]::FromBase64String([string]$envelope.payloadBase64)
+ $payloadText=$utf8.GetString($payloadBytes)
+ $payload=ConvertFrom-Json -InputObject $payloadText -ErrorAction Stop
+ $null = & $Mutation $payload
+ $newPayloadJson=ConvertTo-Json -InputObject $payload -Depth 12 -Compress
+ $newPayloadBytes=$utf8.GetBytes($newPayloadJson)
+ $sha=[Security.Cryptography.SHA256]::Create()
+ try { $newHash=([BitConverter]::ToString($sha.ComputeHash($newPayloadBytes))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+ $envelope.payloadBase64=[Convert]::ToBase64String($newPayloadBytes)
+ $envelope.payloadSha256=$newHash
+ $envelopeJson=ConvertTo-Json -InputObject $envelope -Depth 4 -Compress
+ [IO.File]::WriteAllText($JournalPath,$envelopeJson,$utf8)
 }
 
 try {
@@ -54,6 +74,8 @@ try {
  # 2. Illegal transition and stale sequence must be rejected without mutation.
  Assert-Throws { Move-Phase $journal 0 'COMMITTED' } 'JOURNAL_PHASE_TRANSITION_INVALID'
  Assert-Throws { Move-Phase $journal 4 'PREFLIGHT_VERIFIED' } 'JOURNAL_SEQUENCE_CONFLICT'
+ Assert-Throws { Move-Phase $journal 0 'preflight_verified' } 'JOURNAL_PHASE_TRANSITION_INVALID'
+ Assert-Throws { Move-Phase $journal 0 'PREFLIGHT_VERIFIED' 'lowercase_result' } 'JOURNAL_RESULT_CODE_INVALID'
  $record=Get-CutoverJournal -JournalPath $journal.JournalPath
  Assert-Equal $record.phase 'CREATED' 'failed transition preserves phase'
 
@@ -115,12 +137,21 @@ try {
  [IO.File]::WriteAllText($corrupt.JournalPath,($envelope|ConvertTo-Json -Compress),[System.Text.UTF8Encoding]::new($false))
  Assert-Throws { Get-CutoverJournal -JournalPath $corrupt.JournalPath } 'JOURNAL_CHECKSUM_MISMATCH'
 
- # 8. A torn/unreadable journal is not repaired or replayed automatically.
+ # 8. Fractional sequence and noncanonical result codes are rejected even with a valid checksum.
+ $fractional=New-TestJournal
+ Set-TestJournalPayload -JournalPath $fractional.JournalPath -Mutation { param($payload) $payload.sequence=[double]0.5 }
+ Assert-Throws { Get-CutoverJournal -JournalPath $fractional.JournalPath } 'JOURNAL_SEQUENCE_OR_EVENT_COUNT_INVALID'
+ Set-TestJournalPayload -JournalPath $fractional.JournalPath -Mutation { param($payload) $payload.sequence=0; $payload.events[0].sequence=[double]0.5 }
+ Assert-Throws { Get-CutoverJournal -JournalPath $fractional.JournalPath } 'JOURNAL_EVENT_SEQUENCE_INVALID'
+ Set-TestJournalPayload -JournalPath $fractional.JournalPath -Mutation { param($payload) $payload.sequence=0; $payload.events[0].sequence=0; $payload.events[0].resultCode='lowercase_code' }
+ Assert-Throws { Get-CutoverJournal -JournalPath $fractional.JournalPath } 'JOURNAL_EVENT_RESULT_CODE_INVALID'
+
+ # 9. A torn/unreadable journal is not repaired or replayed automatically.
  $torn=New-TestJournal
  [IO.File]::WriteAllText($torn.JournalPath,'{"formatVersion":1',[System.Text.UTF8Encoding]::new($false))
  Assert-Throws { Get-CutoverJournal -JournalPath $torn.JournalPath } 'JOURNAL_CORRUPT_OR_UNREADABLE'
 
- # 9. A failed rollback is terminal and explicitly requires manual intervention.
+ # 10. A failed rollback is terminal and explicitly requires manual intervention.
  $failed=New-TestJournal
  $null=Move-Phase $failed 0 'PREFLIGHT_VERIFIED'
  $null=Move-Phase $failed 1 'OLD_STOP_INTENT'
@@ -134,7 +165,7 @@ try {
  [pscustomobject]@{
   Result='CUTOVER_JOURNAL_TESTS_PASS'
   Assertions=$passed
-  JournalTransactions=5
+  JournalTransactions=$script:journalTransactions
   AtomicReplaceVerified=$true
   ChecksumCorruptionDetected=$true
   InterruptedIntentRequiresManualReconciliation=$true
