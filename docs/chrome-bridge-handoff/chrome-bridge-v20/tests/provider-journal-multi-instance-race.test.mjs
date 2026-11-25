@@ -42,3 +42,24 @@ test('two preloaded journal instances append one monotonic hash chain',()=>{
     fs.rmSync(dir,{recursive:true,force:true});
   }
 });
+
+test('preloaded instances must not both begin an unresolved request on the same tab',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-tab-fence-'));
+  try {
+    const seed=makeJournal(dir);
+    const seedIdentity=identity('request_0001','task_000001');
+    seed.beginPrepare(seedIdentity,'a'.repeat(64));
+    seed.outcome(seedIdentity,'BLOCKED','TEST_SEED_TERMINAL');
+
+    // Both instances now preload the same epoch and terminal transaction.
+    const first=makeJournal(dir);
+    const second=makeJournal(dir);
+    const one=identity('request_0002','task_000002');
+    const two=identity('request_0003','task_000003');
+    first.beginPrepare(one,'b'.repeat(64));
+    assert.throws(()=>second.beginPrepare(two,'c'.repeat(64)),/PROVIDER_TAB_QUARANTINED/,
+      'the second instance must revalidate tab quarantine while holding the journal lock');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
