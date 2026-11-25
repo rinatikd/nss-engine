@@ -478,7 +478,12 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         const t = toolByName(params.name);
         if (!t) throw Error('Unknown tool');
         const args = params.arguments || {};
-        validateArgs(t, args);
+        try { validateArgs(t, args); }
+        catch (error) {
+          // Schema rejection occurs before the provider command reaches Chrome.
+          error.dispatchState = 'NOT_PERFORMED';
+          throw error;
+        }
         if (t.name === 'browser_open' && !['http:', 'https:'].includes(new URL(args.url).protocol)) throw Error('Only HTTP(S) URLs allowed');
         let data;
         if (t.kind === 'cli') {
@@ -487,7 +492,19 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
           catch (e) { throw Error(/^[A-Z_]+$/.test(e.message) ? e.message : 'CODEX_INTERNAL_ERROR'); }
         } else data = t.kind === 'ext' ? await enqueue(t.name, args) : await hub[t.name](args);
         result = { content: [{ type: 'text', text: JSON.stringify(data) }] };
-      } catch (e) { result = { isError: true, ...(params.name === 'provider_prepare' || params.name === 'provider_commit' ? { dispatchState: 'NOT_PERFORMED' } : {}), content: [{ type: 'text', text: e.message }] }; }
+      } catch (e) {
+        const providerMutation = params.name === 'provider_prepare' || params.name === 'provider_commit';
+        const validDispatchState = ['BLOCKED','NOT_PERFORMED','UNKNOWN'].includes(e?.dispatchState)
+          ? e.dispatchState : null;
+        // A provider_commit exception without a proven pre-dispatch state must
+        // remain UNKNOWN; it may have followed the irreversible Send click.
+        // provider_prepare is structurally no-send, so it cannot mean submitted.
+        const dispatchState = providerMutation
+          ? (validDispatchState || (params.name === 'provider_prepare' ? 'NOT_PERFORMED' : 'UNKNOWN'))
+          : null;
+        result = { isError: true, ...(dispatchState ? { dispatchState } : {}),
+          content: [{ type: 'text', text: e.message }] };
+      }
     } else return { jsonrpc: '2.0', id: id ?? null, error: { code: -32601, message: 'Method not found' } };
     return { jsonrpc: '2.0', id: id ?? null, result };
   }
