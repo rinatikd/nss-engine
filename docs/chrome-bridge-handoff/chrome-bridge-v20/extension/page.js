@@ -13,6 +13,7 @@ export async function pageAction(name, args, expectedOrigin) {
       'https://chat.deepseek.com': /^\/a\/chat\/s\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
       'https://grok.com': /^\/c\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
       'https://chat.qwen.ai': /^\/c\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
+      'https://www.kimi.ai': /^\/chat\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
     };
     return location.pathname.match(routes[location.origin] || /$a/)?.[1] || null;
   };
@@ -83,15 +84,35 @@ export async function pageAction(name, args, expectedOrigin) {
     if (name === 'browser_fill') {
       const e = single(args.selector);
       verifyExpect(e, args.expect);
+      if (typeof args.text !== 'string' || args.text.length > 10000) throw Error('INVALID_FILL_TEXT');
+      if (e.closest('input[type=password],input[type=file],[autocomplete=current-password],[autocomplete=one-time-code],[data-sensitive]')) throw Error('Sensitive input blocked');
+      if (e.getAttribute('aria-disabled') === 'true' || e.getAttribute('contenteditable') === 'false') throw Error('Input disabled');
       const isTA = e instanceof HTMLTextAreaElement;
-      if (!isTA && !(e instanceof HTMLInputElement)) throw Error('Expected text input or textarea');
-      if (e instanceof HTMLInputElement && !['text', 'search', 'email', 'url', 'tel'].includes(e.type)) throw Error('Sensitive or unsupported input type');
+      const isInput = e instanceof HTMLInputElement;
+      const isEditable = e.isContentEditable === true || e.getAttribute('contenteditable') === 'true';
+      if (!isTA && !isInput && !isEditable) throw Error('Expected text input, textarea or contenteditable');
+      if (isInput && !['text', 'search', 'email', 'url', 'tel'].includes(e.type)) throw Error('Sensitive or unsupported input type');
       if (/password|passwd|secret|token|credit|cardnumber|cc-number|one-time-code|cvv|cvc/i.test([e.name, e.id, e.autocomplete].join(' '))) throw Error('Sensitive field blocked');
-      const proto = isTA ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, 'value').set.call(e, args.text);
-      e.dispatchEvent(new Event('input', { bubbles: true }));
+      e.focus();
+      if (isEditable) {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(e);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.execCommand('delete');
+        const inserted = document.execCommand('insertText', false, args.text);
+        if (!inserted && args.text.length) throw Error('CONTENTEDITABLE_INSERT_UNSUPPORTED');
+        e.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: args.text }));
+      } else {
+        const proto = isTA ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(e, args.text);
+        e.dispatchEvent(new Event('input', { bubbles: true }));
+      }
       e.dispatchEvent(new Event('change', { bubbles: true }));
-      return { filled: true };
+      const actual = isEditable ? String(e.innerText || e.textContent || '') : e.value;
+      if (actual.trim() !== args.text.trim()) throw Error('FILL_TEXT_MISMATCH');
+      return { filled: true, elementType: isEditable ? 'contenteditable' : isTA ? 'textarea' : 'input', verified: true };
     }
 
     // ---------- агентские чаты (адаптер приходит в args.adapter) ----------
