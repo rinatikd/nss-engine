@@ -5,6 +5,11 @@ $ErrorActionPreference = 'Stop'
 
 $packageRoot = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $packageRoot 'deployment\upgrade-pr102-lab.ps1'
+$scriptSource = [IO.File]::ReadAllText($updater)
+if ($scriptSource.Contains('C:\Engineering\ChromeBridge-PR102-17484-State') -or
+    -not $scriptSource.Contains('C:\Engineering\ChromeBridge-PR102-17485-State')) {
+  throw 'Extension updater must target the dedicated PR102 17485 StateRoot, never the 17484 StateRoot'
+}
 $sourceExtension = Join-Path $packageRoot 'extension'
 $root = Join-Path $env:RUNNER_TEMP 'ChromeBridge-PR102-17485-Lab-TestFixture'
 $installed = Join-Path $root 'extension'
