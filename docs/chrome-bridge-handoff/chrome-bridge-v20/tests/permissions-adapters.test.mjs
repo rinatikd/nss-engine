@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { ControlGrants, CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_DURATION_MS } from '../extension/permissions.js';
 import { DEFAULT_ADAPTERS } from '../extension/adapters.js';
@@ -84,4 +85,36 @@ test('all six council origins are exact; lookalike hosts and HTTP are denied', (
  for (const value of ['https://grok.com.evil.test', 'http://grok.com', 'https://chat.qwen.ai.evil.test', 'http://chat.qwen.ai', 'https://www.kimi.ai.evil.test', 'http://www.kimi.ai'])
    assert.equal(providerForOrigin(new URL(value).origin), null);
  assert.deepEqual(Object.keys(DISCOVERY_ONLY_ORIGINS), ['https://cursor.com']);
+});
+
+
+test('Kimi conversation URL is bound to its exact /chat/<id> identity', async () => {
+ const previous = globalThis.location;
+ try {
+  globalThis.location = {
+   origin: 'https://www.kimi.ai',
+   pathname: '/chat/1a209c5f-be32-83cf-8000-09c5dd747803'
+  };
+  const context = await pageAction('agent_context', {}, location.origin);
+  assert.deepEqual(context, {
+   verified: true,
+   origin: 'https://www.kimi.ai',
+   conversationId: '1a209c5f-be32-83cf-8000-09c5dd747803'
+  });
+  location.pathname = '/home';
+  assert.deepEqual(await pageAction('agent_context', {}, location.origin), {
+   verified: false, origin: 'https://www.kimi.ai', conversationId: null
+  });
+ } finally {
+  if (previous === undefined) delete globalThis.location;
+  else globalThis.location = previous;
+ }
+});
+
+test('browser_fill supports verified contenteditable fields without clicking Send', () => {
+ const source = readFileSync(new URL('../extension/page.js', import.meta.url), 'utf8');
+ assert.match(source, /const isEditable = e\.isContentEditable === true \|\| e\.getAttribute\('contenteditable'\) === 'true'/);
+ assert.match(source, /document\.execCommand\('insertText', false, args\.text\)/);
+ assert.match(source, /if \(actual\.trim\(\) !== args\.text\.trim\(\)\) throw Error\('FILL_TEXT_MISMATCH'\)/);
+ assert.match(source, /return \{ filled: true, elementType: isEditable \? 'contenteditable'/);
 });
