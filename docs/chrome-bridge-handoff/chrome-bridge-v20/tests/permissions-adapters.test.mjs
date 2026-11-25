@@ -118,3 +118,58 @@ test('browser_fill supports verified contenteditable fields without clicking Sen
  assert.match(source, /if \(actual\.trim\(\) !== args\.text\.trim\(\)\) throw Error\('FILL_TEXT_MISMATCH'\)/);
  assert.match(source, /return \{ filled: true, elementType: isEditable \? 'contenteditable'/);
 });
+
+
+test('browser_fill actually inserts and verifies text in a contenteditable editor without sending', async () => {
+ const keys = ['location','document','window','HTMLTextAreaElement','HTMLInputElement','InputEvent'];
+ const previous = Object.fromEntries(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis,key)]));
+ const events = [];
+ const editor = {
+  disabled: false,
+  isContentEditable: true,
+  innerText: '',
+  textContent: '',
+  value: undefined,
+  name: '',
+  id: 'kimi-composer',
+  autocomplete: '',
+  getClientRects: () => [{}],
+  getAttribute: name => name === 'contenteditable' ? 'true' : null,
+  closest: () => null,
+  focus() {},
+  dispatchEvent(event) { events.push(event.type); return true; }
+ };
+ const selection = { removeAllRanges() {}, addRange() {} };
+ globalThis.location = { origin: 'https://www.kimi.ai', pathname: '/chat/1a209c5f-be32-83cf-8000-09c5dd747803' };
+ globalThis.HTMLTextAreaElement = class HTMLTextAreaElement {};
+ globalThis.HTMLInputElement = class HTMLInputElement {};
+ globalThis.InputEvent = class InputEvent extends Event {
+  constructor(type, options) { super(type, options); this.inputType = options.inputType; this.data = options.data; }
+ };
+ globalThis.window = { getSelection: () => selection };
+ globalThis.document = {
+  querySelectorAll: selector => selector === '.chat-input-editor' ? [editor] : [],
+  createRange: () => ({ selectNodeContents() {} }),
+  execCommand(command, _showUI, value) {
+   if (command === 'delete') { editor.innerText = ''; editor.textContent = ''; return true; }
+   if (command === 'insertText') { editor.innerText = value; editor.textContent = value; return true; }
+   return false;
+  }
+ };
+ try {
+  const result = await pageAction('browser_fill', {
+   selector: '.chat-input-editor',
+   text: 'Bridge diagnostic draft — do not send',
+   controlExpires: Date.now() + 60000
+  }, 'https://www.kimi.ai');
+  assert.deepEqual(result, { filled: true, elementType: 'contenteditable', verified: true });
+  assert.equal(editor.innerText, 'Bridge diagnostic draft — do not send');
+  assert.deepEqual(events, ['input','change']);
+  assert.equal(globalThis.window.__chromeBridgeMutationLock, undefined);
+ } finally {
+  for (const key of keys) {
+   if (previous[key]) Object.defineProperty(globalThis,key,previous[key]);
+   else delete globalThis[key];
+  }
+ }
+});
