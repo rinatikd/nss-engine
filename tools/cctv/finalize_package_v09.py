@@ -1,9 +1,8 @@
 from pathlib import Path
 import json,runpy,hashlib,csv,re,collections
 from tkk_integrity import tkk_block_fingerprints, verify_tkk_blocks
-p=Path(__file__).with_name('build_package_v09.py');s=p.read_text(encoding='utf-8')
-s=s.replace("s.arrow((375,137),(615,137),5,.4)","s.poly([(285,150),(285,158),(705,158),(705,150)],5,lw=.4,closed=False);s.arrow((705,158),(705,150),5,.4)")
-p.write_text(s,encoding='utf-8');api=runpy.run_path(str(p));root=api['ROOT'];out=api['OUT'];ezdxf=api['ezdxf']
+# The builder is only executed here; it is never read back, patched or rewritten.
+p=Path(__file__).with_name('build_package_v09.py');api=runpy.run_path(str(p));root=api['ROOT'];out=api['OUT'];ezdxf=api['ezdxf']
 source=ezdxf.readfile(api['SOURCE']);sig=api['tkk_record'](source)
 source_blocks=tkk_block_fingerprints(source,api['TKK'])
 for v in ['34_chain','47_corner_proposal']:
