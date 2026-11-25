@@ -16,7 +16,7 @@ $names = @(
   'transport-host.html', 'control.html', 'control.js', 'style.css',
   'connection-check.js', 'browser-key-store.js', 'permissions.js',
   'approval-broker.js', 'approval-session.js',
-  'mutation-dispatch.js', 'background-control-grants.js',
+  'mutation-dispatch.js', 'failure-contract.js', 'background-control-grants.js',
   'session-authorization.js',
   'adapters.js', 'visual-snapshot.js', 'page.js', 'secrets.js',
   'control-targets.js', 'coordinator-ack.js', 'background-mode-reconnect.js',

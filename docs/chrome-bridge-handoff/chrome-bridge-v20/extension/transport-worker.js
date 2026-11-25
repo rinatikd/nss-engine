@@ -1,4 +1,5 @@
 import { BridgeTransport } from './transport-engine.js';
+import { makeFailure, normalizeFailure } from './failure-contract.js';
 
 // Worker executes NO browser actions. Only the service worker can dispatch
 // permission-gated commands; this worker owns the HTTP poll connection.
@@ -19,7 +20,9 @@ function delegate(command) {
     const remaining=Math.max(1,Math.min(120000,expires-Date.now()+1000));
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(Error('DISPATCH_TIMEOUT'));
+      const error=Error('DISPATCH_TIMEOUT');
+      error.failure=makeFailure('TRANSPORT','DISPATCH_TIMEOUT');
+      reject(error);
     }, remaining);
     pending.set(id,{resolve,reject,timer});
     send({type:'dispatch',id,command});
@@ -51,6 +54,8 @@ self.onmessage = (event) => {
       const error=Error(msg.error);
       error.dispatchState=['BLOCKED','NOT_PERFORMED'].includes(msg.dispatchState)
         ? msg.dispatchState : 'UNKNOWN';
+      error.failure=normalizeFailure(msg.failure,{stage:'TRANSPORT',code:'DISPATCH_FAILED'});
+      if(typeof msg.sideEffect==='string')error.sideEffect=msg.sideEffect;
       p.reject(error);
     } else p.resolve(msg.result);
   }

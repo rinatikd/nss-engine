@@ -194,3 +194,19 @@ test('stop cannot attest clean while another request on the same tab remains unk
     assert.equal(j.status(other).state,'UNKNOWN');
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
+
+
+test('provider outcomes persist the bounded failure object through status and event history',()=>{
+  const dir=tmp();
+  try {
+    const j=journal(dir);
+    const outcome=j.outcome(identity,'UNKNOWN','PROVIDER_COMMIT_TIMEOUT',{
+      sideEffect:'send-click-may-have-fired',
+      failure:{schemaVersion:1,stage:'TRANSPORT',code:'PROVIDER_COMMIT_TIMEOUT',durationMs:37}
+    });
+    assert.deepEqual(outcome.failure,{schemaVersion:1,stage:'TRANSPORT',code:'PROVIDER_COMMIT_TIMEOUT',durationMs:37});
+    assert.deepEqual(j.status(identity).failure,outcome.failure);
+    assert.equal(j.status(identity).sideEffect,'send-click-may-have-fired');
+    assert.deepEqual(j.events().at(-1).failure,outcome.failure);
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});

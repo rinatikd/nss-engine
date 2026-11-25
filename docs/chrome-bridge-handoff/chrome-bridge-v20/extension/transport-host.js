@@ -1,3 +1,5 @@
+import { makeFailure } from './failure-contract.js';
+
 // Offscreen document genuinely uses the WORKERS reason: it spawns a Web Worker.
 // It has runtime API access only. It never reads chrome.storage or user tabs.
 const worker = new Worker('./transport-worker.js', { type:'module' });
@@ -12,7 +14,8 @@ worker.onmessage = async ({data}) => {
       });
       worker.postMessage({type:'dispatch-result',id:data.id,...result});
     } catch (error) {
-      worker.postMessage({type:'dispatch-result',id:data.id,error:error.message || 'DISPATCH_FAILED'});
+      worker.postMessage({type:'dispatch-result',id:data.id,error:'COORDINATOR_UNAVAILABLE',
+        dispatchState:'UNKNOWN',failure:makeFailure('TRANSPORT','COORDINATOR_UNAVAILABLE')});
     }
   }
 };

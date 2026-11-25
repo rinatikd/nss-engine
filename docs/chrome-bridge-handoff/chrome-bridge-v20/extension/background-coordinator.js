@@ -3,6 +3,7 @@ import { ApprovalSession } from './approval-session.js';
 import { dispatchMutation } from './mutation-dispatch.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
 import { SessionAuthorization } from './session-authorization.js';
+import { normalizeFailure } from './failure-contract.js';
 
 const PATH = 'transport-host.html';
 let creating = null;
@@ -140,6 +141,7 @@ export function installBackgroundCoordinator(chromeApi) {
         respond({error:'OFFSCREEN_CONTEXT_REQUIRED'}); return false;
       }
       const run = async () => {
+        const failureStartedAt=Date.now();
         const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired} =
           await chromeApi.storage.local.get([
             'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
@@ -191,7 +193,10 @@ export function installBackgroundCoordinator(chromeApi) {
         error:e.message,
         // Only the trusted coordinator can assert no DOM execution occurred.
         dispatchState:['BLOCKED','NOT_PERFORMED'].includes(e.dispatchState)
-          ? e.dispatchState : 'UNKNOWN'
+          ? e.dispatchState : 'UNKNOWN',
+        failure:normalizeFailure(e?.failure,{stage:'PRECHECK',
+          code:/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message||'')?e.message:'COORDINATOR_DISPATCH_FAILED',
+          startedAt:failureStartedAt})
       }));
       return true;
     }

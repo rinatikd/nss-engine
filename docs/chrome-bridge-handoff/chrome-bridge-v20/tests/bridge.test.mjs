@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createBridge, loadConfig, resolveSessionScope } from '../server/bridge.mjs';
+import { createBridge, loadConfig, resolveSessionScope, BUILD_INFO, VERSION } from '../server/bridge.mjs';
 import { tools as registeredTools } from '../server/tools.mjs';
 import { validateArgs } from '../server/schema.mjs';
 import { createChromeBridgeProviderTransport } from '../consilium-control-room/consilium/chrome-bridge-provider-adapter.mjs';
@@ -20,6 +20,26 @@ async function setup(opts = {}) {
   const poll = async () => (await (await post('/bridge/poll', {}, config.browserToken)).json()).command;
   return { server, base, stateDir, post, rpc, poll, close: () => new Promise((r) => server.close(r)).then(() => { if (cleanupStateDir) fs.rmSync(stateDir, { recursive: true, force: true }); }) };
 }
+
+test('MCP tool failures expose a bounded versioned failure contract',async()=>{
+  const s=await setup();
+  try {
+    const unknown=await s.rpc('missing_tool');
+    assert.equal(unknown.result.isError,true);
+    assert.deepEqual(Object.keys(unknown.result.failure).sort(),['code','durationMs','schemaVersion','stage']);
+    assert.equal(unknown.result.failure.schemaVersion,1);
+    assert.equal(unknown.result.failure.stage,'VALIDATION');
+    assert.equal(unknown.result.failure.code,'UNKNOWN_TOOL');
+    assert.ok(Number.isSafeInteger(unknown.result.failure.durationMs));
+    assert.ok(unknown.result.failure.durationMs>=0);
+    const invalid=await s.rpc('browser_read',{tabId:-1});
+    assert.equal(invalid.result.isError,true);
+    assert.equal(invalid.result.failure.schemaVersion,1);
+    assert.equal(invalid.result.failure.stage,'VALIDATION');
+    assert.equal(invalid.result.failure.code,'ARGUMENT_VALIDATION_FAILED');
+    assert.doesNotMatch(JSON.stringify(invalid.result.failure),/Invalid argument|tabId/);
+  } finally { await s.close(); }
+});
 
 test('auth, origin, host and tool validation', async () => {
   const s = await setup();
@@ -429,4 +449,29 @@ test('Chrome Bridge ProviderTransport adapter completes a synthetic prepare/comm
     await responder;
     await s.close();
   }
+});
+
+test('runtime MCP diagnostics expose a verifiable registry fingerprint',async()=>{
+  const s=await setup();
+  try {
+    const browserStatus=JSON.parse((await s.rpc('browser_status')).result.content[0].text);
+    assert.deepEqual(browserStatus.buildInfo,BUILD_INFO);
+    assert.equal(browserStatus.buildInfo.version,VERSION);
+    assert.equal(browserStatus.buildInfo.toolCount,registeredTools.length);
+    assert.match(browserStatus.buildInfo.toolRegistrySha256,/^[a-f0-9]{64}$/);
+    const expectedDigest=crypto.createHash('sha256')
+      .update(JSON.stringify(registeredTools.map(({kind,...tool})=>tool)),'utf8').digest('hex');
+    assert.equal(browserStatus.buildInfo.toolRegistrySha256,expectedDigest);
+
+    const initialize=await s.post('/mcp',{
+      jsonrpc:'2.0',id:22,method:'initialize',params:{protocolVersion:'2025-06-18'}
+    }).then(response=>response.json());
+    assert.match(initialize.result.instructions,/registryToolCount=/);
+    assert.ok(initialize.result.instructions.includes(expectedDigest));
+
+    const discovery=await s.post('/mcp',{
+      jsonrpc:'2.0',id:23,method:'server/discover'
+    }).then(response=>response.json());
+    assert.deepEqual(discovery.result.buildInfo,BUILD_INFO);
+  } finally { await s.close(); }
 });

@@ -1,16 +1,19 @@
 import { ProviderTransport, PROVIDER_TRANSPORT_V1 } from './provider-transport-v1.mjs';
 import { deriveProviderJournalKey, verifyQuiescence } from '../../server/provider-transport-crypto.mjs';
+import { normalizeFailure, normalizeProviderSideEffect } from '../../server/failure-contract.mjs';
 
 const ID = /^[A-Za-z0-9_-]{8,100}$/;
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{2,80}$/;
 
 export class ChromeBridgeAdapterError extends Error {
-  constructor(code, { dispatchState = null, ambiguous = false } = {}) {
+  constructor(code, { dispatchState = null, ambiguous = false, failure = null, sideEffect = null } = {}) {
     super(code);
     this.name = 'ChromeBridgeAdapterError';
     this.code = code;
     this.dispatchState = dispatchState;
     this.ambiguous = ambiguous;
+    this.failure = failure;
+    this.sideEffect = normalizeProviderSideEffect(sideEffect);
   }
 }
 
@@ -45,7 +48,9 @@ function rpcResult(payload) {
       dispatchState: ['BLOCKED', 'NOT_PERFORMED'].includes(payload.result.dispatchState)
         ? payload.result.dispatchState : null,
       ambiguous: payload.result.dispatchState !== 'BLOCKED' &&
-        payload.result.dispatchState !== 'NOT_PERFORMED'
+        payload.result.dispatchState !== 'NOT_PERFORMED',
+      failure: normalizeFailure(payload.result.failure,{stage:'BRIDGE',code}),
+      sideEffect: normalizeProviderSideEffect(payload.result.sideEffect)
     });
   }
   if (typeof block?.text !== 'string') throw new ChromeBridgeAdapterError('BRIDGE_TOOL_RESPONSE_MISSING', { ambiguous: true });
@@ -122,13 +127,18 @@ export class ChromeBridgeProviderAdapter {
     try {
       return await this.callTool(name, { ...identity, ...args }, identity.requestId);
     } catch (error) {
-      if (error?.dispatchState === 'BLOCKED') return { state: 'BLOCKED', identity, reasonCode: error.code };
-      if (error?.dispatchState === 'NOT_PERFORMED') return { state: 'NOT_PERFORMED', identity, reasonCode: error.code };
+      const metadata={
+        ...(error?.failure?{failure:error.failure}:{}),
+        ...(normalizeProviderSideEffect(error?.sideEffect)?{sideEffect:normalizeProviderSideEffect(error.sideEffect)}:{})
+      };
+      if (error?.dispatchState === 'BLOCKED') return { state: 'BLOCKED', identity, reasonCode: error.code, ...metadata };
+      if (error?.dispatchState === 'NOT_PERFORMED') return { state: 'NOT_PERFORMED', identity, reasonCode: error.code, ...metadata };
       return {
         state: 'UNKNOWN',
         identity,
         quarantineId: 'quarantine-' + identity.requestId,
-        reasonCode: SAFE_CODE.test(error?.code || '') ? error.code : 'BRIDGE_OUTCOME_UNKNOWN'
+        reasonCode: SAFE_CODE.test(error?.code || '') ? error.code : 'BRIDGE_OUTCOME_UNKNOWN',
+        ...metadata
       };
     }
   }
@@ -149,7 +159,8 @@ export class ChromeBridgeProviderAdapter {
     try { return await this.callTool('provider_status', identity, identity.requestId); }
     catch (error) {
       return { state: 'UNKNOWN', identity, quarantineId: 'quarantine-' + identity.requestId,
-        reasonCode: SAFE_CODE.test(error?.code || '') ? error.code : 'BRIDGE_STATUS_UNKNOWN' };
+        reasonCode: SAFE_CODE.test(error?.code || '') ? error.code : 'BRIDGE_STATUS_UNKNOWN',
+        ...(error?.failure?{failure:error.failure}:{}) };
     }
   }
 
@@ -157,7 +168,8 @@ export class ChromeBridgeProviderAdapter {
     try { return await this.callTool('provider_reply_wait', { ...identity, timeoutSec }, identity.requestId); }
     catch (error) {
       return { state: 'UNKNOWN', identity, quarantineId: 'quarantine-' + identity.requestId,
-        reasonCode: SAFE_CODE.test(error?.code || '') ? error.code : 'BRIDGE_REPLY_UNKNOWN' };
+        reasonCode: SAFE_CODE.test(error?.code || '') ? error.code : 'BRIDGE_REPLY_UNKNOWN',
+        ...(error?.failure?{failure:error.failure}:{}) };
     }
   }
 

@@ -209,6 +209,21 @@ test('unknown outcome after DOM send injection remains UNKNOWN',async()=>{
  assert.equal(f.state.approvalCount,1);
 });
 
+test('mutation failures expose stage-aware bounded failure metadata',async()=>{
+ const f=fixture();
+ f.chromeApi.permissions.contains=async()=>{throw Error('secret DOM and URL detail');};
+ await assert.rejects(execute(cmd('agent_send'),f),e=>{
+   assert.equal(e.dispatchState,'NOT_PERFORMED');
+   assert.deepEqual(Object.keys(e.failure).sort(),['code','durationMs','schemaVersion','stage']);
+   assert.equal(e.failure.schemaVersion,1);
+   assert.equal(e.failure.stage,'PRECHECK');
+   assert.equal(e.failure.code,'MUTATION_PRECHECK_FAILED');
+   assert.ok(Number.isSafeInteger(e.failure.durationMs));
+   return true;
+ });
+ assert.equal(f.state.injections.includes('agent_send'),false);
+});
+
 test('unclassified preflight errors emit safe PRECHECK code and never send',async()=>{
  const f=fixture();
  f.chromeApi.permissions.contains=async()=>{ throw Error('unsafe details from browser'); };
@@ -397,4 +412,73 @@ test('Chat-approved session fails closed on wrong epoch, origin, capability or r
    assert.equal(f.state.injections.includes('agent_send'),false);
    assert.equal(f.state.approvalCount,0);
  }
+});
+
+
+test('provider_prepare failures after a lost no-send receipt stay NOT_PERFORMED',async()=>{
+  for(const mode of ['explicit-preflight-failure','lost-injection-response']) {
+    const f=providerFixture();
+    const original=f.chromeApi.scripting.executeScript;
+    f.chromeApi.scripting.executeScript=async payload=>{
+      if(payload.args[0]==='provider_prepare') {
+        if(mode==='explicit-preflight-failure') return [{result:{
+          error:'PROVIDER_SEND_BUTTON_NOT_READY',
+          dispatchState:'NOT_PERFORMED',
+          sideEffect:'composer-cleared'
+        }}];
+        throw Error('INJECTION_RESPONSE_LOST');
+      }
+      return original(payload);
+    };
+    await assert.rejects(dispatchMutation(providerCommand(),f.chromeApi,{
+      approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'prepare-no-send'
+    }),error=>{
+      assert.equal(error.dispatchState,'NOT_PERFORMED',mode);
+      if(mode==='explicit-preflight-failure') assert.equal(error.sideEffect,'composer-cleared');
+      else assert.equal(error.sideEffect,'composer-draft-state-unverified');
+      return true;
+    });
+    assert.equal(f.state.injections.includes('provider_commit'),false);
+    assert.equal(f.state.approvalCount,1);
+  }
+});
+
+test('provider_commit page receipt classifies pre-click failure as NOT_PERFORMED',async()=>{
+  const f=providerFixture();
+  const original=f.chromeApi.scripting.executeScript;
+  f.chromeApi.scripting.executeScript=async payload=>{
+    if(payload.args[0]==='provider_commit') return [{result:{
+      error:'PROVIDER_PREPARED_DRAFT_MISMATCH',
+      dispatchState:'NOT_PERFORMED'
+    }}];
+    return original(payload);
+  };
+  await assert.rejects(dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{
+    approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'commit-preclick'
+  }),error=>{
+    assert.equal(error.message,'PROVIDER_PREPARED_DRAFT_MISMATCH');
+    assert.equal(error.dispatchState,'NOT_PERFORMED');
+    return true;
+  });
+});
+
+test('provider_commit page receipt after click boundary remains UNKNOWN and carries side effect',async()=>{
+  const f=providerFixture();
+  const original=f.chromeApi.scripting.executeScript;
+  f.chromeApi.scripting.executeScript=async payload=>{
+    if(payload.args[0]==='provider_commit') return [{result:{
+      error:'SEND_CLICK_RESULT_UNVERIFIED',
+      dispatchState:'UNKNOWN',
+      sideEffect:'send-click-may-have-fired'
+    }}];
+    return original(payload);
+  };
+  await assert.rejects(dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{
+    approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'commit-afterclick'
+  }),error=>{
+    assert.equal(error.message,'SEND_CLICK_RESULT_UNVERIFIED');
+    assert.equal(error.dispatchState,'UNKNOWN');
+    assert.equal(error.sideEffect,'send-click-may-have-fired');
+    return true;
+  });
 });

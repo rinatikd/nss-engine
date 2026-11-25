@@ -1,4 +1,5 @@
 import { bridgeHttpErrorCode } from './connection-check.js';
+import { makeFailure, normalizeFailure } from './failure-contract.js';
 
 // Browser transport independent of a UI document. No Chrome UI or permission
 // APIs here: the host owns command execution and approval requirements.
@@ -98,22 +99,29 @@ export class BridgeTransport {
         this.status('connected');
         if (poll.command) {
           const cmd = poll.command;
-          let result, error, dispatchState;
+          let result, error, dispatchState, failure, sideEffect;
+          const commandStartedAt=Date.now();
           if (!Number.isFinite(cmd.expires) || Date.now() >= cmd.expires) {
             error = 'Command expired';
+            dispatchState = 'NOT_PERFORMED';
+            failure = makeFailure('TRANSPORT','COMMAND_EXPIRED',commandStartedAt);
           } else {
             try { result = await this.execute(cmd); }
             catch (e) {
               error = e?.message || 'Command failed';
               dispatchState=['BLOCKED','NOT_PERFORMED'].includes(e?.dispatchState)
                 ? e.dispatchState : 'UNKNOWN';
+              failure=normalizeFailure(e?.failure,{stage:'TRANSPORT',
+                code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error)?error:'DISPATCH_FAILED',
+                startedAt:commandStartedAt});
+              sideEffect=typeof e?.sideEffect==='string'?e.sideEffect:undefined;
             }
           }
           // A non-idempotent command is never re-executed just because a result
           // acknowledgement was lost. The server must handle UNKNOWN outcomes.
           if (!this.active || gen !== this.generation) break;
           try {
-            await this.post('/bridge/result', { id: cmd.id, result, error, dispatchState }, abort, 10000);
+            await this.post('/bridge/result', { id: cmd.id, result, error, dispatchState, failure, sideEffect }, abort, 10000);
           } catch (e) {
             this.status('recovering', 'RESULT_ACK_UNKNOWN');
             // Do not repeat the command or the result after an uncertain ACK.

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { signQuiescence } from './provider-transport-crypto.mjs';
+import { normalizeFailure, normalizeProviderSideEffect } from './failure-contract.mjs';
 
 const ID=/^[A-Za-z0-9_-]{8,100}$/;
 const CONVERSATION_ID=/^[A-Za-z0-9_-]{8,160}$/;
@@ -39,6 +40,22 @@ function hash(key,value) {
   return crypto.createHmac('sha256',key).update(value,'utf8').digest('hex');
 }
 function tokenHash(token) { return crypto.createHash('sha256').update(token,'utf8').digest('hex'); }
+const LOCK_RETRY_DELAYS_MS = Object.freeze([2,4,8,16,32]);
+const LOCK_WAIT_CELL = new Int32Array(new SharedArrayBuffer(4));
+function acquireJournalLock(fsOps,lockFile) {
+  for(let attempt=0;;attempt++){
+    try{return fsOps.openSync(lockFile,'wx',0o600);}
+    catch(error){
+      if(error?.code!=='EEXIST')throw error;
+      if(attempt>=LOCK_RETRY_DELAYS_MS.length){
+        const busy=new Error('PROVIDER_JOURNAL_LOCK_BUSY');
+        busy.code='PROVIDER_JOURNAL_LOCK_BUSY';
+        throw busy;
+      }
+      Atomics.wait(LOCK_WAIT_CELL,0,0,LOCK_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+}
 
 export class ProviderJournal {
   constructor(stateDir,{hmacKey,bridgeEpoch=crypto.randomUUID(),fsOps=fs,now=Date.now,maxBytes=MAX_BYTES}={}) {
@@ -46,19 +63,22 @@ export class ProviderJournal {
     if(!Buffer.isBuffer(hmacKey)||hmacKey.length<32)throw Error('PROVIDER_JOURNAL_KEY_REQUIRED');
     if(!ID.test(bridgeEpoch))throw Error('PROVIDER_BRIDGE_EPOCH_INVALID');
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1024||maxBytes>64*1024*1024)throw Error('PROVIDER_JOURNAL_SIZE_INVALID');
-    this.fs=fsOps;this.now=now;this.key=Buffer.from(hmacKey);this.bridgeEpoch=bridgeEpoch;this.maxBytes=maxBytes;
+    this.fs=fsOps;this.now=now;this.key=Buffer.from(hmacKey);this.bridgeEpoch=bridgeEpoch;this.maxBytes=maxBytes;this.lockDepth=0;
     this.fs.mkdirSync(stateDir,{recursive:true,mode:0o700});
     this.file=path.join(stateDir,'provider-transactions.jsonl');
     this.lockFile=this.file+'.lock';
     this.records=[];this.transactions=new Map();this.tabEpochs=new Map();this.lastHash='0'.repeat(64);
-    this.#load();
-    // A restart invalidates every in-flight/prepared transaction. Never infer
-    // that a prior browser click did not happen merely because its ACK is gone.
-    for(const tx of this.transactions.values()) {
-      if(['PREPARING','PREPARED','COMMITTING'].includes(tx.state)) {
-        this.outcome(tx.identity,'UNKNOWN','BRIDGE_RESTART');
+    // Recovery is itself a state transition. Acquire the inter-process lock
+    // before loading the journal and deciding which transactions were in flight;
+    // otherwise a stale constructor snapshot could downgrade a later SENT state
+    // to UNKNOWN after another instance completed the commit.
+    this.#withLock(()=>{
+      for(const tx of [...this.transactions.values()]) {
+        if(['PREPARING','PREPARED','COMMITTING'].includes(tx.state)) {
+          this.outcome(tx.identity,'UNKNOWN','BRIDGE_RESTART');
+        }
       }
-    }
+    });
   }
 
   #recordHash(record) {
@@ -118,7 +138,9 @@ export class ProviderJournal {
     } else if(type==='transaction.outcome') {
       const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
       this.transactions.set(identity.requestId,{...old,state:data.state,reasonCode:data.reasonCode||null,
-        quarantineId:data.quarantineId||null,nextEpoch:data.nextEpoch||null});
+        quarantineId:data.quarantineId||null,nextEpoch:data.nextEpoch||null,
+        ...(typeof data.sideEffect==='string'?{sideEffect:data.sideEffect}:{}),
+        ...(data.failure?{failure:normalizeFailure(data.failure,{stage:'JOURNAL',code:data.reasonCode||'PROVIDER_OUTCOME'})}:{})});
     } else if(type==='stop.clean') {
       const old=this.transactions.get(identity.requestId)||{identity:clone(identity)};
       this.transactions.set(identity.requestId,{...old,state:'STOPPED_CLEAN',quiescence:clone(data.quiescence),nextEpoch:data.nextEpoch});
@@ -131,29 +153,50 @@ export class ProviderJournal {
     }
   }
 
-  #append(type,identity,data) {
-    const lock=this.fs.openSync(this.lockFile,'wx',0o600);
-    let fd;
+  #withLock(fn) {
+    if(this.lockDepth>0)return fn();
+    const lock=acquireJournalLock(this.fs,this.lockFile);
     try {
       this.fs.writeFileSync(lock,JSON.stringify({pid:process.pid,at:new Date(this.now()).toISOString()}));
       this.fs.fsyncSync(lock);
-      const record={
-        seq:this.records.length+1,eventId:crypto.randomUUID(),type,
-        identity:clone(identity),data:clone(data),prevHash:this.lastHash
-      };
-      record.hash=this.#recordHash(record);
-      const line=JSON.stringify(record)+'\n';
-      const current=this.fs.existsSync(this.file)?this.fs.statSync(this.file).size:0;
-      if(current+Buffer.byteLength(line,'utf8')>this.maxBytes)throw Error('PROVIDER_JOURNAL_FULL_FAIL_CLOSED');
-      fd=this.fs.openSync(this.file,'a',0o600);
-      this.fs.writeFileSync(fd,line,'utf8');this.fs.fsyncSync(fd);this.fs.closeSync(fd);fd=undefined;
-      this.#apply(record);this.records.push(record);this.lastHash=record.hash;
-      return clone(record);
+      this.lockDepth=1;
+      // Refresh every projection while holding the inter-process lock. Decisions
+      // made by callers inside fn() therefore use the same committed journal.
+      this.records=[];
+      this.transactions.clear();
+      this.tabEpochs.clear();
+      this.lastHash='0'.repeat(64);
+      this.#load();
+      return fn();
     } finally {
-      if(fd!==undefined)try{this.fs.closeSync(fd);}catch{}
+      this.lockDepth=0;
       try{this.fs.closeSync(lock);}catch{}
       try{this.fs.unlinkSync(this.lockFile);}catch{}
     }
+  }
+
+  #append(type,identity,data) {
+    return this.#withLock(()=>this.#appendUnlocked(type,identity,data));
+  }
+
+  #appendUnlocked(type,identity,data) {
+    const record={
+      seq:this.records.length+1,eventId:crypto.randomUUID(),type,
+      identity:clone(identity),data:clone(data),prevHash:this.lastHash
+    };
+    record.hash=this.#recordHash(record);
+    const line=JSON.stringify(record)+'\n';
+    const current=this.fs.existsSync(this.file)?this.fs.statSync(this.file).size:0;
+    if(current+Buffer.byteLength(line,'utf8')>this.maxBytes)throw Error('PROVIDER_JOURNAL_FULL_FAIL_CLOSED');
+    const fd=this.fs.openSync(this.file,'a',0o600);
+    try {
+      this.fs.writeFileSync(fd,line,'utf8');
+      this.fs.fsyncSync(fd);
+    } finally {
+      this.fs.closeSync(fd);
+    }
+    this.#apply(record);this.records.push(record);this.lastHash=record.hash;
+    return clone(record);
   }
 
   #ensureEpoch(identity) {
@@ -173,6 +216,7 @@ export class ProviderJournal {
   }
 
   beginPrepare(input,payloadHash) {
+    return this.#withLock(()=>{
     const identity=validateProviderIdentity(input);
     if(typeof payloadHash!=='string'||!/^[a-f0-9]{64}$/.test(payloadHash))throw Error('PROVIDER_PAYLOAD_HASH_INVALID');
     const old=this.transactions.get(identity.requestId);
@@ -197,9 +241,10 @@ export class ProviderJournal {
     }
     this.#append('prepare.started',identity,{payloadHash,bridgeEpoch:this.bridgeEpoch,at:new Date(this.now()).toISOString()});
     return {duplicate:false};
+    });
   }
-
   completePrepare(input,{preparedId,expiresAt}) {
+    return this.#withLock(()=>{
     const identity=validateProviderIdentity(input);
     const tx=this.transactions.get(identity.requestId);
     if(!tx||tx.state!=='PREPARING'||!identityEqual(tx.identity,identity))throw Error('PROVIDER_PREPARE_STATE_INVALID');
@@ -209,9 +254,10 @@ export class ProviderJournal {
       bridgeEpoch:this.bridgeEpoch,tokenHash:tokenHash(token)});
     return {state:'PREPARED',identity,requestId:identity.requestId,payloadHash:tx.payloadHash,preparedId,expiresAt,fencingToken:token,
       sideEffect:'composer-filled-no-send',clickedSend:false};
+    });
   }
-
   beginCommit(input,{preparedId,fencingToken,payloadHash}) {
+    return this.#withLock(()=>{
     const identity=validateProviderIdentity(input);
     this.#ensureEpoch(identity);
     const tx=this.transactions.get(identity.requestId);
@@ -226,18 +272,20 @@ export class ProviderJournal {
     if(supplied.length!==expected.length||!crypto.timingSafeEqual(supplied,expected))throw Error('PROVIDER_FENCING_TOKEN_INVALID');
     this.#append('commit.started',identity,{preparedId,bridgeEpoch:this.bridgeEpoch,at:new Date(this.now()).toISOString()});
     return clone(tx);
+    });
   }
-
   completeCommit(input,{clickedAt,clickedSend,baseline}) {
+    return this.#withLock(()=>{
     const identity=validateProviderIdentity(input);
     const tx=this.transactions.get(identity.requestId);
     if(!tx||tx.state!=='COMMITTING'||!identityEqual(tx.identity,identity)||
       clickedSend!==true||!Number.isFinite(Date.parse(clickedAt||''))||!Number.isSafeInteger(baseline)||baseline<0)throw Error('PROVIDER_COMMIT_RECEIPT_INVALID');
     this.#append('commit.completed',identity,{clickedAt,clickedSend:true,baseline});
     return {state:'SENT',identity,requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt,clickedSend:true,baseline};
+    });
   }
-
   recordReply(input,{replySha256,replyChars,replyIndex,observedAt,stableSamples=2}={}) {
+    return this.#withLock(()=>{
     const identity=validateProviderIdentity(input);
     const tx=this.transactions.get(identity.requestId);
     if(!tx)throw Error('PROVIDER_REPLY_TRANSACTION_NOT_FOUND');
@@ -255,31 +303,46 @@ export class ProviderJournal {
     });
     const updated=this.transactions.get(identity.requestId);
     return {state:'REPLIED',identity,replyReceipt:clone(updated.replyReceipt),duplicate:false,eventId:event.eventId,sequence:event.seq};
+    });
   }
-
   outcome(input,state,reasonCode='',extra={}) {
+    return this.#withLock(()=>{
     const identity=validateProviderIdentity(input);
     if(!['UNKNOWN','NOT_PERFORMED','BLOCKED','REVOKED','STOP_AFTER_COMMIT'].includes(state))throw Error('PROVIDER_OUTCOME_STATE_INVALID');
     const quarantineId=state==='UNKNOWN'?'quarantine-'+identity.requestId:null;
-    this.#append('transaction.outcome',identity,{state,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(reasonCode)?reasonCode:'',quarantineId,...extra});
-    return {state,identity,...(quarantineId?{quarantineId}:{}),...(reasonCode?{reasonCode}:{})};
+    const {failure:suppliedFailure,startedAt,...persistedExtra}=extra||{};
+    const safeReason=/^[A-Z][A-Z0-9_]{2,80}$/.test(reasonCode)?reasonCode:'';
+    const inferredStage=/REPLY|OBSERVATION/.test(safeReason)?'OBSERVATION':
+      /PREPARE|COMMIT/.test(safeReason)?'PAGE_ACTION':'JOURNAL';
+    const failure=normalizeFailure(suppliedFailure,{stage:inferredStage,
+      code:safeReason||'PROVIDER_OUTCOME',startedAt:Number.isFinite(startedAt)?startedAt:this.now(),now:this.now});
+    const {sideEffect:rawSideEffect,...otherExtra}=persistedExtra;
+    const sideEffect=normalizeProviderSideEffect(rawSideEffect);
+    this.#append('transaction.outcome',identity,{state,reasonCode:safeReason,quarantineId,failure,
+      ...otherExtra,...(sideEffect?{sideEffect}:{})});
+    return {state,identity,...(quarantineId?{quarantineId}:{}),...(safeReason?{reasonCode:safeReason}:{}),
+      failure,...(sideEffect?{sideEffect}:{})};
+    });
   }
-
   status(input) {
-    const identity=validateProviderIdentity(input);
-    const tx=this.transactions.get(identity.requestId);
-    if(!tx)return {state:'NOT_PERFORMED',identity,reasonCode:'REQUEST_NOT_FOUND'};
-    if(!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
-    const publicState=tx.state==='PREPARING'?'ACCEPTED':tx.state==='COMMITTING'?'DISPATCHED':tx.state;
-    const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
-      ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
-      ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
-      ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
-      ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
-      ...(Number.isSafeInteger(tx.baseline)?{baseline:tx.baseline}:{}),
-      ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{}),
-      ...(tx.replyReceipt?{replyReceipt:clone(tx.replyReceipt)}:{})};
-    return out;
+    return this.#withLock(()=>{
+      const identity=validateProviderIdentity(input);
+      const tx=this.transactions.get(identity.requestId);
+      if(!tx)return {state:'NOT_PERFORMED',identity,reasonCode:'REQUEST_NOT_FOUND'};
+      if(!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
+      const publicState=tx.state==='PREPARING'?'ACCEPTED':tx.state==='COMMITTING'?'DISPATCHED':tx.state;
+      const out={state:publicState,identity,...(tx.reasonCode?{reasonCode:tx.reasonCode}:{}),
+        ...(tx.quarantineId?{quarantineId:tx.quarantineId}:{}),
+        ...(tx.sideEffect?{sideEffect:tx.sideEffect}:{}),
+        ...(tx.failure?{failure:normalizeFailure(tx.failure,{stage:'JOURNAL',code:'PROVIDER_OUTCOME'})}:{}),
+        ...(tx.preparedId?{preparedId:tx.preparedId,expiresAt:tx.expiresAt}:{}),
+        ...(tx.state==='PREPARED'?{requestId:identity.requestId,fencingToken:this.#fencingToken(tx),payloadHash:tx.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false}:{}),
+        ...(tx.clickedAt?{requestId:identity.requestId,preparedId:tx.preparedId,payloadHash:tx.payloadHash,clickedAt:tx.clickedAt,clickedSend:true}:{}),
+        ...(Number.isSafeInteger(tx.baseline)?{baseline:tx.baseline}:{}),
+        ...(tx.nextEpoch?{nextEpoch:tx.nextEpoch}:{}),
+        ...(tx.replyReceipt?{replyReceipt:clone(tx.replyReceipt)}:{})};
+      return out;
+    });
   }
 
   #tabOutstanding(tabId) {
@@ -306,6 +369,7 @@ export class ProviderJournal {
   }
 
   revoke(input) {
+    return this.#withLock(()=>{
     const identity=validateProviderIdentity(input);
     const tx=this.transactions.get(identity.requestId);
     if(tx&&!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
@@ -322,9 +386,10 @@ export class ProviderJournal {
     if(updated&&updated.state==='REVOKED')return {state:'REVOKED',identity,nextEpoch};
     this.outcome(identity,'REVOKED','FENCING_EPOCH_REVOKED',{nextEpoch});
     return {state:'REVOKED',identity,nextEpoch};
+    });
   }
-
   stop(input) {
+    return this.#withLock(()=>{
     const identity=validateProviderIdentity(input);
     const tx=this.transactions.get(identity.requestId);
     if(tx&&!identityEqual(tx.identity,identity))throw Error('PROVIDER_REQUEST_ID_CONFLICT');
@@ -372,19 +437,23 @@ export class ProviderJournal {
     proof.signature=signQuiescence(proof,identity,this.key);
     this.#append('stop.clean',identity,{nextEpoch,quiescence:proof});
     return {state:'STOPPED_CLEAN',identity,nextEpoch,quiescence:proof};
+    });
   }
-
   events({after=0,limit=100}={}) {
-    if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>1000)throw Error('PROVIDER_EVENT_WINDOW_INVALID');
-    const stateFor=record=>({
-      'epoch.initialized':'ACCEPTED','epoch.revoked':'REVOKED','prepare.started':'ACCEPTED',
-      'prepare.completed':'PREPARED','commit.started':'DISPATCHED','commit.completed':'SENT','reply.observed':'REPLIED',
-      'transaction.outcome':record.data.state,'stop.requested':'STOP_REQUESTED','stop.clean':'STOPPED_CLEAN','stop.after_commit':'STOP_AFTER_COMMIT'
-    })[record.type]||'UNKNOWN';
-    return this.records.filter(e=>e.seq>after).slice(0,limit).map(e=>({
-      seq:e.seq,eventId:e.eventId,requestId:e.identity.requestId,providerId:e.identity.providerId,
-      state:stateFor(e),identity:clone(e.identity),
-      ...(e.data.quarantineId?{quarantineId:e.data.quarantineId}:{})
-    }));
+    return this.#withLock(()=>{
+      if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(limit)||limit<1||limit>1000)throw Error('PROVIDER_EVENT_WINDOW_INVALID');
+      const stateFor=record=>({
+        'epoch.initialized':'ACCEPTED','epoch.revoked':'REVOKED','prepare.started':'ACCEPTED',
+        'prepare.completed':'PREPARED','commit.started':'DISPATCHED','commit.completed':'SENT','reply.observed':'REPLIED',
+        'transaction.outcome':record.data.state,'stop.requested':'STOP_REQUESTED','stop.clean':'STOPPED_CLEAN','stop.after_commit':'STOP_AFTER_COMMIT'
+      })[record.type]||'UNKNOWN';
+      return this.records.filter(e=>e.seq>after).slice(0,limit).map(e=>({
+        seq:e.seq,eventId:e.eventId,requestId:e.identity.requestId,providerId:e.identity.providerId,
+        state:stateFor(e),identity:clone(e.identity),
+        ...(e.data.quarantineId?{quarantineId:e.data.quarantineId}:{}),
+        ...(e.data.sideEffect?{sideEffect:e.data.sideEffect}:{}),
+        ...(e.data.failure?{failure:normalizeFailure(e.data.failure,{stage:'JOURNAL',code:'PROVIDER_OUTCOME'})}:{})
+      }));
+    });
   }
 }

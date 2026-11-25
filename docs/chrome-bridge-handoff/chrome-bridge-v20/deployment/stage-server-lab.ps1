@@ -18,7 +18,7 @@ $healthSource = Join-Path $candidate 'deployment\cutover-health.mjs'
 $required = @(
   'bridge.mjs', 'tools.mjs', 'schema.mjs', 'secrets.mjs',
   'send-journal.mjs', 'send-outcome.mjs', 'provider-journal.mjs',
-  'provider-transport-crypto.mjs'
+  'provider-transport-crypto.mjs', 'failure-contract.mjs'
 )
 if ($output -eq $installed -or $output.StartsWith($installed + '\',[StringComparison]::OrdinalIgnoreCase) -or
     $output -eq $candidate -or $output.StartsWith($candidate + '\',[StringComparison]::OrdinalIgnoreCase) -or
