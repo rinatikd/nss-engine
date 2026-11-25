@@ -209,6 +209,21 @@ test('unknown outcome after DOM send injection remains UNKNOWN',async()=>{
  assert.equal(f.state.approvalCount,1);
 });
 
+test('mutation failures expose stage-aware bounded failure metadata',async()=>{
+ const f=fixture();
+ f.chromeApi.permissions.contains=async()=>{throw Error('secret DOM and URL detail');};
+ await assert.rejects(execute(cmd('agent_send'),f),e=>{
+   assert.equal(e.dispatchState,'NOT_PERFORMED');
+   assert.deepEqual(Object.keys(e.failure).sort(),['code','durationMs','schemaVersion','stage']);
+   assert.equal(e.failure.schemaVersion,1);
+   assert.equal(e.failure.stage,'PRECHECK');
+   assert.equal(e.failure.code,'MUTATION_PRECHECK_FAILED');
+   assert.ok(Number.isSafeInteger(e.failure.durationMs));
+   return true;
+ });
+ assert.equal(f.state.injections.includes('agent_send'),false);
+});
+
 test('unclassified preflight errors emit safe PRECHECK code and never send',async()=>{
  const f=fixture();
  f.chromeApi.permissions.contains=async()=>{ throw Error('unsafe details from browser'); };

@@ -1,6 +1,7 @@
 // Функция, которая целиком сериализуется и выполняется Р’РќРЈРўР И страницы (chrome.scripting.executeScript).
 // Она не должна ссылаться ни на что снаружи. Возвращает данные или {error}.
 export async function pageAction(name, args, expectedOrigin) {
+  const failureStartedAt=Date.now();
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const vis = (e) => !!e && e.getClientRects().length > 0;
   const qa = (s) => { try { return s ? [...document.querySelectorAll(s)] : []; } catch { return []; } };
@@ -385,7 +386,9 @@ export async function pageAction(name, args, expectedOrigin) {
 
     throw Error('Unknown page command: ' + name);
   } catch (e) {
-    const failure = { error: e.message };
+    const safeCode=/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message||'')?e.message:'PAGE_ACTION_FAILED';
+    const failure = { error: e.message, failure:{schemaVersion:1,stage:'PAGE_ACTION',code:safeCode,
+      durationMs:Math.max(0,Math.min(300000,Date.now()-failureStartedAt))} };
     if (name === 'provider_prepare') {
       failure.dispatchState = 'NOT_PERFORMED';
       failure.sideEffect = providerPrepareMutationStarted ? 'composer-draft-state-unverified' : 'none';

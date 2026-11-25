@@ -7,6 +7,7 @@ import { SESSION_CAPABILITIES } from './session-authorization.js';
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
+import { normalizeFailure } from './failure-contract.js';
 
 const MUTATIONS = new Set(['browser_click', 'browser_fill', 'agent_send', 'provider_prepare', 'provider_commit']);
 const MAX_APPROVAL_MS = 90_000;
@@ -21,6 +22,7 @@ async function inject(chromeApi, tabId, origin, name, args) {
     const error = Error(result?.error || 'INJECTION_FAILED');
     if (result?.dispatchState) error.dispatchState = result.dispatchState;
     if (result?.sideEffect) error.sideEffect = result.sideEffect;
+    if (result?.failure) error.failure = normalizeFailure(result.failure,{stage:'PAGE_ACTION',code:'PAGE_ACTION_FAILED'});
     throw error;
   }
   return result;
@@ -45,6 +47,7 @@ async function dispatchProviderMutation(cmd, chromeApi, {
 }={}) {
   let executionStarted=false;
   let stage='PRECHECK';
+  const startedAt=now();
   const args=cmd.args;
   try {
     const {requestId,taskId,providerId,tabId,origin,conversationId,epoch}=args;
@@ -117,6 +120,7 @@ async function dispatchProviderMutation(cmd, chromeApi, {
           controlExpires:refreshedGrant}
       : {adapter,requestId,epoch,payloadHash:args.payloadHash,preparedId:args.preparedId,fencingToken:args.fencingToken,
           expectedOrigin:origin,expectedConversationId:conversationId,controlExpires:refreshedGrant};
+    stage='PAGE_ACTION';
     executionStarted=true;
     const result=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs);
     if(cmd.name==='provider_prepare') {
@@ -142,6 +146,11 @@ async function dispatchProviderMutation(cmd, chromeApi, {
       error.dispatchState='NOT_PERFORMED';
       error.sideEffect=error.sideEffect||'composer-draft-state-unverified';
     }
+    error.failure=normalizeFailure(error.failure,{
+      stage:executionStarted?'PAGE_ACTION':stage,
+      code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_'+stage+'_FAILED',
+      startedAt,now
+    });
     throw error;
   }
 }
@@ -151,6 +160,7 @@ export async function dispatchMutation(cmd, chromeApi, {
   let executionStarted=false;
   // Stage codes are safe metadata: never expose provider text, prompts, or DOM content.
   let stage='PRECHECK';
+  const startedAt=now();
   try {
   exactCommand(cmd);
   if (cmd.name === 'provider_prepare' || cmd.name === 'provider_commit') {
@@ -248,6 +258,7 @@ export async function dispatchMutation(cmd, chromeApi, {
   }
   if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
   // At most one dispatch. Failed confirmations are UNKNOWN, never retried.
+  stage='PAGE_ACTION';
   executionStarted=true;
   const result=await inject(chromeApi,tab.id,origin,cmd.name,args);
   return result?.text ? {...result,text:redact(result.text)} : result;
@@ -265,6 +276,11 @@ export async function dispatchMutation(cmd, chromeApi, {
       error.dispatchState = /^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|CONTROL_SITE_DENIED)$/.test(error.message)
         ? 'BLOCKED' : 'NOT_PERFORMED';
     }
+    error.failure=normalizeFailure(error.failure,{
+      stage:executionStarted?'PAGE_ACTION':stage,
+      code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'MUTATION_'+stage+'_FAILED',
+      startedAt,now
+    });
     throw error;
   }
 }
