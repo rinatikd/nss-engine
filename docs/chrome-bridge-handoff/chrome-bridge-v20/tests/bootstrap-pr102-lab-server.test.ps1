@@ -3,6 +3,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $packageRoot = Split-Path $PSScriptRoot -Parent
 $bootstrap = Join-Path $packageRoot 'deployment\bootstrap-pr102-lab-server.ps1'
+$bootstrapSource = [IO.File]::ReadAllText($bootstrap)
+if ($bootstrapSource.Contains('C:\Engineering\ChromeBridge-PR102-17484-State') -or
+    -not $bootstrapSource.Contains('C:\Engineering\ChromeBridge-PR102-17485-State')) {
+  throw 'Bootstrap must target the dedicated PR102 17485 StateRoot, never the 17484 StateRoot'
+}
 $updater = Join-Path $packageRoot 'deployment\upgrade-pr102-lab-server.ps1'
 . (Join-Path $packageRoot 'deployment\process-identity.ps1')
 . (Join-Path $packageRoot 'deployment\verify-candidate-source.ps1')
