@@ -145,7 +145,7 @@ export function terminateProcessTree(child, {
 // IMPORTANT: the MCP server must persist a one-shot durable claim *before*
 // calling executeTestPlan. This standalone function does not implement replay
 // protection, user authorization, or an OS sandbox.
-export async function executeTestPlan(plan, { spawnImpl = spawn, terminateImpl = terminateProcessTree } = {}) {
+export async function executeTestPlan(plan, { spawnImpl = spawn, terminateImpl = terminateProcessTree, trustedExecutableImpl = trustedExecutable } = {}) {
   if (!plan || !Object.hasOwn(SUITES, plan.suite))
     throw new TaskPolicyError('UNRECOGNIZED_PLAN');
   const currentWorkspace=canonicalUserWorkspace(plan.cwd);
@@ -155,7 +155,7 @@ export async function executeTestPlan(plan, { spawnImpl = spawn, terminateImpl =
       JSON.stringify(plan.args) !== JSON.stringify(spec.args) ||
       plan.timeoutMs !== spec.timeoutMs)
     throw new TaskPolicyError('PLAN_MODIFIED');
-  const executable=trustedExecutable(plan.command);
+  const executable=trustedExecutableImpl(plan.command);
   return await new Promise((resolve, reject) => {
     let child;
     try {

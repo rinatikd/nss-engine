@@ -77,7 +77,7 @@ test('no shell execution, spawn receives fixed args and bounded result', () => w
     queueMicrotask(() => {child.stdout.emit('data',Buffer.from('PASS'));child.emit('close',0,null);});
     return child;
   };
-  const result=await executeTestPlan(plan,{spawnImpl:mockSpawn});
+  const result=await executeTestPlan(plan,{spawnImpl:mockSpawn,trustedExecutableImpl: command => command});
   assert.equal(options.opts.shell,false);
   assert.equal(options.opts.cwd,root);
   assert.equal(options.cmd,'python');
@@ -94,7 +94,7 @@ test('output is size-bounded', () => withWorkspace(async root => {
     queueMicrotask(() => {child.stdout.emit('data',Buffer.alloc(100000,65));child.emit('close',0,null);});
     return child;
   };
-  const result=await executeTestPlan(plan,{spawnImpl:mockSpawn});
+  const result=await executeTestPlan(plan,{spawnImpl:mockSpawn,trustedExecutableImpl: command => command});
   assert.equal(result.truncated,true);
   assert.ok(Buffer.byteLength(result.stdout)<=65536);
 }));
