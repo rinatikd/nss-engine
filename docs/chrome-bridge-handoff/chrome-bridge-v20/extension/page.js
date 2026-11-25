@@ -202,6 +202,14 @@ export async function pageAction(name, args, expectedOrigin) {
           !Number.isFinite(Date.parse(args.expiresAt || '')) || Date.parse(args.expiresAt) <= Date.now()) {
         throw Error('PROVIDER_PREPARE_INPUT_INVALID');
       }
+      // Complete the read-only preflight before touching the composer. In
+      // particular, an uncalibrated/empty Send selector must never leave a
+      // partially prepared draft in the provider's input field.
+      const sendButtons = qa(A.send).filter(vis);
+      if (sendButtons.length !== 1 || sendButtons[0].disabled ||
+          sendButtons[0].getAttribute('aria-disabled') === 'true') {
+        throw Error('PROVIDER_SEND_BUTTON_NOT_READY');
+      }
       const composer = single(A.composer);
       if (!(composer instanceof HTMLTextAreaElement) && !composer.isContentEditable) throw Error('Unsupported composer');
       if (/password|secret|token|credential/i.test([composer.id, composer.name, composer.autocomplete].join(' '))) throw Error('Sensitive composer blocked');
@@ -233,9 +241,6 @@ export async function pageAction(name, args, expectedOrigin) {
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(textOf(composer)));
       const actualHash = [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, '0')).join('');
       if (actualHash !== args.payloadHash) throw Error('PROVIDER_PREPARE_HASH_MISMATCH');
-      const sendButtons = qa(A.send).filter(vis);
-      if (sendButtons.length !== 1 || sendButtons[0].disabled ||
-          sendButtons[0].getAttribute('aria-disabled') === 'true') throw Error('PROVIDER_SEND_BUTTON_NOT_READY');
       control();
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) {
         throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_PREPARE');
