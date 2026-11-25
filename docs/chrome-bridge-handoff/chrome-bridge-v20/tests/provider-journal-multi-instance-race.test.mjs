@@ -63,3 +63,44 @@ test('preloaded instances must not both begin an unresolved request on the same 
     fs.rmSync(dir,{recursive:true,force:true});
   }
 });
+
+test('preloaded readers refresh status and events after another instance commits',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-fresh-read-'));
+  try {
+    const reader=makeJournal(dir);
+    const writer=makeJournal(dir);
+    const request=identity('request_0004','task_000004');
+    writer.beginPrepare(request,'d'.repeat(64));
+    const prepared=writer.completePrepare(request,{
+      preparedId:'prepared_0004',expiresAt:new Date(Date.now()+60000).toISOString()
+    });
+    assert.equal(prepared.state,'PREPARED');
+    assert.equal(reader.status(request).state,'PREPARED',
+      'status must reload committed state while holding the inter-process lock');
+    const events=reader.events({after:0,limit:20});
+    assert.ok(events.some(event=>event.requestId===request.requestId&&event.state==='PREPARED'),
+      'events must include records appended by another preloaded instance');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+test('constructor fails closed on an existing lock and never removes it',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-stale-lock-'));
+  try {
+    const writer=makeJournal(dir);
+    const request=identity('request_0005','task_000005');
+    writer.beginPrepare(request,'e'.repeat(64));
+    const journalPath=path.join(dir,'provider-transactions.jsonl');
+    const lockPath=journalPath+'.lock';
+    const before=fs.readFileSync(journalPath,'utf8');
+    fs.writeFileSync(lockPath,'owner=another-process');
+    assert.throws(()=>makeJournal(dir),error=>error?.code==='EEXIST');
+    assert.equal(fs.readFileSync(journalPath,'utf8'),before,
+      'failed recovery must not mutate the journal while another owner holds the lock');
+    assert.equal(fs.readFileSync(lockPath,'utf8'),'owner=another-process',
+      'constructor must not auto-delete a possibly active or stale lock');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
