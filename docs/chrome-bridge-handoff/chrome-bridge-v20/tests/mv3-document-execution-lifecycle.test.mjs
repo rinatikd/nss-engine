@@ -186,7 +186,9 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
   // Use a real same-origin link navigation so Chromium creates a history entry
   // and can put the original document into Back/Forward Cache.
   const navigation=await inject(documentIdA,()=>{document.querySelector('#navigate').click();return true;});
-  assert.equal(navigation[0].result,true);
+  assert.equal(navigation[0].documentId,documentIdA);
+  // A synchronous navigation can destroy the executing realm before Chrome serializes
+  // its return value; null/undefined is not treated as a navigation failure.
   const secondDocument=await until(async()=>{
    const frame=await activeFrame(origin+'/b');
    return frame&&frame.documentId!==documentIdA?frame:null;
