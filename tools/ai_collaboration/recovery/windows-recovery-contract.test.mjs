@@ -87,3 +87,16 @@ test('resumed installer verifies every staged file before updating the verifier'
   assert.match(verify,/\$expectedFiles -cnotcontains \$name/);
   assert.match(verify,/INVALID_MANIFEST_ENTRY:/);
 });
+
+
+test('PR102 recovery pins the current 17485 Lab port, StateRoot and extension identity',async()=>{
+  const restore=await read('Restore-LocalStack.ps1');
+  const tunnel=await read('Recover-LabTunnel.ps1');
+  assert.ok(restore.includes('Port=17485'));
+  assert.ok(restore.includes(String.raw\`StateDir='C:\\Engineering\\ChromeBridge-PR102-17485-State'\`));
+  assert.ok(restore.includes("ExtensionId='nhflbnfcaicihaepdcjacdmaddagcmcj'"));
+  assert.ok(restore.includes("EnvironmentVariables['CHROME_BRIDGE_EXTENSION_ID']=$s.ExtensionId"));
+  assert.doesNotMatch(restore,/17484/);
+  assert.ok(tunnel.includes(String.raw\`$labHome='C:\\Engineering\\ChromeBridge-PR102-17485-State'\`));
+  assert.doesNotMatch(tunnel,/17484/);
+});
