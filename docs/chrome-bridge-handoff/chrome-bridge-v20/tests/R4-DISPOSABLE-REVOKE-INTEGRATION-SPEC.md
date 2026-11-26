@@ -40,6 +40,7 @@ The fixture must account for all of the following, not just the extension's top-
 - `page.js:pageAction()` recognizes Claude conversation routes under `/chat/<id>`; use a stable ID matching `[A-Za-z0-9_-]{8,160}` and the existing Claude adapter DOM selectors.
 - `server/tools.mjs` validates `providerOrigin=https://claude.ai` and `providerId=claude`.
 - `server/bridge.mjs` requires the provider tab to be bound to an agent entry through `agent_bind({name, tabId})`.
+- `server/bridge.mjs` has one global active extension dispatch slot (`activeId`). While one command is awaiting its result, later MCP commands remain queued and cannot create a second simultaneous extension-side approval. Scenario A must test this serialization rather than fabricate concurrent pending approvals.
 - `server/provider-journal.mjs:validateProviderIdentity()` independently validates the same origin-to-provider mapping. Keep the full identity tuple (requestId, taskId, providerId, tabId, origin, conversationId, epoch) consistent.
 - `provider_prepare` must be exercised through the MCP tool route, including the real server queue and extension dispatch. Calling `pageAction()` directly is not an integration test.
 
@@ -80,18 +81,16 @@ Only the provider website content and adapter DOM are synthetic; the origin and 
 1. Start disposable MCP + Chrome and wait for the real worker/offscreen connection.
 2. Open two provider tabs A and B on the same isolated `https://claude.ai` origin, each with a valid conversation route.
 3. Configure the temporary site's adapter and host permission; verify both tabs appear in `browser_tabs`.
-4. Obtain separate per-tab Grants through the real control UI.
+4. Obtain Grants for A and B through the real Control UI/local trusted gesture path; record each tab's effective Grant independently.
 5. Bind A and B to separate MCP agent names using the actual MCP tool `agent_bind({name, tabId})`; the server's `provider_prepare` handler rejects tabs that are not present in its agent registry.
-6. Start a `provider_prepare` for A and hold its Approval pending using the actual approval UI/session. The MCP schema requires the complete identity tuple plus `message` and SHA-256 `payloadHash`; the server accepts either an active owner-approved Session Authorization lease or the legacy explicit one-action approval path.
-7. Start a `provider_prepare` for B and hold its Approval pending as well.
-8. Invoke per-tab Revoke for A through the real control UI.
-9. Assert:
-   - A's pending approval is removed and its waiter settles as cancelled/blocked;
-   - B's pending approval remains pending;
-   - no `provider_prepare` page action was executed for A;
-   - A's Grant is gone and B's Grant remains effective;
-   - the per-tab mutation lane drains without waiting for approval timeout;
-   - the final outcome is not `UNKNOWN` and no quarantine is created for a cleanly cancelled pre-dispatch action.
+6. Start `provider_prepare` for A and hold its Approval pending through the actual approval UI/session. The MCP schema requires the complete identity tuple plus `message` and SHA-256 `payloadHash`; the server accepts either an active owner-approved Session Authorization lease or the legacy explicit one-action approval path.
+7. While A owns the single active extension dispatch slot, submit `provider_prepare` for B. Verify B remains queued at the MCP server and has not yet created an approval.
+8. Invoke per-tab Revoke for A through the real Control UI.
+9. Assert A's pending approval is removed and its waiter settles as cancelled/blocked; A's page action does not execute; A's Grant is removed; B's Grant remains effective; and the clean cancellation does not create quarantine or return `UNKNOWN`.
+10. Verify the single dispatch slot is released and B's queued request advances to its own real approval. Approve B through the Control UI and assert B's `provider_prepare` completes with the expected no-send receipt.
+11. Assert B's Grant remains effective, A remains revoked, and the per-tab mutation lane for A drains without waiting for approval timeout.
+
+**Concurrency note:** A and B approvals are intentionally not simultaneous. The current MCP transport is single-writer; the required isolation proof is that revoking the active A request does not discard the queued B request or revoke B's independent Grant.
 
 ### B. Global Revoke cancels all pending approvals
 
