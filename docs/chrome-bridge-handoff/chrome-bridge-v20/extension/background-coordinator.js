@@ -291,13 +291,15 @@ export async function startBackgroundTransport(chromeApi) {
     return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
   const generation = lifecycleGeneration;
   if (starting?.generation === generation) return starting.promise;
-  const promise = startBackgroundTransportOnce(chromeApi, generation).finally(() => {
+  const record = {generation,promise:null,messageSent:false};
+  const promise = startBackgroundTransportOnce(chromeApi,generation,record).finally(() => {
     if (starting?.promise === promise) starting = null;
   });
-  starting = {generation, promise};
+  record.promise = promise;
+  starting = record;
   return promise;
 }
-async function startBackgroundTransportOnce(chromeApi, generation) {
+async function startBackgroundTransportOnce(chromeApi, generation, startRecord) {
   if (mutationStopCount > 0 || controlClearRequested)
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
   if (controlClearFailed)
@@ -328,6 +330,10 @@ async function startBackgroundTransportOnce(chromeApi, generation) {
   if (latest.bridgeBackgroundMode !== true || latest.bridgeConnectionDesired !== true ||
       latest.browserToken !== browserToken || generation !== lifecycleGeneration)
     return {ok:false,reason:'MANUAL_DISCONNECT'};
+  // Mark the transition immediately before dispatching the offscreen START.
+  // A Stop before this point invalidates the generation without needing to
+  // wait for a still-pending createDocument operation.
+  startRecord.messageSent = true;
   await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'start',token:browserToken});
   // If Stop raced the message delivery, issue a final stop so queue ordering
   // cannot leave a late transport running.
@@ -344,7 +350,7 @@ export async function stopBackgroundTransport(chromeApi, {
   stopDrainTimeoutMs=STOP_DRAIN_TIMEOUT_MS,
   startDrainTimeoutMs=START_DRAIN_TIMEOUT_MS
 }={}) {
-  const pendingStart = starting?.promise || null;
+  const pendingStart = starting?.messageSent === true ? starting.promise : null;
   // Fence mutation and grant admission synchronously, before the first await.
   mutationStopRequested = true;
   controlClearRequested = true;
