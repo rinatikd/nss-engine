@@ -1,4 +1,4 @@
-import { dispatchReadOnly } from './read-only-dispatch.js';
+import { dispatchReadOnly, permittedTab } from './read-only-dispatch.js';
 import { ApprovalSession } from './approval-session.js';
 import { dispatchMutation } from './mutation-dispatch.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
@@ -12,6 +12,218 @@ let starting = null;
 // Lifecycle generation fences a delayed START against a newer manual STOP.
 let lifecycleGeneration = 0;
 const approvals = new ApprovalSession();
+
+const MUTATION_COMMANDS = new Set([
+  'browser_click','browser_fill','agent_send','provider_prepare','provider_commit'
+]);
+const STOP_DRAIN_TIMEOUT_MS = 5000;
+const START_DRAIN_TIMEOUT_MS = 5000;
+const mutationLanes = new Map();
+const mutationFencedTabs = new Map();
+const mutationQuarantinedTabs = new Set();
+let mutationStopRequested = false;
+let mutationStopCount = 0;
+let mutationQuarantinePersistenceFailed = false;
+let controlStorageLane = Promise.resolve();
+let controlClearRequested = false;
+let controlClearFailed = false;
+
+function coordinatorError(code, dispatchState='NOT_PERFORMED') {
+  return Object.assign(Error(code), {dispatchState});
+}
+
+// Grants, Revoke and global clear all mutate the same session-storage object.
+// One FIFO prevents stale read/modify/write snapshots from overwriting each other.
+function enqueueControlOperation(task, {
+  tabId=null, allowDuringClear=false, allowFencedTab=false
+}={}) {
+  if (!allowFencedTab && tabId !== null && mutationFencedTabs.has(tabId))
+    throw coordinatorError('TAB_CONTROL_REVOKING');
+  if (!allowDuringClear && mutationStopRequested)
+    throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS');
+  if (!allowDuringClear && controlClearFailed)
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
+  if (!allowDuringClear && controlClearRequested)
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+
+  const next = controlStorageLane.catch(() => {}).then(() => {
+    if (!allowFencedTab && tabId !== null && mutationFencedTabs.has(tabId))
+      throw coordinatorError('TAB_CONTROL_REVOKING');
+    if (!allowDuringClear && mutationStopRequested)
+      throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS');
+    if (!allowDuringClear && controlClearFailed)
+      throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
+    if (!allowDuringClear && controlClearRequested)
+      throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+    return task();
+  });
+  controlStorageLane = next;
+  void next.catch(() => {});
+  return next;
+}
+
+function enqueueTabMutation(tabId, task) {
+  if (!Number.isSafeInteger(tabId) || tabId <= 0)
+    throw coordinatorError('INVALID_MUTATION_TAB');
+  if (mutationStopRequested)
+    throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS');
+  if (controlClearFailed)
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
+  if (controlClearRequested)
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  if (mutationQuarantinePersistenceFailed)
+    throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+  if (mutationFencedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_REVOKING');
+  if (mutationQuarantinedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_QUARANTINED');
+
+  const previous = mutationLanes.get(tabId) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => {
+    if (mutationStopRequested)
+      throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS');
+    if (controlClearFailed)
+      throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
+    if (controlClearRequested)
+      throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+    if (mutationQuarantinePersistenceFailed)
+      throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+    if (mutationFencedTabs.has(tabId))
+      throw coordinatorError('TAB_MUTATION_REVOKING');
+    if (mutationQuarantinedTabs.has(tabId))
+      throw coordinatorError('TAB_MUTATION_QUARANTINED');
+    return task();
+  });
+  mutationLanes.set(tabId, next);
+  void next.finally(() => {
+    if (mutationLanes.get(tabId) === next) mutationLanes.delete(tabId);
+  }).catch(() => {});
+  return next;
+}
+
+async function assertMutationAllowed(chromeApi, tabId) {
+  if (mutationStopRequested)
+    throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS');
+  if (controlClearFailed)
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
+  if (controlClearRequested)
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  if (mutationQuarantinePersistenceFailed)
+    throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+
+  const local = await chromeApi.storage.local.get([
+    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock'
+  ]);
+  let session = {};
+  if (chromeApi.storage.session?.get) {
+    session = await chromeApi.storage.session.get([
+      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock'
+    ]);
+  }
+  if (local.bridgeMutationQuarantineLock === true ||
+      session.bridgeMutationQuarantineLock === true)
+    throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+
+  const localTabs = Array.isArray(local.bridgeMutationQuarantinedTabs)
+    ? local.bridgeMutationQuarantinedTabs : [];
+  const sessionTabs = Array.isArray(session.bridgeMutationQuarantinedTabs)
+    ? session.bridgeMutationQuarantinedTabs : [];
+  for (const id of [...localTabs,...sessionTabs]) {
+    if (Number.isSafeInteger(id) && id > 0) mutationQuarantinedTabs.add(id);
+  }
+  if (mutationQuarantinedTabs.has(tabId) ||
+      localTabs.includes(tabId) || sessionTabs.includes(tabId))
+    throw coordinatorError('TAB_MUTATION_QUARANTINED');
+}
+
+async function persistMutationQuarantine(chromeApi, tabIds) {
+  for (const tabId of tabIds) mutationQuarantinedTabs.add(tabId);
+  try {
+    const state = await chromeApi.storage.local.get('bridgeMutationQuarantinedTabs');
+    const prior = Array.isArray(state.bridgeMutationQuarantinedTabs)
+      ? state.bridgeMutationQuarantinedTabs : [];
+    await chromeApi.storage.local.set({
+      bridgeMutationQuarantinedTabs:[...new Set([...prior,...tabIds])]
+    });
+    return {persisted:true,store:'local'};
+  } catch {
+    // chrome.storage.session survives an MV3 service-worker restart; local is
+    // preferred because its quarantine survives a browser restart as well.
+    try {
+      const state = await chromeApi.storage.session.get('bridgeMutationQuarantinedTabs');
+      const prior = Array.isArray(state.bridgeMutationQuarantinedTabs)
+        ? state.bridgeMutationQuarantinedTabs : [];
+      await chromeApi.storage.session.set({
+        bridgeMutationQuarantinedTabs:[...new Set([...prior,...tabIds])]
+      });
+      return {persisted:true,store:'session'};
+    } catch {
+      mutationQuarantinePersistenceFailed = true;
+      // Try to leave a durable global deny marker. If both stores are down,
+      // the current worker remains fail-closed but restart recovery is UNKNOWN.
+      try {
+        await chromeApi.storage.local.set({bridgeMutationQuarantineLock:true});
+      } catch {
+        try {
+          await chromeApi.storage.session.set({bridgeMutationQuarantineLock:true});
+        } catch { /* no durable storage path remains */ }
+      }
+      return {persisted:false,store:null};
+    }
+  }
+}
+
+async function drainMutationLanes(chromeApi, timeoutMs=STOP_DRAIN_TIMEOUT_MS) {
+  const entries = [...mutationLanes.entries()];
+  if (!entries.length) return {drained:true,tabIds:[],quarantinePersisted:true};
+  let timer;
+  const drained = Promise.allSettled(entries.map(([,pending]) => pending)).then(() => true);
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  const clean = await Promise.race([drained,timeout]);
+  clearTimeout(timer);
+  if (clean) return {drained:true,tabIds:[],quarantinePersisted:true};
+  const tabIds = entries.map(([tabId]) => tabId);
+  const persisted = await persistMutationQuarantine(chromeApi,tabIds);
+  return {drained:false,tabIds,quarantinePersisted:persisted.persisted};
+}
+
+async function awaitBounded(promise, timeoutMs) {
+  if (!promise) return true;
+  let timer;
+  const settled = await Promise.race([
+    Promise.resolve(promise).then(() => true,() => true),
+    new Promise(resolve => {
+      timer = setTimeout(() => resolve(false),timeoutMs);
+    })
+  ]);
+  clearTimeout(timer);
+  return settled;
+}
+
+async function clearAllBackgroundControls(chromeApi) {
+  await new BackgroundControlGrants(chromeApi).clear();
+  await new SessionAuthorization(chromeApi).revoke();
+  await chromeApi.storage.local.set({bridgeMutationLabMode:false});
+}
+
+async function stopOffscreenTransport(chromeApi) {
+  try {
+    const ack = await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'});
+    if (ack?.ok === true) return true;
+  } catch { /* verify whether the offscreen host is already absent */ }
+  try {
+    if (typeof chromeApi.runtime?.getContexts !== 'function') return false;
+    const contexts = await chromeApi.runtime.getContexts({
+      contextTypes:['OFFSCREEN_DOCUMENT'],
+      documentUrls:[chromeApi.runtime.getURL(PATH)]
+    });
+    return Array.isArray(contexts) && contexts.length === 0;
+  } catch {
+    return false;
+  }
+}
 // Extension control.html opened via chrome.windows.create is still a tab.
 // Reject web content scripts by requiring the exact extension page URL, not
 // by treating sender.tab presence as proof of an untrusted sender.
