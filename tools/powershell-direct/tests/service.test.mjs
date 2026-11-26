@@ -56,7 +56,8 @@ test('expiry and duplicate request IDs are rejected; workspaces are selected per
  x.advance(90000);
  assert.equal(x.service.status(request.requestId).state,'EXPIRED');
  assert.equal(x.starts(),0);
-  const outside=x.service.propose({...request,requestId:'outsidejob01',workspace:'C:\\Windows\\System32'});\n  assert.equal(outside.state,'PENDING');
+  const outside=x.service.propose({...request,requestId:'outsidejob01',workspace:'C:\\Windows\\System32'});
+  assert.equal(outside.state,'PENDING');
 });
 
 test('request validation rejects malformed paths, NUL arguments, missing risk and excessive timeout',()=>{
