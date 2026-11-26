@@ -102,7 +102,8 @@ jobs:
             tools/ai_collaboration/engineering-runner.test.mjs \
             tools/powershell-direct/tests/service.test.mjs \
             tools/powershell-direct/tests/named-suites.test.mjs \
-            tools/powershell-direct/tests/engineering.test.mjs
+            tools/powershell-direct/tests/engineering.test.mjs \\
+            tools/powershell-direct/tests/pr102-lab-identity-contract.test.mjs
 
   windows-powershell-5-1-syntax:
     runs-on: windows-latest
@@ -232,4 +233,22 @@ jobs:
             if (Test-Path -LiteralPath $primary) {
               Remove-Item -LiteralPath $primary -Recurse -Force
             }
+          }
+      - name: Parse current PR102 17485 diagnostics with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $files = @(
+            'tools/powershell-direct/Inspect-PR102LabRoots.ps1',
+            'tools/powershell-direct/Inspect-PR102LabRuntime.ps1',
+            'tools/powershell-direct/Probe-PR102AgentAdapters.ps1',
+            'tools/powershell-direct/Prepare-PR145LabPort17485.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $env:GITHUB_WORKSPACE $file),
+              [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { throw ($file + ': ' + ($errors | Format-List Message,ErrorId,IncompleteInput,Extent | Out-String)) }
+            Write-Output ('[PASS] PR102 diagnostic PowerShell 5.1 parse: ' + $file)
           }
