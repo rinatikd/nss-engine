@@ -127,7 +127,7 @@ globalThis.__r4PermissionGate={permittedTab,BackgroundControlGrants};
         'https://claude.ai':{mode:'chat',adapter:'claude'}
       }});
       const hostPermission=await chrome.permissions.contains({origins:['https://claude.ai/*']});
-      const permitted=await permittedTab(chrome,tab.id);
+      const permitted=await permittedTab(chrome,tabA.id);
       const grants=new BackgroundControlGrants(chrome);
       const grantA=await grants.grant({tabId:tabA.id,durationMinutes:15,localGesture:true});
       const grantB=await grants.grant({tabId:tabB.id,durationMinutes:15,localGesture:true});
