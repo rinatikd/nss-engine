@@ -36,7 +36,7 @@ async function waitForHealth(timeoutMs=15000){
   if(stopping)throw Error('STACK_STOPPING');
   try{
    const response=await fetch('http://127.0.0.1:18086/ui',{signal:AbortSignal.timeout(750),redirect:'manual'});
-   if(response.status>=200&&response.status<500)return;
+   if(response.status===200)return;
   }catch{}
   await new Promise(resolve=>setTimeout(resolve,300));
  }
