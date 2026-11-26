@@ -223,7 +223,7 @@ async function persistTabRevocationFence(chromeApi, tabId) {
       mutationQuarantinePersistenceFailed = true;
       return {persisted:false,stores:[]};
     }
-    return {persisted:true,stores:[...(localWritten?['local']:[]),...(sessionWritten?['session']:[])]};
+    return {persisted:true,stores:[...(localWritten || localPrior.includes(tabId)?['local']:[]),...(sessionWritten || sessionPrior.includes(tabId)?['session']:[])]};
   } catch {
     mutationQuarantinePersistenceFailed = true;
     return {persisted:false,stores:[]};
