@@ -7,11 +7,13 @@ import {createApprovalProxy} from './approval-proxy.mjs';
 
 const root=process.env.PS_DIRECT_ALLOWED_ROOT;
 const client=process.env.PS_DIRECT_TUNNEL_CLIENT;
+const runtimeKey=process.env.CONTROL_PLANE_API_KEY;
 if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
 if(!root||!path.win32.isAbsolute(root)||!fs.existsSync(root))
  throw Error('ALLOWED_ROOT_MISSING');
 if(!client||!path.win32.isAbsolute(client)||!fs.existsSync(client))
  throw Error('TUNNEL_CLIENT_MISSING');
+if(!runtimeKey)throw Error('CONTROL_PLANE_API_KEY_REQUIRED');
 
 const service=new PowerShellApprovalService({root});
 let child,proxy,stopping=false;
@@ -52,7 +54,6 @@ try{
  process.stdout.write('LOCAL_MCP_OK 127.0.0.1:'+service.port+' chat_readonly=false\n');
  process.stdout.write('LOCAL_APPROVAL_URL '+approval.url+'\n');
  const env={...process.env,PS_DIRECT_AGENT_TOKEN:service.agentToken};
- delete env.CONTROL_PLANE_API_KEY;
  delete env.PS_DIRECT_UI_TOKEN;
  child=spawn(client,['run','--profile','powershell-direct-work','--health.listen-addr','127.0.0.1:18086'],
    {env,stdio:['ignore','pipe','pipe'],windowsHide:false,shell:false});
