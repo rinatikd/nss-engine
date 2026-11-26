@@ -5,6 +5,7 @@ import {validateExecutionSpec,executableIdentity,assertExecutableIdentity} from 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import {createApprovalProxy} from '../approval-proxy.mjs';
 
 const workspace='C:\\Engineering\\NSS_Engine';
@@ -175,6 +176,19 @@ test('supervisor stop reports unconfirmed termination when active runner ignores
  assert.equal(service.status(request.requestId).state,'RUNNING');
  release();await flush();
  assert.equal(service.status(request.requestId).state,'FINISHED');
+});
+
+
+test('service shutdown closes a stalled local HTTP client within its bound',async()=>{
+ const x=fixture();await x.service.start();
+ const socket=net.connect(x.service.port,'127.0.0.1');
+ await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
+ socket.write('POST /mcp HTTP/1.1\\r\\nHost: 127.0.0.1:'+x.service.port+'\\r\\nAuthorization: Bearer '+x.service.agentToken+'\\r\\nContent-Length: 1000\\r\\n\\r\\n{');
+ const started=Date.now();
+ const stopped=await x.service.stop({timeoutMs:250});
+ assert.equal(stopped,true);
+ assert.ok(Date.now()-started<1500);
+ assert.equal(socket.destroyed,true);
 });
 
 test('MCP authentication protects the proposal and status interface',async()=>{
