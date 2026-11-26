@@ -136,6 +136,14 @@ A cancellation arriving while CreateProcessW is in progress sets a cancellation-
 - Integrate behind a feature flag only after native tests pass; keep the existing direct-child runner as an explicitly labelled fallback only if policy permits. Never silently fall back to uncontained execution.
 - No production cutover until disposable Work PC smoke tests confirm the actual Windows build, parent-job environment, output behavior, and shutdown semantics.
 
+## Native RAII ownership scaffold (2026-11-26)
+
+The current addon now defines a move-only `UniqueHandle` wrapper and adds the planned lifecycle-state vocabulary (`REGISTERED`, `STARTING`, `RUNNING`, `TERMINATING`, `COMPLETED`, `CLOSED`). `OperationRecord` declares ownership slots for the Job, process, primary thread, and stdout/stderr pipe endpoints. Member declaration order is intentional so reverse destruction releases pipe endpoints and process/thread handles before the Job handle.
+
+This is a type/structure scaffold only. No HANDLE is currently created, adopted, or assigned to an operation record. The state enum is not yet enforced by transition functions; `closeOperation` still removes a registry record without lifecycle-state validation. There is no process launch, async wait, termination, pipe capture, or shutdown drain. Do not interpret the presence of RAII members as evidence of handle-lifetime correctness or process-tree containment.
+
+Before adding native launch functions, implement and test a per-operation state transition contract and make close reject non-terminal operations. The contract must define cancellation during STARTING, repeated terminate/close, completion after both Job emptiness and pipe EOF, and concurrency between wait/terminate/close. Registry locks must not be held during blocking Win32 operations.
+ 
 ## N-API bootstrap and operation registry (2026-11-26)
 
 The Windows x64 N-API addon is built and loaded by the dedicated Windows CI job using Node 24, MSVC x64, and pinned node-gyp 11.2.0. The current exports are:
