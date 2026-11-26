@@ -631,6 +631,8 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         // Session authorization changes are global control operations: fence
         // mutations synchronously before any storage/browser await.
         const sessionControlChange = name==='session_authorize' || name==='session_revoke';
+        if (sessionControlChange && controlClearRequested)
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
         if (sessionControlChange) controlClearRequested = true;
         let globalRevocationFence=null;
 
@@ -642,8 +644,10 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             globalRevocationFence=await enqueueRevocationFence(
               ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
             );
-            if (!globalRevocationFence.persisted)
+            if (!globalRevocationFence.persisted) {
+              await persistGlobalQuarantineLock(chromeApi);
               throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+            }
           }
           const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired} =
             await chromeApi.storage.local.get([
@@ -856,13 +860,19 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       }
       // Revoke-all is a global mutation fence. No accepted page action may
       // continue after the UI receives a successful clear response.
+      if (controlClearRequested || mutationStopRequested || mutationStopCount>0) {
+        respond({error:'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',outcome:'NOT_PERFORMED'});
+        return false;
+      }
       controlClearRequested = true;
       void (async()=>{
         const fence=await enqueueRevocationFence(
           ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
         );
-        if (!fence.persisted)
+        if (!fence.persisted) {
+          await persistGlobalQuarantineLock(chromeApi);
           throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+        }
         const recovered=fence.existing===true;
         const affectedTabs=Array.isArray(fence.record?.affectedTabs)?fence.record.affectedTabs:[];
         if (recovered && affectedTabs.length) {
