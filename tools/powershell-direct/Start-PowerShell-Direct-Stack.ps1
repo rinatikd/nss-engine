@@ -43,7 +43,13 @@ $observed | Format-Table -AutoSize
 Write-Host 'PREFLIGHT_PASS. Ports 17487 and 17381/17382 were not touched.'
 if($Mode -eq 'Check'){Write-Host 'CHECK_ONLY; to replace the verified stack use -Mode Cutover.';return}
 
-# No control-plane API key is needed by this supervisor or tunnel child.
+# Capture the existing runtime key before stopping the old instance.
+if([string]::IsNullOrWhiteSpace($env:CONTROL_PLANE_API_KEY)){
+  $secure=Read-Host 'Enter CONTROL_PLANE_API_KEY (hidden)' -AsSecureString
+  $env:CONTROL_PLANE_API_KEY=[System.Net.NetworkCredential]::new('', $secure).Password
+  Remove-Variable secure -ErrorAction SilentlyContinue
+}
+if([string]::IsNullOrWhiteSpace($env:CONTROL_PLANE_API_KEY)){throw 'RUNTIME_KEY_REQUIRED'}
 
 # Re-check all owners, to avoid PID reuse or replacing the wrong profile.
 foreach($entry in $observed){
@@ -68,4 +74,5 @@ try{
   Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
   Remove-Item Env:PS_DIRECT_ALLOWED_ROOT -ErrorAction SilentlyContinue
   Remove-Item Env:PS_DIRECT_TUNNEL_CLIENT -ErrorAction SilentlyContinue
+  Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
 }
