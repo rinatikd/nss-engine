@@ -317,3 +317,26 @@ Official API references reviewed: Chrome `scripting` (<https://developer.chrome.
 - Verify cancellation after the irreversible boundary remains UNKNOWN and is never retried. Use only a deterministic local fixture; no real provider submissions.
 
 **Updated decision:** document identity tracking and cooperative cancellation can materially reduce races and stop work before a side-effect boundary, but neither is a universal kill switch. Until exact-document execution receipts, durable operation records, and command-specific side-effect reconciliation pass disposable Chrome Lab tests, an unresolved tab must stay quarantined. R4 remains NO-GO.
+
+
+## 15. Disposable Chrome execution evidence — PR #170
+
+The dedicated test-only PR #170 added `tests/mv3-document-execution-lifecycle.test.mjs` and ran it in GitHub Actions against Chrome for Testing **158.0.8127.88** with a fresh temporary profile, a temporary local HTTP fixture, and a temporary unpacked MV3 extension.
+
+Observed result: **PASS**.
+
+- Repeated `chrome.scripting.executeScript` calls targeted the same exact `documentId` and shared the same extension isolated-world operation registry (probe sequence 1 then 2).
+- A deliberately held asynchronous operation was cancelled by a second injection into that exact document before its click boundary. The original Promise returned `CANCELLED_BEFORE_CLICK`, and the fixture button had no click marker.
+- A fixture click dispatched its DOM event and `executeScript` returned while the fixture's delayed event-handler side effect was still pending. The side effect appeared later. This directly demonstrates why function completion is not proof of site-side-effect completion.
+- After navigation from fixture document A to B, an injection explicitly targeted to A's old `documentId` was **rejected** by Chrome; it was not rebound to B.
+- Back navigation restored A from Back/Forward Cache. The active frame reported the original A `documentId`; the page recorded `pageshow.persisted === true`, and its DOM nonce remained intact.
+
+The complete PR #170 CI also passed the existing Linux MV3 tests, offscreen recovery, closed-panel lifecycle, adapters, HTTP MCP serialization, syntax checks, and the Windows disposable Chrome / PowerShell 5.1 / PR102 Lab upgrade-rollback checks.
+
+### What this evidence does and does not prove
+
+It proves the tested Chrome build supports exact-document execution targeting, that stale-document injection is rejected while a replacement document is active, that an extension isolated-world cancellation registry can cooperatively stop a held operation before its irreversible boundary, and that BFCache can restore the same document identity.
+
+It does **not** prove that arbitrary site handlers or network requests are cancelled after a click; it does not test forced MV3 Worker termination while an injected operation is held; it does not implement product-runtime cancellation or durable generic mutation journaling; and it does not authorize quarantine unlock. Those remain separate implementation and fault-injection gates.
+
+**Updated implementation guidance:** bind each real mutation to the document ID obtained by its final preflight and pass that document ID to the mutation injection. Keep stale-document targeting failures fail-closed. Retain quarantine when the old document may be cached/resumable or when an irreversible side effect may already have started. Implement worker-crash recovery and the durable operation journal independently before any unlock path.
