@@ -28,7 +28,7 @@ $sourceInputs = @('extension','deployment/verify-candidate-source.ps1','deployme
 # Fault injection must never be available for a real workstation invocation.
 $injectionRejected = $false
 try {
-  & $updater -LabRoot 'C:\\not-a-real-lab' -ExpectedSourceSha ('0' * 40) -TestFailDisplacedCleanup
+  & $updater -LabRoot 'C:\not-a-real-lab' -ExpectedSourceSha ('0' * 40) -TestFailDisplacedCleanup
 } catch {
   if ($_.Exception.Message -like '*Cleanup failure injection is allowed only in TestFixture mode*') {
     $injectionRejected = $true
