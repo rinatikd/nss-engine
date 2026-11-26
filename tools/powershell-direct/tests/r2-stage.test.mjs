@@ -5,26 +5,57 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-const stage='C:/Engineering/PowerShellDirect-Engineering-Lab-R2';
-const source='C:/Engineering/ChromeBridge-Recovery-Install-20261114';
+const stage=process.env.R2_STAGE_ROOT||'C:/Engineering/PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125';
+const source=process.env.R2_SOURCE_ROOT||'C:/Engineering/ChromeBridge-Recovery-Install-20261114/work/PowerShellDirect-PR138-graceful-drain-20261125';
 const tests=[
- 'tools/powershell-direct/tests/engineering.test.mjs',
- 'tools/ai_collaboration/engineering-runner.test.mjs',
- 'tools/powershell-direct/tests/named-suites.test.mjs',
+ 'tools/ai_collaboration/workspace-policy.test.mjs',
+ 'tools/ai_collaboration/local_test_runner.test.mjs',
  'tools/ai_collaboration/local_job_service.test.mjs',
- 'tools/ai_collaboration/local_mcp_dispatch.test.mjs',
+ 'tools/ai_collaboration/engineering-runner.test.mjs',
  'tools/powershell-direct/tests/service.test.mjs',
- 'tools/powershell-direct/tests/chat-approval-config.test.mjs',
- 'tools/ai_collaboration/chat-approval-attestation.test.mjs',
- 'tools/ai_collaboration/chat-approval-redemption.test.mjs',
- 'tools/ai_collaboration/chat-approval-replay-store.test.mjs',
- 'tools/ai_collaboration/chat-approval-service.test.mjs'
+ 'tools/powershell-direct/tests/named-suites.test.mjs',
+ 'tools/powershell-direct/tests/engineering.test.mjs'
 ];
 const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-test('R2 exists and stage manifest matches source and staged module bytes',()=>{
+function treeInventory(base){
+ const roots=['tools/powershell-direct','tools/ai_collaboration'];
+ const files=[];
+ for(const root of roots){
+  const absoluteRoot=path.join(base,root);
+  const visit=directory=>{
+   for(const entry of fs.readdirSync(directory,{withFileTypes:true})){
+    const absolute=path.join(directory,entry.name);
+    if(entry.isSymbolicLink())throw new Error('REPARSE_POINT_NOT_ALLOWED: '+absolute);
+    if(entry.isDirectory())visit(absolute);
+    else if(entry.isFile()){
+     const relative=path.relative(absoluteRoot,absolute).split(path.sep).join('/');
+     files.push(root+'/'+relative);
+    }else throw new Error('UNSUPPORTED_STAGE_ENTRY: '+absolute);
+   }
+  };
+  visit(absoluteRoot);
+ }
+ return files.sort();
+}
+function trackedInventory(base){
+ const git=process.env.R2_GIT_EXE||'C:/Program Files/Git/cmd/git.exe';
+ const result=spawnSync(git,['-C',base,'ls-files','--',
+  'tools/powershell-direct','tools/ai_collaboration'],{
+   cwd:base,encoding:'utf8',timeout:15000,windowsHide:true
+  });
+ assert.equal(result.status,0,'Git tracked-file inventory failed: '+(result.stderr||result.error||''));
+ return result.stdout.split(/\r?\n/).filter(Boolean).sort();
+}
+test('R2 exists and manifest covers every copied pinned runtime and test file',()=>{
  assert.ok(fs.statSync(stage).isDirectory(),'R2 must exist before verification');
  const rows=JSON.parse(fs.readFileSync(path.join(stage,'source-hashes.json'),'utf8').replace(/^\uFEFF/,''));
- assert.ok(Array.isArray(rows)&&rows.length>=7);
+ assert.ok(Array.isArray(rows)&&rows.length>=17);
+ const manifestFiles=rows.map(row=>row.File).sort();
+ assert.deepEqual(manifestFiles,trackedInventory(source),'manifest must cover every Git-tracked source file exactly once');
+ assert.deepEqual(manifestFiles,treeInventory(stage),'staged tree must contain exactly the manifest files');
+ for(const rel of tests){
+  assert.ok(manifestFiles.includes(rel),'regression test is not hash-pinned: '+rel);
+ }
  for(const {File,Sha256} of rows){
   assert.match(File,/^tools\/(?:powershell-direct|ai_collaboration)\/[a-zA-Z0-9_./-]+$/);
   assert.match(Sha256,/^[0-9A-Fa-f]{64}$/);
@@ -33,7 +64,7 @@ test('R2 exists and stage manifest matches source and staged module bytes',()=>{
  }
 });
 test('all staged Node modules pass syntax and selected tests',()=>{
- const node='C:/Program Files/nodejs/node.exe';
+ const node=process.env.R2_NODE_EXE||'C:/Program Files/nodejs/node.exe';
  for(const rel of [
   'tools/powershell-direct/service.mjs',
   'tools/powershell-direct/stack-supervisor.mjs',

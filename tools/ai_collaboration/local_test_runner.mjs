@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
+import {canonicalUserWorkspace} from './workspace-policy.mjs';
 
 export const SUITES = Object.freeze({
   'platform-contract': {
@@ -21,6 +22,7 @@ export const SUITES = Object.freeze({
   'platform-node': {
     command: 'node',
     args: ['--test', 'tools/ai_collaboration/local_test_runner.test.mjs',
+      'tools/ai_collaboration/workspace-policy.test.mjs',
       'tools/ai_collaboration/chat-approval-attestation.test.mjs',
       'tools/ai_collaboration/chat-approval-redemption.test.mjs',
       'tools/ai_collaboration/chat-approval-replay-store.test.mjs',
@@ -98,21 +100,18 @@ const MAX_OUTPUT = 64 * 1024;
 const REQUEST = /^[a-zA-Z0-9_-]{8,80}$/;
 export class TaskPolicyError extends Error {}
 
-export async function resolveTestPlan({ requestId, suite, workspace, approved, approvedRequestId }, workspaceAllowlist) {
+export async function resolveTestPlan({ requestId, suite, workspace, approved, approvedRequestId }) {
   if (typeof requestId !== 'string' || !REQUEST.test(requestId))
     throw new TaskPolicyError('INVALID_REQUEST_ID');
   if (approved !== true || approvedRequestId !== requestId)
     throw new TaskPolicyError('EXPLICIT_APPROVAL_REQUIRED');
   if (typeof suite !== 'string' || !Object.hasOwn(SUITES, suite))
     throw new TaskPolicyError('UNKNOWN_TEST_SUITE');
-  if (typeof workspace !== 'string' || !path.isAbsolute(workspace))
-    throw new TaskPolicyError('INVALID_WORKSPACE');
-  const candidate = await realpath(workspace);
-  if (!(await stat(candidate)).isDirectory())
-    throw new TaskPolicyError('NOT_A_DIRECTORY');
-  const roots = await Promise.all(workspaceAllowlist.map(root => realpath(root)));
-  if (!roots.includes(candidate))
-    throw new TaskPolicyError('WORKSPACE_NOT_ALLOWLISTED');
+  let candidate;
+  try{candidate=canonicalUserWorkspace(workspace);}
+  catch(error){
+    throw new TaskPolicyError(/^[A-Z0-9_]+$/.test(error?.message||'')?error.message:'WORKSPACE_INVALID');
+  }
   const spec = SUITES[suite];
   return Object.freeze({
     requestId, suite, command: spec.command,
@@ -146,15 +145,17 @@ export function terminateProcessTree(child, {
 // IMPORTANT: the MCP server must persist a one-shot durable claim *before*
 // calling executeTestPlan. This standalone function does not implement replay
 // protection, user authorization, or an OS sandbox.
-export async function executeTestPlan(plan, { spawnImpl = spawn, terminateImpl = terminateProcessTree } = {}) {
+export async function executeTestPlan(plan, { spawnImpl = spawn, terminateImpl = terminateProcessTree, trustedExecutableImpl = trustedExecutable } = {}) {
   if (!plan || !Object.hasOwn(SUITES, plan.suite))
     throw new TaskPolicyError('UNRECOGNIZED_PLAN');
+  const currentWorkspace=canonicalUserWorkspace(plan.cwd);
+  if(currentWorkspace!==plan.cwd)throw new TaskPolicyError('WORKSPACE_CHANGED_SINCE_APPROVAL');
   const spec = SUITES[plan.suite];
   if (plan.command !== spec.command ||
       JSON.stringify(plan.args) !== JSON.stringify(spec.args) ||
       plan.timeoutMs !== spec.timeoutMs)
     throw new TaskPolicyError('PLAN_MODIFIED');
-  const executable=trustedExecutable(plan.command);
+  const executable=trustedExecutableImpl(plan.command);
   return await new Promise((resolve, reject) => {
     let child;
     try {

@@ -1,8 +1,8 @@
 // Narrowly scoped, executable-free command policy: NEVER accept raw PowerShell.
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import {spawn} from 'node:child_process';
+import {canonicalUserWorkspace} from '../ai_collaboration/workspace-policy.mjs';
 
 export const POLICY=Object.freeze({
   'git-status':{exe:'git.exe',args:['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=NUL','status','--short','--branch'],timeout:15000},
@@ -26,25 +26,17 @@ const EXECUTABLES=Object.freeze({
 });
 const MAX_OUTPUT=32768;
 
-export function canonicalWorkspace(candidate,root){
-  if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
-  if(typeof candidate!=='string'||!path.win32.isAbsolute(candidate)||candidate.startsWith('\\\\'))throw Error('WORKSPACE_NOT_ABSOLUTE');
-  const actual=fs.realpathSync.native(candidate);
-  const base=fs.realpathSync.native(root);
-  const rel=path.win32.relative(base,actual);
-  if(rel==='..'||rel.startsWith('..\\')||path.win32.isAbsolute(rel))
-    throw Error('WORKSPACE_OUTSIDE_ALLOWED_ROOT');
-  if(!fs.statSync(actual).isDirectory())throw Error('WORKSPACE_NOT_DIRECTORY');
-  return actual;
+export function canonicalWorkspace(candidate){
+  return canonicalUserWorkspace(candidate);
 }
 export function validateTask(task){
   if(typeof task!=='string'||!Object.hasOwn(POLICY,task))throw Error('TASK_NOT_ALLOWED');
   return POLICY[task];
 }
 function clip(buf){return buf.toString('utf8').slice(0,MAX_OUTPUT);}
-export async function runApproved({task,workspace,allowedRoot,spawnImpl=spawn}){
+export async function runApproved({task,workspace,spawnImpl=spawn}){
   const spec=validateTask(task);
-  const cwd=canonicalWorkspace(workspace,allowedRoot);
+  const cwd=canonicalWorkspace(workspace);
   // Reject relative programs: PATH search can load an attacker-controlled
   // executable in the working tree on Windows.
   const fixed=EXECUTABLES[spec.exe];

@@ -14,7 +14,6 @@ $client='C:\Engineering\chrome-bridge\codex-handoff-output\direct-cli-v21\runtim
 $credential=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\control-plane.dpapi'
 $script=Join-Path $stage 'tools\powershell-direct\stack-supervisor.mjs'
 $audit='C:\Engineering\PowerShellDirect-Engineering-Audit-R1'
-$roots=$repo+';'+$stage
 $relative=@(
  'tools\powershell-direct\stack-supervisor.mjs',
  'tools\powershell-direct\service.mjs',
@@ -24,7 +23,9 @@ $relative=@(
  'tools\ai_collaboration\engineering-plan.mjs',
  'tools\ai_collaboration\engineering-runner.mjs',
  'tools\ai_collaboration\engineering-mcp.mjs',
- 'tools\ai_collaboration\local_job_service.mjs'
+ 'tools\ai_collaboration\local_job_service.mjs',
+ 'tools\ai_collaboration\workspace-policy.mjs'
+ 'tools\ai_collaboration\local_test_runner.mjs'
 )
 function Get-Listener([int]$port){
  $s=@(Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
@@ -107,10 +108,8 @@ function Start-Stack {
   $psi.WorkingDirectory=Split-Path $script -Parent
   $psi.UseShellExecute=$false
   $psi.CreateNoWindow=$true
-  $psi.EnvironmentVariables['PS_DIRECT_ALLOWED_ROOT']='C:\Engineering'
   $psi.EnvironmentVariables['PS_DIRECT_TUNNEL_CLIENT']=$client
   $psi.EnvironmentVariables['CONTROL_PLANE_API_KEY']=$plain
-  $psi.EnvironmentVariables['PS_DIRECT_ENGINEERING_WORKSPACES']=$roots
   $psi.EnvironmentVariables['PS_DIRECT_ENGINEERING_AUDIT_DIR']=$audit
   $p=[Diagnostics.Process]::Start($psi)
   if(!$p){throw 'NEW_STACK_LAUNCH_FAILED'}
