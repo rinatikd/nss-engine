@@ -3,6 +3,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $packageRoot = Split-Path $PSScriptRoot -Parent
 $updater = Join-Path $packageRoot 'deployment\upgrade-pr102-lab-server.ps1'
+# The synthetic cleanup-failure switch must be rejected for non-fixture invocations.
+$injectionRejected = $false
+try {
+  & $updater -LabRoot 'C:\not-a-real-lab' -StateRoot 'C:\not-a-real-state' -ExpectedPid 1 -ExpectedStartUtc '2026-01-01T00:00:00Z' -ExpectedSourceSha ('0' * 40) -TestFailDisplacedCleanup
+} catch {
+  if ($_.Exception.Message -like '*Cleanup failure injection is allowed only in TestFixture mode*') {
+    $injectionRejected = $true
+  } else { throw }
+}
+if (-not $injectionRejected) { throw 'Server cleanup fault injection was not rejected outside TestFixture mode' }
 $updaterSource = [IO.File]::ReadAllText($updater)
 if ($updaterSource.Contains('C:\Engineering\ChromeBridge-PR102-17484-State') -or
     -not $updaterSource.Contains('C:\Engineering\ChromeBridge-PR102-17485-State')) {
@@ -229,8 +239,16 @@ try {
   $applyArgs = @{}
   foreach ($key in $updaterArgs.Keys) { $applyArgs[$key] = $updaterArgs[$key] }
   $applyArgs['Apply'] = $true
+  $applyArgs['TestFailDisplacedCleanup'] = $true
   $applied = RunUpdater $applyArgs
-  if (($applied -join ' ') -notmatch '\[UPGRADED\]') { throw 'Upgrade marker missing' }
+  $appliedText = $applied -join ' '
+  if ($appliedText -notmatch '\[UPGRADED\]' -or $appliedText -notmatch '\[UPGRADED_CLEANUP_PENDING\]') {
+    throw 'Healthy server cutover with synthetic cleanup failure was not reported distinctly'
+  }
+  $upgradePendingMatch = [regex]::Match($appliedText, '\[UPGRADED_CLEANUP_PENDING\] DisplacedPath=([^;]+);')
+  if (-not $upgradePendingMatch.Success) { throw 'Server upgrade cleanup-pending path was not reported' }
+  $upgradePendingPath = $upgradePendingMatch.Groups[1].Value.Trim()
+  if (-not (Test-Path -LiteralPath $upgradePendingPath -PathType Container)) { throw 'Displaced pre-upgrade server was not retained' }
   if ((Get-FileHash $configPath -Algorithm SHA256).Hash -ne $configHash) { throw 'Upgrade changed config/tokens' }
   $activePid = CurrentOwner
   $p = [Diagnostics.Process]::GetProcessById($activePid)
@@ -275,8 +293,16 @@ try {
   $rollbackApplyArgs = @{}
   foreach ($key in $rollbackArgs.Keys) { $rollbackApplyArgs[$key] = $rollbackArgs[$key] }
   $rollbackApplyArgs['Apply'] = $true
+  $rollbackApplyArgs['TestFailDisplacedCleanup'] = $true
   $rb = RunUpdater $rollbackApplyArgs
-  if (($rb -join ' ') -notmatch '\[ROLLED_BACK\]') { throw 'Rollback marker missing' }
+  $rollbackText = $rb -join ' '
+  if ($rollbackText -notmatch '\[ROLLED_BACK\]' -or $rollbackText -notmatch '\[ROLLED_BACK_CLEANUP_PENDING\]') {
+    throw 'Healthy server rollback with synthetic cleanup failure was not reported distinctly'
+  }
+  $rollbackPendingMatch = [regex]::Match($rollbackText, '\[ROLLED_BACK_CLEANUP_PENDING\] DisplacedPath=([^;]+);')
+  if (-not $rollbackPendingMatch.Success) { throw 'Server rollback cleanup-pending path was not reported' }
+  $rollbackPendingPath = $rollbackPendingMatch.Groups[1].Value.Trim()
+  if (-not (Test-Path -LiteralPath $rollbackPendingPath -PathType Container)) { throw 'Displaced pre-rollback server was not retained' }
   $activePid = CurrentOwner
   $p = [Diagnostics.Process]::GetProcessById($activePid)
   try { $activeStart = (Get-BridgeHandleIdentity $p).created } finally { $p.Dispose() }
