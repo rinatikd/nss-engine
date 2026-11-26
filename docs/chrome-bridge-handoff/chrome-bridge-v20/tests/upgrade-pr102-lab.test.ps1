@@ -80,7 +80,15 @@ if ((Get-FileHash $manifestPath -Algorithm SHA256).Hash -ne $beforeManifest) { t
 if ([IO.File]::ReadAllText((Join-Path $installed 'control.js')) -ne $beforeControl) { throw 'Dry-run changed installed source' }
 if (Test-Path (Join-Path $root 'backups')) { throw 'Dry-run created a persistent backup' }
 
-& $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha -Apply
+$applyResult = & $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha -Apply -TestFailDisplacedCleanup
+$applyText = $applyResult -join ' '
+if ($applyText -notmatch '\[INSTALLED\]' -or $applyText -notmatch '\[INSTALLED_CLEANUP_PENDING\]') {
+  throw 'Committed install with synthetic cleanup failure was not reported distinctly'
+}
+$applyPendingMatch = [regex]::Match($applyText, '\[INSTALLED_CLEANUP_PENDING\] DisplacedPath=([^;]+);')
+if (-not $applyPendingMatch.Success) { throw 'Install cleanup-pending path was not reported' }
+$applyPendingPath = $applyPendingMatch.Groups[1].Value.Trim()
+if (-not (Test-Path -LiteralPath $applyPendingPath -PathType Container)) { throw 'Displaced pre-upgrade tree was not retained for cleanup' }
 $updated = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 if ($updated.key -ne $manifest.key) { throw 'Unpacked extension identity key changed' }
 if (@($updated.host_permissions) -notcontains 'http://127.0.0.1:17485/*') { throw 'Exact PR102 Lab host permission missing' }
@@ -106,10 +114,21 @@ $backups = @(Get-ChildItem -LiteralPath (Join-Path $root 'backups') -Directory)
 if ($backups.Count -ne 1) { throw 'Exactly one Lab rollback backup expected' }
 if (-not (Test-Path (Join-Path $backups[0].FullName 'lab-backup.json'))) { throw 'Lab rollback marker missing' }
 
-& $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha -RollbackFrom $backups[0].FullName -Apply
+$rollbackResult = & $updater -LabRoot $root -CandidateRoot $packageRoot -LabPort 17485 -TestFixture -ExpectedSourceSha $sourceSha -RollbackFrom $backups[0].FullName -Apply -TestFailDisplacedCleanup
+$rollbackText = $rollbackResult -join ' '
+if ($rollbackText -notmatch '\[RESTORED\]' -or $rollbackText -notmatch '\[RESTORED_CLEANUP_PENDING\]') {
+  throw 'Committed rollback with synthetic cleanup failure was not reported distinctly'
+}
+$rollbackPendingMatch = [regex]::Match($rollbackText, '\[RESTORED_CLEANUP_PENDING\] DisplacedPath=([^;]+);')
+if (-not $rollbackPendingMatch.Success) { throw 'Rollback cleanup-pending path was not reported' }
+$rollbackPendingPath = $rollbackPendingMatch.Groups[1].Value.Trim()
+if (-not (Test-Path -LiteralPath $rollbackPendingPath -PathType Container)) { throw 'Displaced pre-rollback tree was not retained for cleanup' }
 if ((Get-FileHash $manifestPath -Algorithm SHA256).Hash -ne $beforeManifest) { throw 'Rollback did not restore manifest exactly' }
 if ([IO.File]::ReadAllText((Join-Path $installed 'control.js')) -ne $beforeControl) { throw 'Rollback did not restore original extension source' }
 Write-Output '[PASS] PR102 Lab dry-run/apply/rollback; identity/endpoint/permissions; dirty and ignored source rejection'
+# The two retained displaced trees are intentional synthetic cleanup-failure fixtures.
+Remove-Item -LiteralPath $applyPendingPath -Recurse -Force
+Remove-Item -LiteralPath $rollbackPendingPath -Recurse -Force
 Remove-Item -LiteralPath $root -Recurse -Force
 
 
