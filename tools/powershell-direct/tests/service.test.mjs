@@ -61,7 +61,7 @@ test('expiry, duplicate request IDs and workspace escape are rejected',()=>{
 
 test('request validation rejects malformed paths, NUL arguments, missing risk and excessive timeout',()=>{
  assert.throws(()=>validateExecutionSpec({...request,executable:'powershell.exe'}),/ABSOLUTE_LOCAL_PATH/);
- assert.throws(()=>validateExecutionSpec({...request,args:['bad\\0arg']}),/INVALID_ARGUMENT/);
+ assert.throws(()=>validateExecutionSpec({...request,args:['bad'+String.fromCharCode(0)+'arg']}),/INVALID_ARGUMENT/);
  assert.throws(()=>validateExecutionSpec({...request,riskAssessment:''}),/MISSING_RISKASSESSMENT/);
  assert.throws(()=>validateExecutionSpec({...request,timeoutMs:9999999}),/INVALID_TIMEOUT/);
 });
