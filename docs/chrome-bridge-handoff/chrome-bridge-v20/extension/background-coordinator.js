@@ -656,7 +656,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         return {ok:true};
       })().then(respond,error=>respond({
         error:error.message,
-        outcome:error.outcome || 'NOT_PERFORMED',
+        outcome:error.outcome || (error.dispatchState==='UNKNOWN'?'UNKNOWN':'NOT_PERFORMED'),
         quarantinedTabs:Array.isArray(error.quarantinedTabs)?error.quarantinedTabs:[]
       }));
       return true;
@@ -714,7 +714,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         };
         void revoke().then(respond,error=>respond({
           error:error.message,
-          outcome:error.outcome || 'NOT_PERFORMED',
+          outcome:error.outcome || (error.dispatchState==='UNKNOWN'?'UNKNOWN':'NOT_PERFORMED'),
           quarantinedTabs:Array.isArray(error.quarantinedTabs)?error.quarantinedTabs:[]
         }));
         return true;
