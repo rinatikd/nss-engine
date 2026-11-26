@@ -117,10 +117,6 @@ export class PowerShellApprovalService {
  stop(){return new Promise(resolve=>this.server.close(resolve));}
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const root=process.argv[2];if(!root)throw Error('USAGE: node service.mjs WINDOWS_ALLOWED_ROOT');
- const svc=new PowerShellApprovalService({root});await svc.start();
- console.error('PS_LAB_READY 127.0.0.1:'+svc.port);
- console.error('LOCAL_APPROVAL_URL http://127.0.0.1:'+svc.port+'/approve');
- console.error('MCP_AGENT_TOKEN '+svc.agentToken);
- console.error('Keep the MCP token private; local approval is authenticated by the supervised local proxy.');
+ console.error('SUPERVISOR_REQUIRED: start stack-supervisor.mjs so the local approval proxy is available.');
+ process.exitCode=1;
 }
