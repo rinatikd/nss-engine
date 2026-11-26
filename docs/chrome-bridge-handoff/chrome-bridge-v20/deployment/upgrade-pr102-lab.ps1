@@ -16,6 +16,8 @@ param(
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'verify-candidate-source.ps1')
 $ErrorActionPreference = 'Stop'
+$script:ExpectedExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
+$script:TestFixtureMode = [bool]$TestFixture
 
 $DeployFiles = @(
   'control.html', 'control.js', 'background.js', 'permissions.js',
@@ -28,6 +30,28 @@ $DeployFiles = @(
 )
 function Require([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
+}
+# Chrome derives an unpacked extension ID from SHA-256(DER public key):
+# take the first 16 bytes and map each hexadecimal nibble 0..15 to a..p.
+function GetChromeExtensionIdFromKey([string]$Key) {
+  if ([string]::IsNullOrWhiteSpace($Key)) { throw 'PR102_EXTENSION_PUBLIC_KEY_MISSING' }
+  try { $publicKey = [Convert]::FromBase64String($Key) } catch { throw 'PR102_EXTENSION_PUBLIC_KEY_INVALID' }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $digest = $sha.ComputeHash($publicKey) } finally { $sha.Dispose() }
+  $alphabet = 'abcdefghijklmnop'
+  $builder = New-Object System.Text.StringBuilder
+  for ($i = 0; $i -lt 16; $i++) {
+    $value = [int]$digest[$i]
+    [void]$builder.Append($alphabet[$value -shr 4])
+    [void]$builder.Append($alphabet[$value -band 15])
+  }
+  return $builder.ToString()
+}
+function AssertExpectedExtensionIdentity($Manifest) {
+  if ($script:TestFixtureMode) { return }
+  Require ($Manifest -and $Manifest.PSObject.Properties['key']) 'PR102_EXTENSION_PUBLIC_KEY_MISSING'
+  $actualId = GetChromeExtensionIdFromKey ([string]$Manifest.key)
+  Require ($actualId -ceq $script:ExpectedExtensionId) ('PR102_EXTENSION_ID_MISMATCH: expected ' + $script:ExpectedExtensionId + ', got ' + $actualId)
 }
 function FullPath([string]$Path) {
   $full = [IO.Path]::GetFullPath($Path.Trim())
@@ -68,6 +92,7 @@ function InvokeNodeCapture([string]$Executable,[string]$Arguments,[string]$Worki
 function ReadManifest([string]$Path) {
   Require (Test-Path -LiteralPath $Path -PathType Leaf) 'Extension manifest.json missing'
   $m = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+  AssertExpectedExtensionIdentity $m
   Require ($m.manifest_version -eq 3) 'MV3 manifest required'
   Require ($m.background.service_worker -eq 'background.js') 'Unexpected service worker'
   Require ((@($m.permissions) -contains 'storage') -and (@($m.permissions) -contains 'scripting')) 'Baseline permissions missing'
