@@ -54,6 +54,7 @@ bool make_operation_id(std::string& id) {
 
 napi_value create_operation(napi_env env, napi_callback_info) {
   std::string id;
+  bool registered = false;
   for (int attempt = 0; attempt < 4; ++attempt) {
     if (!make_operation_id(id)) {
       return throw_error(env, "OPERATION_ID_GENERATION_FAILED",
@@ -63,10 +64,11 @@ napi_value create_operation(napi_env env, napi_callback_info) {
     if (active_operations.find(id) == active_operations.end() &&
         closed_operations.find(id) == closed_operations.end()) {
       active_operations.emplace(id, OperationRecord{});
+      registered = true;
       break;
     }
   }
-  if (id.empty() || active_operations.find(id) == active_operations.end()) {
+  if (!registered) {
     return throw_error(env, "OPERATION_ID_COLLISION",
                        "Could not allocate a unique operation ID");
   }
