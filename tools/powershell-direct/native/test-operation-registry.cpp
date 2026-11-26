@@ -20,7 +20,6 @@ struct TestRecord {
 int main() {
   OperationRegistry<TestRecord> registry;
   auto record = std::make_shared<TestRecord>();
-  std::weak_ptr<TestRecord> weak_record = record;
   if (!registry.insert_if_absent("operation-a", record)) {
     std::cerr << "FAIL: initial registry insert\n";
     return EXIT_FAILURE;
