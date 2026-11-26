@@ -7,6 +7,8 @@ function fakeChrome(data={},options={}) {
   const calls=[];
   const session={};
   let blockedGrantWrite=false;
+  let localWriteFailuresRemaining=options.failLocalSetOnce?1:0;
+  let sessionWriteFailuresRemaining=options.failSessionSetOnce?1:0;
   return {
     calls,listeners,data,session,
     storage:{local:{
@@ -16,7 +18,11 @@ function fakeChrome(data={},options={}) {
         const failedKey=Object.keys(next).find(key=>
           options.failLocalSet===true || options.failLocalSet===key ||
           (Array.isArray(options.failLocalSet) && options.failLocalSet.includes(key)));
-        if (failedKey) throw Error('SYNTHETIC_LOCAL_STORAGE_WRITE_FAILED:'+failedKey);
+        if (failedKey || (localWriteFailuresRemaining>0 &&
+            (options.failLocalSetOnce===true || options.failLocalSetOnce===Object.keys(next)[0]))) {
+          if (localWriteFailuresRemaining>0) localWriteFailuresRemaining--;
+          throw Error('SYNTHETIC_LOCAL_STORAGE_WRITE_FAILED:'+(failedKey||Object.keys(next)[0]));
+        }
         Object.assign(data,next);calls.push(['set',next]);
       }
     },session:{
@@ -26,7 +32,11 @@ function fakeChrome(data={},options={}) {
         const failedKey=Object.keys(next).find(key=>
           options.failSessionSet===true || options.failSessionSet===key ||
           (Array.isArray(options.failSessionSet) && options.failSessionSet.includes(key)));
-        if (failedKey) throw Error('SYNTHETIC_SESSION_STORAGE_WRITE_FAILED:'+failedKey);
+        if (failedKey || (sessionWriteFailuresRemaining>0 &&
+            (options.failSessionSetOnce===true || options.failSessionSetOnce===Object.keys(next)[0]))) {
+          if (sessionWriteFailuresRemaining>0) sessionWriteFailuresRemaining--;
+          throw Error('SYNTHETIC_SESSION_STORAGE_WRITE_FAILED:'+(failedKey||Object.keys(next)[0]));
+        }
         if (Object.hasOwn(next,'bridgeBackgroundControlGrants') && options.failGrantStoreWrite)
           throw Error('SYNTHETIC_GRANT_STORE_WRITE_FAILED');
         if (Object.hasOwn(next,'bridgeBackgroundControlGrants') &&
@@ -272,6 +282,21 @@ async function prepareLab(c,tabId) {
   installBackgroundCoordinator(c);
   return tabId;
 }
+
+test('per-tab Revoke also clears a stale marker in a store whose new write failed transiently',async()=>{
+  const c=fakeChrome({...LAB_STATE,bridgeMutationRevokingTabs:[73]},{
+    failLocalSetOnce:'bridgeMutationRevokingTabs'
+  });
+  await prepareLab(c,73);
+  c.session.bridgeBackgroundControlGrants={'73':{
+    origin:'https://claude.ai',expires:Date.now()+60000
+  }};
+  const result=await sendCoordinator(c,'revoke-background-control',{tabId:73});
+  assert.equal(result.ok,true);
+  assert.deepEqual(c.data.bridgeMutationRevokingTabs,[],
+    'the pre-existing local marker must be included in the cleanup targets even though the new local write failed');
+  assert.deepEqual(c.session.bridgeMutationRevokingTabs,[]);
+});
 
 test('per-tab Revoke clears only the storage copy whose fence write was confirmed',async()=>{
   for (const [failedStore,options] of [
