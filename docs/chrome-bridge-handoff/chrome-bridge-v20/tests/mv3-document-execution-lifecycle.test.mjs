@@ -101,7 +101,7 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
    {stdio:'ignore',detached:true});
   const debugPort=await until(()=>{
    const file=path.join(profile,'DevToolsActivePort');
-   return fs.existsSync(file)?Number(fs.readFileSync(file,'utf8').split(/\\r?\\n/)[0]):0;
+   return fs.existsSync(file)?Number(fs.readFileSync(file,'utf8').split(/\r?\n/)[0]):0;
   },15000,'DEBUG_PORT');
   const extensionHash=crypto.createHash('sha256').update(path.resolve(extension)).digest('hex').slice(0,32);
   const extensionId=[...extensionHash].map(char=>'abcdefghijklmnop'[parseInt(char,16)]).join('');
