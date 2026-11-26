@@ -472,3 +472,29 @@ test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a dura
   assert.equal(clear.outcome,'UNKNOWN',
     'the Control UI must not claim NOT_PERFORMED after a partial revoke');
 });
+
+
+test('session_authorize failure to clear legacy grants sets a durable global lock',async()=>{
+  const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeBackgroundControlGrants'});
+  await startBackgroundTransport(c);
+  installBackgroundCoordinator(c);
+  const result=await sendCoordinator(c,'dispatch',{
+    command:{
+      name:'session_authorize',
+      bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,
+      args:{
+        sessionId:'session_0002',
+        durationMinutes:60,
+        origins:['https://claude.ai']
+      }
+    }
+  },'transport-host.html');
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.equal(c.data.bridgeMutationLabMode,false);
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+  const restart=await startBackgroundTransport(c);
+  assert.equal(restart.ok,false);
+  assert.equal(restart.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
+});
