@@ -120,17 +120,22 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
 
   const local = await chromeApi.storage.local.get([
-    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock','bridgeMutationRevokingTabs'
+    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock',
+    'bridgeMutationRevokingTabs','bridgeMutationRevocationPending'
   ]);
   let session = {};
   if (chromeApi.storage.session?.get) {
     session = await chromeApi.storage.session.get([
-      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock','bridgeMutationRevokingTabs'
+      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock',
+      'bridgeMutationRevokingTabs','bridgeMutationRevocationPending'
     ]);
   }
   if (local.bridgeMutationQuarantineLock === true ||
       session.bridgeMutationQuarantineLock === true)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+  if (local.bridgeMutationRevocationPending?.pending === true ||
+      session.bridgeMutationRevocationPending?.pending === true)
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
 
   const localRevoking = Array.isArray(local.bridgeMutationRevokingTabs)
     ? local.bridgeMutationRevokingTabs : [];
@@ -235,6 +240,68 @@ async function clearTabRevocationFence(chromeApi, tabId, stores) {
     const state = await storage.get(key);
     const prior = Array.isArray(state[key]) ? state[key] : [];
     await storage.set({[key]:prior.filter(id=>id!==tabId)});
+  }
+  return true;
+}
+
+async function readGlobalRevocationFence(chromeApi) {
+  const key='bridgeMutationRevocationPending';
+  const [localState,sessionState]=await Promise.all([
+    chromeApi.storage.local.get(key),
+    chromeApi.storage.session.get(key)
+  ]);
+  const localRecord=localState[key];
+  const sessionRecord=sessionState[key];
+  const record=[localRecord,sessionRecord].find(x=>x && x.pending===true) || null;
+  return {
+    record,
+    stores:['local','session']
+  };
+}
+
+async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
+  const key='bridgeMutationRevocationPending';
+  try {
+    const current=await readGlobalRevocationFence(chromeApi);
+    if (current.record) return {
+      persisted:true,existing:true,record:current.record,stores:current.stores
+    };
+    const record={
+      pending:true,
+      token:`${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      affectedTabs:[...new Set(affectedTabs.filter(id=>Number.isSafeInteger(id)&&id>0))],
+      startedAt:Date.now()
+    };
+    let localWritten=false,sessionWritten=false;
+    try {
+      await chromeApi.storage.local.set({[key]:record});
+      localWritten=true;
+    } catch { /* session storage may still provide a worker-lifetime fence */ }
+    try {
+      await chromeApi.storage.session.set({[key]:record});
+      sessionWritten=true;
+    } catch { /* local storage may still provide a browser-lifetime fence */ }
+    if (!localWritten && !sessionWritten) {
+      mutationQuarantinePersistenceFailed=true;
+      return {persisted:false,existing:false,record:null,stores:[]};
+    }
+    return {persisted:true,existing:false,record,stores:['local','session']};
+  } catch {
+    mutationQuarantinePersistenceFailed=true;
+    return {persisted:false,existing:false,record:null,stores:[]};
+  }
+}
+
+async function clearGlobalRevocationFence(chromeApi, record, stores) {
+  if (!record?.token || !Array.isArray(stores) || !stores.length) return false;
+  const key='bridgeMutationRevocationPending';
+  for (const store of stores) {
+    const storage=store==='local' ? chromeApi.storage.local :
+      store==='session' ? chromeApi.storage.session : null;
+    if (!storage?.get || !storage?.set) return false;
+    const state=await storage.get(key);
+    if (state[key]?.token===record.token)
+      await storage.set({[key]:null});
   }
   return true;
 }
