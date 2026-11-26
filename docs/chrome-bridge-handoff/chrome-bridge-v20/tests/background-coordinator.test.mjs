@@ -465,6 +465,9 @@ test('per-tab Revoke refuses to partially revoke an origin-wide Session Authoriz
   const result=await sendCoordinator(c,'revoke-background-control',{tabId:45});
   assert.equal(result.error,'SESSION_WIDE_REVOCATION_REQUIRED');
   assert.equal(c.session.bridgeSessionAuthorization.status,'active');
+  assert.deepEqual(c.data.bridgeMutationRevokingTabs,[],
+    'a known scope denial must remove its temporary durable admission fence');
+  assert.deepEqual(c.session.bridgeMutationRevokingTabs,[]);
 });
 
 test('session_revoke fences new provider work and drains an already accepted page action',async()=>{
