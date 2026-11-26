@@ -23,7 +23,11 @@ async function inject(chromeApi, tabId, origin, name, args, documentId=null) {
   if (!Array.isArray(out) || out.length!==1 ||
       typeof out[0]?.documentId!=='string' || !out[0].documentId ||
       out[0].frameId!==0) {
-    throw Object.assign(Error('INJECTION_DOCUMENT_IDENTITY_UNAVAILABLE'),{dispatchState:'NOT_PERFORMED'});
+    // A tab-scoped preflight has not mutated anything; a document-scoped
+    // mutation may already have run even if Chrome returned incomplete metadata.
+    throw Object.assign(Error('INJECTION_DOCUMENT_IDENTITY_UNAVAILABLE'),{
+      dispatchState:documentId?'UNKNOWN':'NOT_PERFORMED'
+    });
   }
   if (documentId && out[0].documentId!==documentId)
     throw Object.assign(Error('INJECTION_DOCUMENT_IDENTITY_MISMATCH'),{dispatchState:'UNKNOWN'});
