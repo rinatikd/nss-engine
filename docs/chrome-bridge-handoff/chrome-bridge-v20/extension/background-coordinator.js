@@ -530,12 +530,35 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                 if (currentStatus().connected!==true)
                   throw coordinatorError('BRIDGE_NOT_CONNECTED','BLOCKED');
                 // A new session starts only after old per-tab grants are gone.
-                await new BackgroundControlGrants(chromeApi).clear();
+                try {
+                  await new BackgroundControlGrants(chromeApi).clear();
+                } catch {
+                  // A failed grant clear leaves the legacy tab-grant path
+                  // potentially live. Keep all mutations blocked until an
+                  // explicit cleanup/reconciliation succeeds.
+                  controlClearFailed=true;
+                  await chromeApi.storage.local.set({bridgeMutationLabMode:false}).catch(()=>{});
+                  await persistGlobalQuarantineLock(chromeApi);
+                  throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+                }
                 const created=await sessionAuthorization.authorize({
                   ...msg.command.args,bridgeEpoch:msg.command.bridgeEpoch
                 });
-                try { await chromeApi.storage.local.set({bridgeMutationLabMode:true}); }
-                catch (error) { await sessionAuthorization.revoke(); throw error; }
+                try {
+                  await chromeApi.storage.local.set({bridgeMutationLabMode:true});
+                } catch {
+                  // The lease may have been persisted while the feature flag
+                  // was not. Revoke it and leave a lock if cleanup is uncertain.
+                  try {
+                    await sessionAuthorization.revoke();
+                    await chromeApi.storage.local.set({bridgeMutationLabMode:false});
+                  } catch {
+                    controlClearFailed=true;
+                    await persistGlobalQuarantineLock(chromeApi);
+                    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+                  }
+                  throw coordinatorError('SESSION_AUTH_ENABLE_FAILED','NOT_PERFORMED');
+                }
                 return created;
               },{allowDuringClear:true});
               controlClearFailed=false;
