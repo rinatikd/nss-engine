@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 
 const root=path.resolve(import.meta.dirname,'..');
@@ -105,10 +106,12 @@ globalThis.__r4PermissionGate={permittedTab,BackgroundControlGrants};
     ],{stdio:'ignore',detached:true});
 
     const port=await debugPort(profile);
+    const extensionId=[...crypto.createHash('sha256').update(path.resolve(extension)).digest('hex').slice(0,32)]
+      .map(character=>'abcdefghijklmnop'[parseInt(character,16)]).join('');
     const worker=await until(async()=>{
       const list=await targets(port);
       return list.find(target=>target.type==='service_worker'&&
-        /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(target.url)&&target.webSocketDebuggerUrl);
+        target.url==='chrome-extension://'+extensionId+'/background.js'&&target.webSocketDebuggerUrl);
     },12000,'SERVICE_WORKER');
     workerCdp=await Cdp.connect(worker.webSocketDebuggerUrl);
     await workerCdp.call('Runtime.enable');
