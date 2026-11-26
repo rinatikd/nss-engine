@@ -33,15 +33,21 @@ async function stopTunnelChild(timeoutMs=5000){
 async function shutdown(signal='STOP'){
  if(stopping)return;
  stopping=true;
- process.stdout.write('STOPPING_STACK '+signal+'\n');
- try{await proxy?.stop();}catch{}
- const tunnelStopped=await stopTunnelChild();
+ shutdownDeadline=Date.now()+SHUTDOWN_BUDGET_MS;
+ process.stdout.write('STOPPING_STACK '+signal+' budget_ms='+SHUTDOWN_BUDGET_MS+'\\n');
+ let proxyStopped=false;
+ try{proxyStopped=proxy?await proxy.stop({timeoutMs:remainingShutdownMs()}):true;}catch{}
+ const tunnelStopped=remainingShutdownMs()>0?await stopTunnelChild(remainingShutdownMs()):false;
  let serviceStopped=false;
- try{serviceStopped=await service.stop({timeoutMs:5000});}catch{}
- if(serviceStopped)process.stdout.write('LOCAL_SERVICE_STOPPED_ACTIVE_JOB_EXIT_CONFIRMED\n');
- else process.stderr.write('ACTIVE_JOB_TERMINATION_UNCONFIRMED: direct child may still be running\n');
- if(tunnelStopped)process.stdout.write('TUNNEL_CHILD_EXIT_CONFIRMED\n');
- else process.stderr.write('TUNNEL_TERMINATION_UNCONFIRMED: process may still be running\n');
+ // service.stop performs separate active-job and HTTP-close waits.
+ const serviceBudget=Math.floor(remainingShutdownMs()/2);
+ try{if(serviceBudget>0)serviceStopped=await service.stop({timeoutMs:serviceBudget});}catch{}
+ if(serviceStopped)process.stdout.write('LOCAL_SERVICE_STOPPED_ACTIVE_JOB_AND_HTTP_CLOSE_CONFIRMED\\n');
+ else process.stderr.write('LOCAL_SERVICE_STOP_UNCONFIRMED: active child or HTTP close may remain\\n');
+ if(tunnelStopped)process.stdout.write('TUNNEL_DIRECT_CHILD_EXIT_CONFIRMED\\n');
+ else process.stderr.write('TUNNEL_DIRECT_CHILD_EXIT_UNCONFIRMED: process may still be running\\n');
+ if(!proxyStopped)process.stderr.write('APPROVAL_PROXY_STOP_UNCONFIRMED\\n');
+ process.stderr.write('PROCESS_TREE_CLEANUP_NOT_GUARANTEED: descendants were not independently verified\\n');
  process.exitCode=tunnelStopped&&serviceStopped&&proxyStopped?0:1;
 }
 process.on('SIGINT',()=>{void shutdown('SIGINT');});
