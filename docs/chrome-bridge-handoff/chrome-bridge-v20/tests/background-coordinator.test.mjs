@@ -319,6 +319,51 @@ test('per-tab Revoke cancels a pending approval before draining the mutation lan
   assert.equal((await sendCoordinatorTo(c,listener,'approval-list')).pending.length,0);
 });
 
+test('global Revoke cancels pending approvals across tabs before draining mutation lanes',async()=>{
+  for(const mode of ['session_revoke','clear-background-controls']){
+    const c=fakeChrome({...LAB_STATE});
+    await prepareLab(c,74);
+    delete c.session.bridgeSessionAuthorization;
+    c.session.bridgeBackgroundControlGrants={
+      '74':{origin:'https://claude.ai',expires:Date.now()+60000},
+      '75':{origin:'https://claude.ai',expires:Date.now()+60000}
+    };
+    const listener=c.listeners.at(-1);
+    const mutations=[74,75].map(tabId=>sendCoordinatorTo(c,listener,'dispatch',{
+      command:providerPrepare(tabId)
+    },'transport-host.html'));
+
+    let pending=[];
+    for(let i=0;i<40;i++){
+      const state=await sendCoordinatorTo(c,listener,'approval-list');
+      pending=state?.pending||[];
+      if(pending.filter(item=>[74,75].includes(item.tabId)).length===2)break;
+      await delay(5);
+    }
+    assert.equal(pending.filter(item=>[74,75].includes(item.tabId)).length,2,
+      mode+' must begin with two independent pending approvals');
+
+    const revoke=mode==='session_revoke'
+      ? sendCoordinatorTo(c,listener,'dispatch',{command:{
+          name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+          expires:Date.now()+90000,args:{}
+        }},'transport-host.html')
+      : sendCoordinatorTo(c,listener,'clear-background-controls');
+    const [revoked,...results]=await Promise.all([revoke,...mutations]);
+    assert.equal(mode==='session_revoke'?revoked.result?.revoked:revoked.ok,true);
+    assert.equal(results.length,2);
+    for(const result of results){
+      assert.equal(result.error,'APPROVAL_CANCELLED');
+      assert.equal(result.dispatchState,'BLOCKED');
+    }
+    assert.deepEqual(c.session.bridgeBackgroundControlGrants||{},
+      {},'global Revoke must remove all per-tab grants');
+    assert.equal(c.calls.some(call=>call[0]==='script'&&call[1]==='provider_prepare'),
+      false,'no cancelled approval may enter pageAction');
+    assert.equal((await sendCoordinatorTo(c,listener,'approval-list')).pending.length,0);
+  }
+});
+
 test('per-tab Revoke also clears a stale marker in a store whose new write failed transiently',async()=>{
   const c=fakeChrome({...LAB_STATE,bridgeMutationRevokingTabs:[73]},{
     failLocalSetOnce:'bridgeMutationRevokingTabs'
