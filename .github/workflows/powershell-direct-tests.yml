@@ -1,0 +1,27 @@
+name: PowerShell Direct tests
+
+on:
+  pull_request:
+    paths:
+      - "tools/powershell-direct/**"
+      - ".github/workflows/powershell-direct-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Syntax checks
+        run: |
+          node --check tools/powershell-direct/runner.mjs
+          node --check tools/powershell-direct/service.mjs
+          node --check tools/powershell-direct/approval-proxy.mjs
+          node --check tools/powershell-direct/stack-supervisor.mjs
+      - name: PowerShell Direct unit and HTTP tests
+        run: node --test tools/powershell-direct/tests/service.test.mjs
