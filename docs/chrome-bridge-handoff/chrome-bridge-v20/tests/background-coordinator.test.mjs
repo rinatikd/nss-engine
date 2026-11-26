@@ -526,6 +526,55 @@ test('session_revoke persists a global mutation fence across MV3 worker restart'
   assert.equal(c.session.bridgeMutationRevocationPending,null);
 });
 
+
+test('clear-background-controls persists a global revoke fence across worker restart',async()=>{
+  let enteredResolve,releaseResolve;
+  const entered=new Promise(resolve=>{enteredResolve=resolve;});
+  const held=new Promise(resolve=>{releaseResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{executeScript:async({name,details,origin,tabId,calls})=>{
+    calls.push(['script',name,tabId]);
+    if (name==='agent_context') return [{result:{
+      verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+    }}];
+    if (name==='provider_prepare') {
+      enteredResolve();
+      await held;
+      return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+    }
+    return [{result:{ok:true}}];
+  }});
+  await prepareLab(c,63);
+  const firstWorker=await import('../extension/background-coordinator.js?clear-controls-worker-before');
+  firstWorker.installBackgroundCoordinator(c);
+  const mutation=sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:providerPrepare(63)
+  },'transport-host.html');
+  await entered;
+  const clear=sendCoordinatorTo(c,c.listeners.at(-1),'clear-background-controls');
+  await delay(10);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+  assert.deepEqual(c.data.bridgeMutationRevocationPending.affectedTabs,[63]);
+
+  const restartedWorker=await import('../extension/background-coordinator.js?clear-controls-worker-after');
+  restartedWorker.installBackgroundCoordinator(c);
+  const late=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:providerPrepare(64)
+  },'transport-host.html');
+  assert.equal(late.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+
+  releaseResolve();
+  await mutation;
+  const cleared=await clear;
+  assert.equal(cleared.ok,true);
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationRevocationPending,null);
+  assert.equal(c.session.bridgeMutationRevocationPending,null);
+});
+
 test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN',async()=>{
   const c=fakeChrome({...LAB_STATE});
   await prepareLab(c,62);
