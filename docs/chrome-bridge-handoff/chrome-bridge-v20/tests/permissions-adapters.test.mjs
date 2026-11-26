@@ -1,0 +1,175 @@
+import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+import { ControlGrants, CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_DURATION_MS } from '../extension/permissions.js';
+import { DEFAULT_ADAPTERS } from '../extension/adapters.js';
+import { pageAction } from '../extension/page.js';
+import { toolByName } from '../server/tools.mjs';
+test('tool descriptions match the preserved Control allowlist and scoped session capabilities', () => {
+ assert.deepEqual(Object.keys(CONTROL_ORIGINS).sort(), ['https://chat.deepseek.com', 'https://chat.qwen.ai', 'https://claude.ai', 'https://gemini.google.com', 'https://grok.com', 'https://www.kimi.ai']);
+ const description = toolByName('agent_send').description;
+ for (const origin of Object.keys(CONTROL_ORIGINS)) assert.ok(description.includes(origin));
+ assert.match(description, /ChatGPT-owner-approved Session Authorization lease/);
+ assert.match(description, /agent_send\/provider_prepare\/provider_commit/);
+ assert.match(toolByName('provider_prepare').description, /Session Authorization lease/);
+ assert.match(toolByName('provider_commit').description, /Session Authorization lease/);
+ assert.match(toolByName('browser_click').description, /not included in Session Authorization/);
+ assert.match(toolByName('browser_fill').description, /individual confirmation/);
+ assert.doesNotMatch(description, /chatgpt\.com|cursor\.com/);
+});
+test('control requires local approval, exact allowed origin and a live epoch; expires and resets', () => {
+ let now = 100; const g = new ControlGrants(() => now);
+ for (const origin of Object.keys(CONTROL_ORIGINS)) {
+  assert.throws(() => g.require(origin)); assert.throws(() => g.approve(origin, true));
+  g.reset('instance'); assert.throws(() => g.approve(origin, false));
+  g.approve(origin, true); assert.equal(g.require(origin), now + CONTROL_DURATION_MS[240]);
+  now += CONTROL_DURATION_MS[240]; assert.throws(() => g.require(origin));
+  g.approve(origin, true); g.reset('restart'); assert.throws(() => g.require(origin));
+  g.reset();
+ }
+ g.reset('instance');
+ for (const o of ['https://chatgpt.com','https://claude.ai.evil.test','http://claude.ai','https://example.com']) {
+  assert.throws(() => g.approve(o,true)); assert.throws(() => g.require(o));
+ }
+});
+test('each allowed origin has its own complete adapter', () => {
+ for (const [origin, key] of Object.entries(CONTROL_ORIGINS)) {
+  const a = DEFAULT_ADAPTERS[key]; assert.equal(a.origin, origin);
+  assert.equal(new URL(a.newChatUrl).origin, origin);
+  assert.ok(a.composer, key+' composer selector required');
+  // Equal Control permission is independent of provider DOM calibration.
+  // Blank send/stop/reply selectors must fail closed until live calibration.
+ }
+});
+test('Grok, Qwen and Kimi use the same explicit Control grant semantics as the primary providers', () => {
+ for (const [key, origin] of [['grok','https://grok.com'], ['qwen','https://chat.qwen.ai'], ['kimi','https://www.kimi.ai']]) {
+  const adapter = DEFAULT_ADAPTERS[key];
+  assert.equal(adapter.origin, origin);
+  assert.equal(CONTROL_ORIGINS[origin], key);
+  const grants = new ControlGrants(() => 100);
+  grants.reset('test-instance');
+  grants.approve(origin, true, 240);
+  assert.equal(grants.require(origin), 100 + CONTROL_DURATION_MS[240]);
+  grants.revoke(origin);
+  assert.throws(() => grants.require(origin), /Control denied/);
+ }
+});
+
+test('injected mutation denies other origins and expired grants before DOM access', async () => {
+ globalThis.location = { origin:'https://example.com' };
+ assert.match((await pageAction('agent_send',{controlExpires:Date.now()+1000},location.origin)).error,/Control denied/);
+ location.origin = 'https://claude.ai';
+ assert.match((await pageAction('browser_click',{controlExpires:0},location.origin)).error,/Control denied/);
+ delete globalThis.location;
+});
+
+
+test('global off is denied even with per-origin grant; explicit revoke removes only selected origin', () => {
+  const g = new ControlGrants(() => 1000);
+  g.reset('session');
+  g.approve('https://claude.ai', true, 60);
+  g.approve('https://gemini.google.com', true, 60);
+  assert.equal(g.status('https://claude.ai', false).allowed, false);
+  assert.equal(g.status('https://claude.ai', true).allowed, true);
+  g.revoke('https://claude.ai');
+  assert.equal(g.status('https://claude.ai', true).allowed, false);
+  assert.throws(() => g.require('https://claude.ai'));
+  assert.equal(g.status('https://gemini.google.com', true).allowed, true);
+  g.revoke('https://claude.ai');
+  g.reset();
+  assert.equal(g.status('https://gemini.google.com', true).allowed, false);
+});
+
+test('all six council origins are exact; lookalike hosts and HTTP are denied', () => {
+ for (const [origin,key] of Object.entries(CONTROL_ORIGINS)) assert.equal(providerForOrigin(origin),key);
+ for (const value of ['https://grok.com.evil.test', 'http://grok.com', 'https://chat.qwen.ai.evil.test', 'http://chat.qwen.ai', 'https://www.kimi.ai.evil.test', 'http://www.kimi.ai'])
+   assert.equal(providerForOrigin(new URL(value).origin), null);
+ assert.deepEqual(Object.keys(DISCOVERY_ONLY_ORIGINS), ['https://cursor.com']);
+});
+
+
+test('Kimi conversation URL is bound to its exact /chat/<id> identity', async () => {
+ const previous = globalThis.location;
+ try {
+  globalThis.location = {
+   origin: 'https://www.kimi.ai',
+   pathname: '/chat/1a209c5f-be32-83cf-8000-09c5dd747803'
+  };
+  const context = await pageAction('agent_context', {}, location.origin);
+  assert.deepEqual(context, {
+   verified: true,
+   origin: 'https://www.kimi.ai',
+   conversationId: '1a209c5f-be32-83cf-8000-09c5dd747803'
+  });
+  location.pathname = '/home';
+  assert.deepEqual(await pageAction('agent_context', {}, location.origin), {
+   verified: false, origin: 'https://www.kimi.ai', conversationId: null
+  });
+ } finally {
+  if (previous === undefined) delete globalThis.location;
+  else globalThis.location = previous;
+ }
+});
+
+test('browser_fill supports verified contenteditable fields without clicking Send', () => {
+ const source = readFileSync(new URL('../extension/page.js', import.meta.url), 'utf8');
+ assert.match(source, /const isEditable = e\.isContentEditable === true \|\| e\.getAttribute\('contenteditable'\) === 'true'/);
+ assert.match(source, /document\.execCommand\('insertText', false, args\.text\)/);
+ assert.match(source, /if \(actual\.trim\(\) !== args\.text\.trim\(\)\) throw Error\('FILL_TEXT_MISMATCH'\)/);
+ assert.match(source, /return \{ filled: true, elementType: isEditable \? 'contenteditable'/);
+});
+
+
+test('browser_fill actually inserts and verifies text in a contenteditable editor without sending', async () => {
+ const keys = ['location','document','window','HTMLTextAreaElement','HTMLInputElement','InputEvent'];
+ const previous = Object.fromEntries(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis,key)]));
+ const events = [];
+ const editor = {
+  disabled: false,
+  isContentEditable: true,
+  innerText: '',
+  textContent: '',
+  value: undefined,
+  name: '',
+  id: 'kimi-composer',
+  autocomplete: '',
+  getClientRects: () => [{}],
+  getAttribute: name => name === 'contenteditable' ? 'true' : null,
+  closest: () => null,
+  focus() {},
+  dispatchEvent(event) { events.push(event.type); return true; }
+ };
+ const selection = { removeAllRanges() {}, addRange() {} };
+ globalThis.location = { origin: 'https://www.kimi.ai', pathname: '/chat/1a209c5f-be32-83cf-8000-09c5dd747803' };
+ globalThis.HTMLTextAreaElement = class HTMLTextAreaElement {};
+ globalThis.HTMLInputElement = class HTMLInputElement {};
+ globalThis.InputEvent = class InputEvent extends Event {
+  constructor(type, options) { super(type, options); this.inputType = options.inputType; this.data = options.data; }
+ };
+ globalThis.window = { getSelection: () => selection };
+ globalThis.document = {
+  querySelectorAll: selector => selector === '.chat-input-editor' ? [editor] : [],
+  createRange: () => ({ selectNodeContents() {} }),
+  execCommand(command, _showUI, value) {
+   if (command === 'delete') { editor.innerText = ''; editor.textContent = ''; return true; }
+   if (command === 'insertText') { editor.innerText = value; editor.textContent = value; return true; }
+   return false;
+  }
+ };
+ try {
+  const result = await pageAction('browser_fill', {
+   selector: '.chat-input-editor',
+   text: 'Bridge diagnostic draft — do not send',
+   controlExpires: Date.now() + 60000
+  }, 'https://www.kimi.ai');
+  assert.deepEqual(result, { filled: true, elementType: 'contenteditable', verified: true });
+  assert.equal(editor.innerText, 'Bridge diagnostic draft — do not send');
+  assert.deepEqual(events, ['input','change']);
+  assert.equal(globalThis.window.__chromeBridgeMutationLock, undefined);
+ } finally {
+  for (const key of keys) {
+   if (previous[key]) Object.defineProperty(globalThis,key,previous[key]);
+   else delete globalThis[key];
+  }
+ }
+});

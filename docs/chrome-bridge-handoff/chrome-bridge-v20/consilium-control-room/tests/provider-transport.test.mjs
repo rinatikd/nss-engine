@@ -1,0 +1,158 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { ProviderTransport, PROVIDER_TRANSPORT_V1, TransportContractError, validateTransportIdentity } from '../consilium/provider-transport-v1.mjs';
+
+const identity={
+  requestId:'request_0001',
+  taskId:'task_000001',
+  providerId:'claude',
+  tabId:42,
+  origin:'https://claude.ai',
+  conversationId:'conversation_001',
+  epoch:7
+};
+const message='Review the immutable source packet.';
+const payloadHash=crypto.createHash('sha256').update(message,'utf8').digest('hex');
+const expiresAt=()=>new Date(Date.now()+60_000).toISOString();
+function baseAdapter(overrides={}) {
+  return {
+    version:PROVIDER_TRANSPORT_V1,
+    async prepare(input){return {state:'PREPARED',identity,requestId:input.requestId,payloadHash:input.payloadHash,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:expiresAt(),sideEffect:'composer-filled-no-send',clickedSend:false}},
+    async commit(input){return {state:'SENT',identity,requestId:input.requestId,preparedId:input.preparedId,payloadHash:input.payloadHash,clickedAt:new Date().toISOString(),clickedSend:true}},
+    async status(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001'}},
+    async replyWait(){const clickedAt=new Date(Date.now()-1000).toISOString();const reply='synthetic reply';return {
+      state:'REPLIED',identity,reply,replyReceipt:{
+        identity,requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
+        tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
+        clickedAt,baseline:0,replyIndex:1,observedAt:new Date().toISOString(),
+        replySha256:crypto.createHash('sha256').update(reply,'utf8').digest('hex'),
+        replyChars:reply.length,stableSamples:2,eventId:'event_reply_0001',
+        sequence:4,recordHash:'f'.repeat(64)
+      }
+    }},
+    async stop(){return {state:'STOP_REQUESTED',identity}},
+    async revoke(){return {state:'REVOKED',identity,nextEpoch:8}},
+    async events(){return [{seq:1,eventId:'event_0001',requestId:identity.requestId,state:'UNKNOWN',providerId:'claude',identity,quarantineId:'quarantine_001'}]},
+    ...overrides
+  };
+}
+function transport(adapter=baseAdapter(),verifyQuiescence=async()=>true) {
+  return new ProviderTransport(adapter,{verifyQuiescence});
+}
+
+test('v1 requires the versioned prepare/commit/status/stop/revoke/events adapter surface',()=>{
+  assert.throws(()=>new ProviderTransport({version:'v2'}),e=>e instanceof TransportContractError&&e.code==='TRANSPORT_VERSION_UNSUPPORTED');
+  assert.throws(()=>new ProviderTransport({version:PROVIDER_TRANSPORT_V1}),e=>e.code==='TRANSPORT_METHOD_MISSING_PREPARE');
+});
+
+test('transport identity binds provider origin, tab, conversation and epoch',()=>{
+  assert.deepEqual(validateTransportIdentity(identity),identity);
+  assert.throws(()=>validateTransportIdentity({...identity,origin:'https://evil.example'}),e=>e.code==='ORIGIN_PROVIDER_MISMATCH');
+  assert.throws(()=>validateTransportIdentity({...identity,epoch:0}),e=>e.code==='FENCING_EPOCH_INVALID');
+  assert.throws(()=>validateTransportIdentity({...identity,conversationId:'bad space'}),e=>e.code==='CONVERSATION_ID_INVALID');
+});
+
+test('prepare validates payload hash, fencing token, expiry and no-send side effect',async()=>{
+  const t=transport();
+  const result=await t.prepare({...identity,message,payloadHash});
+  assert.equal(result.state,'PREPARED');
+  await assert.rejects(()=>t.prepare({...identity,message,payloadHash:'0'.repeat(64)}),e=>e.code==='PAYLOAD_HASH_MISMATCH');
+  const clicked=transport(baseAdapter({async prepare(input){return {state:'PREPARED',identity,requestId:input.requestId,payloadHash:input.payloadHash,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:expiresAt(),sideEffect:'composer-filled-no-send',clickedSend:true}}}));
+  await assert.rejects(()=>clicked.prepare({...identity,message,payloadHash}),e=>e.code==='PREPARE_MUST_NOT_CLICK_SEND');
+  const noClickProof=transport(baseAdapter({async prepare(input){return {state:'PREPARED',identity,requestId:input.requestId,payloadHash:input.payloadHash,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:expiresAt(),sideEffect:'composer-filled-no-send'}}}));
+  await assert.rejects(()=>noClickProof.prepare({...identity,message,payloadHash}),e=>e.code==='PREPARE_MUST_NOT_CLICK_SEND');
+  const expired=transport(baseAdapter({async prepare(input){return {state:'PREPARED',identity,requestId:input.requestId,payloadHash:input.payloadHash,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',expiresAt:'2000-01-01T00:00:00.000Z',sideEffect:'composer-filled-no-send',clickedSend:false}}}));
+  await assert.rejects(()=>expired.prepare({...identity,message,payloadHash}),e=>e.code==='PREPARE_EXPIRY_INVALID');
+});
+
+test('commit requires fencing proof and explicit click evidence for SENT',async()=>{
+  const t=transport();
+  const result=await t.commit({...identity,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',payloadHash:'a'.repeat(64)});
+  assert.equal(result.state,'SENT');
+  const noClick=transport(baseAdapter({async commit(input){return {state:'SENT',identity,requestId:input.requestId,preparedId:input.preparedId,payloadHash:input.payloadHash,clickedSend:false}}}));
+  await assert.rejects(()=>noClick.commit({...identity,preparedId:'prepared_001',fencingToken:'fencing-token-0123456789abcdef',payloadHash:'a'.repeat(64)}),e=>e.code==='COMMIT_CLICK_EVIDENCE_REQUIRED');
+});
+
+test('UNKNOWN states require quarantine identity and are never auto-retried',async()=>{
+  let calls=0;
+  const t=transport(baseAdapter({async prepare(){calls++;return {state:'UNKNOWN',identity,quarantineId:'quarantine_001'}}}));
+  const result=await t.prepare({...identity,message,payloadHash});
+  assert.equal(result.state,'UNKNOWN');
+  assert.equal(result.quarantineId,'quarantine_001');
+  assert.equal(calls,1);
+  const malformed=transport(baseAdapter({async status(){return {state:'UNKNOWN',identity}}}));
+  await assert.rejects(()=>malformed.status(identity),e=>e.code==='UNKNOWN_QUARANTINE_ID_REQUIRED');
+});
+
+test('provider reply wait validates a request-bound hash-chained receipt and exact reply bytes',async()=>{
+  const t=transport();
+  const result=await t.replyWait({...identity,timeoutSec:5});
+  assert.equal(result.state,'REPLIED');
+  assert.equal(result.reply,'synthetic reply');
+  assert.equal(result.replyReceipt.requestId,identity.requestId);
+  assert.equal(result.replyReceipt.replyIndex,result.replyReceipt.baseline+1);
+  assert.equal(result.replyReceipt.stableSamples,2);
+  const mismatch=transport(baseAdapter({async replyWait(){return {
+    state:'REPLIED',identity,reply:'altered reply',replyReceipt:{
+      identity,requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
+      tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
+      clickedAt:new Date(Date.now()-1000).toISOString(),baseline:0,replyIndex:1,
+      observedAt:new Date().toISOString(),replySha256:'0'.repeat(64),replyChars:13,
+      stableSamples:2,eventId:'event_reply_0001',sequence:4,recordHash:'f'.repeat(64)
+    }
+  }}}));
+  await assert.rejects(()=>mismatch.replyWait(identity),e=>e.code==='REPLY_TEXT_RECEIPT_MISMATCH');
+  const wrongIdentity=transport(baseAdapter({async replyWait(){return {
+    state:'REPLIED',identity:{...identity,tabId:99},reply:'synthetic reply',
+    replyReceipt:{identity:{...identity,tabId:99},requestId:identity.requestId,taskId:identity.taskId,
+      providerId:identity.providerId,tabId:99,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
+      clickedAt:new Date(Date.now()-1000).toISOString(),baseline:0,replyIndex:1,observedAt:new Date().toISOString(),
+      replySha256:crypto.createHash('sha256').update('synthetic reply').digest('hex'),replyChars:15,
+      stableSamples:2,eventId:'event_reply_0001',sequence:4,recordHash:'f'.repeat(64)}
+  }}}));
+  await assert.rejects(()=>wrongIdentity.replyWait(identity),e=>e.code==='TRANSPORT_IDENTITY_MISMATCH');
+  const unknown=transport(baseAdapter({async replyWait(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001'}}}));
+  assert.equal((await unknown.replyWait(identity)).state,'UNKNOWN');
+  const badUnknown=transport(baseAdapter({async replyWait(){return {state:'UNKNOWN',identity}}}));
+  await assert.rejects(()=>badUnknown.replyWait(identity),e=>e.code==='UNKNOWN_QUARANTINE_ID_REQUIRED');
+});
+
+test('status and events preserve correlation and reject malformed event sequences',async()=>{
+  const t=transport();
+  assert.equal((await t.status(identity)).state,'UNKNOWN');
+  assert.equal((await t.events({after:0,limit:10}))[0].seq,1);
+  const bad=transport(baseAdapter({async events(){return [{seq:2,eventId:'event_0001',requestId:identity.requestId,state:'SENT',providerId:'claude',identity},{seq:1,eventId:'event_0002',requestId:identity.requestId,state:'SENT',providerId:'claude',identity}]}}));
+  await assert.rejects(()=>bad.events(),e=>e.code==='TRANSPORT_EVENT_INVALID');
+});
+
+test('STOPPED_CLEAN requires independently verified epoch-bound quiescence',async()=>{
+  const proof={verified:true,signatureValid:true,epoch:7,nextEpoch:8,unresolved:0,outstandingPrepared:0,attestationId:'attest_0001',signature:'s'.repeat(64)};
+  const t=transport(baseAdapter({async stop(){return {state:'STOPPED_CLEAN',identity,quiescence:proof}}}),async()=>true);
+  assert.equal((await t.stop(identity)).state,'STOPPED_CLEAN');
+  const unverified=transport(baseAdapter({async stop(){return {state:'STOPPED_CLEAN',identity,quiescence:proof}}}),async()=>false);
+  await assert.rejects(()=>unverified.stop(identity),e=>e.code==='STOP_QUIESCENCE_ATTESTATION_INVALID');
+});
+
+test('revoke must attest a strictly newer epoch for the exact binding',async()=>{
+  const t=transport();
+  assert.equal((await t.revoke(identity)).nextEpoch,8);
+  const invalid=transport(baseAdapter({async revoke(){return {state:'REVOKED',identity,nextEpoch:7}}}));
+  await assert.rejects(()=>invalid.revoke(identity),e=>e.code==='FENCING_REVOKE_ATTESTATION_INVALID');
+});
+
+test('stop-request and stop-after-commit must advance the fencing epoch',async()=>{
+  const requested=transport(baseAdapter({async stop(){return {state:'STOP_REQUESTED',identity,nextEpoch:8}}}));
+  assert.equal((await requested.stop(identity)).nextEpoch,8);
+  const afterCommit=transport(baseAdapter({async stop(){return {state:'STOP_AFTER_COMMIT',identity,nextEpoch:8}}}));
+  assert.equal((await afterCommit.stop(identity)).state,'STOP_AFTER_COMMIT');
+  const stale=transport(baseAdapter({async stop(){return {state:'STOP_REQUESTED',identity,nextEpoch:7}}}));
+  await assert.rejects(()=>stale.stop(identity),e=>e.code==='STOP_FENCING_EPOCH_INVALID');
+});
+
+test('revoke may return UNKNOWN only with quarantine and an advanced epoch',async()=>{
+  const t=transport(baseAdapter({async revoke(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001',nextEpoch:8}}}));
+  assert.equal((await t.revoke(identity)).state,'UNKNOWN');
+  const invalid=transport(baseAdapter({async revoke(){return {state:'UNKNOWN',identity,quarantineId:'quarantine_001',nextEpoch:7}}}));
+  await assert.rejects(()=>invalid.revoke(identity),e=>e.code==='FENCING_REVOKE_ATTESTATION_INVALID');
+});
