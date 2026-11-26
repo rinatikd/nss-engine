@@ -125,6 +125,25 @@ test('document identity missing from initial injection blocks approval and mutat
  assert.equal(f.state.approvalCount,0);
  assert.equal(f.state.injections.includes('browser_click'),false);
 });
+
+test('incomplete result identity after a document-targeted mutation remains UNKNOWN',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ let mutationCalls=0;
+ f.chromeApi.scripting.executeScript=async payload=>{
+   if(payload.args[0]==='browser_click') {
+     mutationCalls++;
+     return [{frameId:0,result:{ok:true}}];
+   }
+   return original(payload);
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),error=>{
+   assert.equal(error.message,'INJECTION_DOCUMENT_IDENTITY_UNAVAILABLE');
+   assert.equal(error.dispatchState,'UNKNOWN');
+   return true;
+ });
+ assert.equal(mutationCalls,1);
+});
 test('denial, navigation and revoked grants prevent page mutation',async()=>{
  for (const opts of [{deny:true},{changed:true},{expiredGrant:true}]){
   const f=fixture(opts);
