@@ -9,7 +9,8 @@ param(
   [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedSourceSha,
   [string]$RollbackFrom,
   [switch]$Apply,
-  [switch]$TestFixture
+  [switch]$TestFixture,
+  [switch]$TestFailDisplacedCleanup
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -19,6 +20,24 @@ $LabExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 . (Join-Path $PSScriptRoot 'verify-candidate-source.ps1')
 
 function Require([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
+$script:TestFixtureMode = [bool]$TestFixture
+$script:TestFailDisplacedCleanup = [bool]$TestFailDisplacedCleanup
+Require (-not $TestFailDisplacedCleanup -or $TestFixture) 'Cleanup failure injection is allowed only in TestFixture mode'
+function RemoveDisplacedServerSafely([string]$Path,[string]$PendingMarker) {
+  try {
+    if ($script:TestFixtureMode -and $script:TestFailDisplacedCleanup) {
+      throw 'SYNTHETIC_DISPLACED_CLEANUP_FAILURE'
+    }
+    Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+  } catch {
+    # Cutover is already committed and the new server has passed health checks.
+    # Never turn a cleanup-only failure into an automatic rollback through a
+    # possibly partially deleted displaced tree; the durable backup remains.
+    if (Test-Path -LiteralPath $Path) {
+      Write-Output (('[' + $PendingMarker + '] DisplacedPath=' + $Path + '; retained for manual cleanup; durable backup remains available.'))
+    }
+  }
+}
 function FullPath([string]$Path) { return (Get-BridgeCanonicalPath $Path) }
 function InvokeNodeCapture([string]$Executable,[string]$Arguments,[string]$WorkingDirectory,[int]$TimeoutMs=15000){
   $psi=New-Object Diagnostics.ProcessStartInfo
@@ -404,15 +423,6 @@ try {
     $started = StartLabServer $state $run $configHashBefore
     WaitHealthy $started $state $expectedTools $run
     Require ((HashFile $configPath) -eq $configHashBefore) 'Lab config mutated during server startup'
-    Remove-Item -LiteralPath $displaced -Recurse -Force
-    if ($RollbackFrom) {
-      Write-Output '[ROLLED_BACK] Previous PR102 Lab server is running and healthy.'
-    } else {
-      Write-Output '[UPGRADED] PR102 Lab server is running with the new Session/Provider registry.'
-    }
-    Write-Output ('[NEW_PID] ' + $started.process.Id)
-    Write-Output ('[BACKUP] ' + $backupRoot)
-    Write-Output '[NEXT] Reload only the PR102 Lab extension, then refresh/reconnect the ChatGPT Lab connector.'
   } catch {
     if ($started -and -not $started.process.HasExited) { StopPinned $started.process }
     if (Test-Path -LiteralPath $displaced) {
@@ -426,6 +436,16 @@ try {
     Write-Output '[AUTO_ROLLBACK] Previous PR102 Lab server restored and healthy.'
     throw ('Upgrade failed; old server automatically restored: ' + $_.Exception.Message)
   }
+  if ($RollbackFrom) {
+    RemoveDisplacedServerSafely $displaced 'ROLLED_BACK_CLEANUP_PENDING'
+    Write-Output '[ROLLED_BACK] Previous PR102 Lab server is running and healthy.'
+  } else {
+    RemoveDisplacedServerSafely $displaced 'UPGRADED_CLEANUP_PENDING'
+    Write-Output '[UPGRADED] PR102 Lab server is running with the new Session/Provider registry.'
+  }
+  Write-Output ('[NEW_PID] ' + $started.process.Id)
+  Write-Output ('[BACKUP] ' + $backupRoot)
+  Write-Output '[NEXT] Reload only the PR102 Lab extension, then refresh/reconnect the ChatGPT Lab connector.'
 } finally {
   if ($oldProc) { $oldProc.Dispose() }
   if ((Test-Path -LiteralPath $run) -and -not $Apply) {
