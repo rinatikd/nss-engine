@@ -48,14 +48,15 @@ function safeEnvironment(source){
 }
 function clip(buffer){return buffer.toString('utf8').slice(0,MAX_OUTPUT);}
 
-export async function runApproved({spec,workspace,spawnImpl=spawn,envSource=process.env}){
+export async function runApproved({spec,workspace,spawnImpl=spawn,envSource=process.env,signal}){
   const checked=validateExecutionSpec(spec);
   if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
+  if(signal?.aborted)return {state:'CANCELLED',exitCode:null,reason:'CANCELLED_BEFORE_START',stdout:'',stderr:'',elapsedMs:0};
   const executable=fs.realpathSync.native(checked.executable);
   if(!fs.statSync(executable).isFile())throw Error('EXECUTABLE_NOT_FILE');
   const cwd=workspace;
   return await new Promise(resolve=>{
-    let stdout=Buffer.alloc(0),stderr=Buffer.alloc(0),finished=false,timedOut=false,timer;
+    let stdout=Buffer.alloc(0),stderr=Buffer.alloc(0),finished=false,timedOut=false,cancelled=false,timer;
     const started=Date.now();
     let child;
     try{
@@ -70,18 +71,22 @@ export async function runApproved({spec,workspace,spawnImpl=spawn,envSource=proc
     const finish=(state,code,reason)=>{
       if(finished)return;
       finished=true;clearTimeout(timer);
+      signal?.removeEventListener('abort',onAbort);
       resolve({state,exitCode:Number.isInteger(code)?code:null,reason:reason||null,
         stdout:clip(stdout),stderr:clip(stderr),
         truncated:stdout.length===MAX_OUTPUT||stderr.length===MAX_OUTPUT,
         elapsedMs:Date.now()-started});
     };
+    const terminate=()=>{
+      try{child.kill();}catch{}
+      // Keep the job active until close confirms that the direct child exited.
+    };
+    const onAbort=()=>{cancelled=true;terminate();};
     child.on('error',e=>finish('FAILED_TO_START',null,e.code||'SPAWN_FAILED'));
-    child.on('close',(code,signal)=>finish(timedOut?'TIMEOUT':signal?'TERMINATED':'FINISHED',code,timedOut?'EXECUTION_TIMEOUT_DIRECT_CHILD_ONLY':signal));
-    timer=setTimeout(()=>{
-      timedOut=true;
-      try{child.kill('SIGKILL');}catch{}
-      // Keep the job RUNNING until the direct child actually emits close.
-      // If termination cannot be confirmed, the service remains fail-safe busy.
-    },checked.timeoutMs);
+    child.on('close',(code,signalName)=>finish(timedOut?'TIMEOUT':cancelled?'CANCELLED':signalName?'TERMINATED':'FINISHED',code,
+      timedOut?'EXECUTION_TIMEOUT_DIRECT_CHILD_ONLY':cancelled?'SUPERVISOR_STOP_DIRECT_CHILD_ONLY':signalName));
+    if(signal?.aborted)onAbort();
+    else signal?.addEventListener('abort',onAbort,{once:true});
+    timer=setTimeout(()=>{timedOut=true;terminate();},checked.timeoutMs);
   });
 }
