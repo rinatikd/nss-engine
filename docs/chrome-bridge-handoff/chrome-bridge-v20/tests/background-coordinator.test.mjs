@@ -456,6 +456,9 @@ test('session_authorize failure to clear legacy grants sets a durable global loc
   const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeBackgroundControlGrants'});
   await startBackgroundTransport(c);
   installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
   const result=await sendCoordinator(c,'dispatch',{
     command:{
       name:'session_authorize',
