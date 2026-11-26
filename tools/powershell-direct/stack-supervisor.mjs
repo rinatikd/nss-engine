@@ -17,15 +17,26 @@ if(!runtimeKey)throw Error('CONTROL_PLANE_API_KEY_REQUIRED');
 
 const service=new PowerShellApprovalService({root});
 let child,proxy,stopping=false;
+async function stopTunnelChild(timeoutMs=5000){
+ if(!child||child.pid===undefined||child.exitCode!==null||child.signalCode!==null)return true;
+ const exited=new Promise(resolve=>child.once('exit',()=>resolve(true)));
+ if(!child.killed){try{child.kill();}catch{}}
+ let timer;
+ const confirmed=await Promise.race([exited,new Promise(resolve=>{timer=setTimeout(()=>resolve(false),timeoutMs);})]);
+ clearTimeout(timer);
+ return confirmed;
+}
 async function shutdown(signal='STOP'){
  if(stopping)return;
  stopping=true;
- process.stdout.write('STOPPING_STACK '+signal+'\n');
+ process.stdout.write('STOPPING_STACK '+signal+'\\n');
  try{await proxy?.stop();}catch{}
- if(child&&!child.killed)child.kill();
+ const tunnelStopped=await stopTunnelChild();
  try{await service.stop();}catch{}
- process.stdout.write('STOPPED_LOCAL_SERVICE_AND_APPROVAL_PROXY\n');
- process.exitCode=0;
+ process.stdout.write('LOCAL_SERVICE_AND_APPROVAL_PROXY_STOPPED\\n');
+ if(tunnelStopped)process.stdout.write('TUNNEL_CHILD_EXIT_CONFIRMED\\n');
+ else process.stderr.write('TUNNEL_TERMINATION_UNCONFIRMED: process may still be running\\n');
+ process.exitCode=tunnelStopped?0:1;
 }
 process.on('SIGINT',()=>{void shutdown('SIGINT');});
 process.on('SIGTERM',()=>{void shutdown('SIGTERM');});
