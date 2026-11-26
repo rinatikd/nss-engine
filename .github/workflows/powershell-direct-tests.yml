@@ -47,3 +47,32 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\build\job-object-poc.exe
           if ($LASTEXITCODE -ne 0) { throw "Job Object smoke test failed: $LASTEXITCODE" }
+
+  windows-native-addon:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Configure MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install pinned node-gyp
+        shell: pwsh
+        run: npm install --global node-gyp@11.2.0
+      - name: Build N-API addon
+        working-directory: tools/powershell-direct/native
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "Native addon build failed: $LASTEXITCODE" }
+      - name: Load addon and verify ABI metadata
+        working-directory: tools/powershell-direct/native
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw "Native addon load test failed: $LASTEXITCODE" }
