@@ -8,7 +8,7 @@
         "VCCLCompilerTool": {
           "ExceptionHandling": 1,
           "WarningLevel": 4,
-          "TreatWarningAsError": "true",
+          "TreatWarningAsError": True,
           "AdditionalOptions": [ "/std:c++17" ]
         }
       }
