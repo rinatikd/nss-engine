@@ -17,6 +17,8 @@ function fakeChrome(data={},options={}) {
       setAccessLevel:async opts=>calls.push(['session-restrict',opts.accessLevel]),
       get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,session[k]])),
       set:async next=>{
+        if (Object.hasOwn(next,'bridgeBackgroundControlGrants') && options.failGrantStoreWrite)
+          throw Error('SYNTHETIC_GRANT_STORE_WRITE_FAILED');
         if (Object.hasOwn(next,'bridgeBackgroundControlGrants') &&
             options.beforeGrantStoreWrite && !blockedGrantWrite) {
           blockedGrantWrite=true;
@@ -436,6 +438,20 @@ test('session_revoke fences new provider work and drains an already accepted pag
 });
 
 
+test('per-tab Revoke write failure returns UNKNOWN and quarantines the tab',async()=>{
+  const c=fakeChrome({...LAB_STATE},{failGrantStoreWrite:true});
+  await startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '48':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  installBackgroundCoordinator(c);
+  const result=await sendCoordinator(c,'revoke-background-control',{tabId:48});
+  assert.equal(result.error,'BACKGROUND_REVOKE_UNCONFIRMED');
+  assert.equal(result.outcome,'UNKNOWN');
+  assert.deepEqual(result.quarantinedTabs,[48]);
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[48]);
+});
+
 test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a durable global reconnect lock',async()=>{
   const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeSessionAuthorization'});
   await startBackgroundTransport(c);
@@ -450,4 +466,9 @@ test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a dura
   const restarted=await startBackgroundTransport(c);
   assert.equal(restarted.ok,false);
   assert.equal(restarted.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
+
+  const clear=await sendCoordinator(c,'clear-background-controls');
+  assert.equal(clear.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(clear.outcome,'UNKNOWN',
+    'the Control UI must not claim NOT_PERFORMED after a partial revoke');
 });
