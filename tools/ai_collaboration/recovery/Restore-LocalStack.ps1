@@ -8,9 +8,10 @@ $node='C:\Program Files\nodejs\node.exe'
 $services=@(
   [PSCustomObject]@{
     Id='chrome-pr102-lab'
-    Port=17484
+    Port=17485
     Script='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20\server\bridge.mjs'
-    StateDir='C:\Engineering\ChromeBridge-PR102-17484-State'
+    StateDir='C:\Engineering\ChromeBridge-PR102-17485-State'
+    ExtensionId='nhflbnfcaicihaepdcjacdmaddagcmcj'
     Restorable=$true
   },
   [PSCustomObject]@{
@@ -76,7 +77,7 @@ try {
         $startInfo.CreateNoWindow=$true
         $startInfo.EnvironmentVariables['CHROME_BRIDGE_HOME']=$s.StateDir
         $startInfo.EnvironmentVariables['CHROME_BRIDGE_PORT']=[string]$s.Port
-        [void]$startInfo.EnvironmentVariables.Remove('CHROME_BRIDGE_EXTENSION_ID')
+        if($s.ExtensionId){$startInfo.EnvironmentVariables['CHROME_BRIDGE_EXTENSION_ID']=$s.ExtensionId}
         [void]$startInfo.EnvironmentVariables.Remove('CONTROL_PLANE_API_KEY')
         [void]$startInfo.EnvironmentVariables.Remove('PS_DIRECT_AGENT_TOKEN')
         [void]$startInfo.EnvironmentVariables.Remove('PS_DIRECT_GATEWAY_TOKEN')

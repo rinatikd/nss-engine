@@ -29,10 +29,10 @@ test('restore never kills an occupying PID or a running tunnel',async()=>{
 
 test('Windows auto-start is opt-in as current user and non-admin',async()=>{
   const s=await read('Register-StackRecovery.ps1');
-  assert.match(s,/\[string\]\$Mode='Check'/);
+  assert.match(s,/\[string\]\$Mode\s*=\s*'Check'/);
   assert.match(s,/New-ScheduledTaskTrigger\s+-AtLogOn\s+-User\s+\$userId/);
   assert.match(s,/-LogonType Interactive -RunLevel Limited/);
-  assert.match(s,/if\(\$Mode -eq 'Unregister'\)/);
+  assert.match(s,/if\s*\(\$Mode -eq 'Unregister'\)/);
   assert.doesNotMatch(s,/-RunLevel Highest|SYSTEM|LocalSystem/);
 });
 
@@ -58,7 +58,7 @@ test('manifest integrity is required by both logon task and desktop shortcut',as
   const register=await read('Register-StackRecovery.ps1');
   const verify=await read('Invoke-VerifiedRecovery.ps1');
   assert.match(register,/Invoke-VerifiedRecovery\.ps1/);
-  assert.match(register,/& \$script -Mode Verify/);
+  assert.match(register,/&\s+\$entrypoint\s+-Mode\s+Verify/);
   assert.match(verify,/RECOVERY_FILE_HASH_MISMATCH/);
   assert.match(verify,/Get-FileHash.*SHA256/);
 });
@@ -86,4 +86,18 @@ test('resumed installer verifies every staged file before updating the verifier'
   assert.doesNotMatch(resume,/\bRemove-Item\b|\bgit\s+reset\b/);
   assert.match(verify,/\$expectedFiles -cnotcontains \$name/);
   assert.match(verify,/INVALID_MANIFEST_ENTRY:/);
+});
+
+
+
+test('PR102 recovery pins the current 17485 Lab port, StateRoot and extension identity',async()=>{
+  const restore=await read('Restore-LocalStack.ps1');
+  const tunnel=await read('Recover-LabTunnel.ps1');
+  assert.ok(restore.includes('Port=17485'));
+  assert.ok(restore.includes("StateDir='C:\\Engineering\\ChromeBridge-PR102-17485-State'"));
+  assert.ok(restore.includes("ExtensionId='nhflbnfcaicihaepdcjacdmaddagcmcj'"));
+  assert.ok(restore.includes("EnvironmentVariables['CHROME_BRIDGE_EXTENSION_ID']=$s.ExtensionId"));
+  assert.doesNotMatch(restore,/17484/);
+  assert.ok(tunnel.includes("$labHome='C:\\Engineering\\ChromeBridge-PR102-17485-State'"));
+  assert.doesNotMatch(tunnel,/17484/);
 });
