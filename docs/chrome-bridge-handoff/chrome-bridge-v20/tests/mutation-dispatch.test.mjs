@@ -52,6 +52,79 @@ test('click executes only after fresh site/target revalidation and approval',asy
  assert.deepEqual(f.state.injections,['describe','describe','browser_click']);
  assert.equal(f.state.approvalCount,1);
 });
+
+test('every mutation injection is explicitly isolated and pinned after the first document capture',async()=>{
+ const f=fixture();
+ await execute(cmd('browser_click'),f);
+ assert.deepEqual(f.state.targets.map(x=>x.name),['describe','describe','browser_click']);
+ assert.deepEqual(f.state.targets[0].target,{tabId:9});
+ for(const call of f.state.targets) assert.equal(call.world,'ISOLATED');
+ for(const call of f.state.targets.slice(1))
+   assert.deepEqual(call.target,{tabId:9,documentIds:[f.state.documentId]});
+
+ const send=fixture();
+ await execute(cmd('agent_send'),send);
+ assert.deepEqual(send.state.targets.map(x=>x.target),[
+   {tabId:9},
+   {tabId:9,documentIds:[send.state.documentId]},
+   {tabId:9,documentIds:[send.state.documentId]}
+ ]);
+ assert.ok(send.state.targets.every(x=>x.world==='ISOLATED'));
+});
+
+test('provider prepare and commit pin all post-preflight injections to the same document',async()=>{
+ for(const name of ['provider_prepare','provider_commit']) {
+   const f=providerFixture();
+   await dispatchMutation(providerCommand(name),f.chromeApi,{
+     approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'doc-bound-provider'
+   });
+   assert.deepEqual(f.state.targets.map(x=>x.target),[
+     {tabId:9},
+     {tabId:9,documentIds:[f.state.documentId]},
+     {tabId:9,documentIds:[f.state.documentId]}
+   ],name);
+   assert.ok(f.state.targets.every(x=>x.world==='ISOLATED'),name);
+ }
+});
+
+test('stale exact-document injection fails closed and is never rebound to the active tab document',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ let mutationCalls=0;
+ f.chromeApi.scripting.executeScript=async payload=>{
+   if(payload.args[0]==='browser_click') {
+     mutationCalls++;
+     assert.deepEqual(payload.target,{tabId:9,documentIds:[f.state.documentId]});
+     throw Error('No frame with given document id found');
+   }
+   return original(payload);
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),error=>{
+   assert.equal(error.dispatchState,'UNKNOWN');
+   return true;
+ });
+ assert.equal(mutationCalls,1);
+ assert.equal(f.state.targets.some(x=>x.name==='browser_click'),false,
+   'a rejected stale-document request must not be retried with a tab-only target');
+});
+
+test('document identity missing from initial injection blocks approval and mutation',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ f.chromeApi.scripting.executeScript=async payload=>{
+   if(payload.args[0]==='describe') {
+     return [{frameId:0,result:{tag:'button',text:'Send',href:'',formAction:'',type:'button'}}];
+   }
+   return original(payload);
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),error=>{
+   assert.equal(error.message,'INJECTION_DOCUMENT_IDENTITY_UNAVAILABLE');
+   assert.equal(error.dispatchState,'NOT_PERFORMED');
+   return true;
+ });
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(f.state.injections.includes('browser_click'),false);
+});
 test('denial, navigation and revoked grants prevent page mutation',async()=>{
  for (const opts of [{deny:true},{changed:true},{expiredGrant:true}]){
   const f=fixture(opts);
