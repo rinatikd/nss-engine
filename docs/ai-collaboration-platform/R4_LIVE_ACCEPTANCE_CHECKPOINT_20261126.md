@@ -117,3 +117,30 @@ This WM43 inspect action confirms R2 owner and basic R4 staging metadata, but it
 The platform branch now points to `18dd9d23a035d794734eb7279f26a83c4f3ab33a`, the merge commit for the updated R4 acceptance checkpoint. Its exact-head GitHub check-runs are **17/17 SUCCESS**.
 
 This closes the source/CI verification for the current platform head, but does not close G1–G6 live acceptance. R4 remains **DRAFT / NO-GO for Production** until the remaining Work PC identity/ACL, real provider E2E, recovery/reboot, and operator acceptance evidence is collected.
+
+
+## 9. Prepared next read-only PR102 inventory sequence
+
+The current repository includes two post-cutover read-only PowerShell Direct inspectors, both pinned to the approved workspace `C:\Engineering\ChromeBridge-Recovery-Install-20261114`:
+
+1. `tools/powershell-direct/Inspect-PR102LabRoots.ps1`
+   - Verifies the server root, unpacked extension root and dedicated 17485 StateRoot.
+   - Reports reparse-point status, ACL owner/access summaries, manifest SHA256, manifest-derived extension ID, exact host permissions, endpoint literals, token lengths (never token values), backup directory names, and listeners on 17381/17382/17484/17485/17486/17487.
+2. `tools/powershell-direct/Inspect-PR102LabRuntime.ps1`
+   - Pins the loopback listener on 17485 to its owning process.
+   - Reports executable, entry-point kind, working directory, `CHROME_BRIDGE_HOME`, port and extension-ID environment, config hash/token lengths, Chrome Secure Preferences extension-to-directory mapping, and extension/StateRoot ACL summaries.
+3. `tools/powershell-direct/Probe-PR102AgentAdapters.ps1`
+   - Performs authenticated, read-only MCP `tools/list`, `agent_list`, and `agent_selftest` calls.
+   - Explicitly performs no drafts, sends, grants or provider mutations; checks config hash and listener identity before/after.
+   - Expected to resolve the earlier connector-level `UNKNOWN_TOOL` ambiguity and establish the actual server registry and adapter selector evidence.
+
+**Execution timing:** these Work PC PowerShell Direct checks remain deferred until **2026-11-27** as previously specified. Do not invoke them through another shell or approval path before then.
+
+**Do not run** `Prepare-PR145LabPort17485.ps1` as a post-cutover inventory: its header explicitly marks it PRE-CUTOVER ONLY and it expects the old 17484 extension/StateRoot identity. The current target intentionally uses a legacy extension directory label `ChromeBridge-PR102-17484-Lab` with endpoint/StateRoot 17485. Use the two current inspectors above to avoid conflating directory name with runtime port.
+
+## 10. Documentation PR and latest platform head
+
+- PR #163 merged the WM43 inventory reconciliation and passed **12/12 exact-head check-runs**.
+- Latest platform branch head after that documentation merge: `9230f0a0a1dec1cd152003c84e8bd3fcfcf3998f`.
+- The PR #163 head's 12/12 checks passed; GitHub has not exposed additional check-runs for the resulting documentation merge commit at the time of this checkpoint.
+- R4 remains **DRAFT / NO-GO for Production**. The next permitted step on 2026-11-27 is the three read-only inspections above, followed by evidence review before any Lab-only mutation is considered.
