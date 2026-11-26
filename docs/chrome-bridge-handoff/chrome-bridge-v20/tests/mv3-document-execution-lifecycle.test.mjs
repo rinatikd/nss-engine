@@ -23,7 +23,7 @@ async function listen(server){
 }
 function html(pathname){
  return '<!doctype html><meta charset="utf-8"><title>'+pathname+'</title>'+
-  '<button id="action">test action</button><script>'+
+  '<a id="navigate" href="/b">navigate to B</a><button id="action">test action</button><script>'+
   'document.documentElement.dataset.r4DocumentNonce=crypto.randomUUID();'+
   'window.addEventListener("pageshow",event=>{document.documentElement.dataset.r4PageshowPersisted=String(event.persisted)});'+
   'document.querySelector("#action").addEventListener("click",event=>{'+
