@@ -142,7 +142,7 @@ $repoCanonical=[IO.Path]::GetFullPath($repo)
 if($top.TrimEnd('\') -ine $repoCanonical.TrimEnd('\')){
  throw 'GIT_TOPLEVEL_MISMATCH'
 }
-$dirty=@(& $git -C $repo status --porcelain=v1 --untracked-files=all)
+$dirty=@(& $git -C $repo status --porcelain=v1 --untracked-files=all -- 'tools/powershell-direct' 'tools/ai_collaboration')
 if($LASTEXITCODE -ne 0){throw 'GIT_STATUS_FAILED'}
 if($dirty.Count){
  Write-Warning ('SOURCE_WORKTREE_DIRTY_ENTRIES='+($dirty -join ' | '))
