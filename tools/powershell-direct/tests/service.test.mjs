@@ -147,6 +147,26 @@ test('supervisor stop aborts the active job and waits for cancellation confirmat
  assert.equal(service.status(request.requestId).state,'CANCELLED');
 });
 
+
+test('supervisor stop reports unconfirmed termination when active runner ignores abort',async()=>{
+ let release,observedSignal;
+ const service=new PowerShellApprovalService({root:'C:\\Engineering',port:0,
+  workspaceCheck:(candidate)=>candidate,
+  run:({signal})=>new Promise(resolve=>{
+   observedSignal=signal;
+   release=()=>resolve({state:'FINISHED',exitCode:0,stdout:'late',stderr:''});
+  })
+ });
+ await service.start();
+ const p=service.propose(request);
+ service.decide(request.requestId,p.sha256,true);
+ assert.equal(await service.stop({timeoutMs:20}),false);
+ assert.equal(observedSignal.aborted,true);
+ assert.equal(service.status(request.requestId).state,'RUNNING');
+ release();await flush();
+ assert.equal(service.status(request.requestId).state,'FINISHED');
+});
+
 test('MCP authentication protects the proposal and status interface',async()=>{
  const x=fixture();await x.service.start();
  try{
