@@ -11,7 +11,7 @@ This edition does not use a fixed task-ID allowlist. It accepts a general proces
 - a purpose and preliminary risk assessment;
 - a bounded timeout.
 
-The assistant must assess the requested action before submitting it. The user confirms the proposed action in chat. The local approval page then displays the exact executable, arguments, workspace, purpose, risk assessment, timeout and immutable SHA-256 fingerprint. The process is dispatched only after the operator selects **Approve once** locally.
+The assistant must assess the requested action before submitting it. The user confirms the proposed action in chat. The local approval page displays the exact executable, arguments, workspace, purpose, risk assessment, timeout, resolved executable path, executable-content SHA-256 and proposal SHA-256. At proposal time, the service resolves the executable path and hashes the file content in 1 MiB chunks (files over 1 GiB are rejected). The runner repeats the content hash immediately before dispatch and fails closed with `EXECUTABLE_IDENTITY_MISMATCH` if the resolved path or hash differs. The process is dispatched only after the operator selects **Approve once** locally. This narrows executable replacement risk but is not an atomic handle-based launch: a residual TOCTOU interval remains between final verification and Windows process creation.
 
 This is deliberately capability-flexible, not an automatic trust system. No request is executed merely because it is syntactically valid or because ChatGPT submitted it.
 
