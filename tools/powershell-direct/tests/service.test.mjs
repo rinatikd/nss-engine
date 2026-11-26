@@ -141,6 +141,7 @@ test('supervisor stop aborts the active job and waits for cancellation confirmat
  let observedSignal;
  const service=new PowerShellApprovalService({root:'C:\\Engineering',port:0,
   workspaceCheck:(candidate)=>candidate,
+  identityCheck:(executable)=>({path:executable,sha256:'a'.repeat(64),size:123}),
   run:({signal})=>new Promise(resolve=>{
    observedSignal=signal;
    signal.addEventListener('abort',()=>resolve({state:'CANCELLED',exitCode:null,reason:'SUPERVISOR_STOP_DIRECT_CHILD_ONLY'}),{once:true});
@@ -160,6 +161,7 @@ test('supervisor stop reports unconfirmed termination when active runner ignores
  let release,observedSignal;
  const service=new PowerShellApprovalService({root:'C:\\Engineering',port:0,
   workspaceCheck:(candidate)=>candidate,
+  identityCheck:(executable)=>({path:executable,sha256:'a'.repeat(64),size:123}),
   run:({signal})=>new Promise(resolve=>{
    observedSignal=signal;
    release=()=>resolve({state:'FINISHED',exitCode:0,stdout:'late',stderr:''});
