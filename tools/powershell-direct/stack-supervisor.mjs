@@ -18,6 +18,9 @@ if(!runtimeKey)throw Error('CONTROL_PLANE_API_KEY_REQUIRED');
 
 const service=new PowerShellApprovalService({root});
 let child,proxy,stopping=false;
+const SHUTDOWN_BUDGET_MS=15000;
+let shutdownDeadline=0;
+const remainingShutdownMs=()=>Math.max(0,shutdownDeadline-Date.now());
 async function stopTunnelChild(timeoutMs=5000){
  if(!child||child.pid===undefined||child.exitCode!==null||child.signalCode!==null)return true;
  const exited=new Promise(resolve=>child.once('exit',()=>resolve(true)));
@@ -39,7 +42,7 @@ async function shutdown(signal='STOP'){
  else process.stderr.write('ACTIVE_JOB_TERMINATION_UNCONFIRMED: direct child may still be running\n');
  if(tunnelStopped)process.stdout.write('TUNNEL_CHILD_EXIT_CONFIRMED\n');
  else process.stderr.write('TUNNEL_TERMINATION_UNCONFIRMED: process may still be running\n');
- process.exitCode=tunnelStopped&&serviceStopped?0:1;
+ process.exitCode=tunnelStopped&&serviceStopped&&proxyStopped?0:1;
 }
 process.on('SIGINT',()=>{void shutdown('SIGINT');});
 process.on('SIGTERM',()=>{void shutdown('SIGTERM');});
