@@ -114,11 +114,12 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
   await until(()=>worker.eval('typeof chrome!=="undefined" && !!chrome.scripting && !!chrome.webNavigation'),10000,'WORKER_APIS');
   const created=await worker.eval('(async()=>await chrome.tabs.create({url:'+JSON.stringify(origin+'/a')+',active:true}))()');
   tabId=created.id;
-  const activeFrame=async()=>{
+  const activeFrame=async(expectedUrl)=>{
    const frames=await worker.eval('(async()=>await chrome.webNavigation.getAllFrames({tabId:'+tabId+'}))()');
-   return Array.isArray(frames)?frames.find(frame=>frame.frameId===0&&frame.documentLifecycle==='active'):null;
+   return Array.isArray(frames)?frames.find(frame=>frame.frameId===0&&
+    frame.documentLifecycle==='active'&&(!expectedUrl||frame.url===expectedUrl)):null;
   };
-  const firstDocument=await until(activeFrame,12000,'FIRST_DOCUMENT');
+  const firstDocument=await until(()=>activeFrame(origin+'/a'),12000,'FIRST_DOCUMENT');
   assert.ok(firstDocument.documentId,'Chrome must expose a documentId for the main frame');
   const documentIdA=firstDocument.documentId;
 
@@ -127,6 +128,11 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
    'target:{tabId:'+tabId+',documentIds:['+JSON.stringify(documentId)+']},'+
    'world:"ISOLATED",func:'+func.toString()+',args:'+JSON.stringify(args)+'}))()'
   );
+  await until(async()=>{
+   const ready=await inject(documentIdA,()=>document.readyState==='complete'&&!!document.querySelector('#action'));
+   return ready[0]?.result===true;
+  },8000,'FIRST_DOCUMENT_READY');
+
   // The same extension isolated world is reused for this document across executeScript calls.
   const probe1=await inject(documentIdA,()=>{globalThis.__r4Probe=(globalThis.__r4Probe||0)+1;return {count:globalThis.__r4Probe,path:location.pathname};});
   const probe2=await inject(documentIdA,()=>{globalThis.__r4Probe=(globalThis.__r4Probe||0)+1;return {count:globalThis.__r4Probe,path:location.pathname};});
@@ -180,8 +186,8 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
   // Navigate to another document in the same tab and prove its documentId changes.
   await worker.eval('(async()=>await chrome.tabs.update('+tabId+',{url:'+JSON.stringify(origin+'/b')+'}))()');
   const secondDocument=await until(async()=>{
-   const frame=await activeFrame();
-   return frame&&frame.url===origin+'/b'&&frame.documentId!==documentIdA?frame:null;
+   const frame=await activeFrame(origin+'/b');
+   return frame&&frame.documentId!==documentIdA?frame:null;
   },12000,'SECOND_DOCUMENT');
   const documentIdB=secondDocument.documentId;
   assert.notEqual(documentIdB,documentIdA);
@@ -203,8 +209,8 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
   // Go Back without attaching DevTools to the page; this leaves BFCache eligible.
   await worker.eval('(async()=>{await chrome.tabs.goBack('+tabId+');return true})()');
   const restored=await until(async()=>{
-   const frame=await activeFrame();
-   if(!frame||frame.url!==origin+'/a'||frame.documentId!==documentIdA)return null;
+   const frame=await activeFrame(origin+'/a');
+   if(!frame||frame.documentId!==documentIdA)return null;
    const result=await inject(documentIdA,
     ()=>({persisted:document.documentElement.dataset.r4PageshowPersisted||'',nonce:document.documentElement.dataset.r4DocumentNonce||''}));
    return result[0]?.result?.persisted==='true'?{frame,result:result[0].result}:null;
