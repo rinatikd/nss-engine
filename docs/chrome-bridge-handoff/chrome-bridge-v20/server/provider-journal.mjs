@@ -44,10 +44,14 @@ const LOCK_RETRY_DELAYS_MS = Object.freeze([2,4,8,16,32]);
 const LOCK_WAIT_CELL = new Int32Array(new SharedArrayBuffer(4));
 function isLockContention(fsOps,lockFile,error) {
   if(error?.code==='EEXIST')return true;
-  // Windows may report EPERM for CREATE_NEW when another process already
-  // owns the .lock path. Confirm the path exists before treating EPERM as
-  // contention; a genuine ACL/parent-directory denial must still fail closed.
+  // Windows may report EPERM rather than EEXIST for CREATE_NEW while another
+  // process owns this lock path (including a sharing/metadata race). Treat
+  // Windows EPERM as contention only within the same bounded 62ms retry
+  // budget; never remove the lock. Genuine ACL failures therefore still fail
+  // closed with PROVIDER_JOURNAL_LOCK_BUSY instead of becoming a write.
+  if(error?.code==='EPERM'&&process.platform==='win32')return true;
   if(error?.code!=='EPERM')return false;
+  // On non-Windows platforms, normalize EPERM only when the lock path exists.
   try {
     fsOps.lstatSync(lockFile);
     return true;
