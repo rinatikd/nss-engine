@@ -193,6 +193,24 @@ test('service shutdown closes a stalled local HTTP client within its bound',asyn
  assert.equal(socket.destroyed,true);
 });
 
+
+test('approval proxy shutdown closes a stalled local HTTP client within its bound',async()=>{
+ const x=fixture();await x.service.start();
+ const nonce='c'.repeat(64),proxy=createApprovalProxy({servicePort:x.service.port,uiToken:x.service.uiToken,nonce});
+ const opened=await proxy.start();
+ const socket=net.connect(opened.port,'127.0.0.1');
+ try{
+  await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
+  socket.write('POST /'+nonce+'/decide HTTP/1.1\\r\\nHost: 127.0.0.1:'+opened.port+'\\r\\nOrigin: http://127.0.0.1:'+opened.port+'\\r\\nContent-Length: 1000\\r\\n\\r\\napproved=');
+  const socketClosed=new Promise(resolve=>socket.once('close',()=>resolve(true)));
+  const started=Date.now();
+  assert.equal(await proxy.stop({timeoutMs:250}),true);
+  assert.equal(await Promise.race([socketClosed,new Promise(resolve=>setTimeout(()=>resolve(false),500))]),true);
+  assert.ok(Date.now()-started<1500);
+  assert.equal(socket.destroyed,true);
+ }finally{socket.destroy();await proxy.stop();await x.service.stop();}
+});
+
 test('MCP authentication protects the proposal and status interface',async()=>{
  const x=fixture();await x.service.start();
  try{
