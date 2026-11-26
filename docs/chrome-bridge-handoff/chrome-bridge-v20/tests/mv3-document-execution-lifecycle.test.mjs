@@ -196,6 +196,12 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
   },12000,'SECOND_DOCUMENT');
   const documentIdB=secondDocument.documentId;
   assert.notEqual(documentIdB,documentIdA);
+  const pageBReady=await until(async()=>{
+   const result=await inject(documentIdB,()=>({ready:document.readyState,historyLength:history.length,referrer:document.referrer}));
+   return result[0]?.result?.ready==='complete'?result[0].result:null;
+  },8000,'SECOND_DOCUMENT_READY');
+  assert.ok(pageBReady.historyLength>=2,
+   'fixture navigation should create a back entry; observed history.length='+pageBReady.historyLength);
 
   // A stale document-targeted injection must never execute in the replacement /b document.
   let staleTargetOutcome;
