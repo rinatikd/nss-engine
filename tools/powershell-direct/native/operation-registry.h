@@ -18,7 +18,7 @@ template <typename Record>
 class OperationRegistry {
  public:
   explicit OperationRegistry(
-      std::size_t tombstone_limit = 4096) noexcept
+      std::size_t tombstone_limit = 4096)
       : tombstone_limit_(tombstone_limit) {}
 
   OperationRegistry(const OperationRegistry&) = delete;
