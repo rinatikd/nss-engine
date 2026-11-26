@@ -245,3 +245,69 @@ test('unclassified revalidation errors emit safe REVALIDATION code and never sen
  assert.equal(f.state.approvalCount,1);
  assert.equal(f.state.injections.includes('agent_send'),false);
 });
+
+
+function providerFixture({deny=false,conversationChanged=false,grant=true}={}) {
+  const state={injections:[],approvalCount:0,allowAt:true};
+  const chromeApi={
+    tabs:{get:async()=>({id:9,url:'https://claude.ai/chat/abcdefghi',title:'Test'})},
+    storage:{local:{get:async key=>key==='sites'
+      ?{sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:{adapters:'{}'}}},
+    permissions:{contains:async()=>true},
+    scripting:{executeScript:async({args})=>{
+      const [name,details]=args;state.injections.push(name);
+      if(name==='agent_context')return [{result:{verified:true,origin:'https://claude.ai',
+        conversationId:conversationChanged&&!state.allowAt?'other12345':'abcdefghi'}}];
+      if(name==='provider_prepare')return [{result:{prepared:true,requestId:details.requestId,preparedId:details.preparedId,
+        expiresAt:details.expiresAt,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send',clickedSend:false}}];
+      if(name==='provider_commit')return [{result:{clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,payloadHash:details.payloadHash,clickedAt:new Date().toISOString()}}];
+      return [{result:{ok:true}}];
+    }}
+  };
+  const approvals={request:async()=>{state.approvalCount++;state.allowAt=false;if(deny)throw Error('USER_DENIED');}};
+  const controlGrant=async()=>grant?Date.now()+120000:null;
+  return {chromeApi,approvals,controlGrant,state};
+}
+const providerCommand=(name='provider_prepare')=>({
+  id:'provider_cmd_01',name,expires:Date.now()+90000,
+  args:{requestId:'request_0001',taskId:'task_000001',providerId:'claude',tabId:9,
+    origin:'https://claude.ai',conversationId:'abcdefghi',epoch:7,
+    message:'Review this isolated test.',payloadHash:'a'.repeat(64),
+    preparedId:'prepared_001',expiresAt:new Date(Date.now()+60000).toISOString(),
+    fencingToken:'f'.repeat(64)}
+});
+
+test('provider_prepare requires approval and returns explicit no-send receipt',async()=>{
+  const f=providerFixture();
+  const result=await dispatchMutation(providerCommand(),f.chromeApi,{
+    approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'fixedid'
+  });
+  assert.equal(result.prepared,true);
+  assert.equal(result.clickedSend,false);
+  assert.equal(result.sideEffect,'composer-filled-no-send');
+  assert.deepEqual(f.state.injections,['agent_context','agent_context','provider_prepare']);
+  assert.equal(f.state.approvalCount,1);
+});
+
+test('provider_commit requires approval and exact revalidated conversation',async()=>{
+  const f=providerFixture();
+  const result=await dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{
+    approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'fixedid'
+  });
+  assert.equal(result.clickedSend,true);
+  assert.ok(result.clickedAt);
+  assert.deepEqual(f.state.injections,['agent_context','agent_context','provider_commit']);
+  assert.equal(f.state.approvalCount,1);
+});
+
+test('provider stages fail closed on denial, conversation change and missing local grant',async()=>{
+  for(const opts of [{deny:true},{conversationChanged:true},{grant:false}]) {
+    const f=providerFixture(opts);
+    await assert.rejects(dispatchMutation(providerCommand(),f.chromeApi,{
+      approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'fixedid'
+    }));
+    assert.equal(f.state.injections.includes('provider_prepare'),false);
+    assert.equal(f.state.approvalCount,opts.grant===false?0:1);
+  }
+});

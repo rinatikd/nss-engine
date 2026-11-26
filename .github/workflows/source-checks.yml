@@ -11,8 +11,39 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements-test.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: python tools/repo_guard.py --tree HEAD
       - name: Verify Chrome Bridge adapter and origin permissions
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
-        run: node --test tests/permissions-adapters.test.mjs tests/claude-gemini-adapters.test.mjs
+        run: node --test tests/permissions-adapters.test.mjs tests/claude-gemini-adapters.test.mjs tests/provider-journal.test.mjs tests/provider-bridge-integration.test.mjs
+      - name: Test Consilium Control Room MVP
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20/consilium-control-room
+        run: |
+          node --check consilium/event-ledger.mjs
+          node --check consilium/control-room.mjs
+          node --check consilium/web/app.js
+          node --test tests/*.test.mjs
       - run: python tools/run_portable_checks.py
+
+  consilium-lab-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Stage and smoke-test isolated Consilium Control Room Lab package
+        shell: powershell
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE 'docs/chrome-bridge-handoff/chrome-bridge-v20/consilium-control-room'
+          $commit = (git -C $root rev-parse HEAD).Trim()
+          $output = Join-Path $env:RUNNER_TEMP 'consilium-control-room-lab-package'
+          & (Join-Path $root 'deployment/stage-consilium-lab.ps1') -CandidateRoot $root -OutputRoot $output -CommitSha $commit
+          if ($LASTEXITCODE -ne 0) { throw 'Consilium Lab package staging/smoke failed' }
+          $manifest = Get-Content -LiteralPath (Join-Path $output 'consilium-release-manifest.json') -Raw | ConvertFrom-Json
+          if ($manifest.sourceCommit -ne $commit -or $manifest.smoke -ne 'LOOPBACK_AUTH_AND_ROLE_BOUNDARIES_PASS' -or
+              $manifest.providerDispatch -ne $false -or $manifest.production -ne $false -or $manifest.realSecrets -ne $false) {
+            throw 'Consilium Lab package manifest failed safety/evidence checks'
+          }

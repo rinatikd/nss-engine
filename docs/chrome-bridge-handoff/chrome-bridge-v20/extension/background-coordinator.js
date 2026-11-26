@@ -120,7 +120,7 @@ export function installBackgroundCoordinator(chromeApi) {
         if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
           throw Error('BACKGROUND_TRANSPORT_DISABLED');
         const name=msg.command?.name;
-        if (['browser_click','browser_fill','agent_send'].includes(name)) {
+        if (['browser_click','browser_fill','agent_send','provider_prepare','provider_commit'].includes(name)) {
           if (bridgeMutationLabMode!==true) throw Object.assign(Error('BACKGROUND_MUTATIONS_DISABLED'), {dispatchState:'BLOCKED'});
           const grants=new BackgroundControlGrants(chromeApi);
           return dispatchMutation(msg.command,chromeApi,{

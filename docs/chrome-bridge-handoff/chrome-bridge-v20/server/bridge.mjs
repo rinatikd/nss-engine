@@ -8,6 +8,8 @@ import { validateArgs } from './schema.mjs';
 import { findSecret } from './secrets.mjs';
 import { SendJournal, conversationFingerprint, legacyRequestFingerprint, requestFingerprint } from './send-journal.mjs';
 import { classifySend, SendState } from './send-outcome.mjs';
+import { ProviderJournal, validateProviderIdentity } from './provider-journal.mjs';
+import { deriveProviderJournalKey } from './provider-transport-crypto.mjs';
 
 export { tools };
 export const VERSION = '0.2.0';
@@ -39,6 +41,9 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
   const journalKey = crypto.createHmac('sha256', 'chrome-bridge/send-journal/v1')
     .update(String(config.agentToken || ''), 'utf8').digest();
   const sendJournal = stateDir ? new SendJournal(path.resolve(stateDir), { hmacKey: journalKey }) : null;
+  const providerJournal = stateDir && typeof config.agentToken === 'string'
+    ? new ProviderJournal(path.resolve(stateDir), { hmacKey: deriveProviderJournalKey(config.agentToken), bridgeEpoch: epoch })
+    : null;
   const queue = [];
   const pending = new Map();
   const waiters = []; // РїСЂРёРїР°СЂРєРѕРІР°РЅРЅС‹Рµ long-poll Р·Р°РїСЂРѕСЃС‹ СЂР°СЃС€РёСЂРµРЅРёСЏ
@@ -70,15 +75,25 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       const limit = timeout ?? EXT_TIMEOUTS[name] ?? 30000;
       const expires = Date.now() + limit;
       const timer = setTimeout(() => {
+        const entry = pending.get(id);
+        if (!entry) return;
         const wasDispatched = activeId === id;
+        entry.timer = null;
+        if (wasDispatched) {
+          // Keep the single-writer slot and tombstone until a late ACK arrives
+          // or the Bridge process is deliberately restarted. Releasing it here
+          // could overlap a still-running DOM action after a lost ACK.
+          entry.expired = true;
+          reject(Object.assign(Error('Command expired after dispatch; execution remains quarantined. Do not retry.'), { dispatchState: 'UNKNOWN' }));
+          return;
+        }
         pending.delete(id);
-        if (activeId === id) activeId = null;
         const i = queue.findIndex((x) => x.id === id);
         if (i >= 0) queue.splice(i, 1);
-        reject(Object.assign(Error('Command expired; result unknown if execution already started. Do not retry clicks automatically.'), { dispatchState: wasDispatched ? 'UNKNOWN' : 'NOT_PERFORMED' }));
+        reject(Object.assign(Error('Command expired before dispatch.'), { dispatchState: 'NOT_PERFORMED' }));
         wake();
       }, limit);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { resolve, reject, timer, expired: false });
       queue.push({ id, name, args, expires });
       wake();
     });
@@ -218,6 +233,87 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
       return { count: p.count, generating: p.generating, composerFound: p.composerFound, chars: p.text.length, tail: p.text.slice(-maxChars), url: p.url };
     },
     async agent_selftest({ name }) { return enqueue('agent_selftest', { tabId: agent(name).tabId }); },
+    async provider_prepare(args) {
+      const identity=validateProviderIdentity(args);
+      if(!providerJournal)return {state:'BLOCKED',identity,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+      const bound=[...agents.values()].some(entry=>entry.tabId===identity.tabId);
+      if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
+      if(typeof args.message!=='string'||!args.message.trim()||findSecret(args.message))
+        return providerJournal.outcome(identity,'BLOCKED','PROVIDER_MESSAGE_REJECTED');
+      const actualHash=crypto.createHash('sha256').update(args.message,'utf8').digest('hex');
+      if(actualHash!==args.payloadHash)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_PAYLOAD_HASH_MISMATCH');
+      let begun;
+      try { begun=providerJournal.beginPrepare(identity,args.payloadHash); }
+      catch(error) { return {state:'BLOCKED',identity,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_PREPARE_REJECTED'}; }
+      if(begun.duplicate) {
+        const duplicate=begun.transaction;
+        if(['ACCEPTED','DISPATCHED','STOP_REQUESTED'].includes(duplicate.state))
+          return {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_REQUEST_IN_FLIGHT'};
+        if(['PREPARED','UNKNOWN','BLOCKED','NOT_PERFORMED'].includes(duplicate.state))return duplicate;
+        return {state:'BLOCKED',identity,reasonCode:'PROVIDER_REQUEST_ALREADY_TERMINAL'};
+      }
+      try {
+        const context=await enqueue('agent_context',{tabId:identity.tabId});
+        if(!context?.verified||context.origin!==identity.origin||context.conversationId!==identity.conversationId)
+          return providerJournal.outcome(identity,'NOT_PERFORMED','PROVIDER_CONTEXT_MISMATCH');
+        const preparedId=crypto.randomUUID();
+        const expiresAt=new Date(Date.now()+90000).toISOString();
+        const result=await enqueue('provider_prepare',{...identity,message:args.message,
+          payloadHash:args.payloadHash,preparedId,expiresAt});
+        if(result?.prepared!==true||result.clickedSend!==false||result.requestId!==identity.requestId||
+          result.sideEffect!=='composer-filled-no-send'||result.preparedId!==preparedId||
+          result.payloadHash!==args.payloadHash) {
+          return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_PREPARE_RECEIPT_INVALID');
+        }
+        return providerJournal.completePrepare(identity,{preparedId,expiresAt});
+      } catch(error) {
+        const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
+          error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
+        return providerJournal.outcome(identity,state,
+          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_PREPARE_FAILED');
+      }
+    },
+    async provider_commit(args) {
+      const identity=validateProviderIdentity(args);
+      if(!providerJournal)return {state:'BLOCKED',identity,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+      const bound=[...agents.values()].some(entry=>entry.tabId===identity.tabId);
+      if(!bound)return providerJournal.outcome(identity,'BLOCKED','PROVIDER_TAB_NOT_BOUND');
+      let tx;
+      try { tx=providerJournal.beginCommit(identity,{preparedId:args.preparedId,fencingToken:args.fencingToken,payloadHash:args.payloadHash}); }
+      catch(error) { return {state:'BLOCKED',identity,reasonCode:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_REJECTED'}; }
+      try {
+        const result=await enqueue('provider_commit',{...identity,preparedId:args.preparedId,
+          fencingToken:args.fencingToken,payloadHash:tx.payloadHash});
+        if(result?.clickedSend!==true||result.requestId!==identity.requestId||result.preparedId!==args.preparedId||
+          result.payloadHash!==tx.payloadHash||!Number.isFinite(Date.parse(result.clickedAt||'')))
+          return providerJournal.outcome(identity,'UNKNOWN','PROVIDER_COMMIT_RECEIPT_INVALID');
+        return providerJournal.completeCommit(identity,{clickedAt:result.clickedAt,clickedSend:true});
+      } catch(error) {
+        const state=error?.dispatchState==='BLOCKED'?'BLOCKED':
+          error?.dispatchState==='NOT_PERFORMED'?'NOT_PERFORMED':'UNKNOWN';
+        return providerJournal.outcome(identity,state,
+          /^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:'PROVIDER_COMMIT_FAILED');
+      }
+    },
+    async provider_status(args) {
+      const identity=validateProviderIdentity(args);
+      return providerJournal?providerJournal.status(identity):
+        {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+    },
+    async provider_stop(args) {
+      const identity=validateProviderIdentity(args);
+      return providerJournal?providerJournal.stop(identity):
+        {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+    },
+    async provider_revoke(args) {
+      const identity=validateProviderIdentity(args);
+      return providerJournal?providerJournal.revoke(identity):
+        {state:'UNKNOWN',identity,quarantineId:'quarantine-'+identity.requestId,reasonCode:'PROVIDER_JOURNAL_UNAVAILABLE'};
+    },
+    async provider_events(args) {
+      if(!providerJournal)throw Error('PROVIDER_JOURNAL_UNAVAILABLE');
+      return providerJournal.events(args);
+    },
   };
   const agent_peekRaw = (name) => enqueue('agent_peek', { tabId: agent(name).tabId });
 
@@ -247,7 +343,7 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
           catch (e) { throw Error(/^[A-Z_]+$/.test(e.message) ? e.message : 'CODEX_INTERNAL_ERROR'); }
         } else data = t.kind === 'ext' ? await enqueue(t.name, args) : await hub[t.name](args);
         result = { content: [{ type: 'text', text: JSON.stringify(data) }] };
-      } catch (e) { result = { isError: true, content: [{ type: 'text', text: e.message }] }; }
+      } catch (e) { result = { isError: true, ...(params.name === 'provider_prepare' || params.name === 'provider_commit' ? { dispatchState: 'NOT_PERFORMED' } : {}), content: [{ type: 'text', text: e.message }] }; }
     } else return { jsonrpc: '2.0', id: id ?? null, error: { code: -32601, message: 'Method not found' } };
     return { jsonrpc: '2.0', id: id ?? null, result };
   }
@@ -313,6 +409,13 @@ export function createBridge(config, { timeout, pollHold = 20000, settleMs = 250
         pending.delete(body.id);
         activeId = null;
         lastSeen = Date.now();
+        if (p.expired) {
+          // Late ACK releases the transport lane only. The caller already
+          // received UNKNOWN, so this ACK never triggers an automatic retry.
+          json(res, 200, { ok: true, late: true });
+          wake();
+          return;
+        }
         body.error ? p.reject(Object.assign(Error(String(body.error)), {
           // Only an explicit pre-DOM acknowledgement can mark the command
           // not performed. Absent/ambiguous metadata is always UNKNOWN.

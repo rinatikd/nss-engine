@@ -5,11 +5,14 @@ export async function pageAction(name, args, expectedOrigin) {
   const vis = (e) => !!e && e.getClientRects().length > 0;
   const qa = (s) => { try { return s ? [...document.querySelectorAll(s)] : []; } catch { return []; } };
   const one = (s) => qa(s).find(vis);
+  let releaseActionLock = () => {};
   const conversationId = () => {
     const routes = {
       'https://claude.ai': /^\/chat\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
       'https://gemini.google.com': /^\/app\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
       'https://chat.deepseek.com': /^\/a\/chat\/s\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
+      'https://grok.com': /^\/c\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
+      'https://chat.qwen.ai': /^\/c\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
     };
     return location.pathname.match(routes[location.origin] || /$a/)?.[1] || null;
   };
@@ -32,11 +35,18 @@ export async function pageAction(name, args, expectedOrigin) {
   };
   try {
     const control = () => {
-      if (!['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com'].includes(location.origin) ||
+      if (!['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com', 'https://grok.com', 'https://chat.qwen.ai', 'https://www.kimi.ai'].includes(location.origin) ||
           location.origin !== expectedOrigin || !(args.controlExpires > Date.now())) throw Error('Control denied: local re-grant required');
     };
-    if (['browser_click', 'browser_fill', 'agent_send'].includes(name)) control();
+    if (['browser_click', 'browser_fill', 'agent_send', 'provider_prepare', 'provider_commit'].includes(name)) control();
     if (location.origin !== expectedOrigin) throw Error('Tab navigated to another origin');
+    if (['browser_click','browser_fill','agent_send','provider_prepare','provider_commit'].includes(name)) {
+      const key='__chromeBridgeMutationLock';
+      if (window[key]) throw Error('TAB_MUTATION_BUSY');
+      const lock={requestId:typeof args.requestId==='string'?args.requestId:'local-'+Date.now(),name};
+      window[key]=lock;
+      releaseActionLock=()=>{if(window[key]===lock)delete window[key];};
+    }
 
     if (name === 'exists') return { found: !!one(args.selector), loaded: document.readyState === 'complete' };
 
@@ -146,6 +156,100 @@ export async function pageAction(name, args, expectedOrigin) {
       };
     }
 
+    if (name === 'provider_prepare') {
+      if (args.expectedOrigin !== location.origin || !conversationId() ||
+          args.expectedConversationId !== conversationId()) throw Error('PROVIDER_CONVERSATION_CHANGED');
+      if (!/^[A-Za-z0-9_-]{8,100}$/.test(args.requestId || '') || !Number.isSafeInteger(args.epoch) || args.epoch < 1 ||
+          typeof args.message !== 'string' || !args.message.trim() || args.message.length > 100000 ||
+          !/^[a-f0-9]{64}$/.test(args.payloadHash || '') ||
+          !/^[A-Za-z0-9_-]{8,100}$/.test(args.preparedId || '') ||
+          !Number.isFinite(Date.parse(args.expiresAt || '')) || Date.parse(args.expiresAt) <= Date.now()) {
+        throw Error('PROVIDER_PREPARE_INPUT_INVALID');
+      }
+      const composer = single(A.composer);
+      if (!(composer instanceof HTMLTextAreaElement) && !composer.isContentEditable) throw Error('Unsupported composer');
+      if (/password|secret|token|credential/i.test([composer.id, composer.name, composer.autocomplete].join(' '))) throw Error('Sensitive composer blocked');
+      if (textOf(composer)) throw Error('Existing draft: refusing to overwrite');
+      if (qa(A.stop).some(vis)) throw Error('Agent is still generating');
+      const baseline = replies().length;
+      composer.focus();
+      if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+        const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(composer, args.message);
+        composer.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
+        const sel = getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(composer);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.execCommand('delete');
+        try {
+          const dt = new DataTransfer();
+          dt.setData('text/plain', args.message);
+          composer.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        } catch { /* fall back to insertText */ }
+        await sleep(150);
+        if (!textOf(composer)) document.execCommand('insertText', false, args.message);
+      }
+      await sleep(300);
+      if (textOf(composer) !== args.message.trim()) throw Error('PROVIDER_PREPARE_TEXT_MISMATCH');
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(textOf(composer)));
+      const actualHash = [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, '0')).join('');
+      if (actualHash !== args.payloadHash) throw Error('PROVIDER_PREPARE_HASH_MISMATCH');
+      const sendButtons = qa(A.send).filter(vis);
+      if (sendButtons.length !== 1 || sendButtons[0].disabled ||
+          sendButtons[0].getAttribute('aria-disabled') === 'true') throw Error('PROVIDER_SEND_BUTTON_NOT_READY');
+      control();
+      if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) {
+        throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_PREPARE');
+      }
+      window.__chromeBridgePreparedDraft = {
+        requestId:args.requestId,preparedId:args.preparedId,payloadHash:actualHash,
+        origin:location.origin,conversationId:args.expectedConversationId,epoch:args.epoch,expiresAt:args.expiresAt
+      };
+      return { prepared:true, requestId:args.requestId, preparedId:args.preparedId, expiresAt:args.expiresAt,
+        payloadHash:actualHash, sideEffect:'composer-filled-no-send', clickedSend:false, baseline };
+    }
+
+    if (name === 'provider_commit') {
+      if (args.expectedOrigin !== location.origin || !conversationId() ||
+          args.expectedConversationId !== conversationId()) throw Error('PROVIDER_CONVERSATION_CHANGED');
+      if (!/^[A-Za-z0-9_-]{8,100}$/.test(args.requestId || '') ||
+          !Number.isSafeInteger(args.epoch) || args.epoch < 1 ||
+          !/^[A-Za-z0-9_-]{8,100}$/.test(args.preparedId || '') ||
+          !/^[a-f0-9]{64}$/.test(args.fencingToken || '') ||
+          !/^[a-f0-9]{64}$/.test(args.payloadHash || '')) throw Error('PROVIDER_COMMIT_INPUT_INVALID');
+      const prepared = window.__chromeBridgePreparedDraft;
+      if (!prepared || prepared.requestId !== args.requestId || prepared.preparedId !== args.preparedId ||
+          prepared.payloadHash !== args.payloadHash || prepared.origin !== location.origin ||
+          prepared.conversationId !== args.expectedConversationId || prepared.epoch !== args.epoch ||
+          Date.parse(prepared.expiresAt) <= Date.now()) throw Error('PROVIDER_PREPARED_BINDING_MISMATCH');
+      const composer = single(A.composer);
+      if (!(composer instanceof HTMLTextAreaElement) && !composer.isContentEditable) throw Error('Unsupported composer');
+      if (textOf(composer).length === 0) throw Error('PROVIDER_PREPARED_DRAFT_MISSING');
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(textOf(composer)));
+      const actualHash = [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, '0')).join('');
+      if (actualHash !== args.payloadHash) throw Error('PROVIDER_PREPARED_DRAFT_MISMATCH');
+      if (qa(A.stop).some(vis)) throw Error('Agent is still generating');
+      const baseline = replies().length;
+      const sendButtons = qa(A.send).filter(vis);
+      if (sendButtons.length !== 1 || sendButtons[0].disabled ||
+          sendButtons[0].getAttribute('aria-disabled') === 'true') throw Error('PROVIDER_SEND_BUTTON_NOT_READY');
+      control();
+      if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) {
+        throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_COMMIT');
+      }
+      // Consume the page-side prepare receipt before the irreversible click.
+      delete window.__chromeBridgePreparedDraft;
+      sendButtons[0].click();
+      const clickedAt = new Date().toISOString();
+      await sleep(1200);
+      const confirmed = qa(A.stop).some(vis) || replies().length > baseline;
+      return { clickedSend:true, clickedAt, baseline, confirmed, requestId:args.requestId,
+        preparedId:args.preparedId, payloadHash:actualHash };
+    }
+
     if (name === 'agent_send') {
       if (args.expectedOrigin !== location.origin || !conversationId() || args.expectedConversationId !== conversationId()) throw Error('Conversation changed or has no verified provider identifier');
       const composer = single(A.composer);
@@ -199,6 +303,6 @@ export async function pageAction(name, args, expectedOrigin) {
     }
 
     throw Error('Unknown page command: ' + name);
-  } catch (e) { return { error: e.message }; }
+  } catch (e) { return { error: e.message }; } finally { releaseActionLock(); }
 }
 
