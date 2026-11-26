@@ -127,6 +127,18 @@ test('document identity missing from initial injection blocks approval and mutat
  assert.equal(f.state.injections.includes('browser_click'),false);
 });
 
+test('tab navigation during initial document capture blocks before presenting approval',async()=>{
+ const f=fixture();
+ let reads=0;
+ f.chromeApi.tabs.get=async id=>({
+   id,url:++reads>=3?'https://claude.ai/chat/replaced_document_001':
+     'https://claude.ai/chat/abcdefghi',title:'Test'
+ });
+ await assert.rejects(execute(cmd('browser_click'),f),/TAB_CHANGED_AFTER_APPROVAL/);
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(f.state.injections.includes('browser_click'),false);
+});
+
 test('incomplete result identity after a document-targeted mutation remains UNKNOWN',async()=>{
  const f=fixture();
  const original=f.chromeApi.scripting.executeScript;
