@@ -591,6 +591,57 @@ test('session_revoke persists a global mutation fence across MV3 worker restart'
 });
 
 
+test('session_revoke tracks and clears only the global fence stores that accepted the write',async()=>{
+  for (const [failedStore,options] of [
+    ['local',{failLocalSet:'bridgeMutationRevocationPending'}],
+    ['session',{failSessionSet:'bridgeMutationRevocationPending'}]
+  ]) {
+    let enteredResolve,releaseResolve;
+    const entered=new Promise(resolve=>{enteredResolve=resolve;});
+    const held=new Promise(resolve=>{releaseResolve=resolve;});
+    const c=fakeChrome({...LAB_STATE},{...options,executeScript:async({name,details,origin,tabId,calls})=>{
+      calls.push(['script',name,tabId]);
+      if (name==='agent_context') return [{result:{
+        verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+      }}];
+      if (name==='provider_prepare') {
+        enteredResolve();
+        await held;
+        return [{result:{
+          prepared:true,clickedSend:false,requestId:details.requestId,
+          preparedId:details.preparedId,payloadHash:details.payloadHash,
+          sideEffect:'composer-filled-no-send'
+        }}];
+      }
+      return [{result:{ok:true}}];
+    }});
+    await prepareLab(c,76);
+    const mutation=sendCoordinator(c,'dispatch',{command:providerPrepare(76)},'transport-host.html');
+    await entered;
+    const revoke=sendCoordinator(c,'dispatch',{command:{
+      name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{}
+    }},'transport-host.html');
+    await delay(10);
+    const writtenStore=failedStore==='local'?'session':'local';
+    const missingStore=failedStore;
+    assert.equal(c[writtenStore].bridgeMutationRevocationPending?.pending,true,
+      'the successful '+writtenStore+' write must retain the global deny fence');
+    assert.equal(c[missingStore].bridgeMutationRevocationPending,undefined,
+      'the failed '+missingStore+' write must not be reported as persisted');
+    const restarted=await import('../extension/background-coordinator.js?partial-global-'+failedStore);
+    restarted.installBackgroundCoordinator(c);
+    const denied=await sendCoordinator(c,'dispatch',{command:providerPrepare(77)},'transport-host.html');
+    assert.equal(denied.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+    releaseResolve();
+    const [mutationResult,revokeResult]=await Promise.all([mutation,revoke]);
+    assert.equal(mutationResult.result.prepared,true);
+    assert.equal(revokeResult.result.revoked,true);
+    assert.equal(c.data.bridgeMutationRevocationPending,null);
+    assert.equal(c.session.bridgeMutationRevocationPending,null);
+  }
+});
+
 test('clear-background-controls persists a global revoke fence across worker restart',async()=>{
   let enteredResolve,releaseResolve;
   const entered=new Promise(resolve=>{enteredResolve=resolve;});
