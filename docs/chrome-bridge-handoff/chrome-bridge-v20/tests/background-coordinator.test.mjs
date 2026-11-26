@@ -625,9 +625,11 @@ test('session_revoke tracks and clears only the global fence stores that accepte
     await delay(10);
     const writtenStore=failedStore==='local'?'session':'local';
     const missingStore=failedStore;
-    assert.equal(c[writtenStore].bridgeMutationRevocationPending?.pending,true,
+    const writtenState=writtenStore==='local'?c.data:c.session;
+    const missingState=missingStore==='local'?c.data:c.session;
+    assert.equal(writtenState.bridgeMutationRevocationPending?.pending,true,
       'the successful '+writtenStore+' write must retain the global deny fence');
-    assert.equal(c[missingStore].bridgeMutationRevocationPending,undefined,
+    assert.equal(missingState.bridgeMutationRevocationPending,undefined,
       'the failed '+missingStore+' write must not be reported as persisted');
     const restarted=await import('../extension/background-coordinator.js?partial-global-'+failedStore);
     restarted.installBackgroundCoordinator(c);
