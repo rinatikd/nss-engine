@@ -26,6 +26,7 @@ export class PowerShellApprovalService {
   if(this.jobs.has(id))throw Error('DUPLICATE_REQUEST_ID');
   if(this.jobs.size>=32){
    for(const [oldId,oldJob] of this.jobs){
+    if(oldJob.state==='PENDING'&&this.now()>=oldJob.payload.expiresAt)oldJob.state='EXPIRED';
     if(oldJob.state!=='PENDING'&&oldJob.state!=='RUNNING')this.jobs.delete(oldId);
     if(this.jobs.size<32)break;
    }
