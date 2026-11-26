@@ -25,7 +25,7 @@ function fakeChrome(data={},options={}) {
         Object.assign(session,next);
         calls.push(['session-set',next]);
       },
-      remove:async key=>{delete session[key];}
+      remove:async key=>{if(options.failSessionRemove===key)throw Error('SYNTHETIC_SESSION_REMOVE_FAILED');delete session[key];}
     }},
     tabs:{get:async id=>({id,url:'https://claude.ai/chat/conversation_001'})},
     permissions:{contains:async()=>true},
@@ -337,14 +337,18 @@ test('Stop timeout returns UNKNOWN and persists tab quarantine; a later Start ca
   await mutation;
   c.data.bridgeConnectionDesired=true;
   c.data.bridgeMutationLabMode=true;
-  const restarted=await startBackgroundTransport(c);
-  assert.equal(restarted.ok,true);
+  await assert.rejects(
+    startBackgroundTransport(c),
+    /MUTATION_QUARANTINE_STATE_UNAVAILABLE/,
+    'an UNKNOWN global Stop must leave a durable lock that blocks reconnect'
+  );
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
   const before=c.calls.filter(x=>x[0]==='script').length;
   const retry=await sendCoordinator(c,'dispatch',{command:providerPrepare(43)},'transport-host.html');
-  assert.equal(retry.error,'TAB_MUTATION_QUARANTINED');
+  assert.equal(retry.error,'BACKGROUND_STOP_IN_PROGRESS');
   assert.equal(retry.dispatchState,'NOT_PERFORMED');
   assert.equal(c.calls.filter(x=>x[0]==='script').length,before,
-    'quarantined tab must be rejected before any new DOM/page action');
+    'unknown Stop must not permit another DOM/page action');
 });
 
 test('Revoke is a synchronous per-tab fence and its grant-store write follows an accepted Grant',async()=>{
@@ -429,4 +433,22 @@ test('session_revoke fences new provider work and drains an already accepted pag
   assert.equal(revoked.result.revoked,true);
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.data.bridgeMutationLabMode,false);
+});
+
+
+test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a durable global reconnect lock',async()=>{
+  const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeSessionAuthorization'});
+  await startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  installBackgroundCoordinator(c);
+  const stop=await sendCoordinator(c,'stop-background');
+  assert.equal(stop.ok,false);
+  assert.equal(stop.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(stop.outcome,'UNKNOWN',
+    'some grants may already have been cleared even though Session Authorization removal failed');
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+  await assert.rejects(
+    startBackgroundTransport(c),
+    /BACKGROUND_CONTROL_CLEAR_FAILED|MUTATION_QUARANTINE_STATE_UNAVAILABLE/
+  );
 });
