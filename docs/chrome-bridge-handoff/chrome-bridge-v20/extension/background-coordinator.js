@@ -676,6 +676,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         // per-tab grant and must be revoked through session_revoke instead.
         mutationFencedTabs.set(tabId,(mutationFencedTabs.get(tabId)||0)+1);
         const revoke=async()=>{
+          let revokeWriteStarted=false;
           try {
             const pending=mutationLanes.get(tabId);
             const settled=await awaitBounded(pending,STOP_DRAIN_TIMEOUT_MS);
@@ -690,14 +691,16 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             const sessionStatus=await new SessionAuthorization(chromeApi).status();
             if (sessionStatus.active && sessionStatus.origins.includes(origin))
               throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
+            revokeWriteStarted=true;
             await enqueueControlOperation(
               () => new BackgroundControlGrants(chromeApi).revoke(tabId),
               {tabId,allowFencedTab:true}
             );
             return {ok:true,tabId};
           } catch (error) {
-            // A failed revoke must not reopen the tab against a possibly
-            // still-persisted grant. Quarantine it until explicit recovery.
+            // Preserve known precondition denials. Only a failed attempted
+            // grant-store mutation is ambiguous and requires quarantine.
+            if (!revokeWriteStarted) throw error;
             const persisted=await persistMutationQuarantine(chromeApi,[tabId]);
             const uncertain=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
             uncertain.quarantinedTabs=[tabId];
