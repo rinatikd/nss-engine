@@ -16,6 +16,8 @@ test('current PR102 inventory scripts target the dedicated 17485 StateRoot', () 
     assert.doesNotMatch(source, /ChromeBridge-PR102-17484-State/, name);
   }
   assert.match(updater, /ChromeBridge-PR102-17485-State/);
+  assert.match(roots, /nhflbnfcaicihaepdcjacdmaddagcmcj/);
+  assert.match(runtime, /nhflbnfcaicihaepdcjacdmaddagcmcj/);
 });
 
 test('legacy extension directory label is not confused with its 17485 endpoint', () => {
@@ -34,6 +36,7 @@ test('PR102 adapter probe remains read-only and does not pin the obsolete 17484 
   assert.match(probe, /tools\/list/);
   assert.match(probe, /agent_list/);
   assert.match(probe, /agent_selftest/);
+  assert.doesNotMatch(probe, /provider_commit|provider_send/);
   assert.match(probe, /configHashBefore/);
   assert.doesNotMatch(probe, /configExpectedSha/);
   assert.match(probe, /MessagesSent=0/);
