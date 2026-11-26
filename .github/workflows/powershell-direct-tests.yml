@@ -51,6 +51,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Synchronized operation state test compilation failed: $LASTEXITCODE" }
           & .\build\test-synchronized-operation-state.exe
           if ($LASTEXITCODE -ne 0) { throw "Synchronized operation state tests failed: $LASTEXITCODE" }
+      - name: Compile and run shared operation registry tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cl.exe /nologo /std:c++17 /EHsc /W4 /WX /DUNICODE /D_UNICODE /permissive- tools/powershell-direct/native/test-operation-registry.cpp /Fe:build/test-operation-registry.exe
+          if ($LASTEXITCODE -ne 0) { throw "Operation registry test compilation failed: $LASTEXITCODE" }
+          & .\build\test-operation-registry.exe
+          if ($LASTEXITCODE -ne 0) { throw "Operation registry tests failed: $LASTEXITCODE" }
       - name: Compile native Job Object proof of concept
         shell: pwsh
         run: |
