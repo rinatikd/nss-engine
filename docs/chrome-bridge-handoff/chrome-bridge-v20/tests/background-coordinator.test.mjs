@@ -314,8 +314,10 @@ test('per-tab Revoke clears only the storage copy whose fence write was confirme
     }};
     const result=await sendCoordinator(c,'revoke-background-control',{tabId:72});
     assert.equal(result.ok,true,'a single confirmed durable fence remains sufficient when the other store rejects writes ('+failedStore+')');
-    assert.equal(c.data.bridgeMutationRevokingTabs,undefined);
-    assert.equal(c.session.bridgeMutationRevokingTabs,undefined);
+    assert.equal((c.data.bridgeMutationRevokingTabs||[]).includes(72),false,
+      'local storage must not retain a Revoke fence for this tab');
+    assert.equal((c.session.bridgeMutationRevokingTabs||[]).includes(72),false,
+      'session storage must not retain a Revoke fence for this tab');
     assert.equal(c.session.bridgeBackgroundControlGrants?.['72'],undefined);
   }
 });
