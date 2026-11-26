@@ -223,7 +223,7 @@ async function persistTabRevocationFence(chromeApi, tabId) {
       mutationQuarantinePersistenceFailed = true;
       return {persisted:false,stores:[]};
     }
-    return {persisted:true,stores:['local','session']};
+    return {persisted:true,stores:[...(localWritten?['local']:[]),...(sessionWritten?['session']:[])]};
   } catch {
     mutationQuarantinePersistenceFailed = true;
     return {persisted:false,stores:[]};
@@ -252,11 +252,16 @@ async function readGlobalRevocationFence(chromeApi) {
   ]);
   const localRecord=localState[key];
   const sessionRecord=sessionState[key];
-  const record=[localRecord,sessionRecord].find(x=>x && x.pending===true) || null;
-  return {
-    record,
-    stores:['local','session']
-  };
+  const localPending=localRecord && localRecord.pending===true ? localRecord : null;
+  const sessionPending=sessionRecord && sessionRecord.pending===true ? sessionRecord : null;
+  if (localPending && sessionPending && localPending.token!==sessionPending.token)
+    throw new Error('GLOBAL_REVOCATION_FENCE_STORE_CONFLICT');
+  const record=localPending || sessionPending || null;
+  const stores=[
+    ...(localPending?['local']:[]),
+    ...(sessionPending?['session']:[]
+  ];
+  return {record,stores};
 }
 
 async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
@@ -285,7 +290,7 @@ async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
       mutationQuarantinePersistenceFailed=true;
       return {persisted:false,existing:false,record:null,stores:[]};
     }
-    return {persisted:true,existing:false,record,stores:['local','session']};
+    return {persisted:true,existing:false,record,stores:[...(localWritten?['local']:[]),...(sessionWritten?['session']:[])]};
   } catch {
     mutationQuarantinePersistenceFailed=true;
     return {persisted:false,existing:false,record:null,stores:[]};
