@@ -1,165 +1,89 @@
-# Chrome Bridge — Direct PowerShell Channel (P0, Issue #107)
+# PowerShell Direct — isolated local-approval channel
 
-**Status: developer preview / Draft PR #108. Original two-step local-approval E2E passed on Windows; optional ChatGPT-only approval mode remains untested and disabled by default.**
+**Status: Draft hardening branch. Not deployed. No Work PC service or tunnel was started by these source changes.**
 
-A dedicated local Windows command executor that needs **no Codex CLI**. It exposes three MCP tools, `powershell_propose`, `powershell_job` and `powershell_cancel`, while actual execution is controlled by a separately authenticated, local-only **Approve once / Deny** browser form. It does not accept arbitrary PowerShell text or scripts.
+This project exposes three MCP tools:
+- `powershell_propose` — create a pending fixed read-only task.
+- `powershell_job` — inspect its state/result.
+- `powershell_cancel` — cancel a pending task.
 
-## Authorization — two layers
+A proposal is never execution. Execution requires a separate local browser approval through the supervised local proxy. There is no arbitrary PowerShell, shell, approval MCP tool, Chat Read-only tool, or diagnostics tool.
 
-1. The assistant shows the **exact task**, target directory and effects in ChatGPT and asks the user **«Отправить команду на исполнение?»**. Before affirmative consent, do **not** call `powershell_propose`.
-2. `powershell_propose` creates a pending job in the local service and returns a SHA-256 fingerprint and expiry. It never executes the job.
-3. The user opens the private LOCAL_APPROVAL_URL printed in the service's Windows terminal, inspects the exact command, workspace and fingerprint and clicks **Approve once** or **Deny**. A yes in ChatGPT must **not** substitute for local approval.
-4. ChatGPT polls `powershell_job` or cancels an unstarted request with `powershell_cancel`; it does **not** re-submit an ambiguous or expired job.
+## Approval sequence
 
-The service binds to `127.0.0.1:17486` and has separate random secrets for the remote MCP client and the local approval page. There is **no generic MCP execute or approval tool**; `powershell_cancel` only cancels pending work. Mutations and arbitrary scripts are unsupported in v1.
+1. ChatGPT shows the exact task, workspace and effect and asks for explicit permission to submit it.
+2. After the user's affirmative response, `powershell_propose` creates a pending request with a SHA-256 fingerprint and 90-second expiry. It does not execute.
+3. The operator opens the ephemeral `LOCAL_APPROVAL_URL` printed by the local supervisor. The URL contains a random, process-lifetime proxy nonce, not the service UI token.
+4. The local proxy forwards only `GET /approve` and `POST /decide` to the loopback service. The UI bearer token remains in supervisor memory and is sent only as an Authorization header between local processes. It is not placed in a URL, HTML, tunnel environment, or ChatGPT payload.
+5. The operator verifies task, workspace, command and SHA-256, then selects **Approve once** or **Deny**. ChatGPT can only poll or cancel via MCP; it cannot approve.
+6. On supervisor shutdown, the proxy and its nonce become unavailable. Restart creates new in-memory tokens and a new proxy URL.
 
-## Allowed tasks
+The approval proxy binds only to 127.0.0.1 on an ephemeral port. It accepts only the current random nonce path, rejects other paths and query strings, checks same-origin POSTs, limits request bodies, and forwards no UI credentials to the tunnel. The underlying MCP service remains on 127.0.0.1:17486.
+
+## Server-enforced task allowlist
+
+The service enforces the proposal allowlist itself; it does not rely only on MCP input-schema validation:
 
 | Task ID | Fixed executable | Effect |
 | --- | --- | --- |
-| `powershell-version` | Windows PowerShell 5.1 executable | Read PowerShell version |
+| `powershell-version` | Windows PowerShell 5.1 | Read version |
 | `git-status` | Fixed Git executable | Read repository status |
 | `git-diff-check` | Fixed Git executable | Check diff whitespace |
 | `dotnet-version` | Fixed .NET executable | Read SDK version |
 | `node-version` | Fixed Node executable | Read Node.js version |
 
-Executable paths are pinned to `C:\Program Files\Git\cmd\git.exe`, `C:\Program Files\dotnet\dotnet.exe`, `C:\Program Files\nodejs\node.exe`, and `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`. Missing executables fail closed; users may have to review and update the allowlist for their installation.
+The server rejects additional runner policy entries unless they are explicitly added to `ALLOWED_PROPOSALS` and reviewed. Chrome Bridge peer, port, session, extension and tunnel diagnostics are not exposed through this service.
 
-No command accepts user-supplied arguments, redirects, pipes, an arbitrary `-Command` script, or `Invoke-Expression`. Scripts from GitHub cannot execute merely because they appear in a chat.
+Executable paths are pinned in `runner.mjs`. Missing executables fail closed. No user-supplied command text or arguments are accepted.
 
-## Setup on Windows — isolated developer test
+## Supervisor behavior
 
-Use a CLEAN clone of branch `agent/chatgpt/powershell-approval-channel-20261113` from `rinatikd/nss-engine`. In a terminal, go to `tools/powershell-direct`. First run:
+`stack-supervisor.mjs`:
+- starts the loopback service with Chat Read-only disabled (the service does not register that tool);
+- creates the ephemeral approval proxy;
+- starts only the named `powershell-direct-work` tunnel profile;
+- passes only the MCP agent token as an explicit PowerShell Direct secret to the tunnel child;
+- removes `CONTROL_PLANE_API_KEY` and `PS_DIRECT_UI_TOKEN` from the child environment;
+- does not print either bearer token;
+- waits for the tunnel health endpoint before reporting `STACK_READY`;
+- closes the proxy and service on shutdown.
 
-```powershell
-node --version
-node --test .\tests\service.test.mjs
-```
+No control-plane API key is required by this supervisor. The tunnel's own profile/authentication configuration remains external and is not modified by these source changes.
 
-Run the earlier contract tests separately from `docs/chrome-bridge-handoff/chrome-bridge-v20`:
+The local approval URL is a temporary capability for the current supervisor process. Keep it on the Work PC and do not paste it into chat, tickets, screenshots or GitHub. It is not a persistent DPAPI credential and is invalidated by stopping the supervisor.
 
-```powershell
-node --test .\tests\powershell-approval-contract.test.mjs
-```
+## Read-only preflight
 
-Only after all tests pass, choose an EXISTING, non-system folder that contains no secrets and restricts execution to intended project directories. Example:
-
-```powershell
-node .\service.mjs "C:\Engineering"
-```
-
-The server prints `PS_LAB_READY`, a private `LOCAL_APPROVAL_URL`, and `MCP_AGENT_TOKEN`. **Never paste either secret into chat, GitHub, screenshots or a public log.** The UI URL can be opened locally by the operator only; its capability-bearing secret appears in the local Windows terminal.
-
-The process runs in the foreground. Closing that terminal stops the service. It never automatically installs anything, edits Chrome, changes browser tokens or starts Codex CLI.
-
-## Attaching ChatGPT after approval and testing
-
-The optional `mcp-stdio.mjs` adapter reads `PS_DIRECT_AGENT_TOKEN` from its own local environment and forwards MCP JSON-RPC requests to this service via loopback. It does not accept remote approval events. Use **a separate private tunnel and a separate ChatGPT plugin**, not the existing PR102 or production tunnel, to expose this adapter. Rotating/restarting the service changes both secrets, and the adapter must be reconfigured.
-
-No tunnel or plugin has been created as part of this PR. ChatGPT will NOT see `powershell_propose` or `powershell_job` until an operator sets up and connects that new plugin.
-
-## Isolating MCP from the local approval UI
-
-**Never tunnel port 17486 directly.** It contains both the MCP endpoint and
-the operator's private approval page (`/approve` and `/decide`).
-
-The additional `mcp-only-gateway.mjs` module listens on loopback **17487**.
-It forwards exclusively authenticated `POST /mcp` requests to 17486 and
-returns 404 for everything else. In particular, `/approve`, `/decide`
-and all other URLs are not exposed.
-
-It requires TWO DIFFERENT secrets, set only in the local process environment:
-
-- `PS_DIRECT_AGENT_TOKEN`: the bearer token printed by the already running
-  17486 server. Supply locally; never publish.
-- `PS_DIRECT_GATEWAY_TOKEN`: newly generated 64-hex bearer token for the
-  external MCP client, never the same as the first token.
-
-**This gateway is NOT a tunnel.** A separate, authenticated HTTPS tunnel and
-private ChatGPT plugin are still needed. The gateway explicitly requires a
-local loopback Host header and has no generic web endpoint. Tunnel settings
-must preserve/rewrite the upstream Host to `127.0.0.1:17487`; if not,
-connection deliberately fails closed.
-
-The gateway contains no remote approval API. Its existence never bypasses
-the two manual confirmations.
-
-## Experimental ChatGPT-only approval (opt-in, fixed read-only tasks)
-
-For operators who prefer confirming the tool invocation in ChatGPT instead of
-opening the local approval page, a separate `powershell_chat_readonly` MCP tool
-is available **only if** the Windows service starts with process environment
-`PS_DIRECT_CHAT_READONLY_ENABLED=1`. Default is OFF. It supports the same five
-pinned, read-only task IDs, fixed executable arguments, workspace checks and
-output/time bounds. Arbitrary PowerShell and mutating commands remain forbidden.
-
-Before opting in, set ChatGPT plugin **PowerShell Direct — Work PC** permission
-to **Always ask** (never Full access). The user reviews the exact proposed
-`task` and `workspace` in the ChatGPT approval prompt. A confirmed tool call
-starts the fixed task immediately and returns a request ID; poll `powershell_job`
-for the bounded result. There is **no additional local Approve once** in this mode.
-The existing `powershell_propose` path retains its local approval requirement.
-
-**Security distinction:** the local service cannot cryptographically distinguish
-user approval from a tool call; it relies on ChatGPT's host UI and plugin permission
-policy for this mode. A user message such as 'yes' is not proof of host approval,
-and no client should assert otherwise. Do not enable this mode if remote chat-only
-approval is insufficient for the machine's sensitivity. For writes, project changes,
-credential operations, or new executable commands, keep the independent local
-approval gate and perform a separate design/security review.
-
-Enable the opt-in setting only in the environment of the **17486 service process**,
-then restart that service and its separately authenticated stdio tunnel using fresh
-random tokens. Confirm the new tool is discovered after plugin refresh; keep
-production Chrome Bridge and the 17487 gateway unchanged. Roll back by removing
-`PS_DIRECT_CHAT_READONLY_ENABLED` and restarting the service. Never expose the
-local approval URL or bearer tokens through the tunnel or ChatGPT.
-
-## Single-window Work PC stack (experimental)
-
-The new `Start-PowerShell-Direct-Stack.ps1` works in two explicit stages
-from the validation worktree. **No running process is stopped by Check.**
+From the validation worktree:
 
 ```powershell
 $root='C:/Engineering/ChromeBridge-PowerShell-Direct-Validation'
 & "$root/tools/powershell-direct/Start-PowerShell-Direct-Stack.ps1" -Mode Check
 ```
 
-If Check passes, close unrelated terminal windows only after identifying their
-functions. The supervisor can replace **only the verified** 17486 server and
-18086 `powershell-direct-work` tunnel. It **never stops 17487**, production
-Chrome Bridge, or other tunnel profiles. To opt in to this replacement:
+`Check` performs syntax checks, unit tests and listener-owner inspection for ports 17486 and 18086. It does not stop processes or start services. It does not inspect or modify 17487, Production 17381/17382, PR102 Lab 17484, or other tunnel profiles.
+
+## Cutover is a separate gated operation
+
+The `Cutover` mode is not part of this hardening validation. It stops verified 17486/18086 owners before launching the replacement and does not yet provide a fully automated rollback if startup fails. Do not run it until a separate operator-approved cutover plan, exact Windows validation and rollback procedure are complete.
+
+## Tests
+
+Run on a disposable Windows development checkout with Node.js:
 
 ```powershell
-& "$root/tools/powershell-direct/Start-PowerShell-Direct-Stack.ps1" -Mode Cutover
+node --check .\approval-proxy.mjs
+node --check .\service.mjs
+node --check .\stack-supervisor.mjs
+node --test .\tests\service.test.mjs
 ```
 
-Enter the existing control-plane runtime API key locally through the hidden
-prompt (unless the current console already supplies `CONTROL_PLANE_API_KEY`).
-The supervisor creates the PowerShell service and fresh MCP agent token in the
-same Node process and passes the agent token to the child tunnel **only in process
-environment**. It neither prints nor stores the token or local approval URL.
-It validates that `powershell_chat_readonly` exists in the local MCP tool
-registry before starting the child tunnel. Leave this one console running.
+Tests cover local approval, denial, immutable fingerprint, expiry, duplicate IDs, cancellation, MCP authentication, server-side task allowlisting, rejection of chat/diagnostic MCP tools, and the ephemeral proxy's nonce and same-origin behavior.
 
-The ChatGPT permission for the private plugin **must remain Always ask**.
-After cutover, reconnect/refresh the plugin's discovered tools, then confirm
-the fourth tool is visible in ChatGPT. **A passing unit test does not prove
-that ChatGPT will present an approval dialog**, nor does it prove the tunnel is
-ready: verify 18086 health and an end-to-end test before claiming success.
-If the new stack fails, the old server/tunnel will already have been stopped;
-recovery requires restarting the old configuration with its own new tokens.
-This launcher intentionally has no unattended auto-restart, no credential
-persistence and no claim of production readiness.
+These tests do not prove a real tunnel connection or Work PC end-to-end operation. Those remain separate acceptance gates.
 
-## Release blockers
+## Explicit isolation boundaries
 
-- Windows unit tests, service startup and end-to-end deny/approve/expiry/replay/missing-executable tests with an actual local operator.
-- Adversarial security review of Windows child-process launching, workspace reparse points, Git configuration hooks, output masking and Windows process-tree cleanup. Current `child.kill` targets the direct child only.
-- Durable replay journal across service restarts; right now request IDs are unique only per service lifetime. A restarted service uses new tokens and requires fresh pairing, but is **not** a complete cross-restart exactly-once guarantee.
-- Output length bound and secrets redaction review, lost-connection behavior and clean rollback.
-- Separate tunnel/plugin installation; ensure process remains inaccessible on external interfaces.
+Do not change Production Chrome Bridge 17381/17382, PR102 Lab 17484, RC1 17481, Codex, Chrome extensions, existing tunnel profiles, credentials or permissions as part of this work. Keep the private ChatGPT plugin permission at **Always ask**. Do not enable Chat Read-only, Full access or automatic approval.
 
-Keep production 17381/17382, RC1 17481, PR102 17484, Chrome profile and existing tunnels untouched until explicit review.
-
-**NO-GO for uncontrolled shell, mutation commands and production use.**
+**Current state: source-only hardening branch; no deployment, cutover or production readiness claim.**
