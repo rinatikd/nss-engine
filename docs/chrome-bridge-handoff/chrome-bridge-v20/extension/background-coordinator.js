@@ -283,6 +283,12 @@ async function ensureHost(chromeApi) {
   await creating;
 }
 export async function startBackgroundTransport(chromeApi) {
+  if (mutationStopCount > 0 || controlClearRequested)
+    return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
+  if (controlClearFailed)
+    return {ok:false,reason:'BACKGROUND_CONTROL_CLEAR_FAILED'};
+  if (mutationQuarantinePersistenceFailed)
+    return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
   const generation = lifecycleGeneration;
   if (starting?.generation === generation) return starting.promise;
   const promise = startBackgroundTransportOnce(chromeApi, generation).finally(() => {
@@ -292,6 +298,15 @@ export async function startBackgroundTransport(chromeApi) {
   return promise;
 }
 async function startBackgroundTransportOnce(chromeApi, generation) {
+  if (mutationStopCount > 0 || controlClearRequested)
+    return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
+  if (controlClearFailed)
+    return {ok:false,reason:'BACKGROUND_CONTROL_CLEAR_FAILED'};
+  if (mutationQuarantinePersistenceFailed)
+    return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
+  await controlStorageLane.catch(() => {});
+  if (controlClearRequested || controlClearFailed || mutationStopCount > 0)
+    return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
   // Restrict access before reading secrets, not after obtaining the key.
   await chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
   const {bridgeConnectionDesired, browserToken} = await chromeApi.storage.local.get(
@@ -305,7 +320,8 @@ async function startBackgroundTransportOnce(chromeApi, generation) {
   await ensureHost(chromeApi);
   // The panel may be reopened while a manual Stop is pending. Never let an
   // earlier automatic start overtake that Stop after offscreen creation.
-  if (generation !== lifecycleGeneration) return {ok:false,reason:'START_SUPERSEDED'};
+  if (generation !== lifecycleGeneration || mutationStopCount > 0)
+    return {ok:false,reason:'START_SUPERSEDED'};
   const latest = await chromeApi.storage.local.get([
     'bridgeBackgroundMode','bridgeConnectionDesired','browserToken'
   ]);
@@ -315,23 +331,77 @@ async function startBackgroundTransportOnce(chromeApi, generation) {
   await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'start',token:browserToken});
   // If Stop raced the message delivery, issue a final stop so queue ordering
   // cannot leave a late transport running.
-  if (generation !== lifecycleGeneration) {
+  if (generation !== lifecycleGeneration || mutationStopCount > 0) {
     try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
     return {ok:false,reason:'START_SUPERSEDED'};
   }
+  // Only a new, explicitly requested successful Start reopens mutation admission.
+  mutationStopRequested = false;
+  controlClearRequested = false;
   return {ok:true};
 }
-export async function stopBackgroundTransport(chromeApi) {
+export async function stopBackgroundTransport(chromeApi, {
+  stopDrainTimeoutMs=STOP_DRAIN_TIMEOUT_MS,
+  startDrainTimeoutMs=START_DRAIN_TIMEOUT_MS
+}={}) {
+  const pendingStart = starting?.promise || null;
+  // Fence mutation and grant admission synchronously, before the first await.
+  mutationStopRequested = true;
+  controlClearRequested = true;
+  mutationStopCount += 1;
   lifecycleGeneration++;
   starting = null;
   approvals.stop();
-  await new BackgroundControlGrants(chromeApi).clear();
-  await new SessionAuthorization(chromeApi).revoke();
-  await chromeApi.storage.local.set({
-    bridgeConnectionDesired:false,bridgeMutationLabMode:false
-  });
-  try { await chromeApi.runtime.sendMessage({target:'bridge-offscreen',type:'stop'}); } catch {}
-  updateStatus({state:'disconnected',connected:false});
+  updateStatus({state:'stopping',connected:false,error:null});
+
+  let intentPersisted = true;
+  try {
+    // Persist the stop intent before cleanup so an MV3 worker restart cannot
+    // re-open the mutation path from stale desired-state flags.
+    await chromeApi.storage.local.set({
+      bridgeConnectionDesired:false,bridgeMutationLabMode:false
+    });
+  } catch {
+    intentPersisted = false;
+    try {
+      await chromeApi.storage.session.set({bridgeMutationQuarantineLock:true});
+    } catch {
+      mutationQuarantinePersistenceFailed = true;
+    }
+  }
+
+  let cleanupError = null;
+  try {
+    await enqueueControlOperation(
+      () => clearAllBackgroundControls(chromeApi),
+      {allowDuringClear:true}
+    );
+    controlClearFailed = false;
+  } catch (error) {
+    controlClearFailed = true;
+    cleanupError = error;
+  }
+
+  // A Start accepted before Stop may still be creating the offscreen document
+  // or sending its START message. Drain it first, then send the final STOP.
+  const startDrained = await awaitBounded(pendingStart,startDrainTimeoutMs);
+  const mutationDrain = await drainMutationLanes(chromeApi,stopDrainTimeoutMs);
+  const stopConfirmed = await stopOffscreenTransport(chromeApi);
+
+  const unknown = !intentPersisted || !startDrained ||
+    !mutationDrain.drained || !stopConfirmed;
+  if (!stopConfirmed || !startDrained || !mutationDrain.drained || cleanupError || !intentPersisted) {
+    const code = !stopConfirmed || !startDrained || !mutationDrain.drained || !intentPersisted
+      ? 'BACKGROUND_STOP_UNCONFIRMED' : 'BACKGROUND_CONTROL_CLEAR_FAILED';
+    updateStatus({state:'unknown',connected:false,error:code});
+    const error = Error(code);
+    error.outcome = unknown ? 'UNKNOWN' : 'NOT_PERFORMED';
+    if (mutationDrain.tabIds.length) error.quarantinedTabs = mutationDrain.tabIds;
+    throw error;
+  }
+
+  updateStatus({state:'disconnected',connected:false,error:null});
+  return {ok:true,quarantinedTabs:[]};
 }
 export function installBackgroundCoordinator(chromeApi) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
