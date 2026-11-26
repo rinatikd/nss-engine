@@ -447,8 +447,7 @@ test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a dura
   assert.equal(stop.outcome,'UNKNOWN',
     'some grants may already have been cleared even though Session Authorization removal failed');
   assert.equal(c.data.bridgeMutationQuarantineLock,true);
-  await assert.rejects(
-    startBackgroundTransport(c),
-    /BACKGROUND_CONTROL_CLEAR_FAILED|MUTATION_QUARANTINE_STATE_UNAVAILABLE/
-  );
+  const restarted=await startBackgroundTransport(c);
+  assert.equal(restarted.ok,false);
+  assert.equal(restarted.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
 });
