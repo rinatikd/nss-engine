@@ -274,3 +274,46 @@ Further inspection of `server/bridge.mjs`, `server/send-journal.mjs`, and `serve
 ### Updated prerequisite
 
 Do not build a duplicate journal for provider_prepare/provider_commit or agent_send. First expose a narrow read-only recovery evidence API over the existing ProviderJournal and SendJournal, with exact identity checks and authenticated access. Add write-ahead operation coverage for `browser_click` / `browser_fill` if these remain supported mutation paths under the relevant control scope. Then add browser execution quiescence evidence. Until all evidence for an affected tab is terminal and consistent, do not unlock that tab.
+
+
+## 14. Source review update — injected execution and Chrome document lifecycle
+
+A focused review of `extension/mutation-dispatch.js`, `extension/page.js`, `extension/background-coordinator.js`, and `extension/read-only-dispatch.js` found the following concrete execution contract.
+
+### Current implementation facts
+
+1. Mutations enter through `inject()` in `mutation-dispatch.js`, which calls `chrome.scripting.executeScript({ target:{tabId}, func:pageAction, args:[...] })`. The target is tab-scoped only: no `documentIds` or `frameIds` are supplied. Chrome therefore targets the tab's main frame by default. The helper then returns only `out[0].result`, discarding the `documentId` and `frameId` in the injection result.
+2. No `world` is specified. Chrome documents `ISOLATED` as the default execution world. `pageAction` is therefore an extension-isolated one-shot function that manipulates the shared DOM; it is not a persistent content-script worker and is not running in the site's MAIN JavaScript world.
+3. `pageAction` has no cancellation input, abort signal, cancellation listener, or durable execution registry. Its `window.__chromeBridgeMutationLock` is a local in-context mutex released in `finally`; it is not a Revoke signal or a persisted operation record.
+4. Several actions await between DOM steps (`provider_prepare`, `agent_send`, `provider_commit`). Revoke cannot currently set a cancellation flag that those steps check. For `browser_click`, the injected function calls `.click()` and returns immediately.
+5. The coordinator's in-memory `mutationLanes` are drained by waiting for the dispatcher Promise. That proves only that the extension's injected function returned while that Worker instance remained alive. It does not prove that a site event handler, fetch/XHR, provider generation, or server-side submission caused by a DOM event has completed.
+6. Per-tab Revoke persists its fence and waits for the current lane; global Revoke/Clear snapshots the active lane tab IDs. On Worker replacement, those in-memory lanes are gone, so a recovered operation cannot be reconstructed from the new Worker's empty map. Existing provider/send journals remain authoritative for their own transaction classes, not for every browser DOM action.
+
+### Chrome API implications
+
+- Chrome's `scripting.executeScript` returns an `InjectionResult` containing `documentId` and `frameId`; Chrome 106+ also supports `InjectionTarget.documentIds`. The current dispatcher does not use or retain these fields. A document-bound target can prevent a delayed command from accidentally being injected into a replacement document in the same tab, but it is not a cancellation API.
+- Chrome documents that an injected Promise is awaited until it settles. The scripting API reference does not define a cancellation handle for an already executing function. Unregistering a content script does not remove code already injected.
+- MV3 service-worker globals are lost on shutdown. A new Worker must recover from durable records, not from its own lane map.
+- A tab may retain more than one page lifecycle at once. A previous page can move into Back/Forward Cache (`cached`) and later become active again with the same `documentId`. Therefore a new URL, a new active document ID, or a committed navigation does **not** prove that the previous document was destroyed. `frameId` alone is insufficient because it can remain constant across navigations. Cached documents do not provide the same navigation-event visibility as active pages.
+
+Official API references reviewed: Chrome `scripting` (<https://developer.chrome.com/docs/extensions/reference/api/scripting>) and `webNavigation` (<https://developer.chrome.com/docs/extensions/reference/api/webNavigation>); Chrome's Back/Forward Cache and document-lifecycle explanation (<https://developer.chrome.com/blog/extension-instantnav>); MV3 service-worker lifecycle (<https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle>).
+
+### Required design refinement
+
+1. Before every mutation injection, durably record an operation ID, scope/generation, command class, tab ID, exact `documentId`/frame identity, origin and conversation binding, and an `INJECTING` phase. Reuse ProviderJournal and SendJournal where their existing identity contracts apply; add coordinator write-ahead coverage for generic `browser_click` and `browser_fill`. Failure to persist must prevent injection.
+2. Pin the injection to the captured `documentId` using `target.documentIds` (Chrome 106+), explicitly select `world:'ISOLATED'`, and verify the returned `documentId`/frame identity. Revalidate the same document before any irreversible page action. A mismatch is a pre-dispatch denial, not a reason to retry against the new page.
+3. Add a cooperative, per-operation cancellation registry in the extension isolated world. Revoke may request cancellation against the exact document; `pageAction` must check the operation token after each asynchronous yield and immediately before any irreversible DOM action. This can stop work that has not crossed its side-effect boundary. It cannot retract an already-fired click, cancel arbitrary site event handlers, or undo a request already accepted by a provider.
+4. Treat a cancellation request as intent, not proof. Only a matching completion/abort receipt from the exact operation and document can prove the injected function reached a safe checkpoint. If the document is unavailable, cached, navigation-raced, or fails to acknowledge before timeout, retain UNKNOWN/quarantine. A recovered Worker must never synthesize an acknowledgement.
+5. Keep document-context quiescence separate from side-effect reconciliation. Even proven termination of the isolated-world function does not prove whether a prior click/send took effect. Provider/send outcomes still require their existing journal and provider-specific evidence. Generic clicks remain UNKNOWN unless the command has an explicit side-effect contract and terminal evidence.
+6. Do not count `cached` as terminated. Do not force navigation, reload, tab close, or BFCache eviction to manufacture a quiescence result. If Chrome cannot provide authoritative evidence that the original document is no longer resumable, the result remains UNKNOWN.
+
+### Mandatory disposable Chrome Lab cases
+
+- Capture and pin a real `documentId`; navigate the tab between admission and injection and prove the old command cannot run in the replacement document.
+- Hold a page action at a cooperative await, issue Revoke, and verify that only a matching cancellation/terminal receipt permits the drain to complete.
+- Force Worker termination before injection, during a held action, after a click, and before the receipt reaches the coordinator. The replacement Worker must recover the durable operation state and keep unresolved scopes quarantined.
+- Navigate away so the original document enters Back/Forward Cache, then navigate back. Verify the old document ID and prove that a cached/resumed execution cannot be mistaken for a destroyed document.
+- Trigger a test click whose event handler performs a delayed asynchronous side effect. Verify that the injected-function completion receipt is not misreported as side-effect completion.
+- Verify cancellation after the irreversible boundary remains UNKNOWN and is never retried. Use only a deterministic local fixture; no real provider submissions.
+
+**Updated decision:** document identity tracking and cooperative cancellation can materially reduce races and stop work before a side-effect boundary, but neither is a universal kill switch. Until exact-document execution receipts, durable operation records, and command-specific side-effect reconciliation pass disposable Chrome Lab tests, an unresolved tab must stay quarantined. R4 remains NO-GO.
