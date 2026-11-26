@@ -100,6 +100,7 @@ test('stale exact-document injection fails closed and is never rebound to the ac
    return original(payload);
  };
  await assert.rejects(execute(cmd('browser_click'),f),error=>{
+   assert.equal(error.message,'DOCUMENT_BOUND_INJECTION_FAILED');
    assert.equal(error.dispatchState,'UNKNOWN');
    return true;
  });
@@ -298,8 +299,8 @@ test('unknown outcome after DOM send injection remains UNKNOWN',async()=>{
   return original(payload);
  };
  await assert.rejects(execute(cmd('agent_send'),f),e=>{
-  assert.equal(e.message,'INJECTION_RESPONSE_LOST');
-  assert.equal(e.dispatchState,undefined);
+  assert.equal(e.message,'DOCUMENT_BOUND_INJECTION_FAILED');
+  assert.equal(e.dispatchState,'UNKNOWN');
   return true;
  });
  assert.equal(f.state.injections.includes('agent_send'),false);
