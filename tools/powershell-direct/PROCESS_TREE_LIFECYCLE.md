@@ -136,10 +136,19 @@ A cancellation arriving while CreateProcessW is in progress sets a cancellation-
 - Integrate behind a feature flag only after native tests pass; keep the existing direct-child runner as an explicitly labelled fallback only if policy permits. Never silently fall back to uncontained execution.
 - No production cutover until disposable Work PC smoke tests confirm the actual Windows build, parent-job environment, output behavior, and shutdown semantics.
 
-## N-API bootstrap implementation (2026-11-26)
+## N-API bootstrap and operation registry (2026-11-26)
 
-A first build-only N-API bootstrap is now present under native/: addon.cpp, binding.gyp, package.json, and test-load.mjs. It exports only getBuildInfo() and reports the Windows x64 target and compiled N-API version. It deliberately exposes no process execution, Job HANDLE, or lifecycle operations yet.
+The Windows x64 N-API addon is built and loaded by the dedicated Windows CI job using Node 24, MSVC x64, and pinned node-gyp 11.2.0. The current exports are:
+- `getBuildInfo()`: reports platform, architecture, N-API version, and the `job-object-registry-bootstrap` backend label;
+- `createOperation()`: creates a cryptographically random 128-bit lowercase-hex opaque operation ID and registers an empty native operation record;
+- `closeOperation(operationId)`: closes the registry entry logically; it does not yet close OS resources because the record currently owns no HANDLE values.
 
-The workflow adds a separate windows-native-addon job using Node 24, MSVC x64, and pinned node-gyp 11.2.0. It builds the .node module and loads it from Node to verify the ABI metadata.
+The registry is protected by a mutex. IDs are checked against active entries and retained closed-ID tombstones before registration. Closed-ID tombstones are bounded to the most recent 4096 entries to prevent unbounded memory growth. Consequently, repeated close is idempotent while the ID remains in that bounded tombstone window; after eviction, the old ID is reported as `UNKNOWN_OPERATION`. This is a deliberate bounded-memory tradeoff, not permanent idempotency.
 
-This is an ABI/build gate, not the process-tree implementation. The module must not be used to launch work. Next native increments should add and test operation-registry ownership and asynchronous start/wait/terminate/close in isolated steps before any runner integration.
+The addon validates operation ID type, length, and lowercase hexadecimal format; unknown IDs and malformed inputs produce stable coded errors. N-API string creation is kept outside the registry critical section. The create path rolls back its registry entry if it cannot return the ID to JavaScript.
+
+The Windows CI job has passed both native compilation and module load/ABI/registry tests at commit `1e8c8071682228c81e5a099f22e9785ccf0935d3`. The separate Job Object proof-of-concept and portable/Node checks also passed at that commit.
+
+This is still only an opaque-ID registry bootstrap. `OperationRecord` owns no Job, process, thread, pipe, or event HANDLE; there is no native process launch, wait, terminate, asynchronous worker, output capture, or shutdown drain. The addon must not be used to launch work and is not integrated into `runner.mjs`. The current direct-child runner remains process-tree-unsafe.
+
+Next native increments must introduce RAII HANDLE ownership and a reviewed operation state machine, then add asynchronous Job Object lifecycle functions and the required Windows tests in isolated, reviewable steps. Do not wire the addon into production dispatch until those gates pass.
