@@ -11,13 +11,15 @@ param(
   [string]$NodeExe,
   [switch]$Apply,
   [string]$RollbackFrom,
-  [switch]$TestFixture
+  [switch]$TestFixture,
+  [switch]$TestFailDisplacedCleanup
 )
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'verify-candidate-source.ps1')
 $ErrorActionPreference = 'Stop'
 $script:ExpectedExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 $script:TestFixtureMode = [bool]$TestFixture
+$script:TestFailDisplacedCleanup = [bool]$TestFailDisplacedCleanup
 
 $DeployFiles = @(
   'control.html', 'control.js', 'background.js', 'permissions.js',
@@ -31,6 +33,7 @@ $DeployFiles = @(
 function Require([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
 }
+Require (-not $TestFailDisplacedCleanup -or $TestFixture) 'Cleanup failure injection is allowed only in TestFixture mode'
 # Chrome derives an unpacked extension ID from SHA-256(DER public key):
 # take the first 16 bytes and map each hexadecimal nibble 0..15 to a..p.
 function GetChromeExtensionIdFromKey([string]$Key) {
@@ -52,6 +55,20 @@ function AssertExpectedExtensionIdentity($Manifest) {
   Require ($Manifest -and $Manifest.PSObject.Properties['key']) 'PR102_EXTENSION_PUBLIC_KEY_MISSING'
   $actualId = GetChromeExtensionIdFromKey ([string]$Manifest.key)
   Require ($actualId -ceq $script:ExpectedExtensionId) ('PR102_EXTENSION_ID_MISMATCH: expected ' + $script:ExpectedExtensionId + ', got ' + $actualId)
+}
+function RemoveDisplacedDirectory([string]$Path, [string]$PendingMarker) {
+  try {
+    if ($script:TestFixtureMode -and $script:TestFailDisplacedCleanup) {
+      throw 'SYNTHETIC_DISPLACED_CLEANUP_FAILURE'
+    }
+    Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+  } catch {
+    # The replacement/restore has already committed. Never report it as failed
+    # merely because post-commit cleanup failed; retain and identify the displaced tree.
+    if (Test-Path -LiteralPath $Path) {
+      Write-Output (('[' + $PendingMarker + '] DisplacedPath=' + $Path + '; retained for manual cleanup; durable backup remains available.'))
+    }
+  }
 }
 function FullPath([string]$Path) {
   $full = [IO.Path]::GetFullPath($Path.Trim())
@@ -200,16 +217,18 @@ if (-not [string]::IsNullOrWhiteSpace($RollbackFrom)) {
     Copy-Item -LiteralPath $backupExtension -Destination $restoreStage -Recurse -Force
     Move-Item -LiteralPath $installed -Destination $displaced -ErrorAction Stop
     Move-Item -LiteralPath $restoreStage -Destination $installed -ErrorAction Stop
-    Remove-Item -LiteralPath $displaced -Recurse -Force
-    Write-Output '[RESTORED] Previous PR102 Lab extension restored; server, credentials and Production untouched.'
   } catch {
     if (-not (Test-Path -LiteralPath $installed) -and (Test-Path -LiteralPath $displaced)) {
       Move-Item -LiteralPath $displaced -Destination $installed
     }
     throw
   } finally {
-    if (Test-Path -LiteralPath $restoreStage) { Remove-Item -LiteralPath $restoreStage -Recurse -Force }
+    if (Test-Path -LiteralPath $restoreStage) {
+      RemoveDisplacedDirectory $restoreStage 'RESTORE_STAGE_CLEANUP_PENDING'
+    }
   }
+  RemoveDisplacedDirectory $displaced 'RESTORED_CLEANUP_PENDING'
+  Write-Output '[RESTORED] Previous PR102 Lab extension restored; server, credentials and Production untouched.'
   return
 }
 
@@ -294,15 +313,15 @@ try {
   try {
     Move-Item -LiteralPath $installed -Destination $displaced -ErrorAction Stop
     Move-Item -LiteralPath $stage -Destination $installed -ErrorAction Stop
-    Remove-Item -LiteralPath $displaced -Recurse -Force
-    Write-Output ('[INSTALLED] PR102 Lab extension updated at existing path. Chrome reload required. Backup: ' + $backupRoot)
-    Write-Output ('[ROLLBACK] -LabRoot "' + $root + '" -StateRoot "' + $state + '" -LabPort 17485 -RollbackFrom "' + $backupRoot + '" -Apply')
   } catch {
     if (-not (Test-Path -LiteralPath $installed) -and (Test-Path -LiteralPath $displaced)) {
       Move-Item -LiteralPath $displaced -Destination $installed
     }
     throw
   }
+  RemoveDisplacedDirectory $displaced 'INSTALLED_CLEANUP_PENDING'
+  Write-Output ('[INSTALLED] PR102 Lab extension updated at existing path. Chrome reload required. Backup: ' + $backupRoot)
+  Write-Output ('[ROLLBACK] -LabRoot "' + $root + '" -StateRoot "' + $state + '" -LabPort 17485 -RollbackFrom "' + $backupRoot + '" -Apply')
 } finally {
   if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 }
