@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: '22'
       - name: Run recovery state-machine and Windows identity contract tests
-        run: node --test tools/ai_collaboration/recovery/*.test.mjs
+        run: node --test tools/ai_collaboration/recovery/recovery-plan.test.mjs tools/ai_collaboration/recovery/recovery-runtime.test.mjs tools/ai_collaboration/recovery/recovery-journal.test.mjs tools/ai_collaboration/recovery/windows-recovery-contract.test.mjs tools/ai_collaboration/recovery/native-host-contract.test.mjs
       - name: Parse every recovery PowerShell script with Windows PowerShell 5.1
         shell: powershell
         run: |
