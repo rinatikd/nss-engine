@@ -119,24 +119,28 @@ globalThis.__r4PermissionGate={permittedTab,BackgroundControlGrants};
       if(typeof permittedTab!=='function'||typeof BackgroundControlGrants!=='function')
         throw Error('R4_PERMISSION_GATE_MODULES_NOT_READY');
       const url='https://claude.ai/chat/r4fixture0001';
-      const tab=await chrome.tabs.create({url,active:false});
+      const tabA=await chrome.tabs.create({url,active:false});
+      const tabB=await chrome.tabs.create({url:'https://claude.ai/chat/r4fixture0002',active:false});
       await new Promise(resolve=>setTimeout(resolve,250));
-      const current=await chrome.tabs.get(tab.id);
+      const current=await chrome.tabs.get(tabA.id);
       await chrome.storage.local.set({sites:{
         'https://claude.ai':{mode:'chat',adapter:'claude'}
       }});
       const hostPermission=await chrome.permissions.contains({origins:['https://claude.ai/*']});
       const permitted=await permittedTab(chrome,tab.id);
       const grants=new BackgroundControlGrants(chrome);
-      const grant=await grants.grant({tabId:tab.id,durationMinutes:15,localGesture:true});
+      const grantA=await grants.grant({tabId:tabA.id,durationMinutes:15,localGesture:true});
+      const grantB=await grants.grant({tabId:tabB.id,durationMinutes:15,localGesture:true});
       const active=await grants.activeGrants();
-      await grants.revoke(tab.id);
+      await grants.revoke(tabA.id);
       const afterRevoke=await grants.activeGrants();
-      await chrome.tabs.remove(tab.id);
+      await chrome.tabs.remove(tabA.id);
+      await chrome.tabs.remove(tabB.id);
       return {
         url:current.url,origin:permitted.origin,adapter:permitted.site.adapter,
-        hostPermission,grantTabId:grant.tabId,activeGrantCount:active.length,
-        afterRevokeCount:afterRevoke.length
+        hostPermission,grantTabId:grantA.tabId,otherGrantTabId:grantB.tabId,
+        activeGrantCount:active.length,afterRevokeCount:afterRevoke.length,
+        remainingTabId:afterRevoke[0]?.tabId
       };
     })()`);
 
@@ -145,8 +149,11 @@ globalThis.__r4PermissionGate={permittedTab,BackgroundControlGrants};
     assert.equal(result.adapter,'claude');
     assert.equal(result.hostPermission,true,'manifest host permission must cover the exact provider origin');
     assert.ok(Number.isSafeInteger(result.grantTabId)&&result.grantTabId>0);
-    assert.equal(result.activeGrantCount,1,'the real BackgroundControlGrants module must expose one effective tab grant');
-    assert.equal(result.afterRevokeCount,0,'the real BackgroundControlGrants module must revoke the tab grant');
+    assert.ok(Number.isSafeInteger(result.otherGrantTabId)&&result.otherGrantTabId>0);
+    assert.notEqual(result.grantTabId,result.otherGrantTabId);
+    assert.equal(result.activeGrantCount,2,'both real per-tab Grants must be effective before Revoke');
+    assert.equal(result.afterRevokeCount,1,'Revoke of tab A must preserve tab B Grant');
+    assert.equal(result.remainingTabId,result.otherGrantTabId,'the remaining effective Grant must belong to tab B');
     console.log('[R4 ORIGIN GATE] exact provider origin, permittedTab, session grant and revoke passed');
   }finally{
     workerCdp?.close();
