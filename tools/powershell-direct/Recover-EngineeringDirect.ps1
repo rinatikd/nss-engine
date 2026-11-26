@@ -14,7 +14,6 @@ $client='C:\Engineering\chrome-bridge\codex-handoff-output\direct-cli-v21\runtim
 $script=Join-Path $stage 'tools\powershell-direct\stack-supervisor.mjs'
 $credential=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\control-plane.dpapi'
 $audit='C:\Engineering\PowerShellDirect-Engineering-Audit-R1'
-$roots=$repo+';'+$stage
 
 function Owner([int]$port){
  $found=@(Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
@@ -73,10 +72,8 @@ try{
  $psi.WorkingDirectory=Split-Path $script -Parent
  $psi.UseShellExecute=$false
  $psi.CreateNoWindow=$true
- $psi.EnvironmentVariables['PS_DIRECT_ALLOWED_ROOT']='C:\Engineering'
  $psi.EnvironmentVariables['PS_DIRECT_TUNNEL_CLIENT']=$client
  $psi.EnvironmentVariables['CONTROL_PLANE_API_KEY']=$plain
- $psi.EnvironmentVariables['PS_DIRECT_ENGINEERING_WORKSPACES']=$roots
  $psi.EnvironmentVariables['PS_DIRECT_ENGINEERING_AUDIT_DIR']=$audit
  $child=[Diagnostics.Process]::Start($psi)
  if(!$child){throw 'RECOVERY_NODE_START_FAILED'}

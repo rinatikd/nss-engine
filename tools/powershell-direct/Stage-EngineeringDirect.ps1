@@ -10,7 +10,8 @@ $tests=@(
   'tools/ai_collaboration/engineering-runner.test.mjs',
   'tools/powershell-direct/tests/named-suites.test.mjs',
   'tools/ai_collaboration/local_job_service.test.mjs',
-  'tools/ai_collaboration/local_mcp_dispatch.test.mjs'
+  'tools/ai_collaboration/local_mcp_dispatch.test.mjs',
+  'tools/ai_collaboration/workspace-policy.test.mjs'
 )
 $required=@(
   'tools\powershell-direct\service.mjs',
@@ -19,6 +20,7 @@ $required=@(
   'tools\ai_collaboration\engineering-runner.mjs',
   'tools\ai_collaboration\engineering-mcp.mjs',
   'tools\ai_collaboration\local_job_service.mjs',
+  'tools\ai_collaboration\workspace-policy.mjs',
   'tools\powershell-direct\tests\engineering.test.mjs'
 )
 if(!(Test-Path -LiteralPath $node -PathType Leaf)){throw 'NODE_NOT_FOUND'}
@@ -37,7 +39,7 @@ if($Mode -eq 'Inspect'){
 if($Mode -eq 'Stage'){
   if(Test-Path -LiteralPath $dest){throw 'DESTINATION_EXISTS_NO_OVERWRITE'}
   $branch=(& git -C $source branch --show-current).Trim()
-  if($branch -ne 'platform/ai-windows-control-release-20261114'){throw 'UNEXPECTED_PLATFORM_BRANCH'}
+  if($branch -ne 'feat/psdirect-per-job-workspace-approval-20261123'){throw 'UNEXPECTED_PLATFORM_BRANCH'}
   $changes=@(& git -C $source status --porcelain -- tools/powershell-direct tools/ai_collaboration)
   if($LASTEXITCODE -ne 0 -or $changes.Count){throw 'SOURCE_DIRTY_NO_STAGE'}
   foreach($relative in $required){

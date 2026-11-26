@@ -15,7 +15,7 @@ const request = workspace => ({requestId:'pr113-safe-test-001',suite:'chrome-pr1
 test('host-approved named suite executes exactly once and redacts outputs',()=>fixture(async(root,audits)=>{
   let started=0;
   const service=createLocalJobService({
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+    auditDirectory:audits,
     approveRequest:async ({requestId,planSha256})=>({approved:true,requestId,planSha256}),
     runner:async plan=>{started++;return {
       exitCode:0,stdout:'Bearer sample-secret-token',stderr:'api_key=abc123',truncated:false
@@ -37,7 +37,7 @@ test('host-approved named suite executes exactly once and redacts outputs',()=>f
 test('local DENY blocks execution independently of model fields',()=>fixture(async(root,audits)=>{
   let started=0;
   const service=createLocalJobService({
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+auditDirectory:audits,
     approveRequest:async()=>({approved:false}),
     runner:async()=>{started++;return {exitCode:0};}
   });
@@ -49,7 +49,7 @@ test('local DENY blocks execution independently of model fields',()=>fixture(asy
 test('host approval with wrong plan fingerprint is rejected',()=>fixture(async(root,audits)=>{
   let started=0;
   const service=createLocalJobService({
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+auditDirectory:audits,
     approveRequest:async({requestId})=>({approved:true,requestId,planSha256:'wrong'}),
     runner:async()=>{started++;return {exitCode:0};}
   });
@@ -58,26 +58,29 @@ test('host approval with wrong plan fingerprint is rejected',()=>fixture(async(r
   assert.equal(started,0);
 }));
 
-test('workspace outside allowlist never executes',()=>fixture(async(root,audits)=>{
+test('workspace selection is per-job and does not require a persistent directory list',()=>fixture(async(root,audits)=>{
   const other=await mkdtemp(path.join(tmpdir(),'nonallow-'));
   try {
-    let started=0;
+    let started=0,approvedWorkspace='';
     const service=createLocalJobService({
-      approvedWorkspaceRoots:[root],auditDirectory:audits,
-      approveRequest:async()=>{throw Error('SHOULD_NOT_APPROVE');},
+      auditDirectory:audits,
+      approveRequest:async({requestId,planSha256,workspace})=>{
+        approvedWorkspace=workspace;
+        return {approved:true,requestId,planSha256};
+      },
       runner:async()=>{started++;return {exitCode:0};}
     });
     const r=await service.submit(request(other));
-    assert.equal(r.state,'UNKNOWN_OR_FAILED');
-    assert.equal(r.errorCode,'WORKSPACE_NOT_ALLOWLISTED');
-    assert.equal(started,0);
+    assert.equal(r.state,'FINISHED');
+    assert.equal(approvedWorkspace,other);
+    assert.equal(started,1);
   } finally {await rm(other,{recursive:true,force:true});}
 }));
 
 test('crash after claiming does not permit replay',()=>fixture(async(root,audits)=>{
   let invoked=0;
   const service=createLocalJobService({
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+auditDirectory:audits,
     approveRequest:async({requestId,planSha256})=>({approved:true,requestId,planSha256}),
     runner:async()=>{invoked++;throw Error('simulated lost completion');}
   });
@@ -89,7 +92,7 @@ test('crash after claiming does not permit replay',()=>fixture(async(root,audits
 test('durable audit inbox survives service recreation without replay rights',()=>fixture(async(root,audits)=>{
   let executions=0;
   const settings={
-    approvedWorkspaceRoots:[root],auditDirectory:audits,
+auditDirectory:audits,
     approveRequest:async()=>({approved:false,reason:'APPROVAL_EXPIRED'}),
     runner:async()=>{executions++;return {exitCode:0};}
   };
@@ -116,8 +119,7 @@ test('interrupted audit entries display manual review, never active approval',()
     requestId:'stalejob123',suite:'node-test',state:'PENDING_LOCAL_APPROVAL',
     createdAt:'2026-11-15T05:00:00.000Z',planSha256:'f'.repeat(64)
   }));
-  const service=createLocalJobService({approvedWorkspaceRoots:[root],
-    auditDirectory:audits,approveRequest:async()=>{throw Error('SHOULD_NOT_APPROVE');}});
+  const service=createLocalJobService({    auditDirectory:audits,approveRequest:async()=>{throw Error('SHOULD_NOT_APPROVE');}});
   const rows=await service.recent();
   assert.equal(rows[0].state,'REQUIRES_MANUAL_REVIEW');
   assert.equal((await service.submit({requestId:'stalejob123',suite:'chrome-pr113-node',workspace:root})).state,

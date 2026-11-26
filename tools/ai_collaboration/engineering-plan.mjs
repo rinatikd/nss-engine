@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {TaskPolicyError} from './local_test_runner.mjs';
+import {canonicalUserWorkspace} from './workspace-policy.mjs';
 const EXE=Object.freeze({
   git:'C:/Program Files/Git/cmd/git.exe',
   node:'C:/Program Files/nodejs/node.exe',
@@ -80,17 +81,11 @@ function checkedTarget(root,target,type){
   if(!fs.statSync(absolute).isFile())fail('TARGET_NOT_FILE');
   return absolute;
 }
-export async function resolveEngineeringPlan(request,allowedRoots){
+export async function resolveEngineeringPlan(request){
   const a=validateEngineeringRequest(request);
-  if(!Array.isArray(allowedRoots)||!allowedRoots.length)fail('WORKSPACES_NOT_CONFIGURED');
   let cwd;
-  try{cwd=fs.realpathSync.native(a.workspace);}
-  catch{fail('WORKSPACE_NOT_FOUND');}
-  if(!fs.statSync(cwd).isDirectory())fail('WORKSPACE_NOT_DIRECTORY');
-  if(!allowedRoots.some(root=>{
-    try{return fs.realpathSync.native(root).toLowerCase()===cwd.toLowerCase();}
-    catch{return false;}
-  }))fail('WORKSPACE_NOT_ALLOWLISTED');
+  try{cwd=canonicalUserWorkspace(a.workspace);}
+  catch(error){fail(/^[A-Z0-9_]+$/.test(error?.message||'')?error.message:'WORKSPACE_INVALID');}
   const operation=a.operation;
   let executable,argv;
   switch(operation){

@@ -14,17 +14,60 @@ jobs:
       - run: python tools/repo_guard.py --tree HEAD
       - run: python tools/run_portable_checks.py
 
-  windows-release-helper-syntax:
+  powershell-direct-node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check changed PowerShell Direct modules
+        run: |
+          node --check tools/ai_collaboration/workspace-policy.mjs
+          node --check tools/ai_collaboration/engineering-plan.mjs
+          node --check tools/ai_collaboration/engineering-runner.mjs
+          node --check tools/ai_collaboration/local_job_service.mjs
+          node --check tools/ai_collaboration/local_test_runner.mjs
+          node --check tools/powershell-direct/runner.mjs
+          node --check tools/powershell-direct/service.mjs
+          node --check tools/powershell-direct/stack-supervisor.mjs
+      - name: Run per-job workspace and approval regression tests
+        run: |
+          node --test \
+            tools/ai_collaboration/workspace-policy.test.mjs \
+            tools/ai_collaboration/local_test_runner.test.mjs \
+            tools/ai_collaboration/local_job_service.test.mjs \
+            tools/ai_collaboration/engineering-runner.test.mjs \
+            tools/powershell-direct/tests/service.test.mjs \
+            tools/powershell-direct/tests/named-suites.test.mjs \
+            tools/powershell-direct/tests/engineering.test.mjs
+
+  windows-powershell-5-1-syntax:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Parse PR132 staging and native identity helpers with Windows PowerShell 5.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/checkout@v4
+        with:
+          ref: platform/ai-windows-control-release-20261114
+          path: primary-base-checkout
+          fetch-depth: 0
+      - name: Parse PowerShell Direct staging, cutover and recovery scripts with Windows PowerShell 5.1
         shell: powershell
         run: |
           $files = @(
-            'tools/powershell-direct/Prepare-PR132ReleaseCandidate.ps1',
-            'tools/powershell-direct/Inspect-PR132LabIdentity.ps1',
-            'tools/powershell-direct/Diagnose-PR132GitCapture.ps1'
+            'tools/powershell-direct/Invoke-EngineeringCutover.ps1',
+            'tools/powershell-direct/Recover-EngineeringDirect.ps1',
+            'tools/powershell-direct/Upgrade-EngineeringApproval.ps1',
+            'tools/powershell-direct/Prepare-EngineeringCutover.ps1',
+            'tools/powershell-direct/Stage-EngineeringDirect.ps1',
+            'tools/powershell-direct/Prepare-EngineeringLabR2.ps1',
+            'tools/powershell-direct/Prepare-PR138PinnedWorktree.ps1',
+            'tools/powershell-direct/Verify-EngineeringLabR2.ps1',
+            'tools/powershell-direct/EngineeringCutoverJournal.psm1',
+            'tools/powershell-direct/tests/cutover-journal.tests.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
@@ -32,6 +75,99 @@ jobs:
             [void][System.Management.Automation.Language.Parser]::ParseFile(
               (Join-Path $env:GITHUB_WORKSPACE $file),
               [ref]$tokens, [ref]$errors)
-            if ($errors.Count -gt 0) { throw ($file + ': ' + ($errors | Out-String)) }
+            if ($errors.Count -gt 0) { throw ($file + ': ' + ($errors | Format-List Message,ErrorId,IncompleteInput,Extent | Out-String)) }
             Write-Output ('[PASS] PowerShell 5.1 parse: ' + $file)
+          }
+      - name: Run durable cutover journal failure and recovery tests on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $test = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\tests\cutover-journal.tests.ps1'
+          $result = & powershell.exe -NoProfile -NonInteractive -File $test | Out-String
+          if ($LASTEXITCODE -ne 0) { throw 'CUTOVER_JOURNAL_TESTS_FAILED' }
+          $summary = ($result | Out-String).Trim() | ConvertFrom-Json
+          if ($summary.Result -cne 'CUTOVER_JOURNAL_TESTS_PASS' -or $summary.Assertions -lt 20 -or $summary.AutomaticProcessActionTaken -ne $false) { throw 'CUTOVER_JOURNAL_TEST_SUMMARY_INVALID' }
+          Write-Output ('[PASS] Durable cutover journal: assertions=' + $summary.Assertions + ' transactions=' + $summary.JournalTransactions)
+      - name: Execute read-only R2 preflight on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $git = 'C:\Program Files\Git\cmd\git.exe'
+          if (!(Test-Path -LiteralPath $git -PathType Leaf)) { throw 'TRUSTED_GIT_MISSING' }
+          $head = (& $git -C $env:GITHUB_WORKSPACE rev-parse HEAD 2>$null | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head.Length -ne 40) { throw 'CHECKOUT_HEAD_INVALID' }
+          $script = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
+          $stage = 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125'
+          $result = & $script -Mode Inspect -ExpectedCommit $head -StageDirectory $stage
+          $preflight = ($result | Out-String).Trim() | ConvertFrom-Json
+          if ($preflight.Result -cne 'R2_CREATE_ONLY_PREFLIGHT') { throw 'R2_PREFLIGHT_RESULT_INVALID' }
+          if ($preflight.CandidateSha -cne $head) { throw 'R2_PREFLIGHT_SHA_MISMATCH' }
+          if ($preflight.RequiredSourceCount -ne 10 -or $preflight.RegressionTestCount -ne 7) { throw 'R2_PREFLIGHT_INPUT_COUNT_MISMATCH' }
+          if ($preflight.InventoriedFileCount -lt 17) { throw 'R2_PREFLIGHT_FILE_INVENTORY_TOO_SMALL' }
+          if ($preflight.TargetExists) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
+          Write-Output ('[PASS] R2 PowerShell 5.1 read-only preflight: files=' + $preflight.InventoriedFileCount)
+      - name: Execute the exact pinned worktree and R2 preparation flow on Windows
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $git = 'C:\Program Files\Git\cmd\git.exe'
+          $node = (Get-Command node.exe -ErrorAction Stop).Source
+          $expectedBase = 'f58f44a52c569a4a45e3ffe025dc6d1f62beff58'
+          $expectedPin = '1ab5b9098046028eb3b022b91f8e40ca7ff92596'
+          $primary = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
+          $worktreeName = 'PowerShellDirect-PR138-graceful-drain-20261125'
+          $worktree = Join-Path $primary ('work\' + $worktreeName)
+          $stage = 'C:\Engineering\PowerShellDirect-Engineering-Lab-R2-PR138-graceful-drain-20261125'
+          $baseCheckout = Join-Path $env:GITHUB_WORKSPACE 'primary-base-checkout'
+          if (Test-Path -LiteralPath $primary) { throw 'PRIMARY_CLONE_ALREADY_EXISTS' }
+          if (Test-Path -LiteralPath $stage) { throw 'R2_CI_TARGET_ALREADY_EXISTS' }
+          $null = New-Item -ItemType Directory -Path 'C:\Engineering' -Force
+          try {
+            & $git clone --no-hardlinks $baseCheckout $primary
+            if ($LASTEXITCODE -ne 0) { throw 'PRIMARY_CLONE_FAILED' }
+            & $git -C $primary checkout -B platform/ai-windows-control-release-20261114 $expectedBase
+            if ($LASTEXITCODE -ne 0) { throw 'PRIMARY_BASE_CHECKOUT_FAILED' }
+            & $git -C $primary remote set-url origin https://github.com/rinatikd/nss-engine.git
+            if ($LASTEXITCODE -ne 0) { throw 'PRIMARY_ORIGIN_SET_FAILED' }
+            $baseHead = (& $git -C $primary rev-parse HEAD 2>$null | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $baseHead -cne $expectedBase) { throw 'PRIMARY_BASE_SHA_MISMATCH' }
+            $outer = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Prepare-PR138PinnedWorktree.ps1'
+            $inspect = & $outer -Mode Inspect -RepositoryRoot $primary -CandidateCommit $expectedPin -WorktreeName $worktreeName
+            $outerPreflight = ($inspect | Out-String).Trim() | ConvertFrom-Json
+            if ($outerPreflight.Result -cne 'PR138_WORKTREE_PREFLIGHT') { throw 'OUTER_PREFLIGHT_RESULT_INVALID' }
+            if ($outerPreflight.PrimaryHead -cne $expectedBase -or $outerPreflight.CandidateCommit -cne $expectedPin) { throw 'OUTER_PREFLIGHT_PIN_MISMATCH' }
+            if ($outerPreflight.DestinationExists -or $outerPreflight.FetchPerformed -or $outerPreflight.WorktreeCreated) { throw 'OUTER_PREFLIGHT_SIDE_EFFECT' }
+            $preparedWorktree = & $outer -Mode Prepare -RepositoryRoot $primary -CandidateCommit $expectedPin -WorktreeName $worktreeName
+            $worktreeResult = ($preparedWorktree | Out-String).Trim() | ConvertFrom-Json
+            if ($worktreeResult.Result -cne 'PR138_PINNED_WORKTREE_READY') { throw 'PINNED_WORKTREE_RESULT_INVALID' }
+            if ($worktreeResult.CandidateSha -cne $expectedPin -or $worktreeResult.Worktree -cne $worktree) { throw 'PINNED_WORKTREE_SHA_OR_PATH_MISMATCH' }
+            if ($worktreeResult.WorktreeClean -ne $true -or $worktreeResult.ProductionChanged -ne $false) { throw 'PINNED_WORKTREE_STATE_INVALID' }
+            $r2 = Join-Path $worktree 'tools\powershell-direct\Prepare-EngineeringLabR2.ps1'
+            $r2Inspect = & $r2 -Mode Inspect -ExpectedCommit $expectedPin -StageDirectory $stage
+            $preflight = ($r2Inspect | Out-String).Trim() | ConvertFrom-Json
+            if ($preflight.Result -cne 'R2_CREATE_ONLY_PREFLIGHT' -or $preflight.CandidateSha -cne $expectedPin) { throw 'R2_PREFLIGHT_RECHECK_FAILED' }
+            if ($preflight.TargetExists -or $preflight.InventoriedFileCount -lt 17) { throw 'R2_PREFLIGHT_INVENTORY_OR_TARGET_INVALID' }
+            $env:R2_SOURCE_ROOT = $worktree
+            $env:R2_STAGE_ROOT = $stage
+            $env:R2_NODE_EXE = $node
+            $env:R2_GIT_EXE = $git
+            $r2Prepared = & $r2 -Mode Prepare -ExpectedCommit $expectedPin -StageDirectory $stage -NodeExecutable $node
+            $prepared = ($r2Prepared | Out-String).Trim() | ConvertFrom-Json
+            if ($prepared.Result -cne 'R2_STAGED_UNTESTED' -or $prepared.RuntimeSourceSha -cne $expectedPin) { throw 'R2_PREPARE_RESULT_OR_PIN_INVALID' }
+            if ($prepared.VerifiedFileCount -ne $preflight.InventoriedFileCount -or $prepared.TrackedFilesOnly -ne $true) { throw 'R2_PREPARE_INVENTORY_INVALID' }
+            $verifyScript = Join-Path $env:GITHUB_WORKSPACE 'tools\powershell-direct\Verify-EngineeringLabR2.ps1'
+            $verifiedResult = & $verifyScript -ExpectedCommit $expectedPin -SourceWorktree $worktree -StageDirectory $stage -NodeExecutable $node -GitExecutable $git
+            $verified = ($verifiedResult | Out-String).Trim() | ConvertFrom-Json
+            if ($verified.Result -cne 'R2_EXISTING_STAGE_VERIFIED' -or $verified.RuntimeSourceSha -cne $expectedPin) { throw 'R2_EXISTING_STAGE_VERIFY_RESULT_INVALID' }
+            if ($verified.Tests -ne 2 -or $verified.Passed -ne 2 -or $verified.Failed -ne 0 -or $verified.ProductionTouched -ne $false) { throw 'R2_EXISTING_STAGE_VERIFY_SUMMARY_INVALID' }
+            Write-Output ('[PASS] Outer helper + pinned detached worktree + R2 Inspect/Prepare + read-only existing-stage verifier: sha=' + $expectedPin + ' files=' + $prepared.VerifiedFileCount)
+          } finally {
+            if (Test-Path -LiteralPath $stage) {
+              Remove-Item -LiteralPath $stage -Recurse -Force
+            }
+            if ((Test-Path -LiteralPath $primary) -and (Test-Path -LiteralPath $worktree)) {
+              & $git -C $primary worktree remove --force $worktree 2>$null
+            }
+            if (Test-Path -LiteralPath $primary) {
+              Remove-Item -LiteralPath $primary -Recurse -Force
+            }
           }

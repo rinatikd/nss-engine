@@ -10,8 +10,7 @@ async function fixture(fn) {
   const dir=await mkdtemp(path.join(tmpdir(),'psdirect-named-'));
   let starts=0;
   const svc=new PowerShellApprovalService({
-    root:'C:\\Engineering',port:0,namedWorkspaceRoots:[dir],
-    namedAuditDirectory:path.join(dir,'audits'),
+    port:0,namedAuditDirectory:path.join(dir,'audits'),
     namedRunner:async()=>{starts++;return {
       exitCode:0,stdout:'PASS',stderr:'',truncated:false
     }}
@@ -95,6 +94,7 @@ test('named job STATUS does not start a pending job',()=>fixture(async({svc,dir,
   assert.equal(starts(),0);
   const entry=svc.namedPending.get(id);
   await approval(svc,entry,false);
+  await waitFor(async()=>(await svc.namedService.status(id)).state==='DENIED');
 }));
 
 test('model cannot smuggle approval=true',()=>fixture(async({svc,dir,starts})=>{
