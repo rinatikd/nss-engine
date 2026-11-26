@@ -5,10 +5,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $workspaceExpected = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$repo = Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-release-clean'
+$repo = $workspaceExpected
 $candidateRoot = Join-Path $repo 'docs\chrome-bridge-handoff\chrome-bridge-v20'
-$extensionRoot = 'C:\Engineering\ChromeBridge-PR102-17484-Lab'
-$stateRoot = 'C:\Engineering\ChromeBridge-PR102-17484-State'
+$extensionRoot = 'C:\Engineering\ChromeBridge-PR102-17484-Lab' # Legacy directory label; endpoint is 17485.
+$stateRoot = 'C:\Engineering\ChromeBridge-PR102-17485-State'
 $labPort = 17485
 $labExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 $consiliumExtensionId = 'ojkfdjndmcpnphecoadbcnmlnadmmkah'
@@ -18,6 +18,25 @@ if ($workspace -ine $workspaceExpected) { throw 'UNEXPECTED_APPROVED_WORKSPACE' 
 $identityScript = Join-Path $candidateRoot 'deployment\process-identity.ps1'
 if (-not (Test-Path -LiteralPath $identityScript -PathType Leaf)) { throw 'PINNED_PROCESS_IDENTITY_HELPER_MISSING' }
 . $identityScript
+function AclSummary([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $null }
+  try {
+    $acl = Get-Acl -LiteralPath $Path
+    return [pscustomobject]@{
+      Owner = [string]$acl.Owner
+      Access = @($acl.Access | ForEach-Object {
+        [pscustomobject]@{
+          Identity = [string]$_.IdentityReference
+          Rights = [string]$_.FileSystemRights
+          Type = [string]$_.AccessControlType
+          IsInherited = [bool]$_.IsInherited
+        }
+      })
+    }
+  } catch {
+    return [pscustomobject]@{ Error = $_.Exception.Message }
+  }
+}
 
 $listeners = @([BridgeNativeMetadata]::Listeners($labPort))
 if ($listeners.Count -ne 1) { throw ('LAB_LISTENER_COUNT_MISMATCH: ' + $listeners.Count) }
@@ -124,7 +143,10 @@ $summary = [ordered]@{
   BrowserTokenLength = $browserTokenLength
   ChromeSecurePreferencesMapLabExtension = $securePreferenceMatch
   ChromeExtensionMappings = @($secureMappings)
+  ExtensionRootAcl = (AclSummary $extensionRoot)
+  StateRootAcl = (AclSummary $stateRoot)
   ExpectedExtensionRoot = $extensionRoot
+  ExtensionRootDirectoryNameIsLegacy17484Label = ((Split-Path $extensionRoot -Leaf) -eq 'ChromeBridge-PR102-17484-Lab')
   ExpectedStateRoot = $stateRoot
   ProcessCreatedUtc = [string]$identity.created
 }
