@@ -17,9 +17,21 @@ async function inject(chromeApi, tabId, origin, name, args, documentId=null) {
   const target = Number.isSafeInteger(tabId) && typeof documentId==='string' && documentId
     ? {tabId,documentIds:[documentId]}
     : {tabId};
-  const out = await chromeApi.scripting.executeScript({
-    target,world:'ISOLATED',func:pageAction,args:[name,args,origin]
-  });
+  let out;
+  try {
+    out = await chromeApi.scripting.executeScript({
+      target,world:'ISOLATED',func:pageAction,args:[name,args,origin]
+    });
+  } catch (cause) {
+    if (documentId) {
+      // Once a command is sent to an exact document, a rejected/missing
+      // result is ambiguous: never fall back to the active tab's new document.
+      throw Object.assign(Error('DOCUMENT_BOUND_INJECTION_FAILED'),{
+        dispatchState:'UNKNOWN'
+      });
+    }
+    throw cause;
+  }
   if (!Array.isArray(out) || out.length!==1 ||
       typeof out[0]?.documentId!=='string' || !out[0].documentId ||
       out[0].frameId!==0) {
