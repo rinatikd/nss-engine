@@ -43,12 +43,12 @@ Executable paths are pinned in `runner.mjs`. Missing executables fail closed. No
 - creates the ephemeral approval proxy;
 - starts only the named `powershell-direct-work` tunnel profile;
 - passes only the MCP agent token as an explicit PowerShell Direct secret to the tunnel child;
-- removes `CONTROL_PLANE_API_KEY` and `PS_DIRECT_UI_TOKEN` from the child environment;
+- does not pass the local UI token to the tunnel child; the existing `CONTROL_PLANE_API_KEY` handoff is preserved pending verification that the tunnel client does not require it;
 - does not print either bearer token;
 - waits for the tunnel health endpoint before reporting `STACK_READY`;
 - closes the proxy and service on shutdown.
 
-No control-plane API key is required by this supervisor. The tunnel's own profile/authentication configuration remains external and is not modified by these source changes.
+The launcher retains its existing hidden prompt / environment handoff for `CONTROL_PLANE_API_KEY`. This branch does not rotate, rewrite, persist or otherwise change that credential. Whether the tunnel client truly requires it remains to be verified from the exact client build and profile contract before any attempt to remove it.
 
 The local approval URL is a temporary capability for the current supervisor process. Keep it on the Work PC and do not paste it into chat, tickets, screenshots or GitHub. It is not a persistent DPAPI credential and is invalidated by stopping the supervisor.
 
