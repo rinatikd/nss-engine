@@ -424,62 +424,142 @@ export function installBackgroundCoordinator(chromeApi) {
       }
       const run = async () => {
         const failureStartedAt=Date.now();
-        const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired} =
-          await chromeApi.storage.local.get([
-            'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
-          ]);
-        if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
-          throw Error('BACKGROUND_TRANSPORT_DISABLED');
         const name=msg.command?.name;
-        const sessionAuthorization=new SessionAuthorization(chromeApi);
-        if (name==='session_authorize') {
-          if (currentStatus().connected!==true) throw Error('BRIDGE_NOT_CONNECTED');
-          // Session Authorization must not inherit any stale per-tab grants.
-          await new BackgroundControlGrants(chromeApi).clear();
-          const lease=await sessionAuthorization.authorize({
-            ...msg.command.args,bridgeEpoch:msg.command.bridgeEpoch
-          });
-          try { await chromeApi.storage.local.set({bridgeMutationLabMode:true}); }
-          catch (error) { await sessionAuthorization.revoke(); throw error; }
-          return lease;
-        }
-        if (name==='session_revoke') {
-          await sessionAuthorization.revoke();
-          await new BackgroundControlGrants(chromeApi).clear();
-          await chromeApi.storage.local.set({bridgeMutationLabMode:false});
-          return {revoked:true};
-        }
-        if (name==='session_status') return sessionAuthorization.status(msg.command.bridgeEpoch);
-        if (['browser_click','browser_fill','agent_send','provider_prepare','provider_commit'].includes(name)) {
-          if (bridgeMutationLabMode!==true) throw Object.assign(Error('BACKGROUND_MUTATIONS_DISABLED'), {dispatchState:'BLOCKED'});
-          const grants=new BackgroundControlGrants(chromeApi);
-          return dispatchMutation(msg.command,chromeApi,{
-            approvals,
-            sessionAuthorization,
-            controlGrant:(origin,tabId)=>grants.require(origin,tabId),
-            stillEnabled:async()=>{
-              const settings=await chromeApi.storage.local.get([
-                'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
-              ]);
-              return settings.bridgeBackgroundMode===true &&
-                settings.bridgeMutationLabMode===true &&
-                settings.bridgeConnectionDesired===true;
+        // Session authorization changes are global control operations: fence
+        // mutations synchronously before any storage/browser await.
+        const sessionControlChange = name==='session_authorize' || name==='session_revoke';
+        if (sessionControlChange) controlClearRequested = true;
+
+        try {
+          const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired} =
+            await chromeApi.storage.local.get([
+              'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
+            ]);
+          if (bridgeBackgroundMode!==true || bridgeConnectionDesired!==true)
+            throw coordinatorError('BACKGROUND_TRANSPORT_DISABLED','BLOCKED');
+
+          const sessionAuthorization=new SessionAuthorization(chromeApi);
+          if (name==='session_authorize') {
+            try {
+              const drained = await drainMutationLanes(chromeApi);
+              if (!drained.drained) {
+                const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+                error.quarantinedTabs=drained.tabIds;
+                throw error;
+              }
+              const lease=await enqueueControlOperation(async()=>{
+                if (mutationStopRequested || mutationStopCount>0)
+                  throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS');
+                if (controlClearFailed)
+                  throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
+                const latest=await chromeApi.storage.local.get([
+                  'bridgeBackgroundMode','bridgeConnectionDesired'
+                ]);
+                if (latest.bridgeBackgroundMode!==true || latest.bridgeConnectionDesired!==true)
+                  throw coordinatorError('BACKGROUND_TRANSPORT_DISABLED','BLOCKED');
+                if (currentStatus().connected!==true)
+                  throw coordinatorError('BRIDGE_NOT_CONNECTED','BLOCKED');
+                // A new session starts only after old per-tab grants are gone.
+                await new BackgroundControlGrants(chromeApi).clear();
+                const created=await sessionAuthorization.authorize({
+                  ...msg.command.args,bridgeEpoch:msg.command.bridgeEpoch
+                });
+                try { await chromeApi.storage.local.set({bridgeMutationLabMode:true}); }
+                catch (error) { await sessionAuthorization.revoke(); throw error; }
+                return created;
+              },{allowDuringClear:true});
+              controlClearFailed=false;
+              return lease;
+            } finally {
+              if (!mutationStopRequested && mutationStopCount===0)
+                controlClearRequested=false;
             }
+          }
+          if (name==='session_revoke') {
+            let cleanupError=null;
+            const drained=await drainMutationLanes(chromeApi);
+            try {
+              await enqueueControlOperation(
+                () => clearAllBackgroundControls(chromeApi),
+                {allowDuringClear:true}
+              );
+              controlClearFailed=false;
+            } catch (error) {
+              controlClearFailed=true;
+              cleanupError=error;
+            } finally {
+              if (!mutationStopRequested && mutationStopCount===0)
+                controlClearRequested=false;
+            }
+            if (!drained.drained) {
+              const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+              error.quarantinedTabs=drained.tabIds;
+              throw error;
+            }
+            if (cleanupError)
+              throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','NOT_PERFORMED');
+            return {revoked:true};
+          }
+          if (name==='session_status') return sessionAuthorization.status(msg.command.bridgeEpoch);
+          if (MUTATION_COMMANDS.has(name)) {
+            if (bridgeMutationLabMode!==true)
+              throw coordinatorError('BACKGROUND_MUTATIONS_DISABLED','BLOCKED');
+            await assertMutationAllowed(chromeApi,msg.command?.args?.tabId);
+            const grants=new BackgroundControlGrants(chromeApi);
+            return dispatchMutation(msg.command,chromeApi,{
+              approvals,
+              sessionAuthorization,
+              controlGrant:(origin,tabId)=>grants.require(origin,tabId),
+              stillEnabled:async()=>{
+                if (mutationStopRequested || mutationStopCount>0 ||
+                    controlClearRequested || controlClearFailed ||
+                    mutationQuarantinePersistenceFailed) return false;
+                const settings=await chromeApi.storage.local.get([
+                  'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
+                ]);
+                return settings.bridgeBackgroundMode===true &&
+                  settings.bridgeMutationLabMode===true &&
+                  settings.bridgeConnectionDesired===true;
+              }
+            });
+          }
+          return dispatchReadOnly(msg.command,chromeApi,{
+            getBackgroundControlStatus:()=>readBackgroundControlStatus(chromeApi,msg.command?.bridgeEpoch)
           });
+        } finally {
+          if (sessionControlChange && !mutationStopRequested && mutationStopCount===0)
+            controlClearRequested=false;
         }
-        return dispatchReadOnly(msg.command,chromeApi,{
-          getBackgroundControlStatus:()=>readBackgroundControlStatus(chromeApi,msg.command?.bridgeEpoch)
-        });
       };
-      void run().then(result=>respond({result}),e=>respond({
-        error:e.message,
-        // Only the trusted coordinator can assert no DOM execution occurred.
-        dispatchState:['BLOCKED','NOT_PERFORMED'].includes(e.dispatchState)
-          ? e.dispatchState : 'UNKNOWN',
-        failure:normalizeFailure(e?.failure,{stage:'PRECHECK',
-          code:/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message||'')?e.message:'COORDINATOR_DISPATCH_FAILED',
-          startedAt:failureStartedAt})
-      }));
+      const replyDispatchError = error => respond({
+        error:error?.message || 'COORDINATOR_DISPATCH_FAILED',
+        dispatchState:['BLOCKED','NOT_PERFORMED'].includes(error?.dispatchState)
+          ? error.dispatchState : 'UNKNOWN',
+        sideEffect:typeof error?.sideEffect==='string' ? error.sideEffect : undefined,
+        failure:normalizeFailure(error?.failure,{
+          stage:'PRECHECK',
+          code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')
+            ? error.message : 'COORDINATOR_DISPATCH_FAILED',
+          startedAt:Date.now()
+        })
+      });
+
+      if (MUTATION_COMMANDS.has(msg.command?.name)) {
+        const tabId=msg.command?.args?.tabId;
+        let accepted;
+        try {
+          accepted=enqueueTabMutation(tabId,async()=>{
+            await assertMutationAllowed(chromeApi,tabId);
+            return run();
+          });
+        } catch (error) {
+          replyDispatchError(error);
+          return false;
+        }
+        void accepted.then(result=>respond({result}),replyDispatchError);
+        return true;
+      }
+      void run().then(result=>respond({result}),replyDispatchError);
       return true;
     }
     if (msg.type === 'background-control-status') {
