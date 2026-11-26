@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <cstdlib>
 
 #ifndef PROC_THREAD_ATTRIBUTE_JOB_LIST
 #define PROC_THREAD_ATTRIBUTE_JOB_LIST ProcThreadAttributeValue(13, FALSE, TRUE, FALSE)
@@ -93,12 +94,77 @@ static int child_mode(bool spawn_descendant, const wchar_t* self) {
   return 0;
 }
 
+
+static int kill_on_close_owner(const wchar_t* self) {
+  std::wstring command = L"\"" + std::wstring(self) + L"\" --child";
+  ManagedProcess p{};
+  if (!start_in_job(self, command, nullptr, p)) fail(L"start_in_job kill-on-close");
+  std::wprintf(L"%lu\n", p.pid);
+  std::fflush(stdout);
+  Sleep(INFINITE);
+  return 0;
+}
+
+static bool verify_kill_on_close(const wchar_t* self) {
+  SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+  HANDLE read_pipe = nullptr, write_pipe = nullptr;
+  if (!CreatePipe(&read_pipe, &write_pipe, &sa, 0)) fail(L"CreatePipe");
+  if (!SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0)) fail(L"SetHandleInformation");
+
+  STARTUPINFOW si{}; si.cb = sizeof(si);
+  si.dwFlags = STARTF_USESTDHANDLES;
+  si.hStdOutput = write_pipe;
+  si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+  si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  std::wstring command = L"\"" + std::wstring(self) + L"\" --kill-on-close-owner";
+  PROCESS_INFORMATION owner{};
+  if (!CreateProcessW(self, command.data(), nullptr, nullptr, TRUE, 0,
+                      nullptr, nullptr, &si, &owner)) fail(L"CreateProcessW owner");
+  CloseHandle(write_pipe);
+
+  char line[64]{};
+  DWORD used = 0;
+  while (used < sizeof(line) - 1) {
+    DWORD got = 0;
+    if (!ReadFile(read_pipe, line + used, 1, &got, nullptr) || got == 0) {
+      CloseHandle(read_pipe); TerminateProcess(owner.hProcess, 9);
+      CloseHandle(owner.hThread); CloseHandle(owner.hProcess);
+      std::fwprintf(stderr, L"FAIL: owner did not publish descendant PID\n");
+      return false;
+    }
+    if (line[used++] == '\n') break;
+  }
+  CloseHandle(read_pipe);
+  const DWORD descendant_pid = static_cast<DWORD>(strtoul(line, nullptr, 10));
+  HANDLE descendant = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                                  FALSE, descendant_pid);
+  if (!descendant) {
+    TerminateProcess(owner.hProcess, 9);
+    CloseHandle(owner.hThread); CloseHandle(owner.hProcess);
+    std::fwprintf(stderr, L"FAIL: cannot open descendant process\n");
+    return false;
+  }
+
+  if (!TerminateProcess(owner.hProcess, 0xC000013A)) fail(L"TerminateProcess owner");
+  WaitForSingleObject(owner.hProcess, 5000);
+  const DWORD descendant_exit = WaitForSingleObject(descendant, 5000);
+  CloseHandle(descendant); CloseHandle(owner.hThread); CloseHandle(owner.hProcess);
+  if (descendant_exit != WAIT_OBJECT_0) {
+    std::fwprintf(stderr, L"FAIL: descendant survived owner termination; KILL_ON_JOB_CLOSE unconfirmed\n");
+    return false;
+  }
+  std::wprintf(L"PASS: abrupt owner termination closed Job Object and terminated descendant\n");
+  return true;
+}
+
 int wmain(int argc, wchar_t** argv) {
+  if (argc >= 2 && wcscmp(argv[1], L"--kill-on-close-owner") == 0) return kill_on_close_owner(argv[0]);
   if (argc >= 2 && wcscmp(argv[1], L"--child") == 0) return child_mode(false, argv[0]);
   if (argc >= 2 && wcscmp(argv[1], L"--spawn-descendant") == 0) return child_mode(true, argv[0]);
 
   wchar_t self[MAX_PATH]{};
   if (!GetModuleFileNameW(nullptr, self, MAX_PATH)) fail(L"GetModuleFileNameW");
+  if (!verify_kill_on_close(self)) return 5;
   std::wstring command = L"\"" + std::wstring(self) + L"\" --spawn-descendant";
   ManagedProcess p{};
   if (!start_in_job(self, command, nullptr, p)) fail(L"start_in_job");
