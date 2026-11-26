@@ -259,7 +259,7 @@ async function readGlobalRevocationFence(chromeApi) {
   const record=localPending || sessionPending || null;
   const stores=[
     ...(localPending?['local']:[]),
-    ...(sessionPending?['session']:[]
+    ...(sessionPending?['session']:[])
   ];
   return {record,stores};
 }
