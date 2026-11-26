@@ -150,3 +150,48 @@ The share could not be read from the available connected surface because the bro
 ---
 
 **Release verdict on 2026-11-26: NO-GO for R4-REL release / GO for continued controlled integration.** The source foundation is substantially stronger, particularly the Bridge integration stack and Windows test coverage, but G2, G3, G4, G7, G8 and G9 are not accepted. The right next deliverable is an isolated, reproducible Lab release candidate with exact per-component manifests and evidence—not a tag over the current collection of Draft branches.
+
+
+## 9. Stop/Revoke integration checkpoint — 2026-11-26
+
+### Current candidate
+
+NSS Engine [PR #151](https://github.com/rinatikd/nss-engine/pull/151), branch `fix/pr148-stop-revoke-session-guard-20261126`, current head `319c9ce3f8016bfefabc288b043588c36dc4d5a8`, is **OPEN / DRAFT** and based exactly on PR #148 head `7bda91a77d884d52f2daa8a07747ac1b43ed1a3e`.
+
+PR #151 ports the Stop/Revoke safety invariants from #127/#128 into the current Session Authorization + provider_prepare/provider_commit coordinator. The old #127/#128 coordinator implementation is not cherry-picked because it predates the current SessionAuthorization model.
+
+### Scope now covered
+
+- Per-tab FIFO for accepted `browser_click`, `browser_fill`, `agent_send`, `provider_prepare` and `provider_commit` actions.
+- Synchronous mutation/grant admission fences for Stop, session_revoke, per-tab Revoke and revoke-all.
+- Stop waits for the actually dispatched Start transition and accepted in-flight page mutations, then verifies offscreen Stop.
+- Bounded timeout returns `UNKNOWN`, quarantines affected tabs and sets a durable global reconnect lock after an uncertain global Stop/cleanup.
+- Per-tab revoke does not pretend to partially revoke an origin-wide Session Authorization lease.
+- Failed grant-store mutation quarantines the tab; UI response preserves `outcome: UNKNOWN`.
+- Windows exclusive journal lock `EPERM` is normalized to bounded lock contention within the original 62 ms retry budget. The implementation never deletes another process's lock.
+
+### Exact-head evidence
+
+All evidence below is pinned to PR #151 head `319c9ce3f8016bfefabc288b043588c36dc4d5a8`:
+
+- Source checks PR run [#45745923457](https://github.com/rinatikd/nss-engine/actions/runs/45745923457): 4/4 jobs SUCCESS (portable, Ubuntu OS-process, Windows OS-process, Consilium Lab package).
+- Source checks push run [#45745918035](https://github.com/rinatikd/nss-engine/actions/runs/45745918035): 4/4 jobs SUCCESS.
+- Chrome Bridge RC1 Control Gates [#45745923474](https://github.com/rinatikd/nss-engine/actions/runs/45745923474): SUCCESS.
+- Chrome Bridge Visual RC [#45745923395](https://github.com/rinatikd/nss-engine/actions/runs/45745923395): 2/2 jobs SUCCESS (disposable Chromium/MV3 lifecycle and Windows PowerShell 5.1 synthetic package/upgrade checks).
+- Source logs include 109/109 PASS for the primary bridge adapter suite and 23/23 PASS for the Windows ProviderJournal interprocess suite. Other portable project suites also completed successfully.
+
+### Remaining boundary
+
+PR #151 remains Draft, unmerged and undeployed. Real target-workstation Chrome/Windows E2E, live provider send/reply, 17485 StateRoot inventory/provisioning and operator quarantine recovery remain open. This closes the **source/CI porting checkpoint**, not Bridge live runtime acceptance or R4 G2/G7.
+
+## 10. Platform baseline sync after CCTV Release 2 — 2026-11-26
+
+NSS Engine PR #150 (CCTV CLI E2E, launcher fixes and user guide) was merged into `main` on 2026-11-26:
+
+- PR #150 merge commit: `5bb86dff8f8a50483956fac5237d1f6942926855`.
+- The shared portable assertion is now `Observe, м: 23.0`, matching the CLI output; this supersedes the stale dictionary-style assertion that caused PR #110's earlier portable Source check failure.
+- Current `main` compares as four commits ahead of PR #110's recorded base `d3ac8f167e508d516cbea6f953f707dc10a45f25`. The branch has not yet been synchronized or revalidated against this current main head.
+- PR #110 remains OPEN / Draft at head `674e1fad2b64910b470222c5f17c87cd1df4e8eb`; do not call it current-baseline green yet. Its previous Source run #45452312461 failed only at the stale CCTV assertion on that old merge baseline; that is now superseded by main's corrected test file.
+- Next bounded action: refresh #110's exact merge candidate against current main, inspect the four-commit delta and changed-file ancestry, then run full exact-head Source checks before changing the release gate status.
+
+No mass merge of Draft branches, deployment or Production changes are authorized by this status update.
