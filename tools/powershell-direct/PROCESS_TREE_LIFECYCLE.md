@@ -135,3 +135,11 @@ A cancellation arriving while CreateProcessW is in progress sets a cancellation-
 - Negative tests for unsupported PROC_THREAD_ATTRIBUTE_JOB_LIST, incompatible parent-job policies, and unexpected breakaway.
 - Integrate behind a feature flag only after native tests pass; keep the existing direct-child runner as an explicitly labelled fallback only if policy permits. Never silently fall back to uncontained execution.
 - No production cutover until disposable Work PC smoke tests confirm the actual Windows build, parent-job environment, output behavior, and shutdown semantics.
+
+## N-API bootstrap implementation (2026-11-26)
+
+A first build-only N-API bootstrap is now present under native/: addon.cpp, binding.gyp, package.json, and test-load.mjs. It exports only getBuildInfo() and reports the Windows x64 target and compiled N-API version. It deliberately exposes no process execution, Job HANDLE, or lifecycle operations yet.
+
+The workflow adds a separate windows-native-addon job using Node 24, MSVC x64, and pinned node-gyp 11.2.0. It builds the .node module and loads it from Node to verify the ABI metadata.
+
+This is an ABI/build gate, not the process-tree implementation. The module must not be used to launch work. Next native increments should add and test operation-registry ownership and asynchronous start/wait/terminate/close in isolated steps before any runner integration.
