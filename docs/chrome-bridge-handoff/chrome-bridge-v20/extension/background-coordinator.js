@@ -822,6 +822,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         dispatchState:['BLOCKED','NOT_PERFORMED'].includes(error?.dispatchState)
           ? error.dispatchState : 'UNKNOWN',
         sideEffect:typeof error?.sideEffect==='string' ? error.sideEffect : undefined,
+        quarantinedTabs:Array.isArray(error?.quarantinedTabs) ? error.quarantinedTabs : [],
         failure:normalizeFailure(error?.failure,{
           stage:'PRECHECK',
           code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')
