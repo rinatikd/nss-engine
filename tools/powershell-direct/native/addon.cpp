@@ -7,7 +7,6 @@
 #include "operation-registry.h"
 
 #include <array>
-#include <deque>
 #include <memory>
 #include <string>
 #include <type_traits>
