@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <node_api.h>
+#include "operation-state.h"
 
 #include <array>
 #include <deque>
@@ -57,46 +58,8 @@ static_assert(!std::is_copy_constructible<UniqueHandle>::value,
 static_assert(std::is_nothrow_move_constructible<UniqueHandle>::value,
               "HANDLE ownership transfer must be noexcept");
 
-enum class OperationState {
-  kRegistered,
-  kStarting,
-  kRunning,
-  kTerminating,
-  kCompleted,
-  kClosed
-};
-
-// Single authoritative transition table. Keep it pure so every edge can be
-// checked at compile time and reused under the per-operation lock.
-constexpr bool can_transition(OperationState from, OperationState to) noexcept {
-  switch (from) {
-    case OperationState::kRegistered:
-      return to == OperationState::kStarting || to == OperationState::kClosed;
-    case OperationState::kStarting:
-      return to == OperationState::kRunning || to == OperationState::kTerminating;
-    case OperationState::kRunning:
-      return to == OperationState::kTerminating || to == OperationState::kCompleted;
-    case OperationState::kTerminating:
-      return to == OperationState::kCompleted;
-    case OperationState::kCompleted:
-      return to == OperationState::kClosed;
-    case OperationState::kClosed:
-      return false;
-  }
-  return false;
-}
-
-static_assert(can_transition(OperationState::kRegistered, OperationState::kStarting));
-static_assert(can_transition(OperationState::kStarting, OperationState::kRunning));
-static_assert(can_transition(OperationState::kStarting, OperationState::kTerminating));
-static_assert(can_transition(OperationState::kRunning, OperationState::kCompleted));
-static_assert(can_transition(OperationState::kRunning, OperationState::kTerminating));
-static_assert(can_transition(OperationState::kTerminating, OperationState::kCompleted));
-static_assert(can_transition(OperationState::kCompleted, OperationState::kClosed));
-static_assert(!can_transition(OperationState::kRunning, OperationState::kClosed));
-static_assert(!can_transition(OperationState::kTerminating, OperationState::kClosed));
-static_assert(!can_transition(OperationState::kClosed, OperationState::kRunning));
-
+using powershell_direct::OperationState;
+using powershell_direct::can_transition;
 struct OperationRecord {
   OperationState state = OperationState::kRegistered;
 
