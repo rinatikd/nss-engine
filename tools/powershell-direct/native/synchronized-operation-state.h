@@ -25,6 +25,15 @@ class SynchronizedOperationState {
     return true;
   }
 
+  // Performs a compare-and-transition atomically. This is required when
+  // competing callers must prove that only one observed the same prior state.
+  bool compare_transition(OperationState expected, OperationState next) noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ != expected || !can_transition(state_, next)) return false;
+    state_ = next;
+    return true;
+  }
+
   OperationState snapshot() const noexcept {
     std::lock_guard<std::mutex> lock(mutex_);
     return state_;
