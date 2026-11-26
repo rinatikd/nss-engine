@@ -32,6 +32,9 @@ test('preloaded OS process refreshes status and events committed by another proc
   await send(reader,'read-now');const x=await next(reader,'reader-result');assert.equal(x.state,'BLOCKED');assert.equal(x.eventFound,true);await exit(reader);
  }finally{await Promise.all([stop(reader),stop(writer)]);fs.rmSync(dir,{recursive:true,force:true});}
 });
+// Avoid a scheduler-dependent simultaneous lock race: the production lock budget is finite,
+// so an overloaded Windows runner may legitimately make both contenders return LOCK_BUSY.
+// This test deterministically verifies the cross-process tab fence after the first durable prepare.
 test('second OS process is fenced from a tab with an active prepare',{timeout:20000},async()=>{
  const dir=temp(),ws=[launch('prepare-race',dir,'raceA'),launch('prepare-race',dir,'raceB')];try{
   await Promise.all(ws.map(w=>next(w,'ready')));
