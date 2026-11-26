@@ -197,8 +197,19 @@ async function persistTabRevocationFence(chromeApi, tabId) {
     const next = [...new Set([...localPrior,...sessionPrior,tabId])];
     // Keep both copies: local survives browser restart; session survives an
     // MV3 worker restart even if local storage is temporarily unavailable later.
-    await chromeApi.storage.local.set({[key]:next});
-    await chromeApi.storage.session.set({[key]:next});
+    let localWritten=false,sessionWritten=false;
+    try {
+      await chromeApi.storage.local.set({[key]:next});
+      localWritten=true;
+    } catch { /* session storage may still provide a durable worker fence */ }
+    try {
+      await chromeApi.storage.session.set({[key]:next});
+      sessionWritten=true;
+    } catch { /* local storage may still provide a durable browser fence */ }
+    if (!localWritten && !sessionWritten) {
+      mutationQuarantinePersistenceFailed = true;
+      return {persisted:false,stores:[]};
+    }
     return {persisted:true,stores:['local','session']};
   } catch {
     mutationQuarantinePersistenceFailed = true;
