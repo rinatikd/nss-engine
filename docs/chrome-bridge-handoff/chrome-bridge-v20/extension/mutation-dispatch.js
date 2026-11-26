@@ -103,6 +103,8 @@ async function dispatchProviderMutation(cmd, chromeApi, {
     const preflight=preflightInjection.result;
     if(!preflight.verified||preflight.origin!==origin||preflight.conversationId!==conversationId)
       throw Error('CONVERSATION_NOT_BOUND');
+    // The tab URL must still match the pre-approval snapshot after document capture.
+    await boundTab(chromeApi,tab.id,tab.url,origin);
     if(cmd.name==='provider_prepare') {
       if(typeof args.message!=='string'||!args.message.trim()||args.message.length>100000||
          findSecret(args.message)||!/^[a-f0-9]{64}$/.test(args.payloadHash||'')||
@@ -244,6 +246,10 @@ export async function dispatchMutation(cmd, chromeApi, {
         (typeof cmd.args.text!=='string' || cmd.args.text.length>10000 ||
          findSecret(cmd.args.text))) throw Error('INVALID_OR_SENSITIVE_FILL');
   }
+
+  // Recheck tab URL/origin after capturing the preflight document. Approval
+  // must not be presented for a different same-origin navigation.
+  await boundTab(chromeApi,tab.id,tab.url,origin);
 
   // Only metadata is surfaced in the queue. Do not persist prompt contents.
   const approvalId='m-'+uuid();
