@@ -143,7 +143,11 @@ if($top.TrimEnd('\') -ine $repoCanonical.TrimEnd('\')){
  throw 'GIT_TOPLEVEL_MISMATCH'
 }
 $dirty=@(& $git -C $repo status --porcelain=v1 --untracked-files=all)
-if($LASTEXITCODE -ne 0 -or $dirty.Count){throw 'SOURCE_WORKTREE_NOT_CLEAN'}
+if($LASTEXITCODE -ne 0){throw 'GIT_STATUS_FAILED'}
+if($dirty.Count){
+ Write-Warning ('SOURCE_WORKTREE_DIRTY_ENTRIES='+($dirty -join ' | '))
+ throw 'SOURCE_WORKTREE_NOT_CLEAN'
+}
 
 # Copy only tracked files. Local ignored/private files must never enter R2.
 $tracked=@(& $git -C $repo ls-files -- 'tools/powershell-direct' 'tools/ai_collaboration')
