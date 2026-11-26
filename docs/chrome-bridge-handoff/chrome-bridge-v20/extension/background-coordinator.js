@@ -858,6 +858,21 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       // continue after the UI receives a successful clear response.
       controlClearRequested = true;
       void (async()=>{
+        const fence=await enqueueRevocationFence(
+          ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
+        );
+        if (!fence.persisted)
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+        const recovered=fence.existing===true;
+        const affectedTabs=Array.isArray(fence.record?.affectedTabs)?fence.record.affectedTabs:[];
+        if (recovered && affectedTabs.length) {
+          const quarantine=await persistMutationQuarantine(chromeApi,affectedTabs);
+          if (!quarantine.persisted) {
+            const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+            error.quarantinedTabs=affectedTabs;
+            throw error;
+          }
+        }
         let cleanupError=null;
         const drained=await drainMutationLanes(chromeApi);
         try {
@@ -887,6 +902,18 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         if (cleanupError) {
           await persistGlobalQuarantineLock(chromeApi);
           throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+        }
+        const cleared=await enqueueRevocationFence(
+          ()=>clearGlobalRevocationFence(chromeApi,fence.record,fence.stores)
+        );
+        if (!cleared) {
+          await persistGlobalQuarantineLock(chromeApi);
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+        }
+        if (recovered && affectedTabs.length) {
+          const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+          error.quarantinedTabs=affectedTabs;
+          throw error;
         }
         return {ok:true};
       })().then(respond,error=>respond({
