@@ -33,11 +33,13 @@ async function shutdown(signal='STOP'){
  process.stdout.write('STOPPING_STACK '+signal+'\n');
  try{await proxy?.stop();}catch{}
  const tunnelStopped=await stopTunnelChild();
- try{await service.stop();}catch{}
- process.stdout.write('LOCAL_SERVICE_AND_APPROVAL_PROXY_STOPPED\n');
+ let serviceStopped=false;
+ try{serviceStopped=await service.stop({timeoutMs:5000});}catch{}
+ if(serviceStopped)process.stdout.write('LOCAL_SERVICE_STOPPED_ACTIVE_JOB_EXIT_CONFIRMED\n');
+ else process.stderr.write('ACTIVE_JOB_TERMINATION_UNCONFIRMED: direct child may still be running\n');
  if(tunnelStopped)process.stdout.write('TUNNEL_CHILD_EXIT_CONFIRMED\n');
  else process.stderr.write('TUNNEL_TERMINATION_UNCONFIRMED: process may still be running\n');
- process.exitCode=tunnelStopped?0:1;
+ process.exitCode=tunnelStopped&&serviceStopped?0:1;
 }
 process.on('SIGINT',()=>{void shutdown('SIGINT');});
 process.on('SIGTERM',()=>{void shutdown('SIGTERM');});
