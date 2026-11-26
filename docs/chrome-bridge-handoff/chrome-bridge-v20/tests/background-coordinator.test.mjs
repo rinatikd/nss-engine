@@ -2,24 +2,52 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startBackgroundTransport, stopBackgroundTransport, installBackgroundCoordinator} from '../extension/background-coordinator.js';
 
-function fakeChrome(data={}) {
+function fakeChrome(data={},options={}) {
   const listeners=[];
   const calls=[];
   const session={};
+  let blockedGrantWrite=false;
   return {
-    calls,listeners,
+    calls,listeners,data,session,
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
       get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
       set:async next=>{Object.assign(data,next);calls.push(['set',next]);}
     },session:{
       setAccessLevel:async opts=>calls.push(['session-restrict',opts.accessLevel]),
-      get:async key=>({[key]:session[key]}),
-      set:async next=>Object.assign(session,next),
+      get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,session[k]])),
+      set:async next=>{
+        if (Object.hasOwn(next,'bridgeBackgroundControlGrants') &&
+            options.beforeGrantStoreWrite && !blockedGrantWrite) {
+          blockedGrantWrite=true;
+          await options.beforeGrantStoreWrite(next,session,calls);
+        }
+        Object.assign(session,next);
+        calls.push(['session-set',next]);
+      },
       remove:async key=>{delete session[key];}
     }},
-    tabs:{get:async id=>({id,url:'https://claude.ai/chat/test'})},
+    tabs:{get:async id=>({id,url:'https://claude.ai/chat/conversation_001'})},
     permissions:{contains:async()=>true},
+    scripting:{executeScript:async({target,args})=>{
+      const [name,details,origin]=args;
+      calls.push(['script',name,target.tabId]);
+      if (options.executeScript)
+        return options.executeScript({name,details,origin,tabId:target.tabId,session,data,calls});
+      if (name==='agent_context') return [{result:{
+        verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+      }}];
+      if (name==='provider_prepare') return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+      if (name==='provider_commit') return [{result:{
+        clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,
+        payloadHash:details.payloadHash,clickedAt:new Date().toISOString()
+      }}];
+      return [{result:{ok:true}}];
+    }},
     runtime:{
       id:'ext-mock-id',
       getURL:part=>'chrome-extension://ext-mock-id/'+part,
@@ -158,4 +186,247 @@ test('extension ID match alone does not authorize web content scripts or other e
     assert.equal(handled,false);
     assert.equal(response,undefined);
   }
+});
+
+
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const LAB_STATE={
+  bridgeBackgroundMode:true,
+  bridgeConnectionDesired:true,
+  bridgeMutationLabMode:true,
+  browserToken:'synthetic-browser-token',
+  sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}},
+  adapters:'{}'
+};
+function sessionLease(overrides={}) {
+  const now=Date.now();
+  return {
+    schemaVersion:1,
+    sessionId:'session_0001',
+    bridgeEpoch:'bridge_epoch_0001',
+    issuedAt:now-100,
+    expiresAt:now+120000,
+    origins:['https://claude.ai'],
+    capabilities:['agent_send','provider_prepare','provider_commit'],
+    approvalMode:'chat-owner-approved',
+    status:'active',
+    ...overrides
+  };
+}
+function providerPrepare(tabId) {
+  return {
+    name:'provider_prepare',
+    bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{
+      requestId:'request_0001',
+      taskId:'task_000001',
+      providerId:'claude',
+      tabId,
+      origin:'https://claude.ai',
+      conversationId:'conversation_001',
+      epoch:1,
+      message:'safe synthetic coordinator test',
+      payloadHash:'a'.repeat(64),
+      preparedId:'prepared_0001',
+      expiresAt:new Date(Date.now()+60000).toISOString()
+    }
+  };
+}
+function sendCoordinator(c,type,payload={},page='control.html') {
+  const listener=c.listeners.at(-1);
+  return new Promise(resolve=>{
+    let called=false;
+    const handled=listener({
+      target:'bridge-coordinator',type,...payload
+    },{
+      id:c.runtime.id,url:c.runtime.getURL(page)
+    },value=>{called=true;resolve(value);});
+    if (!handled && !called) resolve(undefined);
+  });
+}
+async function prepareLab(c,tabId) {
+  await startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  c.data.bridgeConnectionDesired=true;
+  c.data.bridgeMutationLabMode=true;
+  installBackgroundCoordinator(c);
+  return tabId;
+}
+
+test('Stop fences a running provider_prepare and waits for its page action before confirming',async()=>{
+  let enteredResolve,releaseResolve;
+  const entered=new Promise(resolve=>{enteredResolve=resolve;});
+  const held=new Promise(resolve=>{releaseResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{executeScript:async({name,details,origin,tabId,calls})=>{
+    calls.push(['script',name,tabId]);
+    if (name==='agent_context') return [{result:{
+      verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+    }}];
+    if (name==='provider_prepare') {
+      enteredResolve();
+      await held;
+      calls.push(['page-action-completed',tabId]);
+      return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+    }
+    return [{result:{ok:true}}];
+  }});
+  await prepareLab(c,42);
+
+  const mutation=sendCoordinator(c,'dispatch',{command:providerPrepare(42)},'transport-host.html');
+  await entered;
+  let stopDone=false;
+  const stop=sendCoordinator(c,'stop-background').then(result=>{
+    stopDone=true;return result;
+  });
+  await delay(25);
+  assert.equal(stopDone,false,'Stop must not acknowledge while the accepted page action is still running');
+
+  releaseResolve();
+  const dispatchResult=await mutation;
+  const stopResult=await stop;
+  assert.equal(dispatchResult.result.prepared,true);
+  assert.equal(stopResult.ok,true);
+  const completedIndex=c.calls.findIndex(x=>x[0]==='page-action-completed');
+  const stopMessageIndex=c.calls.findIndex(x=>x[0]==='message'&&x[1]==='stop');
+  assert.ok(completedIndex>=0 && stopMessageIndex>completedIndex,
+    'the offscreen Stop acknowledgement must follow the accepted page action');
+  assert.equal(c.data.bridgeConnectionDesired,false);
+  assert.equal(c.data.bridgeMutationLabMode,false);
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+});
+
+test('Stop timeout returns UNKNOWN and persists tab quarantine; a later Start cannot reopen that tab',async()=>{
+  let enteredResolve,releaseResolve;
+  const entered=new Promise(resolve=>{enteredResolve=resolve;});
+  const held=new Promise(resolve=>{releaseResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{executeScript:async({name,details,origin,tabId,calls})=>{
+    calls.push(['script',name,tabId]);
+    if (name==='agent_context') return [{result:{
+      verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+    }}];
+    if (name==='provider_prepare') {
+      enteredResolve();
+      await held;
+      return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+    }
+    return [{result:{ok:true}}];
+  }});
+  await startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  installBackgroundCoordinator(c,{stopDrainTimeoutMs:25,startDrainTimeoutMs:25});
+
+  const mutation=sendCoordinator(c,'dispatch',{command:providerPrepare(43)},'transport-host.html');
+  await entered;
+  const stop=await sendCoordinator(c,'stop-background');
+  assert.equal(stop.ok,false);
+  assert.equal(stop.reason,'BACKGROUND_STOP_UNCONFIRMED');
+  assert.equal(stop.outcome,'UNKNOWN');
+  assert.deepEqual(stop.quarantinedTabs,[43]);
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[43]);
+
+  releaseResolve();
+  await mutation;
+  c.data.bridgeConnectionDesired=true;
+  c.data.bridgeMutationLabMode=true;
+  const restarted=await startBackgroundTransport(c);
+  assert.equal(restarted.ok,true);
+  const before=c.calls.filter(x=>x[0]==='script').length;
+  const retry=await sendCoordinator(c,'dispatch',{command:providerPrepare(43)},'transport-host.html');
+  assert.equal(retry.error,'TAB_MUTATION_QUARANTINED');
+  assert.equal(retry.dispatchState,'NOT_PERFORMED');
+  assert.equal(c.calls.filter(x=>x[0]==='script').length,before,
+    'quarantined tab must be rejected before any new DOM/page action');
+});
+
+test('Revoke is a synchronous per-tab fence and its grant-store write follows an accepted Grant',async()=>{
+  let grantWriteEntered,releaseGrantWrite;
+  const entered=new Promise(resolve=>{grantWriteEntered=resolve;});
+  const held=new Promise(resolve=>{releaseGrantWrite=resolve;});
+  const c=fakeChrome({...LAB_STATE},{beforeGrantStoreWrite:async()=>{
+    grantWriteEntered();
+    await held;
+  }});
+  await startBackgroundTransport(c);
+  installBackgroundCoordinator(c);
+
+  const grant=sendCoordinator(c,'grant-background-control',{
+    tabId:44,durationMinutes:60,localGesture:true
+  });
+  await entered;
+  const revoke=sendCoordinator(c,'revoke-background-control',{tabId:44});
+  await delay(5);
+  const racingGrant=await sendCoordinator(c,'grant-background-control',{
+    tabId:44,durationMinutes:60,localGesture:true
+  });
+  assert.equal(racingGrant.error,'TAB_CONTROL_REVOKING');
+
+  releaseGrantWrite();
+  const grantResult=await grant;
+  const revokeResult=await revoke;
+  assert.equal(grantResult.tabId,44);
+  assert.equal(revokeResult.ok,true);
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['44'],undefined,
+    'Revoke must be the last writer after the accepted Grant');
+});
+
+test('per-tab Revoke refuses to partially revoke an origin-wide Session Authorization lease',async()=>{
+  const c=fakeChrome({...LAB_STATE});
+  await startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  installBackgroundCoordinator(c);
+  const result=await sendCoordinator(c,'revoke-background-control',{tabId:45});
+  assert.equal(result.error,'SESSION_WIDE_REVOCATION_REQUIRED');
+  assert.equal(c.session.bridgeSessionAuthorization.status,'active');
+});
+
+test('session_revoke fences new provider work and drains an already accepted page action',async()=>{
+  let enteredResolve,releaseResolve;
+  const entered=new Promise(resolve=>{enteredResolve=resolve;});
+  const held=new Promise(resolve=>{releaseResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{executeScript:async({name,details,origin,tabId,calls})=>{
+    calls.push(['script',name,tabId]);
+    if (name==='agent_context') return [{result:{
+      verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+    }}];
+    if (name==='provider_prepare') {
+      enteredResolve();
+      await held;
+      calls.push(['page-action-completed',tabId]);
+      return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+    }
+    return [{result:{ok:true}}];
+  }});
+  await prepareLab(c,46);
+
+  const mutation=sendCoordinator(c,'dispatch',{command:providerPrepare(46)},'transport-host.html');
+  await entered;
+  let revokeDone=false;
+  const revoke=sendCoordinator(c,'dispatch',{
+    command:{name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',expires:Date.now()+90000,args:{}}
+  },'transport-host.html').then(result=>{revokeDone=true;return result;});
+  await delay(10);
+  const late=await sendCoordinator(c,'dispatch',{command:providerPrepare(47)},'transport-host.html');
+  assert.equal(late.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(revokeDone,false);
+
+  releaseResolve();
+  const completed=await mutation;
+  const revoked=await revoke;
+  assert.equal(completed.result.prepared,true);
+  assert.equal(revoked.result.revoked,true);
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationLabMode,false);
 });
