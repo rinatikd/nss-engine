@@ -118,6 +118,10 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
   if (mutationQuarantinePersistenceFailed)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+  if (mutationFencedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_REVOKING');
+  if (mutationQuarantinedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_QUARANTINED');
 
   const local = await chromeApi.storage.local.get([
     'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock',
@@ -130,6 +134,12 @@ async function assertMutationAllowed(chromeApi, tabId) {
       'bridgeMutationRevokingTabs','bridgeMutationRevocationPending'
     ]);
   }
+  // Recheck after Storage awaits: Revoke may have installed its in-memory
+  // admission fence while this mutation was reading durable state.
+  if (mutationFencedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_REVOKING');
+  if (mutationQuarantinedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_QUARANTINED');
   if (local.bridgeMutationQuarantineLock === true ||
       session.bridgeMutationQuarantineLock === true)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
@@ -798,8 +808,18 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
               throw coordinatorError('BACKGROUND_MUTATIONS_DISABLED','BLOCKED');
             await assertMutationAllowed(chromeApi,msg.command?.args?.tabId);
             const grants=new BackgroundControlGrants(chromeApi);
+            // Guard approval creation at the point it is requested, not
+            // only when the mutation first enters its lane. Preflight awaits
+            // can overlap a Revoke; this prevents a late approval appearing
+            // after cancelTab() has already run.
+            const guardedApprovals={
+              request:async data=>{
+                await assertMutationAllowed(chromeApi,data.tabId);
+                return approvals.request(data);
+              }
+            };
             return dispatchMutation(msg.command,chromeApi,{
-              approvals,
+              approvals:guardedApprovals,
               sessionAuthorization,
               controlGrant:(origin,tabId)=>grants.require(origin,tabId),
               stillEnabled:async()=>{
