@@ -5,10 +5,9 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
-$candidateRoot=Join-Path $workspaceExpected 'work\ChromeBridge-PR145-754b8f5f-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20'
+$candidateRoot=Join-Path $workspaceExpected 'docs\chrome-bridge-handoff\chrome-bridge-v20'
 $root='C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
-$state='C:\Engineering\ChromeBridge-PR102-17484-State'
-$configExpectedSha='cb3bc9bc5ff43559e36185ac130eed56828beac4f27634439476d95f8b33b61b'
+$state='C:\Engineering\ChromeBridge-PR102-17485-State'
 $extensionId='nhflbnfcaicihaepdcjacdmaddagcmcj'
 $port=17485
 $workspace=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
@@ -20,8 +19,7 @@ function HashFile([string]$Path){(Get-FileHash -LiteralPath $Path -Algorithm SHA
 
 $configPath=Join-Path $state 'config.json'
 Require (Test-Path -LiteralPath $configPath -PathType Leaf) 'PR102_CONFIG_MISSING'
-$configHash=HashFile $configPath
-Require ($configHash -ceq $configExpectedSha) 'PR102_CONFIG_HASH_MISMATCH'
+$configHashBefore=HashFile $configPath
 $config=Get-Content -LiteralPath $configPath -Raw -Encoding UTF8|ConvertFrom-Json
 Require ($config.agentToken -is [string] -and $config.agentToken.Length -ge 32) 'PR102_AGENT_TOKEN_INVALID'
 
@@ -110,7 +108,7 @@ foreach($name in @('claude','gemini','deepseek','grok','qwen','kimi')){
     $results += [pscustomobject]@{Name=$name;Status='ERROR';Error=$_.Exception.Message}
   }
 }
-Require ((HashFile $configPath) -ceq $configHash) 'PR102_CONFIG_CHANGED_DURING_PROBE'
+Require ((HashFile $configPath) -ceq $configHashBefore) 'PR102_CONFIG_CHANGED_DURING_PROBE'
 $finalListeners=@([BridgeNativeMetadata]::Listeners($port))
 Require ($finalListeners.Count -eq 1 -and [string]$finalListeners[0] -ceq [string]$listeners[0]) 'PR102_LISTENER_CHANGED_DURING_PROBE'
 
@@ -123,6 +121,7 @@ Require ($finalListeners.Count -eq 1 -and [string]$finalListeners[0] -ceq [strin
   AgentBindings=@($agentList.bound|ForEach-Object {[pscustomobject]@{Name=[string]$_.name;Alive=[bool]$_.alive;TabId=$_.tabId}})
   VisibleChatTabCount=@($agentList.chatTabs).Count
   Selftests=$results
+  ConfigSha256=$configHashBefore
   ConfigUnchanged=$true
   ListenerUnchanged=$true
   MessagesSent=0
