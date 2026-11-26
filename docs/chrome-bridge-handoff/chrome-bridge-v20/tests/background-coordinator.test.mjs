@@ -288,6 +288,8 @@ test('per-tab Revoke also clears a stale marker in a store whose new write faile
     failLocalSetOnce:'bridgeMutationRevokingTabs'
   });
   await prepareLab(c,73);
+  // Exercise the per-tab grant path, not the session-wide authorization path.
+  delete c.session.bridgeSessionAuthorization;
   c.session.bridgeBackgroundControlGrants={'73':{
     origin:'https://claude.ai',expires:Date.now()+60000
   }};
@@ -305,6 +307,8 @@ test('per-tab Revoke clears only the storage copy whose fence write was confirme
   ]) {
     const c=fakeChrome({...LAB_STATE},options);
     await prepareLab(c,72);
+    // Per-tab Revoke is intentionally blocked while a session-wide lease is active.
+    delete c.session.bridgeSessionAuthorization;
     c.session.bridgeBackgroundControlGrants={'72':{
       origin:'https://claude.ai',expires:Date.now()+60000
     }};
@@ -664,8 +668,10 @@ test('session_revoke tracks and clears only the global fence stores that accepte
     const [mutationResult,revokeResult]=await Promise.all([mutation,revoke]);
     assert.equal(mutationResult.result.prepared,true);
     assert.equal(revokeResult.result.revoked,true);
-    assert.equal(c.data.bridgeMutationRevocationPending,null);
-    assert.equal(c.session.bridgeMutationRevocationPending,null);
+    assert.equal(writtenState.bridgeMutationRevocationPending,null,
+      'the store that accepted the fence must have its matching marker cleared');
+    assert.equal(missingState.bridgeMutationRevocationPending,undefined,
+      'the store that rejected the fence write must remain untouched');
   }
 });
 
