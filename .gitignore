@@ -1,6 +1,4 @@
 # Main-PC workspace: publish code deliberately; keep local engineering material in place.
-# Isolated secondary checkout used by the Windows PowerShell Direct CI job.
-/primary-base-checkout/
 /*
 !/.gitignore
 !/.gitattributes
