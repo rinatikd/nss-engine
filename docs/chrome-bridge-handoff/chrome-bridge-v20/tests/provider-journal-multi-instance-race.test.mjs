@@ -143,3 +143,41 @@ test('journal lock acquisition retries transient EEXIST and releases its acquire
     assert.equal(fs.existsSync(lockPath),false);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+
+test('Windows EPERM for an existing exclusive journal lock is retried as contention',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-windows-eperm-'));
+  const lockPath=path.join(dir,'provider-transactions.jsonl.lock');
+  let attempts=0;
+  const fsOps=Object.create(fs);
+  fsOps.openSync=(file,flags,mode)=>{
+    if(path.resolve(String(file))===path.resolve(lockPath)&&flags==='wx'&&attempts===0){
+      const owner=fs.openSync(file,'wx',mode);
+      fs.closeSync(owner);
+      attempts++;
+      const error=Error('simulated Windows EPERM while another process owns lock path');
+      error.code='EPERM';
+      throw error;
+    }
+    if(path.resolve(String(file))===path.resolve(lockPath)&&flags==='wx'&&attempts===1){
+      // Simulate the foreign owner releasing its lock between bounded retries.
+      fs.unlinkSync(file);
+      attempts++;
+    }
+    return fs.openSync(file,flags,mode);
+  };
+  try{
+    const writer=new ProviderJournal(dir,{
+      hmacKey:key,bridgeEpoch:'bridge_epoch_0001',fsOps
+    });
+    const result=writer.outcome(
+      identity('request_windows_01','task_windows_001'),
+      'BLOCKED','WINDOWS_EPERM_LOCK_RETRY'
+    );
+    assert.equal(result.state,'BLOCKED');
+    assert.equal(attempts,2);
+    assert.equal(fs.existsSync(lockPath),false);
+  }finally{
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
