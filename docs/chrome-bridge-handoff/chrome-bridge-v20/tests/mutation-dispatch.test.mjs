@@ -5,7 +5,8 @@ import {dispatchMutation} from '../extension/mutation-dispatch.js';
 function fixture({
   changed=false,deny=false,expiredGrant=false,badOrigin=false,conversationChanged=false
 }={}) {
-  const state={injections:[],approvalCount:0,allowAt:true,grant:Date.now()+120000};
+  const state={injections:[],targets:[],approvalCount:0,allowAt:true,
+    documentId:'document-main-0001',grant:Date.now()+120000};
   const url=badOrigin?'https://not-allowed.example/app':'https://claude.ai/chat/abcdefghi';
   const chromeApi={
     tabs:{get:async()=>({id:9,url:changed && !state.allowAt ?
@@ -13,16 +14,20 @@ function fixture({
     storage:{local:{get:async key=>key==='sites'?
       {sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:{adapters:'{}'}}},
     permissions:{contains:async()=>true},
-    scripting:{executeScript:async({args})=>{
+    scripting:{executeScript:async({args,target,world})=>{
       const [name,details]=args;
       state.injections.push(name);
-      if(name==='describe')return [{result:{
-        tag:'button',text:'Send',href:'',formAction:'',type:'button'}}];
-      if(name==='agent_context')return [{result:{
+      state.targets.push({target,world,name});
+      const response=result=>[{
+        documentId:target.documentIds?.[0]||state.documentId,frameId:0,result
+      }];
+      if(name==='describe')return response({
+        tag:'button',text:'Send',href:'',formAction:'',type:'button'});
+      if(name==='agent_context')return response({
         verified:true,origin:'https://claude.ai',
         conversationId:conversationChanged && !state.allowAt?'other':'abcdefghi'
-      }}];
-      return [{result:{ok:true,sent:name==='agent_send'}}];
+      });
+      return response({ok:true,sent:name==='agent_send'});
     }}
   };
   const approvals={request:async() => {
