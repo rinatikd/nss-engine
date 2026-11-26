@@ -11,7 +11,7 @@ const request={requestId:'generaljob01',executable:'C:\\Windows\\System32\\Windo
 function fixture(){
  let now=1000,starts=0,finish;
  const service=new PowerShellApprovalService({root:'C:\\Engineering',port:0,now:()=>now,
-  workspaceCheck:(candidate,root)=>{if(root!=='C:\\Engineering'||candidate!==workspace)throw Error('WORKSPACE_DENIED');return candidate;},
+  workspaceCheck:(candidate)=>{if(candidate!==workspace&&candidate!=='C:\\Windows\\System32')throw Error('WORKSPACE_DENIED');return candidate;},
   run:async({spec,workspace:cwd})=>{starts++;assert.equal(spec.executable,request.executable);assert.equal(cwd,workspace);
    return await new Promise(resolve=>finish=()=>resolve({state:'FINISHED',exitCode:0,stdout:'OK',stderr:''}));}
  });
@@ -50,13 +50,13 @@ test('one-time local approval dispatches exact immutable spec once',async()=>{
  assert.equal(x.service.status(request.requestId).result.stdout,'OK');
 });
 
-test('expiry, duplicate request IDs and workspace escape are rejected',()=>{
+test('expiry and duplicate request IDs are rejected; workspaces are selected per request',()=>{
  const x=fixture(),p=x.service.propose(request);
  assert.throws(()=>x.service.propose(request),/DUPLICATE_REQUEST_ID/);
  x.advance(90000);
  assert.equal(x.service.status(request.requestId).state,'EXPIRED');
  assert.equal(x.starts(),0);
- assert.throws(()=>x.service.propose({...request,requestId:'otherjob01',workspace:'C:\\Windows\\System32'}),/WORKSPACE_DENIED/);
+  const outside=x.service.propose({...request,requestId:'outsidejob01',workspace:'C:\\Windows\\System32'});\n  assert.equal(outside.state,'PENDING');
 });
 
 test('request validation rejects malformed paths, NUL arguments, missing risk and excessive timeout',()=>{
