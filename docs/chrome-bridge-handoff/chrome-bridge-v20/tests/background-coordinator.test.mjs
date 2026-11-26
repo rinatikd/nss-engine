@@ -236,7 +236,9 @@ function providerPrepare(tabId) {
   };
 }
 function sendCoordinator(c,type,payload={},page='control.html') {
-  const listener=c.listeners.at(-1);
+  return sendCoordinatorTo(c,c.listeners.at(-1),type,payload,page);
+}
+function sendCoordinatorTo(c,listener,type,payload={},page='control.html') {
   return new Promise(resolve=>{
     let called=false;
     const handled=listener({
@@ -382,6 +384,45 @@ test('Revoke is a synchronous per-tab fence and its grant-store write follows an
   assert.equal(revokeResult.ok,true);
   assert.equal(c.session.bridgeBackgroundControlGrants?.['44'],undefined,
     'Revoke must be the last writer after the accepted Grant');
+});
+
+
+test('per-tab Revoke persists its admission fence across an MV3 worker restart',async()=>{
+  let writeEnteredResolve,releaseWriteResolve;
+  const writeEntered=new Promise(resolve=>{writeEnteredResolve=resolve;});
+  const heldWrite=new Promise(resolve=>{releaseWriteResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{beforeGrantStoreWrite:async()=>{
+    writeEnteredResolve();
+    await heldWrite;
+  }});
+  await startBackgroundTransport(c);
+  c.data.bridgeConnectionDesired=true;
+  c.data.bridgeMutationLabMode=true;
+
+  const firstWorker=await import('../extension/background-coordinator.js?revoke-worker-before-restart');
+  firstWorker.installBackgroundCoordinator(c);
+  const revoke=sendCoordinatorTo(c,c.listeners.at(-1),'revoke-background-control',{tabId:49});
+  await writeEntered;
+  assert.deepEqual(c.data.bridgeMutationRevokingTabs,[49],
+    'Revoke must persist its deny marker before waiting on the grant-store write');
+
+  // A distinct module instance represents a replacement MV3 service worker:
+  // all in-memory fences/maps are empty, but Chrome storage is shared.
+  const restartedWorker=await import('../extension/background-coordinator.js?revoke-worker-after-restart');
+  restartedWorker.installBackgroundCoordinator(c);
+  const attempted=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:providerPrepare(49)
+  },'transport-host.html');
+  assert.equal(attempted.error,'TAB_MUTATION_REVOKING');
+  assert.equal(attempted.dispatchState,'NOT_PERFORMED');
+  assert.equal(c.calls.some(x=>x[0]==='script'&&x[2]===49),false,
+    'replacement worker must reject the tab before any page script executes');
+
+  releaseWriteResolve();
+  const revoked=await revoke;
+  assert.equal(revoked.ok,true);
+  assert.deepEqual(c.data.bridgeMutationRevokingTabs,[],
+    'the durable pending marker is removed only after the grant-store revoke is confirmed');
 });
 
 test('per-tab Revoke refuses to partially revoke an origin-wide Session Authorization lease',async()=>{
