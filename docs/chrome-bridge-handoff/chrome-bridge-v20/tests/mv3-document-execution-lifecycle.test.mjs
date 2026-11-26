@@ -24,7 +24,7 @@ async function listen(server){
 function html(pathname){
  return '<!doctype html><meta charset="utf-8"><title>'+pathname+'</title>'+
   '<button id="action">test action</button><script>'+
-  'window.__r4DocumentNonce=crypto.randomUUID();'+
+  'document.documentElement.dataset.r4DocumentNonce=crypto.randomUUID();'+
   'window.addEventListener("pageshow",event=>{document.documentElement.dataset.r4PageshowPersisted=String(event.persisted)});'+
   'document.querySelector("#action").addEventListener("click",event=>{'+
   'const button=event.currentTarget;button.dataset.r4Clicked="yes";'+
@@ -206,7 +206,7 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
    const frame=await activeFrame();
    if(!frame||frame.url!==origin+'/a'||frame.documentId!==documentIdA)return null;
    const result=await inject(documentIdA,
-    ()=>({persisted:document.documentElement.dataset.r4PageshowPersisted||'',nonce:window.__r4DocumentNonce||''}));
+    ()=>({persisted:document.documentElement.dataset.r4PageshowPersisted||'',nonce:document.documentElement.dataset.r4DocumentNonce||''}));
    return result[0]?.result?.persisted==='true'?{frame,result:result[0].result}:null;
   },15000,'BF_CACHE_RESTORE');
   assert.equal(restored.frame.documentId,documentIdA,
