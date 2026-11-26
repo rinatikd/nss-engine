@@ -72,6 +72,18 @@ test('terminal jobs are reclaimed so the proposal queue remains usable',()=>{
  assert.equal(x.service.jobs.size,32);
 });
 
+test('expired pending jobs are reclaimed even when nobody polled their status',()=>{
+ const x=fixture();
+ for(let i=0;i<32;i++){
+  const id='expirejob'+String(i).padStart(2,'0');
+  x.service.propose({...request,requestId:id});
+ }
+ x.advance(90000);
+ const next=x.service.propose({...request,requestId:'expirejob_next'});
+ assert.equal(next.state,'PENDING');
+ assert.equal(x.service.jobs.size,1);
+});
+
 test('request validation rejects malformed paths, NUL arguments, missing risk and excessive timeout',()=>{
  assert.throws(()=>validateExecutionSpec({...request,executable:'powershell.exe'}),/ABSOLUTE_LOCAL_PATH/);
  assert.throws(()=>validateExecutionSpec({...request,args:['bad'+String.fromCharCode(0)+'arg']}),/INVALID_ARGUMENT/);
