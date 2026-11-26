@@ -1,9 +1,28 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 
 const MAX_ARGS=128, MAX_ARG_LENGTH=8192, MAX_TOTAL_ARGS=65536;
-const MAX_TIMEOUT=600000, MIN_TIMEOUT=1000, MAX_OUTPUT=65536;
+const MAX_TIMEOUT=600000, MIN_TIMEOUT=1000, MAX_OUTPUT=65536, MAX_EXECUTABLE_BYTES=1024*1024*1024;
+
+export function executableIdentity(candidate){
+  const resolved=fs.realpathSync.native(candidate);
+  const fd=fs.openSync(resolved,'r');
+  try{
+    const stat=fs.fstatSync(fd);
+    if(!stat.isFile())throw Error('EXECUTABLE_NOT_FILE');
+    if(stat.size>MAX_EXECUTABLE_BYTES)throw Error('EXECUTABLE_TOO_LARGE_TO_VERIFY');
+    const hash=crypto.createHash('sha256'),buffer=Buffer.allocUnsafe(1024*1024);
+    let position=0,read;
+    while((read=fs.readSync(fd,buffer,0,buffer.length,position))>0){
+      hash.update(buffer.subarray(0,read));position+=read;
+    }
+    const after=fs.fstatSync(fd);
+    if(after.size!==stat.size||after.mtimeMs!==stat.mtimeMs)throw Error('EXECUTABLE_CHANGED_DURING_HASH');
+    return {path:resolved,sha256:hash.digest('hex'),size:stat.size};
+  }finally{fs.closeSync(fd);}
+}
 
 export function validateExecutionSpec(input){
   if(!input||typeof input!=='object')throw Error('EXECUTION_SPEC_REQUIRED');
@@ -48,12 +67,14 @@ function safeEnvironment(source){
 }
 function clip(buffer){return buffer.toString('utf8').slice(0,MAX_OUTPUT);}
 
-export async function runApproved({spec,workspace,spawnImpl=spawn,envSource=process.env,signal}){
+export async function runApproved({spec,workspace,spawnImpl=spawn,envSource=process.env,signal,expectedExecutable}){
   const checked=validateExecutionSpec(spec);
   if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
   if(signal?.aborted)return {state:'CANCELLED',exitCode:null,reason:'CANCELLED_BEFORE_START',stdout:'',stderr:'',elapsedMs:0};
-  const executable=fs.realpathSync.native(checked.executable);
-  if(!fs.statSync(executable).isFile())throw Error('EXECUTABLE_NOT_FILE');
+  const identity=executableIdentity(checked.executable);
+  if(expectedExecutable&&(identity.path!==expectedExecutable.path||identity.sha256!==expectedExecutable.sha256))
+    throw Error('EXECUTABLE_IDENTITY_MISMATCH');
+  const executable=identity.path;
   const cwd=workspace;
   return await new Promise(resolve=>{
     let stdout=Buffer.alloc(0),stderr=Buffer.alloc(0),finished=false,timedOut=false,cancelled=false,timer;
