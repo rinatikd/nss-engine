@@ -45,6 +45,7 @@ self.onmessage = (event) => {
   } else if (msg.type === 'stop') {
     transport?.stop();
     for (const [id,p] of pending) { clearTimeout(p.timer); p.reject(Error('Stopped')); pending.delete(id); }
+    send({type:'stopped',stopId:msg.stopId});
   } else if (msg.type === 'dispatch-result') {
     const p = pending.get(msg.id);
     if (!p) return;
