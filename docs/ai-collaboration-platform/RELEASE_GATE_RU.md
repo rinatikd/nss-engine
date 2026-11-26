@@ -115,3 +115,17 @@ The common repository baseline advanced after CCTV Release 2 was merged:
 - PR #110's Source checks use the default pull-request checkout, which resolves the merge candidate. A new branch commit is being added to trigger fresh CI against this current main merge baseline; do not promote the gate until those exact runs complete.
 
 No merge of PR #110, deployment, Production change or local Windows mutation is performed by this synchronization checkpoint.
+
+
+## GitHub Actions status reconciliation — 2026-11-26
+
+The earlier billing-related note above is historical and must not be used as the current CI status. On 2026-11-26, exact-head GitHub Actions workflows executed successfully for the current R4 hardening work:
+
+- PR #158: 17/17 check-runs SUCCESS.
+- PR #160: 15/15 check-runs SUCCESS.
+- PR #161: 15/15 check-runs SUCCESS.
+- PR #162: 15/15 check-runs SUCCESS.
+
+The latest platform head at this reconciliation point is `b782d49bd4aec910862183f98d35a491884e8fd4`; its own check-runs are still completing and must be evaluated against that exact SHA before declaring the branch CI-green.
+
+Current classification: **GitHub Actions is operational for these workflows; the earlier billing-reported CI block is not currently reproduced.** This does not replace Windows Work PC acceptance, real provider E2E, reboot/reconnect, or operator approval. Synthetic CI and disposable Chrome tests are not evidence that the user's live PR102 Lab or Production environment has been deployed or accepted.
