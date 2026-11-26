@@ -12,11 +12,21 @@ function fakeChrome(data={},options={}) {
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
       get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
-      set:async next=>{Object.assign(data,next);calls.push(['set',next]);}
+      set:async next=>{
+        const failedKey=Object.keys(next).find(key=>
+          options.failLocalSet===true || options.failLocalSet===key ||
+          (Array.isArray(options.failLocalSet) && options.failLocalSet.includes(key)));
+        if (failedKey) throw Error('SYNTHETIC_LOCAL_STORAGE_WRITE_FAILED:'+failedKey);
+        Object.assign(data,next);calls.push(['set',next]);
+      }
     },session:{
       setAccessLevel:async opts=>calls.push(['session-restrict',opts.accessLevel]),
       get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,session[k]])),
       set:async next=>{
+        const failedKey=Object.keys(next).find(key=>
+          options.failSessionSet===true || options.failSessionSet===key ||
+          (Array.isArray(options.failSessionSet) && options.failSessionSet.includes(key)));
+        if (failedKey) throw Error('SYNTHETIC_SESSION_STORAGE_WRITE_FAILED:'+failedKey);
         if (Object.hasOwn(next,'bridgeBackgroundControlGrants') && options.failGrantStoreWrite)
           throw Error('SYNTHETIC_GRANT_STORE_WRITE_FAILED');
         if (Object.hasOwn(next,'bridgeBackgroundControlGrants') &&
@@ -262,6 +272,24 @@ async function prepareLab(c,tabId) {
   installBackgroundCoordinator(c);
   return tabId;
 }
+
+test('per-tab Revoke clears only the storage copy whose fence write was confirmed',async()=>{
+  for (const [failedStore,options] of [
+    ['local',{failLocalSet:'bridgeMutationRevokingTabs'}],
+    ['session',{failSessionSet:'bridgeMutationRevokingTabs'}]
+  ]) {
+    const c=fakeChrome({...LAB_STATE},options);
+    await prepareLab(c,72);
+    c.session.bridgeBackgroundControlGrants={'72':{
+      origin:'https://claude.ai',expires:Date.now()+60000
+    }};
+    const result=await sendCoordinator(c,'revoke-background-control',{tabId:72});
+    assert.equal(result.ok,true,'a single confirmed durable fence remains sufficient when the other store rejects writes ('+failedStore+')');
+    assert.equal(c.data.bridgeMutationRevokingTabs,undefined);
+    assert.equal(c.session.bridgeMutationRevokingTabs,undefined);
+    assert.equal(c.session.bridgeBackgroundControlGrants?.['72'],undefined);
+  }
+});
 
 test('Stop fences a running provider_prepare and waits for its page action before confirming',async()=>{
   let enteredResolve,releaseResolve;
