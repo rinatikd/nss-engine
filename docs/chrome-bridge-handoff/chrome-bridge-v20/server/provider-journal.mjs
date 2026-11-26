@@ -42,11 +42,24 @@ function hash(key,value) {
 function tokenHash(token) { return crypto.createHash('sha256').update(token,'utf8').digest('hex'); }
 const LOCK_RETRY_DELAYS_MS = Object.freeze([2,4,8,16,32]);
 const LOCK_WAIT_CELL = new Int32Array(new SharedArrayBuffer(4));
+function isLockContention(fsOps,lockFile,error) {
+  if(error?.code==='EEXIST')return true;
+  // Windows may report EPERM for CREATE_NEW when another process already
+  // owns the .lock path. Confirm the path exists before treating EPERM as
+  // contention; a genuine ACL/parent-directory denial must still fail closed.
+  if(error?.code!=='EPERM')return false;
+  try {
+    fsOps.lstatSync(lockFile);
+    return true;
+  } catch {
+    return false;
+  }
+}
 function acquireJournalLock(fsOps,lockFile) {
   for(let attempt=0;;attempt++){
     try{return fsOps.openSync(lockFile,'wx',0o600);}
     catch(error){
-      if(error?.code!=='EEXIST')throw error;
+      if(!isLockContention(fsOps,lockFile,error))throw error;
       if(attempt>=LOCK_RETRY_DELAYS_MS.length){
         const busy=new Error('PROVIDER_JOURNAL_LOCK_BUSY');
         busy.code='PROVIDER_JOURNAL_LOCK_BUSY';
