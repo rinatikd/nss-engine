@@ -128,6 +128,25 @@ test('ephemeral proxy rejects cross-origin POST and forwards an approved local d
  }finally{await proxy.stop();await x.service.stop();}
 });
 
+
+test('supervisor stop aborts the active job and waits for cancellation confirmation',async()=>{
+ let observedSignal;
+ const service=new PowerShellApprovalService({root:'C:\\Engineering',port:0,
+  workspaceCheck:(candidate)=>candidate,
+  run:({signal})=>new Promise(resolve=>{
+   observedSignal=signal;
+   signal.addEventListener('abort',()=>resolve({state:'CANCELLED',exitCode:null,reason:'SUPERVISOR_STOP_DIRECT_CHILD_ONLY'}),{once:true});
+  })
+ });
+ await service.start();
+ const p=service.propose(request);
+ assert.equal(service.decide(request.requestId,p.sha256,true).state,'RUNNING');
+ assert.equal(observedSignal.aborted,false);
+ assert.equal(await service.stop({timeoutMs:1000}),true);
+ assert.equal(observedSignal.aborted,true);
+ assert.equal(service.status(request.requestId).state,'CANCELLED');
+});
+
 test('MCP authentication protects the proposal and status interface',async()=>{
  const x=fixture();await x.service.start();
  try{
