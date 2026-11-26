@@ -157,6 +157,56 @@ static bool verify_kill_on_close(const wchar_t* self) {
   return true;
 }
 
+
+static bool verify_nested_job_assignment(const wchar_t* self) {
+  HANDLE parent_job = CreateJobObjectW(nullptr, nullptr);
+  if (!parent_job) fail(L"CreateJobObjectW parent");
+  if (!AssignProcessToJobObject(parent_job, GetCurrentProcess())) {
+    const DWORD error = GetLastError();
+    CloseHandle(parent_job);
+    std::fwprintf(stderr, L"FAIL: cannot place test host in parent Job Object: %lu\n", error);
+    return false;
+  }
+
+  std::wstring command = L"\"" + std::wstring(self) + L"\" --spawn-descendant";
+  ManagedProcess nested{};
+  if (!start_in_job(self, command, nullptr, nested)) {
+    const DWORD error = GetLastError();
+    CloseHandle(parent_job);
+    std::fwprintf(stderr, L"FAIL: child creation in nested Job Object: %lu\n", error);
+    return false;
+  }
+  if (WaitForSingleObject(nested.process, 10000) != WAIT_OBJECT_0) {
+    TerminateJobObject(nested.job, 9);
+    CloseHandle(nested.process); CloseHandle(nested.job); CloseHandle(parent_job);
+    std::fwprintf(stderr, L"FAIL: nested-job root did not exit\n");
+    return false;
+  }
+  CloseHandle(nested.process);
+  DWORD active = 0;
+  for (int i = 0; i < 100; ++i) {
+    active = active_processes(nested.job);
+    if (active >= 1) break;
+    Sleep(20);
+  }
+  if (active < 1 || !TerminateJobObject(nested.job, 0xC000013A)) {
+    const DWORD error = GetLastError();
+    CloseHandle(nested.job); CloseHandle(parent_job);
+    std::fwprintf(stderr, L"FAIL: nested Job did not retain/terminate descendant: %lu\n", error);
+    return false;
+  }
+  for (int i = 0; i < 100 && active_processes(nested.job) != 0; ++i) Sleep(20);
+  active = active_processes(nested.job);
+  CloseHandle(nested.job);
+  CloseHandle(parent_job);
+  if (active != 0) {
+    std::fwprintf(stderr, L"FAIL: nested Job still has active processes\n");
+    return false;
+  }
+  std::wprintf(L"PASS: process already in parent Job created nested Job; descendant contained and terminated\n");
+  return true;
+}
+
 int wmain(int argc, wchar_t** argv) {
   if (argc >= 2 && wcscmp(argv[1], L"--kill-on-close-owner") == 0) return kill_on_close_owner(argv[0]);
   if (argc >= 2 && wcscmp(argv[1], L"--child") == 0) return child_mode(false, argv[0]);
@@ -165,6 +215,7 @@ int wmain(int argc, wchar_t** argv) {
   wchar_t self[MAX_PATH]{};
   if (!GetModuleFileNameW(nullptr, self, MAX_PATH)) fail(L"GetModuleFileNameW");
   if (!verify_kill_on_close(self)) return 5;
+  if (!verify_nested_job_assignment(self)) return 6;
   std::wstring command = L"\"" + std::wstring(self) + L"\" --spawn-descendant";
   ManagedProcess p{};
   if (!start_in_job(self, command, nullptr, p)) fail(L"start_in_job");
