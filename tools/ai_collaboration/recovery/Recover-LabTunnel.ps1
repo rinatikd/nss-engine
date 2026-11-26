@@ -7,7 +7,7 @@ $client='C:\Engineering\chrome-bridge\codex-handoff-output\direct-cli-v21\runtim
 $profile=Join-Path $env:APPDATA 'tunnel-client\chatgpt-chrome-bridge-pr102.yaml'
 $credential=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\control-plane.dpapi'
 $expectedTunnel='tunnel_6af6edcde2388191a662d3c45fb6f469'
-$labHome='C:\Engineering\ChromeBridge-PR102-17484-State'
+$labHome='C:\Engineering\ChromeBridge-PR102-17485-State'
 function Get-TunnelState {
   try {
     $active=@(Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" |
