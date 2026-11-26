@@ -102,7 +102,7 @@ jobs:
             tools/ai_collaboration/engineering-runner.test.mjs \
             tools/powershell-direct/tests/service.test.mjs \
             tools/powershell-direct/tests/named-suites.test.mjs \
-            tools/powershell-direct/tests/engineering.test.mjs \\
+            tools/powershell-direct/tests/engineering.test.mjs \
             tools/powershell-direct/tests/pr102-lab-identity-contract.test.mjs
 
   windows-powershell-5-1-syntax:
