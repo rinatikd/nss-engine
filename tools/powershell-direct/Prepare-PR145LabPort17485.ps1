@@ -1,4 +1,5 @@
-# Read-only PR145 preparation for PR102 Lab on port 17485.
+# PRE-CUTOVER ONLY: confirms the legacy PR102 extension/state at 17484 before migration to port/StateRoot 17485.
+# Do not use this script as a post-cutover inventory; use Inspect-PR102LabRoots.ps1 and Inspect-PR102LabRuntime.ps1.
 # Runs source/identity checks plus server-bootstrap and extension-updater dry-runs only.
 # It never uses -Apply and never stops the Consilium or Production processes.
 [CmdletBinding()]

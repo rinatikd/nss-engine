@@ -7,12 +7,12 @@ $workspaceExpected = 'C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $workspace = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).ProviderPath.TrimEnd('\')
 if ($workspace -ine $workspaceExpected) { throw 'UNEXPECTED_APPROVED_WORKSPACE' }
 
-. (Join-Path (Join-Path $workspaceExpected 'work\ChromeBridge-PR145-4696c1c0-release-clean\docs\chrome-bridge-handoff\chrome-bridge-v20\deployment') 'process-identity.ps1')
+. (Join-Path (Join-Path $workspaceExpected 'docs\chrome-bridge-handoff\chrome-bridge-v20\deployment') 'process-identity.ps1')
 
 $serverRoot = 'C:\Engineering\chrome-bridge-pr102-release-test\docs\chrome-bridge-handoff\chrome-bridge-v20'
 $serverPath = Join-Path $serverRoot 'server'
-$extensionRoot = 'C:\Engineering\ChromeBridge-PR102-17484-Lab'
-$stateRoot = 'C:\Engineering\ChromeBridge-PR102-17484-State'
+$extensionRoot = 'C:\Engineering\ChromeBridge-PR102-17484-Lab' # Legacy directory label; endpoint is 17485.
+$stateRoot = 'C:\Engineering\ChromeBridge-PR102-17485-State'
 $extensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 function Exists([string]$Path) { Test-Path -LiteralPath $Path }
 function Reparse([string]$Path) {
@@ -22,6 +22,43 @@ function Reparse([string]$Path) {
 function FileHash([string]$Path) {
   if (-not (Exists $Path)) { return '' }
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+function ExtensionIdFromKey([string]$Key) {
+  if ([string]::IsNullOrWhiteSpace($Key)) { return '' }
+  try {
+    $publicKey = [Convert]::FromBase64String($Key)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = $sha.ComputeHash($publicKey) } finally { $sha.Dispose() }
+    $alphabet = 'abcdefghijklmnop'
+    $builder = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt 16; $i++) {
+      $value = [int]$digest[$i]
+      [void]$builder.Append($alphabet[$value -shr 4])
+      [void]$builder.Append($alphabet[$value -band 15])
+    }
+    return $builder.ToString()
+  } catch { return '' }
+}
+function AclSummary([string]$Path) {
+  if (-not (Exists $Path)) { return $null }
+  try {
+    $acl = Get-Acl -LiteralPath $Path
+    return [pscustomobject]@{
+      Owner = [string]$acl.Owner
+      Access = @($acl.Access | ForEach-Object {
+        [pscustomobject]@{
+          Identity = [string]$_.IdentityReference
+          Rights = [string]$_.FileSystemRights
+          Type = [string]$_.AccessControlType
+          IsInherited = [bool]$_.IsInherited
+          InheritanceFlags = [string]$_.InheritanceFlags
+          PropagationFlags = [string]$_.PropagationFlags
+        }
+      })
+    }
+  } catch {
+    return [pscustomobject]@{ Error = $_.Exception.Message }
+  }
 }
 $serverFiles = @()
 if (Exists $serverPath) {
@@ -44,6 +81,8 @@ if (Exists $configPath) {
 $manifestPath = Join-Path $extensionRoot 'manifest.json'
 $manifest = $null
 if (Exists $manifestPath) { $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+$manifestDerivedExtensionId = ''
+if ($manifest -and $manifest.PSObject.Properties['key']) { $manifestDerivedExtensionId = ExtensionIdFromKey ([string]$manifest.key) }
 $extensionEndpoints = @()
 foreach ($fileName in @('control.js','connection-check.js','transport-engine.js')) {
   $file = Join-Path $extensionRoot $fileName
@@ -76,16 +115,24 @@ $result = [ordered]@{
   ExtensionRoot=$extensionRoot
   ExtensionRootExists=(Exists $extensionRoot)
   ExtensionRootReparse=(Reparse $extensionRoot)
+  ExtensionRootAcl=(AclSummary $extensionRoot)
   ExtensionManifestExists=(Exists $manifestPath)
   ExtensionManifestSha256=(FileHash $manifestPath)
   ExtensionManifestVersion=if ($manifest) { [int]$manifest.manifest_version } else { $null }
   ExtensionBackgroundType=if ($manifest -and $manifest.background.PSObject.Properties['type']) { [string]$manifest.background.type } else { '' }
   ExtensionKeyPresent=[bool]($manifest -and $manifest.PSObject.Properties['key'])
+  ManifestDerivedExtensionId=$manifestDerivedExtensionId
+  ManifestExtensionIdMatchesExpected=($manifestDerivedExtensionId -ceq $extensionId)
   ExtensionHostPermissions=if ($manifest) { @($manifest.host_permissions) } else { @() }
+  ExtensionHostPermission17485=([bool]($manifest -and (@($manifest.host_permissions) -contains 'http://127.0.0.1:17485/*')))
+  ExtensionHostPermission17484=([bool]($manifest -and (@($manifest.host_permissions) -contains 'http://127.0.0.1:17484/*')))
+  ExtensionRootDirectoryNameIsLegacy17484Label=((Split-Path $extensionRoot -Leaf) -eq 'ChromeBridge-PR102-17484-Lab')
   ExtensionEndpoints=$extensionEndpoints
   StateRoot=$stateRoot
   StateRootExists=(Exists $stateRoot)
   StateRootReparse=(Reparse $stateRoot)
+  StateRootAcl=(AclSummary $stateRoot)
+  ServerRootAcl=(AclSummary $serverRoot)
   StateConfigExists=(Exists $configPath)
   StateConfigSha256=$configHash
   StateConfigValid=$configValid
