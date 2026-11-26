@@ -60,7 +60,6 @@ jobs:
         with:
           arch: x64
       - name: Build N-API addon
-      - name: Build N-API addon
         working-directory: tools/powershell-direct/native
         shell: pwsh
         run: |
