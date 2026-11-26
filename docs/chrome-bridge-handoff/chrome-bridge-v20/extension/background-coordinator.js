@@ -295,15 +295,21 @@ async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
 async function clearGlobalRevocationFence(chromeApi, record, stores) {
   if (!record?.token || !Array.isArray(stores) || !stores.length) return false;
   const key='bridgeMutationRevocationPending';
-  for (const store of stores) {
-    const storage=store==='local' ? chromeApi.storage.local :
-      store==='session' ? chromeApi.storage.session : null;
-    if (!storage?.get || !storage?.set) return false;
-    const state=await storage.get(key);
-    if (state[key]?.token===record.token)
-      await storage.set({[key]:null});
+  try {
+    for (const store of stores) {
+      const storage=store==='local' ? chromeApi.storage.local :
+        store==='session' ? chromeApi.storage.session : null;
+      if (!storage?.get || !storage?.set) return false;
+      const state=await storage.get(key);
+      const current=state[key];
+      if (current?.pending===true && current.token!==record.token) return false;
+      if (current?.token===record.token)
+        await storage.set({[key]:null});
+    }
+    return true;
+  } catch {
+    return false;
   }
-  return true;
 }
 
 async function persistGlobalQuarantineLock(chromeApi) {
