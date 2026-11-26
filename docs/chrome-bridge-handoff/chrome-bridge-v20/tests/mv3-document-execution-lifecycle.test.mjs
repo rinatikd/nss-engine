@@ -217,8 +217,10 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
   }
   assert.ok(['resolved','rejected'].includes(staleTargetOutcome.kind));
 
-  // Go Back without attaching DevTools to the page; this leaves BFCache eligible.
-  await worker.eval('(async()=>{await chrome.tabs.goBack('+tabId+');return true})()');
+  // Traverse session history from B without attaching DevTools to the page;
+  // this leaves BFCache eligible and avoids headless tabs.goBack API limitations.
+  const back=await inject(documentIdB,()=>{history.back();return true;});
+  assert.equal(back[0].documentId,documentIdB);
   const restored=await until(async()=>{
    const frame=await activeFrame(origin+'/a');
    if(!frame||frame.documentId!==documentIdA)return null;
