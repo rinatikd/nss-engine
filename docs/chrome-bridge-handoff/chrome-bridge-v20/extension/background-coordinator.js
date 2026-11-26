@@ -645,6 +645,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         if (sessionControlChange && controlClearRequested)
           throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
         if (sessionControlChange) controlClearRequested = true;
+        if (name==='session_revoke') approvals.stop();
         let globalRevocationFence=null;
 
         try {
@@ -877,6 +878,8 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         return false;
       }
       controlClearRequested = true;
+      // Revoke-all cancels every outstanding approval before draining lanes.
+      approvals.stop();
       void (async()=>{
         const fence=await enqueueRevocationFence(
           ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
