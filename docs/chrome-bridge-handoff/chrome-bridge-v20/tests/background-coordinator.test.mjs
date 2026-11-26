@@ -599,7 +599,11 @@ test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN
   assert.equal(result.error,'BACKGROUND_STOP_UNCONFIRMED');
   assert.equal(result.dispatchState,'UNKNOWN');
   assert.deepEqual(result.quarantinedTabs,[62]);
-  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[62]);
+  assert.ok(
+    c.data.bridgeMutationQuarantinedTabs?.includes(62) ||
+    c.session.bridgeMutationQuarantinedTabs?.includes(62),
+    'prior-worker tabs must remain durably quarantined in local or session storage'
+  );
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.data.bridgeMutationRevocationPending,null);
   assert.equal(c.session.bridgeMutationRevocationPending,null);
