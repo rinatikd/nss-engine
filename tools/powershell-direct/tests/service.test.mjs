@@ -110,6 +110,8 @@ test('approval UI renders the exact command and risk summary without exposing be
   assert.match(html,/Только чтение системного времени/);
   assert.match(html,/Get-Date/);
   assert.match(html,/SHA-256 исполняемого файла/);
+  assert.match(html,new RegExp('a'.repeat(64)));
+  assert.match(html,/SHA-256 исполняемого файла/);
   assert.match(html, new RegExp('a'.repeat(64)));
   assert.doesNotMatch(html,new RegExp(x.service.uiToken));
  }finally{await x.service.stop();}
