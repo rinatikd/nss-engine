@@ -427,6 +427,36 @@ test('per-tab Revoke persists its admission fence across an MV3 worker restart',
     'the session fallback marker is also removed after the grant-store revoke is confirmed');
 });
 
+
+test('concurrent per-tab Revokes preserve every durable fence',async()=>{
+  let writeEnteredResolve,releaseWriteResolve;
+  const writeEntered=new Promise(resolve=>{writeEnteredResolve=resolve;});
+  const heldWrite=new Promise(resolve=>{releaseWriteResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{beforeGrantStoreWrite:async()=>{
+    writeEnteredResolve();
+    await heldWrite;
+  }});
+  await startBackgroundTransport(c);
+  c.data.bridgeConnectionDesired=true;
+  c.data.bridgeMutationLabMode=true;
+  installBackgroundCoordinator(c);
+
+  const first=sendCoordinator(c,'revoke-background-control',{tabId:50});
+  await writeEntered;
+  const second=sendCoordinator(c,'revoke-background-control',{tabId:51});
+  await delay(10);
+  assert.deepEqual([...c.data.bridgeMutationRevokingTabs].sort((a,b)=>a-b),[50,51],
+    'serialized read/modify/write must not lose another tab Revoke marker');
+  assert.deepEqual([...c.session.bridgeMutationRevokingTabs].sort((a,b)=>a-b),[50,51]);
+
+  releaseWriteResolve();
+  const [a,b]=await Promise.all([first,second]);
+  assert.equal(a.ok,true);
+  assert.equal(b.ok,true);
+  assert.deepEqual(c.data.bridgeMutationRevokingTabs,[]);
+  assert.deepEqual(c.session.bridgeMutationRevokingTabs,[]);
+});
+
 test('per-tab Revoke refuses to partially revoke an origin-wide Session Authorization lease',async()=>{
   const c=fakeChrome({...LAB_STATE});
   await startBackgroundTransport(c);
