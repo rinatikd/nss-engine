@@ -66,6 +66,37 @@ enum class OperationState {
   kClosed
 };
 
+// Single authoritative transition table. Keep it pure so every edge can be
+// checked at compile time and reused under the per-operation lock.
+constexpr bool can_transition(OperationState from, OperationState to) noexcept {
+  switch (from) {
+    case OperationState::kRegistered:
+      return to == OperationState::kStarting || to == OperationState::kClosed;
+    case OperationState::kStarting:
+      return to == OperationState::kRunning || to == OperationState::kTerminating;
+    case OperationState::kRunning:
+      return to == OperationState::kTerminating || to == OperationState::kCompleted;
+    case OperationState::kTerminating:
+      return to == OperationState::kCompleted;
+    case OperationState::kCompleted:
+      return to == OperationState::kClosed;
+    case OperationState::kClosed:
+      return false;
+  }
+  return false;
+}
+
+static_assert(can_transition(OperationState::kRegistered, OperationState::kStarting));
+static_assert(can_transition(OperationState::kStarting, OperationState::kRunning));
+static_assert(can_transition(OperationState::kStarting, OperationState::kTerminating));
+static_assert(can_transition(OperationState::kRunning, OperationState::kCompleted));
+static_assert(can_transition(OperationState::kRunning, OperationState::kTerminating));
+static_assert(can_transition(OperationState::kTerminating, OperationState::kCompleted));
+static_assert(can_transition(OperationState::kCompleted, OperationState::kClosed));
+static_assert(!can_transition(OperationState::kRunning, OperationState::kClosed));
+static_assert(!can_transition(OperationState::kTerminating, OperationState::kClosed));
+static_assert(!can_transition(OperationState::kClosed, OperationState::kRunning));
+
 struct OperationRecord {
   OperationState state = OperationState::kRegistered;
 
@@ -180,6 +211,19 @@ napi_value close_operation(napi_env env, napi_callback_info info) {
     std::lock_guard<std::mutex> lock(registry_mutex);
     const auto active = active_operations.find(id);
     if (active != active_operations.end()) {
+      // A registered record owns no OS resources and can be closed. Once
+      // lifecycle workers exist, only COMPLETED may be closed; active states
+      // must remain registered until wait/termination and pipe EOF settle.
+      if (active->second.state != OperationState::kRegistered &&
+          active->second.state != OperationState::kCompleted) {
+        return throw_error(env, "OPERATION_NOT_TERMINAL",
+                           "operation cannot be closed before completion");
+      }
+      if (!can_transition(active->second.state, OperationState::kClosed)) {
+        return throw_error(env, "INVALID_STATE_TRANSITION",
+                           "operation cannot transition to CLOSED");
+      }
+      active->second.state = OperationState::kClosed;
       active_operations.erase(active);
       closed_operations.insert(id);
       closed_operation_order.push_back(id);
