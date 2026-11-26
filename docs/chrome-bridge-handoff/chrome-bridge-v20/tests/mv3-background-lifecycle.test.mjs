@@ -64,6 +64,17 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   fs.writeFileSync(path.join(ext,name),
    fs.readFileSync(src,'utf8').replaceAll('http://127.0.0.1:17381','http://127.0.0.1:17481'));
  }
+ // Delay only the Worker ACK inside this disposable Chrome profile. The
+ // stop-background call below must remain pending until this ACK is delivered;
+ // this detects regressions where transport-host responds on postMessage alone.
+ const workerPath=path.join(ext,'transport-worker.js');
+ const workerSource=fs.readFileSync(workerPath,'utf8');
+ const workerStopAck="send({type:'stopped',stopId:msg.stopId});";
+ assert.ok(workerSource.includes(workerStopAck),'Worker Stop ACK hook missing');
+ fs.writeFileSync(workerPath,workerSource.replace(
+  workerStopAck,
+  "setTimeout(()=>send({type:'stopped',stopId:msg.stopId}),250);"
+ ));
  fs.writeFileSync(path.join(ext,'manifest.json'),JSON.stringify({
   manifest_version:3,name:'MV3 lifecycle isolated test',version:'0.2.0',
   background:{service_worker:'background.js',type:'module'},
@@ -142,8 +153,12 @@ test('MV3 offscreen stays connected with panel closed; stop revokes session', {t
   control=await openPanel();
   const status=await control.cdp.eval('(async()=>await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"status"}))()');
   assert.equal(status?.connected,true,'reopened control page observes connected coordinator');
+  const stopStartedAt=Date.now();
   const stopped=await control.cdp.eval('(async()=>await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"stop-background"}))()');
+  const stopElapsedMs=Date.now()-stopStartedAt;
   assert.equal(stopped?.ok,true);
+  assert.ok(stopElapsedMs>=200,
+    'stop-background must wait for the deliberately delayed Worker ACK; elapsed='+stopElapsedMs+'ms');
   await until(async()=>!(await browserStatus()).connected,10000,'STOPPED');
   const state=await control.cdp.eval('(async()=>await chrome.storage.local.get(["bridgeConnectionDesired","bridgeMutationLabMode"]))()');
   assert.equal(state.bridgeConnectionDesired,false);
