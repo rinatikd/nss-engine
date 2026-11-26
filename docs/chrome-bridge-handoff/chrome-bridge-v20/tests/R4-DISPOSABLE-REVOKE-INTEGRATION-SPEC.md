@@ -1,8 +1,8 @@
 # R4 Disposable Chrome Revoke Integration — Test Specification
 
-**Status:** SPECIFICATION ONLY — NOT IMPLEMENTED  
+**Status:** FULL HARNESS NOT IMPLEMENTED — preliminary provider-origin permission gate added in PR #176; CI result pending  
 **Target under test:** Chrome Bridge R4 PR #174, base snapshot `a099f86a9af4952c04b9c585864febd9c5244902`  
-**Isolation:** Disposable extension copy, disposable MCP server, disposable Chrome profile, synthetic HTTPS provider origin.  
+**Isolation:** Disposable extension copy, disposable MCP server, disposable Chrome profile, supported provider origin `https://claude.ai` resolved to loopback only inside that Chrome process.  
 **Production and operator Lab:** MUST NOT be modified or used by this test.
 
 ## 1. Purpose
@@ -22,17 +22,11 @@ The existing `mv3-background-lifecycle.test.mjs` is a useful harness pattern (di
 1. Create all files under a unique OS temporary directory. Never copy test changes back to the checked-out extension or production installation.
 2. Use a unique temporary Chrome user-data directory and a unique free loopback MCP port.
 3. Start a separate MCP bridge instance with a temporary state directory, temporary provider journal, temporary agent registry, and test-only credentials.
-4. The synthetic provider origin must be present only in the disposable copies of:
-   - extension `permissions.js` (`CONTROL_ORIGINS`);
-   - extension `page.js` (conversation route and page-side control-origin allowlist);
-   - extension host permissions / runtime permission grant;
-   - MCP `tools.mjs` (`providerOrigin` enum);
-   - MCP `bridge.mjs` (`COUNCIL_ORIGINS`);
-   - server `provider-journal.mjs` (`PROVIDERS` identity map).
-5. Do not add a synthetic origin to production source, production manifest, production server, user Lab, or persistent browser profile.
-6. Do not weaken origin, HTTPS, grant, approval, epoch, payload-hash, journal, or sender validation. The fixture must pass the same checks as a supported provider.
-7. The test server must bind only to loopback. Use a reserved test hostname (for example `r4-provider.test`) mapped to loopback in the disposable Chrome launch, with a local HTTPS certificate trusted only for this disposable run. Do not use `localhost`, `127.0.0.1`, or `[::1]` as the page hostname: `permittedTab()` explicitly rejects those hostnames.
-8. Use a dedicated test provider key/ID (for example `r4test`) and a stable conversation route ID. The same origin/provider identity must be consistent in every disposable allowlist.
+4. Use the already-supported exact provider origin `https://claude.ai` for the fixture, but map `claude.ai` to `127.0.0.1` only inside the disposable Chrome process with `--host-resolver-rules=MAP claude.ai 127.0.0.1`. The fixture must not contact the real provider.
+5. Bind the temporary HTTPS provider server to loopback port 443 so the browser URL remains exactly `https://claude.ai`. Do not use a non-default HTTPS port: `URL.origin` includes that port and the existing origin maps use exact origin keys. If the CI runner cannot bind port 443 safely, stop and redesign the fixture rather than changing production origin validation.
+6. Do not patch `permissions.js`, `page.js`, `tools.mjs`, `bridge.mjs`, or `provider-journal.mjs` to introduce a synthetic provider. Use the existing `claude` provider identity and supported `/chat/<conversation-id>` route.
+7. Do not weaken origin, HTTPS, grant, approval, epoch, payload-hash, journal, or sender validation. The fixture must pass the same checks as a supported provider.
+8. The local HTTPS certificate must be confined to the disposable run. If certificate verification is bypassed, the bypass must be a flag on the disposable Chrome process only; never change system trust stores.
 9. Test cleanup must terminate only child processes started by this test and remove only its own temporary directory. Cleanup must run in `finally`, including assertion failures and timeouts.
 
 ## 3. Source-level constraints discovered
@@ -42,21 +36,26 @@ The fixture must account for all of the following, not just the extension's top-
 - `read-only-dispatch.js:permittedTab()` requires HTTPS, a matching `storage.local.sites[origin]` entry, and Chrome host permission. It rejects loopback hostnames.
 - `read-only-dispatch.js` permits agent context only when the origin exists in `CONTROL_ORIGINS`, `site.mode === 'chat'`, and `site.adapter === CONTROL_ORIGINS[origin]`; adapter origin must match.
 - `background-control-grants.js` requires a local gesture, a supported duration (15 or 60 minutes), a permitted tab, and matching chat site/adapter. The test must obtain grants through the actual control UI/local gesture path, not by directly writing a grant record.
-- `page.js:pageAction()` has its own hard-coded provider-origin allowlist and conversation-route regular expressions. A test-only patch is required in the disposable copy. The test route must produce a valid conversation ID matching `[A-Za-z0-9_-]{8,160}`.
-- `server/tools.mjs` validates `providerOrigin` against an enum and `providerId` against a separate enum.
-- `server/bridge.mjs` has a separate `COUNCIL_ORIGINS` map and `provider_prepare` requires the target tab to be bound to an agent entry.
-- `server/provider-journal.mjs:validateProviderIdentity()` has its own origin-to-provider map. The identity tuple (requestId, taskId, providerId, tabId, origin, conversationId, epoch) must be consistent.
+- The supported Claude origin is already present in all relevant allowlists: extension `permissions.js`, `page.js`, MCP `tools.mjs`, `bridge.mjs`, and `provider-journal.mjs`. Keep those production files unchanged.
+- `page.js:pageAction()` recognizes Claude conversation routes under `/chat/<id>`; use a stable ID matching `[A-Za-z0-9_-]{8,160}` and the existing Claude adapter DOM selectors.
+- `server/tools.mjs` validates `providerOrigin=https://claude.ai` and `providerId=claude`.
+- `server/bridge.mjs` requires the provider tab to be bound to an agent entry through `agent_bind({name, tabId})`.
+- `server/provider-journal.mjs:validateProviderIdentity()` independently validates the same origin-to-provider mapping. Keep the full identity tuple (requestId, taskId, providerId, tabId, origin, conversationId, epoch) consistent.
 - `provider_prepare` must be exercised through the MCP tool route, including the real server queue and extension dispatch. Calling `pageAction()` directly is not an integration test.
 
 ### Permission-pattern compatibility gate
 
-Before implementing the full test, verify Chrome's handling of a host permission for the test origin when the page uses a non-default HTTPS port. `permittedTab()` currently checks `url.origin + '/*'`, which includes a port, while extension host permission match patterns may normalize ports differently. Do not silently work around a mismatch. Prefer HTTPS port 443 in the disposable environment if practical; otherwise document and test the exact Chrome behavior and keep any adaptation confined to the disposable fixture.
+**Preliminary gate in PR #176:** a disposable Chrome test now maps the exact supported host `claude.ai` to loopback, declares `https://claude.ai/*` in the temporary extension manifest, and exercises the production `permittedTab()` and `BackgroundControlGrants` modules. This avoids non-default ports entirely. Its GitHub Actions result is pending; it must pass before the full fixture proceeds.
+
+The preliminary test calls the grant class with `localGesture:true` directly. It verifies origin matching and grant-store behavior, but **does not** verify the real control UI event path or a browser-generated trusted gesture. The full scenarios must obtain Grants through the actual local UI.
+
+The full fixture must bind its temporary HTTPS server to loopback port 443 so the browser URL remains exactly `https://claude.ai`. Do not silently use a non-default port: `URL.origin` includes that port, while the provider allowlists use exact origin keys.
 
 ## 4. Disposable runtime topology
 
 ```text
 Node test process
-  ├─ temporary HTTPS provider server (loopback bind)
+  ├─ temporary HTTPS provider server (127.0.0.1:443; exposed as https://claude.ai only inside disposable Chrome)
   │    ├─ /chat/<stable-conversation-id> for tab A
   │    └─ /chat/<stable-conversation-id> for tab B
   ├─ disposable MCP Bridge (unique loopback port + temp state/journal)
@@ -72,14 +71,14 @@ Node test process
        └─ provider tab B
 ```
 
-Only the provider website and its adapter DOM are synthetic. Do not stub or replace the coordinator, approval classes, mutation dispatcher, grant store, transport worker, offscreen host, or MCP command queue.
+Only the provider website content and adapter DOM are synthetic; the origin and provider identity remain the existing supported Claude identity. Do not stub or replace the coordinator, approval classes, mutation dispatcher, grant store, transport worker, offscreen host, or MCP command queue.
 
 ## 5. Required scenarios and assertions
 
 ### A. Per-tab Revoke cancels only the target tab's approval
 
 1. Start disposable MCP + Chrome and wait for the real worker/offscreen connection.
-2. Open two provider tabs A and B on the same synthetic HTTPS origin, each with a valid conversation route.
+2. Open two provider tabs A and B on the same isolated `https://claude.ai` origin, each with a valid conversation route.
 3. Configure the temporary site's adapter and host permission; verify both tabs appear in `browser_tabs`.
 4. Obtain separate per-tab Grants through the real control UI.
 5. Bind A and B to separate MCP agent names using the actual MCP tool `agent_bind({name, tabId})`; the server's `provider_prepare` handler rejects tabs that are not present in its agent registry.
@@ -136,7 +135,7 @@ Record structured, redacted evidence:
 - Chrome version and extension build SHA;
 - disposable profile and server port identifiers (not tokens);
 - worker/offscreen target readiness and reconnect events;
-- tab IDs, synthetic origin, conversation IDs;
+- tab IDs, fixture origin `https://claude.ai`, conversation IDs;
 - Grant status before/after;
 - approval IDs/counts before/after;
 - mutation outcome state and reason code;
@@ -166,9 +165,10 @@ This test does not implement durable provider mutation journaling or operator qu
 ## 9. Implementation checklist
 
 - [ ] Locate and reuse the current disposable MV3 lifecycle harness helpers without importing test-only stubs into production code.
-- [ ] Add a temporary HTTPS server and certificate lifecycle.
-- [ ] Add the synthetic provider identity to every disposable-only allowlist identified above.
-- [ ] Resolve and assert Chrome host-permission matching for the selected port.
+- [ ] Confirm the PR #176 exact-origin permission gate passes in disposable Chrome.
+- [ ] Add a temporary HTTPS server bound to loopback port 443 and its disposable certificate lifecycle.
+- [ ] Keep all provider allowlists and provider identity maps unchanged; use `claude`.
+- [ ] Exercise the real control UI so the Grant is issued only after an actual local trusted gesture.
 - [ ] Configure the disposable site's adapter and permission state.
 - [ ] Exercise the real local Grant UI.
 - [ ] Bind both tabs through the real MCP agent binding path.
