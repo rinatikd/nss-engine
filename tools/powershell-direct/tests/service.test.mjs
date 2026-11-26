@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {PowerShellApprovalService} from '../service.mjs';
-import {validateExecutionSpec} from '../runner.mjs';
+import {validateExecutionSpec,executableIdentity} from '../runner.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {createApprovalProxy} from '../approval-proxy.mjs';
 
 const workspace='C:\\Engineering\\NSS_Engine';
@@ -12,7 +15,7 @@ function fixture(){
  let now=1000,starts=0,finish;
  const service=new PowerShellApprovalService({root:'C:\\Engineering',port:0,now:()=>now,
   workspaceCheck:(candidate)=>{if(candidate!==workspace&&candidate!=='C:\\Windows\\System32')throw Error('WORKSPACE_DENIED');return candidate;},
-  run:async({spec,workspace:cwd})=>{starts++;assert.equal(spec.executable,request.executable);assert.equal(cwd,workspace);
+  run:async({spec,workspace:cwd,expectedExecutable})=>{starts++;assert.equal(spec.executable,request.executable);assert.equal(expectedExecutable.sha256,'a'.repeat(64));assert.equal(cwd,workspace);
    return await new Promise(resolve=>finish=()=>resolve({state:'FINISHED',exitCode:0,stdout:'OK',stderr:''}));}
  });
  return {service,advance:n=>now+=n,starts:()=>starts,finish:()=>finish?.()};
@@ -105,6 +108,8 @@ test('approval UI renders the exact command and risk summary without exposing be
   assert.match(html,/Проверка текущей даты/);
   assert.match(html,/Только чтение системного времени/);
   assert.match(html,/Get-Date/);
+  assert.match(html,/SHA-256 исполняемого файла/);
+  assert.match(html, new RegExp('a'.repeat(64)));
   assert.doesNotMatch(html,new RegExp(x.service.uiToken));
  }finally{await x.service.stop();}
 });
@@ -177,4 +182,18 @@ test('MCP authentication protects the proposal and status interface',async()=>{
   assert.equal(response.status,200);
   assert.deepEqual((await response.json()).result.tools.map(t=>t.name),['powershell_propose','powershell_cancel','powershell_job']);
  }finally{await x.service.stop();}
+});
+
+test('executable identity hashes file contents and changes when the file is replaced',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ps-direct-identity-'));
+ const file=path.join(dir,'tool.exe');
+ try{
+  fs.writeFileSync(file,Buffer.from('binary-A'));
+  const first=executableIdentity(file);
+  assert.equal(first.path,fs.realpathSync.native(file));
+  assert.match(first.sha256,/^[a-f0-9]{64}$/);
+  fs.writeFileSync(file,Buffer.from('binary-B'));
+  const second=executableIdentity(file);
+  assert.notEqual(second.sha256,first.sha256);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
