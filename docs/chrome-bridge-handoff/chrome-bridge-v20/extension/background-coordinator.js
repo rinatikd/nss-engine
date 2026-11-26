@@ -695,6 +695,14 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
               {tabId,allowFencedTab:true}
             );
             return {ok:true,tabId};
+          } catch (error) {
+            // A failed revoke must not reopen the tab against a possibly
+            // still-persisted grant. Quarantine it until explicit recovery.
+            const persisted=await persistMutationQuarantine(chromeApi,[tabId]);
+            const uncertain=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
+            uncertain.quarantinedTabs=[tabId];
+            uncertain.quarantinePersisted=persisted.persisted;
+            throw uncertain;
           } finally {
             const remaining=(mutationFencedTabs.get(tabId)||1)-1;
             if (remaining>0) mutationFencedTabs.set(tabId,remaining);
