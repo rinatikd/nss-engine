@@ -241,7 +241,7 @@ int wmain(int argc, wchar_t** argv) {
   if (!verify_kill_on_close(self)) return 5;
   if (!verify_nested_job_assignment(self)) return 6;
   ManagedProcess breakaway{};
-  const std::wstring breakaway_command = L"\\\"" + std::wstring(self) + L"\\\" --breakaway-probe";
+  const std::wstring breakaway_command = L"\"" + std::wstring(self) + L"\" --breakaway-probe";
   if (!start_in_job(self, breakaway_command, nullptr, breakaway)) fail(L"start breakaway probe");
   if (WaitForSingleObject(breakaway.process, 10000) != WAIT_OBJECT_0) { TerminateJobObject(breakaway.job, 9); return 7; }
   DWORD breakaway_exit = 99;
