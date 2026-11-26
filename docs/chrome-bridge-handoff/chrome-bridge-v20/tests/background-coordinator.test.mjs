@@ -585,6 +585,13 @@ test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN
   c.session.bridgeMutationRevocationPending=pending;
   const restartedWorker=await import('../extension/background-coordinator.js?session-revoke-recovery');
   restartedWorker.installBackgroundCoordinator(c);
+  const authorize=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:{name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{sessionId:'session_0002',durationMinutes:60,
+        origins:['https://claude.ai']}}
+  },'transport-host.html');
+  assert.equal(authorize.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
+    'a pending global Revoke must block a new Session Authorization');
   const result=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
     command:{name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
       expires:Date.now()+90000,args:{}}
