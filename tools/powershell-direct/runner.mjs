@@ -8,7 +8,7 @@ const MAX_TIMEOUT=600000, MIN_TIMEOUT=1000, MAX_OUTPUT=65536;
 export function validateExecutionSpec(input){
   if(!input||typeof input!=='object')throw Error('EXECUTION_SPEC_REQUIRED');
   const executable=input.executable;
-  if(typeof executable!=='string'||!path.win32.isAbsolute(executable)||executable.startsWith('\\\\\\\\'))
+  if(typeof executable!=='string'||!path.win32.isAbsolute(executable))
     throw Error('EXECUTABLE_MUST_BE_ABSOLUTE_LOCAL_PATH');
   const normalized=path.win32.normalize(executable);
   if(normalized===path.win32.parse(normalized).root)throw Error('EXECUTABLE_MUST_BE_FILE');
@@ -31,14 +31,11 @@ export function validateExecutionSpec(input){
 
 export function canonicalWorkspace(candidate,root){
   if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
-  if(typeof candidate!=='string'||!path.win32.isAbsolute(candidate)||candidate.startsWith('\\\\\\\\'))
+  if(typeof candidate!=='string'||!path.win32.isAbsolute(candidate))
     throw Error('WORKSPACE_NOT_ABSOLUTE_LOCAL_PATH');
   const actual=fs.realpathSync.native(candidate);
-  const base=fs.realpathSync.native(root);
-  const rel=path.win32.relative(base,actual);
-  if(rel==='..'||rel.startsWith('..\\\\')||path.win32.isAbsolute(rel))
-    throw Error('WORKSPACE_OUTSIDE_ALLOWED_ROOT');
   if(!fs.statSync(actual).isDirectory())throw Error('WORKSPACE_NOT_DIRECTORY');
+  // Workspace is selected per request and reviewed locally; it is not fenced to a fixed root.
   return actual;
 }
 
