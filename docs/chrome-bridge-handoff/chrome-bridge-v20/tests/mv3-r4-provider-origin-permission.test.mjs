@@ -112,7 +112,25 @@ globalThis.__r4PermissionGate={permittedTab,BackgroundControlGrants};
     },12000,'SERVICE_WORKER');
     workerCdp=await Cdp.connect(worker.webSocketDebuggerUrl);
     await workerCdp.call('Runtime.enable');
-    await until(()=>workerCdp.eval('typeof chrome!=="undefined" && !!chrome.storage?.local && !!chrome.runtime?.id'),8000,'WORKER_CONTEXT');
+    try {
+      await until(()=>workerCdp.eval('typeof chrome!=="undefined" && !!chrome.storage?.local && !!chrome.runtime?.id'),8000,'WORKER_CONTEXT');
+    } catch(error) {
+      const inventory=await targets(port).catch(()=>[]);
+      console.error('[R4 WORKER CONTEXT DIAGNOSTIC] targets:',
+        JSON.stringify(inventory.map(item=>({type:item.type,url:item.url,hasDebugger:!!item.webSocketDebuggerUrl}))));
+      const preferences=path.join(profile,'Default','Preferences');
+      if(fs.existsSync(preferences)) {
+        try {
+          const data=JSON.parse(fs.readFileSync(preferences,'utf8'));
+          const extensionId=worker.url.split('/')[2];
+          const entry=data.extensions?.settings?.[extensionId];
+          console.error('[R4 WORKER CONTEXT DIAGNOSTIC] extension prefs:',
+            JSON.stringify({extensionId,known:!!entry,state:entry?.state,
+              disable_reasons:entry?.disable_reasons,manifestName:entry?.manifest?.name}));
+        } catch {}
+      }
+      throw error;
+    }
     const apiDiagnostic=await workerCdp.eval(`JSON.stringify({
       runtime:typeof chrome.runtime?.id,
       storageLocal:!!chrome.storage?.local,
