@@ -1,0 +1,1184 @@
+# EDRP — целевая архитектура финального оркестратора
+
+**Статус:** проект архитектуры для Раунда 2 Cross-Review; не утверждён и не развёрнут  
+**Версия:** 0.1 / 22.11.2026  
+**Пилот:** NSS Engine (AutoCAD 2026 / .NET 8), затем APS Expert и AGPT Plugin  
+**Границы:** Windows 11, один инженерный ПК, локальные сервисы и интерактивные AI/AutoCAD-компоненты  
+**Решение владельца:** Production — read-only; Lab — автономность в заранее утверждённых границах; GitHub — зеркало, не единственный источник истины
+
+---
+
+## 1. Резюме архитектурного решения
+
+Рекомендуется не строить «маленький Kubernetes» и не внедрять полноценный кластер Temporal на одном рабочем ПК. Рекомендуется локальная платформа с одним системным Supervisor, отдельным интерактивным User Agent и небольшим Bootstrap-механизмом восстановления. Она использует лучшие идеи зрелых систем, но без их инфраструктурной цены:
+
+1. **Kubernetes controller pattern:** каждый контроллер сравнивает Desired State с Observed State и сводит текущее состояние к желаемому. Контроллер отвечает только за свой набор ресурсов; повторное наблюдение — норма, а не авария. См. [Kubernetes Controllers](https://kubernetes.io/docs/concepts/architecture/controller/).
+2. **Temporal Durable Execution:** последовательность действий и результаты записываются в Event History; после сбоя состояние реконструируется воспроизведением истории. Внешние побочные эффекты выполняются как отдельные Activity и не должны повторяться только потому, что Workflow был replayed. Для EDRP берём эти принципы, но не разворачиваем Temporal Server, если нет распределённых Workers/узлов и реальной потребности в его отдельной инфраструктуре. См. [Temporal Workflows](https://docs.temporal.io/workflows), [Durable Execution](https://docs.temporal.io/durable-execution), [Event History](https://docs.temporal.io/encyclopedia/event-history).
+3. **Windows SCM:** Service Control Manager запускает и восстанавливает только системный Supervisor. SCM не должен конкурировать с внутренним оркестратором за перезапуск одних и тех же дочерних компонентов. Настройки failure actions должны включать ограниченный restart budget и reset interval, а не бесконечный restart loop. См. [SERVICE_FAILURE_ACTIONS](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actionsa) и [Guidelines for Services](https://learn.microsoft.com/en-us/windows/win32/rstmgr/guidelines-for-services).
+4. **Windows Job Objects:** дочерние процессы конкретной операции объединяются в Job Object для учёта, ограничения и контролируемого завершения. Job Object — механизм управления процессами, а не второй Supervisor и не источник Desired State. Флаг KILL_ON_JOB_CLOSE применяется только к краткоживущим worker-группам, когда завершение всех дочерних процессов при потере владельца действительно безопасно. См. [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+5. **SQLite WAL + журнал операций:** локальная БД — источник истины для активных задач, операций, lease, состояний, портов и транзакционного outbox. Для критических переходов — WAL и synchronous=FULL; WAL не переносится на сетевую файловую систему. См. [SQLite WAL](https://www.sqlite.org/wal.html) и [SQLite synchronous](https://www.sqlite.org/pragma.html#pragma_synchronous).
+6. **Intent → Apply → Verify → Commit:** система никогда не считает изменение успешным только потому, что команда была отправлена. Неясный исход внешнего действия становится UNKNOWN, блокирует повтор и требует reconcile/evidence. Exactly-once для произвольного внешнего эффекта не обещается.
+
+**Главная рекомендация:** EDRP должна быть *однописательным локальным control plane с независимым User Agent, durable operation journal и fail-closed исполнительным шлюзом*. Мультиагентность строится над ним; AI-участники не получают произвольную власть над Windows.
+
+## 2. Компоненты и границы ответственности
+
+### 2.1. Компонентная схема
+
+~~~mermaid
+flowchart TB
+  SCM["Windows SCM"] --> S["EDRP Supervisor Service"]
+  BOOT["Bootstrap / Recovery mode"] --> S
+  S --> DB[("SQLite WAL<br/>state + operations + events + outbox")]
+  S --> GIT["Local Git / desired config"]
+  S --> REC["Recovery Storage<br/>signed bundles + backups"]
+  S --> EVD["Evidence Storage<br/>hash-addressed artifacts"]
+  S --> PM["Port Allocation Manager"]
+  S --> POL["Security Kernel / Policy Engine"]
+  S --> JOB["Worker launcher / Job Objects"]
+  JOB --> W1["NSS worker"]
+  JOB --> W2["APS / AGPT workers"]
+  JOB --> BR["Chrome Bridge host / MCP transport"]
+  TASK["Task Scheduler<br/>logon / unlock"] --> UA["Interactive User Agent"]
+  UA <--> S
+  UA --> ACAD["AutoCAD 2026 / .NET 8"]
+  UA --> CHROME["Chrome profile / extensions / AI tabs"]
+  CHROME <--> BR
+  AI["ChatGPT + Claude + expert agents"] --> ORCH["Consilium / EDRP task orchestration"]
+  ORCH --> S
+  POL --> JOB
+  BR --> ORCH
+~~~
+
+### 2.2. EDRP Supervisor Service — единственный системный владелец жизненного цикла
+
+Supervisor — Windows Service с минимальным набором привилегий. Он:
+
+- загружает и проверяет Desired State, политику и manifest установленных компонентов;
+- ведёт reconcile loops и планирует операции;
+- владеет SQLite write lane, outbox, lease и реестром ресурсов;
+- запускает и завершает worker-процессы через ограниченный launcher;
+- контролирует сервисные endpoints, MCP, туннели и адаптеры;
+- создаёт restore points до разрешённых изменений и проверяет rollback;
+- формирует evidence pack каждого завершённого задания;
+- не показывает UI, не управляет интерактивным окном AutoCAD и не вводит текст в AI-чаты.
+
+Supervisor не должен иметь безусловный доступ к любому файлу/процессу. Все операции проходят через типизированные handlers и Policy Engine.
+
+### 2.3. Bootstrap — режим восстановления, а не второй постоянно работающий менеджер
+
+Три отдельных долгоживущих процесса (Bootstrap, Supervisor и Watchdog) создадут конкурирующие циклы восстановления. Поэтому Bootstrap должен быть максимально малым и запускаться только на ранних этапах загрузки или при подтверждённой неисправности Supervisor.
+
+Предпочтительный вариант: подписанный Bootstrap executable или изолированный recovery mode в небольшом отдельном host, который умеет только:
+
+- проверить подпись/хеш Supervisor и его конфигурации;
+- восстановить заведомо проверенную предыдущую версию из Recovery Storage;
+- восстановить минимальный runtime, если пакет доступен локально;
+- записать неизменяемое событие восстановления;
+- передать управление SCM.
+
+Bootstrap **не** имеет права:
+- управлять AI-сессиями и браузером;
+- самостоятельно менять Production;
+- менять allowlist, ACL, credentials или системную политику;
+- убивать неизвестные процессы ради освобождения порта;
+- одновременно запускать второй экземпляр Supervisor.
+
+Bootstrap не должен «сам себя» восстанавливать по бесконечному кругу. Если проверенный rollback не удался, он останавливается в RECOVERY_REQUIRED и оставляет точную диагностику.
+
+### 2.4. User Agent — единственный владелец интерактивной сессии
+
+AutoCAD, Chrome, пользовательские диалоги, расширения и другие GUI-приложения относятся к интерактивной сессии пользователя. User Agent запускается Task Scheduler при входе и повторном входе пользователя, работает в его session, подключается к Supervisor по защищённому Named Pipe с ACL на конкретный SID.
+
+Windows services работают в Session 0, отделённой от интерактивных пользовательских сессий; поэтому запускать AutoCAD и пытаться управлять его UI из Service — неверная граница. См. [Service Changes for Windows Vista — Session 0 Isolation](https://learn.microsoft.com/en-us/windows/win32/services/service-changes-for-windows-vista).
+
+User Agent отвечает за:
+- обнаружение фактического профиля Chrome и разрешённых AI-вкладок;
+- безопасное взаимодействие с AutoCAD 2026 в активной сессии;
+- read-only semantic health checks GUI-компонентов;
+- отправку запросов к Supervisor и возврат evidence, но не выдачу себе новых полномочий;
+- закрытие/обнуление сессионных leases при logout, browser restart, extension restart или смене epoch.
+
+User Agent не является системным Supervisor. При выходе пользователя он может корректно завершиться; сервисная инфраструктура при этом продолжает работать.
+
+### 2.5. Worker / Adapter
+
+Любая операция, которая может зависнуть, завершиться ошибкой или породить дочерние процессы, выполняется в ограниченном Worker-процессе. У каждого Worker:
+- идентификатор задания и operationId;
+- конкретный capability set;
+- рабочий каталог в allowlist;
+- максимальный runtime, лимиты ресурсов и cancellation policy;
+- отдельный stdout/stderr лог с redaction;
+- Job Object и связь с событием Intent.
+
+Для коротких workers Job Object можно настроить с KILL_ON_JOB_CLOSE, чтобы закрытие последнего handle не оставляло orphan children. Этот флаг нельзя автоматически применять к долгоживущим сервисам и процессам, которые должны переживать рестарт Supervisor. Ограничения и наследование Job Objects нужно проверять на реальных процессах, включая nested jobs и breakaway. См. [Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) и [AssignProcessToJobObject](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-assignprocesstojobobject).
+
+### 2.6. Разделение Council Plane и Transport Plane
+
+- **Consilium / Orchestrator** — роли, задачи, раунды, решения, критерии приёмки, артефакты, evidence и синтез.
+- **Chrome Bridge / ProviderTransport** — exact provider/tab/conversation binding, prepare/commit, single-writer lanes, fencing, revoke, delivery state.
+- **Control Room** — UI и projection журнала; не самостоятельный источник истины.
+
+Никакие понятия «раунд», «назначение», «вердикт» не должны попадать в Chrome Bridge. И наоборот: Orchestrator не должен выполнять DOM-вызовы напрямую. Стороны общаются через версионированный контракт.
+
+## 3. Durable orchestration и транзакционная модель
+
+### 3.1. Где брать идеи Temporal
+
+Temporal полезен тем, что сохраняет Event History, восстанавливает workflow state replay-ем и записывает результаты Activity так, чтобы повторное исполнение workflow не повторяло уже выполненные внешние шаги. Для локального EDRP достаточно внутреннего подмножества этой модели:
+- детерминированная логика планирования;
+- отдельные Activities/Workers для I/O и внешних эффектов;
+- сохранение результатов операции до продолжения workflow;
+- стабильные requestId/operationId;
+- lease, timeout, retry policy и manual intervention state;
+- проверка истории при startup/recovery.
+
+Не нужно копировать сам Temporal runtime, если платформа остаётся на одном Windows-хосте и не имеет нескольких независимых Worker nodes. Если в будущем появятся несколько машин, десятки долгоживущих распределённых workflows или внешние очереди, тогда повторно оценить Temporal. У Temporal есть service deployment cost, network dependency, versioning/migration concerns и дополнительная operational surface, которая сейчас не оправдана.
+
+### 3.2. SQLite как операционная БД
+
+**SQLite** — источник истины для изменяемого runtime state. Предлагаемые таблицы:
+
+| Таблица | Назначение |
+|---|---|
+| desired_resources | желаемое состояние сервисов/плагинов/туннелей и версия manifest |
+| observed_resources | последнее наблюдаемое состояние + время и источник evidence |
+| operations | операции и их state machine |
+| events | append-only события, actor, hash, previousHash, timestamp |
+| outbox | зафиксированные intent, ожидающие dispatch |
+| leases | право одного worker/controller на ресурс и epoch |
+| ports | port claims, intended listener, owner identity, health |
+| artifacts | content hashes, paths, source commit, provenance |
+| approvals | owner approvals, exact scope hash, expiry, single-use nonce |
+| checkpoints | backup IDs, snapshots, migration and recovery cursors |
+
+Рекомендуемая конфигурация: journal_mode=WAL, synchronous=FULL, foreign keys ON, busy timeout, единый writer actor и короткие транзакции. WAL позволяет читателям не блокировать writer, но все процессы, использующие БД, должны работать на одном хосте; SQLite WAL не предназначен для сетевого filesystem. synchronous=NORMAL в WAL остаётся согласованным при сбоях, но может потерять последнюю committed транзакцию при power loss; для approval, Intent и operation state использовать FULL. См. [SQLite WAL](https://www.sqlite.org/wal.html) и [PRAGMA synchronous](https://www.sqlite.org/pragma.html#pragma_synchronous).
+
+Нельзя держать SQLite-транзакцию открытой во время долгой сборки, network call или работы AutoCAD. Вместо этого:
+
+1. короткая транзакция создаёт operation + intent + outbox;
+2. worker lease claims operation;
+3. внешний эффект происходит вне DB transaction;
+4. worker сохраняет observed result/evidence;
+5. короткая транзакция фиксирует verified outcome или UNKNOWN.
+
+### 3.3. Append-only события
+
+Не следует одновременно поддерживать два независимых источника истины — JSONL event ledger и SQLite state database. Это создаёт проблему dual-write: один storage может принять событие, а другой — нет.
+
+Рекомендуется SQLite как транзакционный журнал и state store; immutable export в NDJSON/JSONL для аудита и переноса. Событие хранит:
+- sequence;
+- eventId;
+- timestamp;
+- authenticated actor / execution identity;
+- type, operationId, taskId, roundId;
+- sourceCommit, branch, artifact hash;
+- payload schema version;
+- previous hash + event hash;
+- evidence reference.
+
+Хэш-цепочка обнаруживает случайную модификацию и нарушение порядка, но не защищает от администратора, имеющего право переписать саму БД и пересчитать цепочку. Для повышенной защиты нужны подпись/внешний checkpoint (отдельный ключ, TPM-backed key или внешний evidence vault) и off-host export.
+
+### 3.4. State machine для каждой операции
+
+~~~mermaid
+stateDiagram-v2
+  [*] --> PLANNED
+  PLANNED --> APPROVAL_REQUIRED
+  PLANNED --> READY
+  APPROVAL_REQUIRED --> READY: exact approval
+  APPROVAL_REQUIRED --> BLOCKED: denied / expired
+  READY --> INTENT_COMMITTED
+  INTENT_COMMITTED --> APPLYING
+  APPLYING --> APPLIED
+  APPLYING --> UNKNOWN: acknowledgement lost / crash window
+  APPLYING --> FAILED: explicit no effect
+  APPLIED --> VERIFYING
+  VERIFYING --> VERIFIED
+  VERIFYING --> UNKNOWN
+  VERIFYING --> ROLLBACK_REQUIRED
+  ROLLBACK_REQUIRED --> ROLLING_BACK
+  ROLLING_BACK --> ROLLED_BACK
+  ROLLING_BACK --> UNKNOWN
+  VERIFIED --> COMMITTED
+  UNKNOWN --> RECONCILING
+  RECONCILING --> VERIFIED
+  RECONCILING --> FAILED
+  RECONCILING --> MANUAL_REVIEW
+~~~
+
+Критически важное правило: UNKNOWN — не синоним ошибки и не разрешение повторить команду. Это признак, что действие могло произойти, но подтверждение потеряно. Операция:
+- сохраняет исходный requestId;
+- удерживает resource lock/fence;
+- блокирует новый запрос, конфликтующий по тому же ресурсу;
+- выполняет только read-only reconciliation/status query;
+- при отсутствии доказательства остаётся MANUAL_REVIEW.
+
+### 3.5. Idempotency и exactly-once
+
+Не обещать exactly-once для внешних систем, которые не поддерживают транзакционный idempotency key. Для локальных файловых операций можно получить идемпотентность через exact content hash и atomic replace; для HTTP/API и browser click нужно опираться на idempotency contract сервера или классифицировать неопределённый результат как UNKNOWN.
+
+Повтор разрешён только когда:
+- подтверждено NOT_PERFORMED, или
+- операция гарантированно идемпотентна и имеет тот же scope/operationId, или
+- отдельная reconciliation процедура доказывает, что внешнего эффекта не было.
+
+Для Chrome Bridge: prepare не нажимает Send; commit выполняет один click под актуальным fencing token; потерянный ACK переводит запрос в UNKNOWN, а не в повторную отправку.
+
+## 4. Desired State, Controllers и Reconciliation
+
+Каждый контроллер обслуживает ограниченную область:
+- ServiceController — системные сервисы;
+- ProcessController — worker-группы;
+- TunnelController — сетевые тоннели и их endpoint;
+- McpController — MCP readiness, tool registry и protocol handshake;
+- PluginController — версия плагина, DLL/bundle, загрузка и command registration в AutoCAD;
+- PortController — claims и конфликт listener;
+- RecoveryController — snapshots, rollback и restore.
+
+Контроллер не должен создавать бесконечную цепочку взаимных restart requests. Все действия проходят через единый Resource Lease/Operation coordinator и общий restart budget.
+
+Состояние ресурса разделяется на:
+- **Desired:** версия, настройки, запуск, требуемые capabilities, endpoint, hash;
+- **Observed:** PID, process start time, executable path/hash, listener, health, actual version, last evidence;
+- **Policy:** что разрешено сделать автоматически;
+- **Evidence:** почему Observed state принят как истинный.
+
+Контроллер запускает действие только при расхождении Desired и Observed, валидном lease и пройденных preconditions. Наличие PID или открытого порта само по себе не означает HEALTHY. Проверка должна пройти protocol handshake и semantic operation, например не просто TCP 200, а tools/list, browser_status, provider_status, для AutoCAD — реальный command registration/smoke test.
+
+## 5. Запуск и восстановление в Windows
+
+### 5.1. Кто имеет право перезапускать кого
+
+| Объект | Владелец lifecycle | Механизм |
+|---|---|---|
+| EDRP Supervisor | SCM | Windows Service recovery actions с bounded retry |
+| Bootstrap/recovery utility | SCM failure command или ручной recovery trigger | одноразовый запуск, отдельная проверка подписи |
+| NSS/APS/AGPT workers | Supervisor | operation journal + Job Object |
+| User Agent | Task Scheduler | logon / unlock triggers, пользовательская сессия |
+| AutoCAD | User Agent / пользователь | интерактивный lifecycle, не SCM |
+| Chrome Bridge | Supervisor для host процесса; User Agent/extension для профиля | transport health + browser epoch |
+| AI provider tabs | User Agent + Bridge | exact origin/tab/conversation leases |
+
+Запрещено настраивать SCM и Task Scheduler одновременно на бесконечный restart одного и того же Supervisor executable; или разрешать User Agent и Supervisor одновременно «исправлять» один и тот же worker. На каждый ресурс один владелец и один source of desired state.
+
+### 5.2. SCM failure actions
+
+Для Supervisor применить небольшой restart budget, reset period и backoff, после превышения — остановка с диагностическим событием и переход в recovery required. Операция RUN_COMMAND для Bootstrap допускается только как отдельная ограниченная recovery action и должна иметь собственную блокировку/nonce, чтобы не порождать петлю. Не включать автоперезагрузку ПК для обычных ошибок.
+
+Microsoft указывает, что SCM считает число отказов в пределах reset period; при превышении числа заданных действий повторяется последнее действие. Это необходимо учитывать при проектировании backoff и restart loops. См. [SERVICE_FAILURE_ACTIONS](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actionsa).
+
+### 5.3. Холодный запуск
+
+1. Windows SCM запускает Supervisor.
+2. Supervisor проверяет executable signature/hash, config schema, source commit, DB и last event hash.
+3. Startup recovery обрабатывает незакрытые операции: локальные атомарные операции reconcile по файлам; внешние — UNKNOWN/status query, без retry.
+4. Bootstrap используется только если Supervisor отсутствует/повреждён/не проходит проверку.
+5. Supervisor загружает Desired State, создаёт resource leases и поднимает только системные components.
+6. Port Manager сверяет ожидаемые listener claims; unknown listener не убивается автоматически.
+7. MCP/Bridge проходят semantic readiness gates.
+8. При входе пользователя Task Scheduler запускает User Agent в его session.
+9. User Agent проверяет профиль Chrome, AutoCAD version, открытый чертёж и плагин; GUI-only работы допускаются только после подтверждения соответствующей сессии.
+10. Consilium становится RUNNING только когда Control Room восстановила журнал, Bridge поднял актуальную epoch, а готовые provider tabs прошли независимый preflight.
+
+### 5.4. Повторный вход, logout и AutoCAD
+
+При logout User Agent завершает интерактивные операции и отзывает сессионные leases. System Supervisor продолжает обслуживать сервисные зависимости. При новом login User Agent регистрируется заново и не считает прежние tabId/PID валидными — нужны новые process start time, tab binding, conversation ID и epoch.
+
+## 6. Port Allocation Manager
+
+Порты — часть Desired State, а не свободная переменная, которую можно случайно переприсвоить.
+
+Рекомендуемые поля claim:
+- componentId + component instance ID;
+- configured port/range;
+- address family and bind address;
+- owner process identity (PID + process start time + executable path/hash);
+- protocol/probe;
+- endpoint consumers;
+- scope (Production/Lab);
+- epoch and lease expiry.
+
+Правила:
+1. Фиксированные endpoint (MCP, provider adapter, tunnel) сохраняют известный порт, если зависимые клиенты не умеют читать manifest.
+2. Динамический порт разрешён только если endpoint атомарно публикуется в manifest, а все клиенты умеют его перечитать.
+3. При конфликте сначала идентифицировать listener и его исполняемый файл; не завершать PID только по номеру порта.
+4. Не использовать PID без process start time: PID может быть переиспользован.
+5. Если обнаружен неизвестный владелец — PORT_CONFLICT_BLOCKED, а не kill/port-steal.
+6. Изменение endpoint проходит staged update: подготовить новый listener, health-check, переключить клиентов, затем убрать старый listener с подтверждением.
+
+## 7. Хранение, восстановление и секреты
+
+| Хранилище | Источник истины | Что хранить | Что не хранить |
+|---|---|---|---|
+| Local Git | код + desired config | исходники, manifests, scripts, policies без секретов | пароли, bearer tokens, приватные ключи |
+| SQLite | runtime state | operations, events, leases, outbox, observed state | большие бинарные файлы |
+| Recovery Storage | проверенные restore points | подписанные bundles, known-good versions, manifests, backup DB snapshots | неизвестные архивы без provenance |
+| Evidence Storage | доказательства | logs, test results, screenshots, signed hashes, reports | произвольные prompt dumps/секреты |
+| Secret Store | credentials | DPAPI-protected credentials, certificate/TPM material, explicit recovery envelope | открытый .env, журналы с токенами |
+
+DPAPI привязывает защиту к user/machine context; резервный план не должен предполагать, что один DPAPI blob восстановится после переустановки Windows или смены SID. Recovery policy должна явно включать: кто может восстановить секрет, где хранится recovery key, как проверить его доступность и как отозвать потерянные credentials. Нельзя просто экспортировать открытый токен в Git/backup.
+
+### 7.1. Восстановление файлов
+
+Для локальной NTFS-замены:
+- построить новый файл во временном каталоге на том же volume;
+- проверить schema, signature/hash, ACL и размер;
+- закрыть handles;
+- использовать ReplaceFile с backup исходного файла;
+- повторно прочитать файл и проверить итоговый SHA256;
+- commit operation только после verification.
+
+Windows ReplaceFile может заменить файл с созданием резервной копии, но заменяемый/backup/replacement должны находиться на одном томе. MoveFileEx при переходе между томами может превратиться в copy+delete, то есть это не единый атомарный переход. См. [Moving and Replacing Files](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-and-replacing-files) и [ReplaceFile](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilea).
+
+## 8. Security Kernel и AI agents
+
+AI-агенты получают capability-limited инструменты, а не shell. Их ответ — недоверенные данные. Любой запрос проходит:
+1. schema validation;
+2. identity/role authentication;
+3. capability check;
+4. path/workspace/port/environment policy;
+5. exact preconditions (hash, commit, epoch, resource lease);
+6. approval check, если операция выходит за текущий уровень автономности;
+7. execution через специализированный worker;
+8. evidence collection;
+9. policy post-check и journal commit.
+
+Approval связывается с точным digest операции, path, environment, old/new SHA256, operationId, expiry и одноразовым nonce. Если план меняется хоть на один параметр, старое approval недействительно.
+
+Supply-chain protections:
+- pin SDK and packages; use lock files and hash/signature validation;
+- build from known source commit and controlled environment;
+- verify DLL signature/hash/provenance before loading;
+- README, repository code, issue text, PDF, AI-generated patch, and MCP page content are all untrusted inputs;
+- do not run postinstall scripts from unreviewed packages;
+- keep Production configuration immutable to AI agents;
+- no privilege escalation by passing actor, workspace or environment fields in a prompt.
+
+## 9. Модель автономности
+
+| Уровень | Разрешённые операции | Предусловия |
+|---|---|---|
+| A0 — Observe | status, read-only diagnostics, hashes, version, health | без изменений |
+| A1 — Safe repair | restart ограниченного Lab worker, очистка истёкшего lease, повтор read-only probe | операция явно идемпотентна, restart budget |
+| A2 — Reversible Lab | замена Lab файла/конфига, установка известного пакета, staging | backup + rollback plan + проверка hash |
+| A3 — Verified Lab release | pull/checkout approved commit, build/test, publish Lab artifact | чистое рабочее дерево, точный commit, test gate, rollback rehearsal |
+| A4 — Production | любой cutover, credential/ACL/port change, permanent service config | отдельное owner approval на exact digest + evidence pack |
+
+Повышение автономности происходит не по заявлению модели, а после прохождения независимых fault-injection tests, rollback rehearsal, recovery tests и cross-review.
+
+**Внешние ограничения остаются:** при отсутствии интернета, API, авторизации, лицензии AutoCAD, пользовательского входа или нужного ключа нельзя гарантировать восстановление внешнего ресурса. Full Recovery — цель с уровнями R0–R4, а не безусловная гарантия при любом внешнем отказе.
+
+## 10. R0–R4 recovery contract
+
+- **R0 — Process:** обнаружить падение/зависание, безопасно перезапустить контролируемый worker.
+- **R1 — Service:** восстановить состояние системной службы и её configured dependencies.
+- **R2 — Component:** восстановить известную версию компонента, конфиг, порт и MCP contract из signed manifest.
+- **R3 — Environment:** восстановить рабочий каталог/пакеты/проектный state из локальных проверенных snapshots.
+- **R4 — Rebuild:** развёртывание с нуля из offline cache, подписанных bundles и документированного recovery envelope.
+
+R4 нельзя считать пройденным, пока не проверено восстановление на отдельной тестовой Windows VM без интернета, без GitHub и без прежнего user profile. Восстановление secrets и лицензий отдельно фиксируется как external dependency.
+
+## 11. Десять решений — независимая предварительная оценка
+
+| № | Решение | Предварительный вердикт | Условия / коррекция |
+|---:|---|---|---|
+| 1 | Supervisor + Bootstrap + User Agent | Согласен с коррекцией | Один долгоживущий Supervisor; Bootstrap только recovery mode; User Agent — GUI/session owner |
+| 2 | Windows Service + Job Objects | Согласен | SCM только для Supervisor; Job Objects для краткоживущих worker trees, не вместо SCM |
+| 3 | Git + SQLite + Recovery + Evidence | Согласен | SQLite — единый runtime source; Event Journal внутри транзакции, не отдельный конкурирующий JSONL source |
+| 4 | Full Recovery R0–R4 | Согласен с условиями | Каждый уровень имеет проверяемый acceptance; внешние ресурсы/секреты являются ограничениями |
+| 5 | Intent → Apply → Verify → Commit | Согласен | Внешний side effect с потерянным ACK — UNKNOWN, а не повтор |
+| 6 | Port Allocation Manager | Согласен | Конфликт неизвестного owner блокирует операцию; не steal port |
+| 7 | AI + Security Kernel | Согласен | AI только структурированные планы; Security Kernel/worker policy независимо проверяют |
+| 8 | SCM Recovery + Watchdog | Согласен с коррекцией | Один restart owner на ресурс; restart budgets, circuit breaker, no mutual watchdog loops |
+| 9 | Control Room + Bridge separation | Согласен | Council plane не должен писать ложные SENT/DELIVERED статусы без transport evidence |
+| 10 | Event ledger + artifact receipts | Согласен с коррекцией | Нужны подписанные checkpoints/receipt verification; hash chain не защита от локального администратора |
+
+## 12. Конкретные замечания к текущему Consilium MVP / PR #131
+
+Это source review по текущей ветке PR #131, а не проверка Windows deployment.
+
+### 12.1. Что стоит сохранить
+
+- роли двух co-operators и пяти equal participants;
+- независимые reviews ChatGPT и Claude;
+- отдельный Bridge transport plane и Council plane;
+- append-only журнал и hash chain как полезный audit trail;
+- стабильные request IDs;
+- подготовка artifact manifest и recipient receipts;
+- transport contract prepare/commit/status/stop/revoke/events;
+- UNKNOWN quarantine, per-tab fencing и запрет auto-retry.
+
+### 12.2. Блокирующие корректировки до Lab deployment
+
+1. **Нет доказанного live dispatch path из Control Room.** Контракт и adapter source есть, но UI/MVP ещё не доказывает отправку через реальный Bridge и подтверждённый receipt.
+2. **Delivery state нельзя принимать от произвольного AI actor.** API сообщения должен отделять request/analysis comment от transport outcome. SENT, DELIVERED, REPLIED и VERIFIED допускаются только от trust-bound adapter event с requestId, payload hash, origin/tab/conversation/epoch и проверяемым evidence reference.
+3. **Не задавать Production endpoint по умолчанию.** Provider adapter не должен по умолчанию подключаться к 17381. Требовать явный Lab profile + exact loopback endpoint; Production endpoint должен быть отдельной конфигурацией, недоступной в Lab build.
+4. **Не выводить journal HMAC key только из bearer token.** Смена bearer token не должна лишать возможности проверить исторический журнал; хранить отдельный versioned key, protected by DPAPI/TPM/recovery process.
+5. **Stale lock recovery.** Текущий эксклюзивный lock-file fail-closed безопасен от двух writer, но после process kill может остаться старый lock. Нужна безопасная процедура идентификации владельца по PID + process start time + machine identity; не удалять lock по одному PID и не разрешать второму writer стартовать при ambiguity.
+6. **Event retention/archival.** Жёсткий limit журнала должен сопровождаться snapshot/rotation policy, verification и retention. При переполнении система может fail closed, но должна объяснить, какой evidence export нужен для освобождения места.
+7. **Provider status semantics.** Click evidence, observed UI response и confirmed delivery — разные уровни. Не выставлять DELIVERED/REPLIED без точной атрибуции события и привязки к исходному request.
+
+### 12.3. Release gates
+
+- Windows Lab deployment на exact commit и подписанном package manifest;
+- ChatGPT и Claude независимо аутентифицируются как равные operators;
+- пять участников независимо аутентифицируются с equal participant permissions;
+- one real selected provider transaction: prepare/no-send inspection → explicit owner-approved commit → correlated click receipt → reply attribution;
+- cross-tab, wrong-origin, wrong-conversation и stale-epoch tests;
+- lost ACK после commit переводит в UNKNOWN; повтор не происходит;
+- restart Bridge/extension/browser во время PREPARED/COMMIT и доказательство fencing;
+- rollback and restore rehearsal;
+- no Production port/credential/profile changes;
+- независимый cross-review и owner approval exact commit.
+
+## 13. План внедрения без преждевременного переписывания
+
+**Phase 0 — Stabilize the local control plane**
+- исправить PR #131 source findings;
+- зафиксировать ProviderTransport v1;
+- определить SQLite schema, WAL/FULL, event/outbox transaction;
+- определить actor authentication/roles and signed approvals;
+- добавить exact Lab endpoint policy.
+
+**Phase 1 — One real Lab component**
+- один компонент NSS Engine;
+- Supervisor service prototype;
+- one worker launcher + Job Object;
+- semantic health checks;
+- R0/R1 recovery and fault injection.
+
+**Phase 2 — User Agent**
+- Task Scheduler logon/unlock launch;
+- named-pipe ACL and challenge handshake;
+- Chrome bridge and AutoCAD command readiness checks;
+- session lease invalidation on logout/restart/epoch change.
+
+**Phase 3 — Transactional operations**
+- stable operationId/requestId;
+- SQLite outbox and reconciliation;
+- staged file replacement/backup/rollback;
+- UNKNOWN quarantine and no retry.
+
+**Phase 4 — Restore and autonomy**
+- R2/R3 restore from known-good bundles;
+- offline cache;
+- R4 rebuild in disposable VM;
+- promote autonomy one level at a time.
+
+**Phase 5 — Multi-project expansion**
+- APS Expert and AGPT Plugin as separate resource domains;
+- no shared mutable global workspace;
+- project-specific policy and version manifest;
+- independent cross-review and acceptance.
+
+## 14. Cross-Review — вопросы участникам
+
+Каждый участник должен отвечать независимо по одному и тому же immutable commit SHA и этому документу. До фиксации первого ответа не показывать другим участникам чужие выводы.
+
+- **Claude:** критика модели Supervisor/Bootstrap/User Agent, recovery chain, SCM, User Agent и AutoCAD session.
+- **DeepSeek:** adversarial review: race conditions, stale PID, lock recovery, transaction crash windows, restart loops.
+- **Grok:** практическая реализация Windows Service, Job Objects, Task Scheduler и порт-реестра; конкретные API/классы/тесты.
+- **Gemini:** threat model, prompt injection, supply chain, DPAPI/backup/restore и offline operation.
+- **Qwen:** анализ хранения, SQLite schema, durability, migration/rotation и performance.
+- **Kimi:** состязательная проверка всех архитектурных компромиссов, что избыточно/недоказано, и альтернативная минимальная архитектура.
+- **ChatGPT:** независимый synthesis и проверка источников/контрактов.
+- **Владелец:** утверждает consequential decisions и любые Production/security boundaries.
+
+**Важное состояние dispatch:** этот документ подготавливает Раунд 2, но сам по себе не подтверждает доставку поручений внешним AI-моделям. Фактическая доставка отмечается только после Bridge requestId и подтверждённого receipt.
+
+## 15. Windows acceptance test matrix
+
+| ID | Испытание | Ожидаемый результат |
+|---|---|---|
+| W01 | cold boot, без login | Supervisor starts, service health OK; GUI/AutoCAD не запускается в Session 0 |
+| W02 | user logon | User Agent starts once, binds SID/session |
+| W03 | logout/logon | старые leases invalidated; User Agent starts anew |
+| W04 | kill NSS worker | один controller restarts worker в пределах restart budget |
+| W05 | kill Supervisor | SCM performs bounded restart; no second Supervisor writer |
+| W06 | corrupt Supervisor binary | SCM restart fails closed; Bootstrap restores signed known-good package or RECOVERY_REQUIRED |
+| W07 | stale PID / PID reuse | owner mismatch detected by start time/path; no wrong process kill |
+| W08 | port occupied by unknown process | PORT_CONFLICT_BLOCKED; no kill/port steal |
+| W09 | crash between intent and apply | intent remains, precondition checked before apply |
+| W10 | crash after external click before ACK | UNKNOWN/quarantine; no second click |
+| W11 | SQLite power failure | WAL + FULL recovery yields committed or rolled-back transaction, no ambiguous partial state |
+| W12 | SQLite disk full | operation fails before side effect or becomes UNKNOWN if effect already started; evidence retained |
+| W13 | stale DB lock / crashed writer | single-writer protection; controlled recovery by owner identity |
+| W14 | no internet | local components restore from cache; external provider tasks become WAITING_FOR_EXTERNAL |
+| W15 | broken user credentials | secret restore follows explicit recovery envelope; no secret exported to logs/Git |
+| W16 | tampered package/manifest | signature/hash failure blocks install |
+| W17 | malicious README or prompt injection | no policy/capability changes; tool plan rejected |
+| W18 | restart storms | circuit breaker prevents unlimited respawns |
+| W19 | Bridge epoch changes | all old provider leases/prepare tokens invalidated |
+| W20 | Production endpoint accidentally selected in Lab | policy rejects before network dispatch |
+
+## 16. Итоговый вердикт
+
+**Принять:** single Supervisor; desired-state reconciliation; SQLite WAL/FULL transactional operation store; append-only evidence; User Agent for GUI; Job Objects for bounded workers; Intent/Apply/Verify/Commit; port ownership verification; AI capability boundary; R0–R4 with explicit external blockers.
+
+**Изменить:** Bootstrap is recovery-only, not another always-on supervisor; event history and state share one transactional store; SCM only manages Supervisor; one lifecycle owner per resource; endpoint binding must be Lab-explicit; message delivery state must be evidence-backed.
+
+**Отвергнуть:** arbitrary PowerShell from agents; multiple independent watchdogs; auto-kill unknown listeners; treating TCP reachability as semantic health; automatic retries after ambiguous provider sends; exactly-once promises; Production mutation under Lab lease; claiming R4 without an offline rebuild test.
+
+**NO-GO for production:** until real Windows E2E, rollback, R0–R4 acceptance, independent cross-review and explicit owner approval are complete.
+
+---
+
+## References
+
+- [Kubernetes Controllers — control loop and desired/current state](https://kubernetes.io/docs/concepts/architecture/controller/)
+- [Temporal Workflows — deterministic replay and Event History](https://docs.temporal.io/workflows)
+- [Temporal Durable Execution](https://docs.temporal.io/durable-execution)
+- [Temporal Event History](https://docs.temporal.io/encyclopedia/event-history)
+- [SQLite WAL](https://www.sqlite.org/wal.html)
+- [SQLite PRAGMA synchronous](https://www.sqlite.org/pragma.html#pragma_synchronous)
+- [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+- [AssignProcessToJobObject](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-assignprocesstojobobject)
+- [Windows Session 0 Isolation](https://learn.microsoft.com/en-us/windows/win32/services/service-changes-for-windows-vista)
+- [Windows Service Failure Actions](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_failure_actionsa)
+- [Moving and Replacing Files](https://learn.microsoft.com/en-us/windows/win32/fileio/moving-and-replacing-files)
+- [ReplaceFile](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilea)
+
+
+## 17. Free AI Workbench — product surface, not a second orchestrator
+
+### 17.1. Current verified baseline
+
+PR #111 (Free AI Workbench P0 — offline task ledger + static viewer, head 9ee6e02fbc6a0796985bc3756cfda5e4e3823323) is a **design + offline prototype with a read-only UI projection**, not an installed multi-agent Workbench. It contains a local append-only task ledger and a static JSONL viewer. A synthetic, fully hash-chained 4-event sample is stored as a .txt fixture because the repository source guard intentionally prohibits committed .jsonl artifacts. It still does not implement multi-agent chat, live LLM calls, browser control, Bridge delivery, Git workspace operations, PowerShell Direct, shell execution or project builds.
+
+The README test path was corrected to C:/Engineering/Free-AI-Workbench. This is documentation and CI evidence only; no successful installation or E2E test in the target local folder is proven. The last chat-approved read-only target-folder request returned QUEUE_FULL, and no local fallback was used.
+
+### 17.2. Current prototype findings (updated 2026-11-22)
+
+The current PR #111 branch has addressed several original P0 weaknesses. The latest code and Source checks show:
+
+1. **Unauthenticated actor identity — OPEN.** Actor and role remain event fields supplied by the caller. A record saying actor=claude is not cryptographic proof that Claude wrote it. It remains unacceptable as an authorization authority.
+2. **Stale lock after crash — PARTIALLY MITIGATED, OPEN.** Lock metadata now records PID, host label, acquisition time and a random lock token. A pre-existing lock is deliberately not stolen. PID process-start identity, executable identity, safe stale-lock recovery and owner intervention workflow are still absent; a hard crash can leave a blocking lock.
+3. **Durable append barrier — IMPROVED.** New v2 append writes loop until the full record is written and fsync the journal file before acknowledgement. Directory fsync is best-effort and platform-dependent; power-loss recovery on the target Windows filesystem is not yet demonstrated.
+4. **Torn tail / tamper detection — IMPROVED.** New v2 records include payload fingerprints and a SHA-256 hash chain. Torn final records and hash mismatches fail closed; no automatic truncation/repair occurs. This is unkeyed tamper evidence, not protection against an administrator rewriting the complete journal and recomputing the chain.
+5. **Idempotent request admission — IMPLEMENTED FOR THE OFFLINE LEDGER.** Stable requestId + payload fingerprint make identical retries idempotent; conflicting reuse is rejected. This does not yet propagate through a UI, EDRP API, Bridge adapter or worker because those integrations are not implemented.
+6. **Regression coverage — EXPANDED, STILL INCOMPLETE.** The Node suite is now 17/17 PASS: 11 ledger tests plus 6 viewer/sample tests. Coverage includes same-request idempotency, conflicting reuse, hash-chain verification, tamper rejection, torn-tail fail-closed behavior, lock refusal, legacy-to-v2 continuation, rejected-transition byte stability, no-execution scope, viewer projection, legacy-only unchained labeling, viewer rejection of tamper/torn/invalid histories, a static UI security check and full verification of the committed synthetic sample (restrictive CSP, no external URLs, inline handlers, fetch/XHR, browser storage or innerHTML; textContent rendering). Concurrent-process stress, stale-lock recovery, disk-full/fsync fault injection, backup/restore, actual browser UI E2E and Windows filesystem durability remain untested.
+7. **No deployment evidence — OPEN.** No verified Git remote/worktree/commit in C:/Engineering/Free-AI-Workbench and no local Windows execution result are available.
+
+Latest CI evidence at head 9ee6e02:
+- Source checks run 45046307182 — PASS (includes repository portable tests, 17/17 Workbench ledger+viewer+sample Node tests, and node --check for both UI modules).
+- CCTV CLI input/output guards run 45046307226 — PASS.
+
+These changes make the offline prototype safer, but do not change its scope or trust level. Keep it offline and do not use it to authorize or dispatch operations.
+
+### 17.3. Target relationship to EDRP
+
+Free AI Workbench should be the **human-facing task/workspace UI and multi-agent discussion surface** on top of EDRP, not another control plane:
+
+- Workbench owns task intake, task views, user-facing plans, agent discussion, review presentation, decisions and evidence navigation.
+- EDRP owns authenticated actors, desired/observed state, operations, approvals, provider/worker execution, idempotency, retries, leases, event history and recovery.
+- Chrome Bridge owns exact-origin/tab/conversation transport, fenced prepare/commit, provider receipts and UNKNOWN quarantine.
+- Project workspaces (NSS, APS, AGPT) are separate resource scopes, each with its own repo, branch, build/test policy and evidence.
+- Workbench must never write an authoritative SENT, DELIVERED, REPLIED, VERIFIED or COMMITTED status from its own UI or from an AI response. It may display the state only after reading the EDRP/Bridge evidence record.
+- There must be one authoritative operation ID and one idempotency key across UI, Control Room, Bridge adapter and worker. A UI retry must not create a second provider action.
+
+The PR #111 JSONL ledger may remain as an offline mock/export format, but it must not be a second writable production ledger after EDRP adopts SQLite transactions and a durable outbox. Importing prototype tasks into EDRP should be a one-time, schema-validated migration with source hashes and a receipt; it must not silently create new executions.
+
+### 17.4. Workbench integration gates
+
+1. Confirm the exact target folder, Git remote, branch, commit, clean/dirty status and file hashes using chat-approved read-only PowerShell diagnostics. No install/overwrite before this baseline exists.
+2. Keep the current offline prototype isolated; no auto-dispatch and no shell/PowerShell tools.
+3. Add authenticated actor identities and server-issued role claims; user-supplied actor/role fields are display metadata only.
+4. Move authoritative task/operation state to the EDRP store; expose a typed API for task create/read/update, review submission, approval request, and evidence receipts.
+5. Add requestId, idempotency key and payload hash to every mutation; reject duplicate or conflicting IDs.
+6. Add crash recovery and fault-injection coverage for lock ownership, partial append, full disk, interrupted commit and restore.
+7. Connect AI participants only after Bridge session authorization, per-provider preflight, exact recipient binding and an owner-approved challenge; ChatGPT and Claude remain equal co-operators.
+8. Demonstrate a read-only end-to-end flow first: Workbench task → EDRP journal → review record → evidence view. Add provider dispatch only in a later gate after the STOP/revoke and session challenge E2E tests pass.
+9. Keep Production endpoints, profiles and secrets outside the Workbench Lab build. The Lab build must not silently fall back to Production.
+
+### 17.5. Acceptance states
+
+| State | Meaning | Current evidence |
+|---|---|---|
+| PROTOTYPE_OFFLINE | Local mock ledger only; no provider/OS execution | PR #111 source |
+| TARGET_FOLDER_VERIFIED | Exact local path, remote, branch and clean/dirty status captured | NOT VERIFIED; chat-approved request returned QUEUE_FULL |
+| EDRP_API_CONNECTED | Workbench task UI reads/writes authenticated EDRP records | NOT IMPLEMENTED |
+| READ_ONLY_COUNCIL_E2E | Task and independent reviews flow across UI/EDRP without provider send | NOT RUN |
+| PROVIDER_SESSION_E2E | Explicit owner-approved session challenge, exact provider dispatch and correlated receipt | NOT RUN |
+| LAB_RELEASE | Reproducible package, rollback and Windows Lab evidence | NOT RUN |
+| PRODUCTION_RELEASE | Separate owner-approved cutover with evidence | NO-GO |
+
+**Decision:** do not install or overwrite the target Workbench folder until its actual local state is verified. Do not add a second Supervisor, scheduler or writable task ledger. Keep the P0 prototype as a contained offline experiment and evolve it into an EDRP client only after the EDRP API and identity/authorization contract are stable.
+
+
+## 18. Current approval-channel compatibility — operational blocker
+
+### 18.1. Observed tool boundaries (22.11.2026)
+
+The user has explicitly chosen that consequential-operation approval prompts must be presented in the current ChatGPT conversation. The currently exposed Windows tool surface does not yet support that choice end-to-end:
+
+- PowerShell Direct engineering submit tools describe local approval as mandatory.
+- The chat-approved PowerShell read-only endpoint is limited to a small fixed diagnostic set (git-status, git-diff-check, dotnet/node/PowerShell version). It does not accept arbitrary scripts or write operations. Two attempted read-only Workbench git-status requests returned QUEUE_FULL before a durable request was created.
+- Windows Maintenance v0.4.3 reports mode approval-required and writeMode per-operation-local-approval. Its file/write proposal handlers require local operator approval.
+- A maintenance_execute_chat_approved handler exists, but its contract requires a pending exact file operation and SHA-256 values. The proposal stage is not currently exposed as a chat-approved action.
+- The 17488 R2 service is reachable and identified as node.exe PID 17324, but its inspection reports executionEnabled=false and diagnosticsReadOnly=true. This is the R2 Maintenance channel, not PowerShell Direct 17486 and not the PR102 Bridge Lab port.
+
+This creates a broken approval chain: the host can execute a pending, hash-bound operation after ChatGPT approval, but the user cannot currently create the pending proposal from the chat-only path without crossing a local-approval gate.
+
+### 18.2. Required architecture correction
+
+Make the ChatGPT conversation approval route a complete first-class workflow, not only the final execute step:
+
+1. Agent submits a typed operation proposal: requestId, operation type, environment, exact target path, old SHA-256, new SHA-256, source provenance, effect summary, rollback plan and expiry.
+2. Policy Kernel validates scope and emits a canonical proposal digest.
+3. Host shows the exact proposal in the current ChatGPT conversation; a user approval must bind to that digest and be single-use.
+4. The chat-approved execution handler accepts only the exact pending proposal, matching requestId/path/old hash/new hash and unexpired digest.
+5. Host executes once, then independently verifies the resulting hash and writes a receipt.
+6. If queue is full, approval UI unavailable, or the host result is UNKNOWN, do not fall back to local approval or silently retry. Preserve the request and report the blocker.
+
+The proposal endpoint itself must be non-mutating: it may stage a request record and calculate preconditions, but may not write the target file or start a process. The only mutating step is the exact chat-approved execute operation.
+
+### 18.3. Immediate effect on current work
+
+- Do not deploy PR #132 into the PR102 Lab by using legacy local approval while the owner has requested chat-only approvals.
+- Do not run the existing engineering-submit tools that require local approval.
+- Continue source/CI/documentation review and isolated tests that do not mutate the user's PC.
+- Resume local Lab staging only when the whole proposal → ChatGPT approval → exact execute → evidence receipt flow is available and verified.
+
+This is not merely a UX preference: if a supposedly chat-approved workflow silently requires a second, unavailable local approval, the automation is not autonomous within the agreed operating policy.
+
+
+## 19. Grok R1 adversarial cross-review — disposition and proof obligations
+
+**Evidence provenance:** a substantive reply was recovered from the pre-existing Grok conversation on 2026-11-22 and recorded in PR discussion. It was not a new Bridge dispatch in this session. The findings below are adversarial review inputs, not accepted facts about an implementation. Each item must be checked against the pinned source SHA and runtime evidence.
+
+| Grok finding | Disposition | Required architectural control | Proof / acceptance gate |
+|---|---|---|---|
+| Competing Bootstrap, Supervisor and Watchdog loops | ACCEPT | One lifecycle owner per resource. SCM owns the Supervisor process; Bootstrap is recovery-only. A controller cannot restart a resource owned by another controller. | W04/W05 restart and owner-lease tests; demonstrate only one Supervisor writer after repeated crashes. |
+| Job Objects confused with Windows Service ownership | ACCEPT WITH CLARIFICATION | SCM manages the service process. Job Objects group bounded worker descendants and enforce limits/termination; they do not replace SCM or supervise system services. | W04 and worker-tree termination test; verify process identity and child membership. |
+| GitHub as durable journal for MVP | PARTIAL | GitHub can be a durable review/evidence mirror and collaboration surface. It is not the local runtime's transactional source of truth, an approval authority, or proof that a provider received a message. SQLite state + transactional outbox remain authoritative for local EDRP operations. | Reconcile Git mirror after offline/reconnect; prove operationId, requestId, event sequence and content hash survive replay without duplicate side effects. |
+| Exactly-once delivery through DOM automation | REJECT AS A GUARANTEE | DOM send is an external side effect with an ambiguous click/ACK window. The system may provide idempotent admission and at-most-one commit attempt under a fencing token, but cannot promise exactly-once provider delivery. | Inject lost ACK before/after click; result must become UNKNOWN and quarantine; never retry with a new ID. |
+| Parallel browser operations without per-tab fencing | ACCEPT | Exactly one mutation lane per tab/conversation. Bind to providerId + origin + tabId + conversationId + Bridge epoch. Queue ownership and fencing are transport responsibilities. | Two simultaneous prepare/commit requests against the same tab; one must be serialized or rejected. Rebind/navigation must invalidate the old token. |
+| STOP/REVOKE can race an in-flight DOM action | ACCEPT; STRENGTHEN | Distinguish STOP_REQUESTED, STOP_AFTER_COMMIT, UNKNOWN and STOPPED_CLEAN. STOPPED_CLEAN is permitted only after the in-flight lane is drained or the page action is independently reconciled; a timeout is not a clean stop. Revoke fences future commit attempts but does not undo a click already made. | Stop before prepare, between prepare and commit, during commit, after click before ACK, and on disconnect. Persist the exact terminal/ambiguous state. |
+| Replies can be misattributed to a request | ACCEPT | A changed chat DOM or a completed assistant response alone is not a delivery receipt. Track pre-send baseline, conversation binding, request/task ID, commit evidence and response evidence separately. If provider UI exposes no trustworthy correlation, attribution stays UNVERIFIED. | Existing-chat stale tail, two adjacent requests, navigation, regeneration, interrupted output, and late response tests. |
+| Duplicate coordinators can issue conflicting work | ACCEPT | One authoritative orchestrator writer/leader lease, persisted epoch, idempotent command admission and resource-level locks. ChatGPT and Claude remain equal co-operators but do not create two independent execution queues. | Start two coordinator processes against one store; only one lease-holder may advance a mutable operation. |
+| GitHub comment/commit can be mistaken for provider ACK | ACCEPT | GitHub receipts prove only the GitHub operation. A Bridge provider receipt must name the exact requestId, provider, origin, tab/conversation, payload hash, commit state and evidence timestamp. | Deliberately post a PR comment without Bridge dispatch; no provider state may transition to SENT/DELIVERED/REPLIED. |
+| Agent output can inject tool instructions | ACCEPT | All model replies, repository text, documentation and tool output are untrusted data. They cannot change role, policy, capability grants, approval state, target allowlists or operation parameters without a separately validated owner-authorized action. | Prompt-injection corpus in comments, code and model replies; no implicit tool call or capability change. |
+| Navigation/restart loses correlation | ACCEPT | Increment epoch on Bridge restart/revoke/unbind/rebind and invalidate old prepare/fencing tokens. Re-read current URL and conversation identity before commit. A request surviving process restart must be recovered as UNKNOWN unless durable evidence proves a safe state. | Extension restart, Bridge restart, SPA conversation change, tab close/reopen and stale token tests. |
+| UNKNOWN lacks durable quarantine | ACCEPT | Persist UNKNOWN as a terminal hold state with operation identity, payload hash, last known stage, timeout/ACK evidence and a read-only reconciliation path. A human or reconciler may resolve it only with new evidence; never auto-resubmit. | Crash after click with lost ACK; after restart the same requestId returns UNKNOWN/quarantined and a second commit is refused. |
+
+**Architecture outcome:** the review does not justify a new always-on Hub process. It strengthens the existing separation: EDRP/Consilium owns task and decision state; one Supervisor owns local execution state; Bridge owns provider transport and per-tab fencing; Workbench is only the user-facing client/projection. ChatGPT and Claude remain equal co-operators, while the owner retains final authority over consequential changes.
+
+## 20. Chat-only approval protocol for PowerShell Direct and Windows Maintenance
+
+This protocol closes the specific gap recorded in §18. It is a target contract, **not a claim that the current Windows services already implement it**.
+
+### 20.1. Typed proposal envelope
+
+A chat-originated proposal must be registered without changing the target resource. The canonical proposal contains:
+
+- requestId and operationId (stable, unique, idempotent);
+- authenticated proposerId and role from the trusted host, never from a caller-supplied actor string;
+- operationType from a closed allowlist (for example replace-file, restore-file, git-fast-forward, diagnostic-read);
+- environmentId (LAB or an exact named workspace), resource scope and canonical target path;
+- allowedRoot, current file/repository preconditions and oldSha256;
+- sourceArtifact identity, provenance, newSha256 and immutable content/source reference where relevant;
+- human-readable effect summary, expected downtime/impact, rollback plan and backup identity;
+- expiry, risk class, and a canonical proposalDigest covering every field that affects the effect.
+
+Registration may write only a pending proposal record in the approval service. It must not write the target file, launch a process, edit Git, click a browser button, change a port, or alter an allowlist.
+
+### 20.2. Owner approval and exact execution
+
+1. The proposal registrar validates schema, allowlist, exact environment, path containment, current hash and source hash. It returns a pending proposal plus a canonical digest.
+2. The host presents the exact digest, target, old/new hashes, effect and rollback summary in the current ChatGPT conversation.
+3. The owner approves or rejects that exact proposal in the ChatGPT host UI. Natural-language agreement without a matching pending digest must not authorize execution.
+4. The execute handler accepts only the exact requestId + operationId + proposalDigest + target + oldSha256 + newSha256, while unexpired and unused.
+5. The executor applies once, reads back the target and independently verifies the resulting hash. It records a receipt bound to the proposal digest and execution identity.
+6. A mismatch, timeout, disconnect, queue overflow or ambiguous write becomes FAILED/UNKNOWN as appropriate and blocks a second execution until read-only reconciliation.
+
+State model:
+
+PROPOSED → VALIDATED → AWAITING_CHAT_APPROVAL → APPROVED → APPLYING → VERIFIED
+
+Terminal or hold states: REJECTED, EXPIRED, FAILED, UNKNOWN, BLOCKED. The same requestId with the same digest is a read-only idempotent lookup; the same requestId with a different digest is rejected as IDEMPOTENCY_CONFLICT.
+
+### 20.3. Required tool split
+
+- operation_propose_chat: non-mutating registration of the exact typed proposal; permitted through the ChatGPT host approval channel only.
+- operation_status_chat: read-only lookup by exact requestId.
+- operation_execute_chat_approved: mutating action that requires the host's explicit approval and exact digest/hash match; one use only.
+- operation_reconcile_chat: read-only verification of target state, receipt and rollback state.
+- operation_cancel_chat: revokes an unused pending proposal; it cannot claim to undo an in-flight operation.
+
+The current Windows Maintenance maintenance_execute_chat_approved is only the last execution stage and still depends on a pending operation created through the local-approval proposal path. The required correction is to expose a non-mutating chat proposal-registration route or change the proposal handlers so the ChatGPT host can approve their exact proposal. Do not relax the hash preconditions or silently accept local approval as a fallback.
+
+PowerShell Direct's current ChatGPT-approved read-only diagnostic surface remains pinned to its fixed task enum. Do not turn it into a free-form PowerShell endpoint. Any future mutation handler must use the same proposal envelope and exact chat approval contract.
+
+### 20.4. Acceptance matrix
+
+| ID | Test | Required outcome |
+|---|---|---|
+| A01 | Register valid proposal from ChatGPT | Pending record only; target hash unchanged |
+| A02 | Submit caller-forged actor/role | Rejected; trusted host identity is authoritative |
+| A03 | Path escapes allowedRoot or environment is not LAB | Rejected before approval |
+| A04 | Old hash changed after proposal | Execute blocked; fresh proposal required |
+| A05 | Owner approves different/edited digest | Rejected; no write |
+| A06 | Owner rejects or proposal expires | No write; proposal terminal |
+| A07 | Same requestId + same digest | Return same proposal/result; no second execution |
+| A08 | Same requestId + different digest | IDEMPOTENCY_CONFLICT |
+| A09 | Chat queue full / host approval unavailable | Preserve pending or return BLOCKED; never local-approval fallback |
+| A10 | Disconnect during apply | UNKNOWN until read-only reconcile; no auto-retry |
+| A11 | Successful file replacement | Read-back SHA equals newSha256; receipt references exact digest |
+| A12 | Rollback | Separate proposal and explicit approval; verify restored SHA |
+
+**Current operational ruling remains unchanged:** no local approvals, no direct arbitrary PowerShell, no Windows Maintenance proposal mutation and no Lab deployment until the full chat-only proposal → owner approval → exact execution → verification receipt chain is implemented and tested. Production, autostart and working DWGs remain out of scope.
+
+
+### 20.5. Live status reconciliation note — 2026-11-22
+
+A read-only WM43 v0.4.3 inspection returned two different levels of status:
+
+- maintenance_status: service mode approval-required, executionEnabled=true, writeMode=per-operation-local-approval, TCP reachable on R2 port 17488.
+- maintenance_inspect for R2: port 17488 reachable, owner PID 17324 (node.exe, process creation time 2026-11-19 00:09:30), but executionEnabled=false and diagnosticsReadOnly=true.
+
+These values must not be collapsed into a single “execution enabled” claim. The first result may describe service-level policy/configuration; the second describes the inspected R2 runtime. Until the service exposes a single timestamped effective-capability result and explains the difference, treat R2 execution as DISABLED and diagnostics as READ-ONLY. TCP reachability and a process identity do not prove mutation readiness.
+
+PowerShell Direct observations are also kept separate:
+- The fixed chat-approved read-only task for port 17486 previously completed with exit code 0. A listener PID 14716 (node.exe, parent PID 3616) was captured, but a later process-inspect returned NOT_FOUND; current liveness is therefore not established by that earlier snapshot.
+- The user's later report identifies request 18086 as DENIED / APPROVAL_EXPIRED. Treat it as denied, not pending, and do not retry it.
+- Earlier chat-approved Workbench target diagnostics returned QUEUE_FULL before a durable request was created; no write or install followed.
+
+**Additional fail-closed gate:** before any future approval proposal is shown, the status API must return a reconciled tuple of service instance, process identity, effective execution mode, operation allowlist, chat-approval capability, current epoch and timestamp. A contradiction or missing field produces BLOCKED, not an optimistic interpretation.
+
+
+### 20.6. PR102 Lab live preflight snapshot — 2026-11-22
+
+A fresh read-only check of the current Lab adapter surface returned:
+
+- browser_status: connected=true, queued=0.
+- agent_list: live tabs for Claude, Gemini and DeepSeek are visible; stale bound aliases exist for Grok/restore tabs. A visible tab is not proof that its adapter is ready.
+- control_status: tool invocation returned UNKNOWN_TOOL, so effective session/grant state could not be read through this call.
+- agent_selftest(gemini): composer selector matched 1 visible element; send selector matched 0; stop selector matched 0; reply selector matched 0. The page was fully loaded.
+- agent_selftest(claude) and agent_selftest(deepseek) returned UNKNOWN_TOOL in this check.
+
+**Operational effect:** Gemini is NOT_READY for dispatch despite its visible composer. Do not include it in a provider session until a disposable-browser test or an updated adapter establishes one unambiguous send control and a trustworthy response selector on the current UI. Claude and DeepSeek remain unverified by this fresh selftest because their calls were unavailable. No provider was sent a message and no adapter settings were changed.
+
+The PR132 disposable-Chrome CI pass verifies the pinned adapter against its test fixture/browser environment; it does not override this live-profile preflight result. Runtime and CI evidence are separate gates.
+
+
+### 20.7. PR102 Lab provider adapter self-test update — 2026-11-22
+
+A further read-only self-test produced these results:
+
+| Provider | Composer | Send selector | Reply selector | Stop selector | Interpretation |
+|---|---:|---:|---:|---:|---|
+| Claude | 1 visible | 1 visible (disabled while composer is empty) | 19 matches | 0 | DOM anchors exist; reply matches may include previous messages; not yet a send test |
+| DeepSeek | 1 visible | 1 visible/enabled | 0 | 0 | Composer and send candidate exist; no verified reply/stop selector |
+| Gemini | unavailable on this call (UNKNOWN_TOOL) | — | — | — | retain previous NOT_READY result (composer 1, send 0, reply 0) |
+| Grok | not bound to live agent slot | — | — | — | visible chat tab only, no dispatch readiness claim |
+
+The effective Control/session status call remains UNKNOWN_TOOL. The exposed agent_send contract still states that Claude/Gemini/DeepSeek require explicit local approval for 1/3/4 hours; this is incompatible with the owner's chat-only approval requirement. The new PR132 session authorization code and CI are not proven deployed in this Lab tool runtime.
+
+**Result:** no provider may be dispatched yet. Claude is the best candidate for the first controlled Lab test after the chat-approval path is surfaced. DeepSeek requires reply/stop selector calibration. Gemini requires send/reply selector repair. Grok needs an approved binding and adapter self-test before any consideration. Do not use a local approval fallback. No provider messages were sent in this check.
+
+
+### 20.8. PowerShell Direct chat-approved queue recheck — 2026-11-22
+
+A single new fixed, read-only git-status request was submitted for C:\Engineering\Free-AI-Workbench through the ChatGPT-host-approved endpoint:
+
+- requestId: workbench_readonly_status_chat_approval_20261122_1641
+- task: git-status
+- response: QUEUE_FULL
+
+The queue rejected the request before a durable job was created. No status result, file read or local mutation is claimed. A follow-up lookup is not treated as a completed request. Stop after this queue-full result; do not retry with a new ID and do not fall back to local approval or engineering-submit.
+
+This confirms the current blocker is not only write authorization: even the narrow ChatGPT-approved read-only channel is capacity-blocked for the Workbench baseline. TARGET_FOLDER_VERIFIED therefore remains NOT VERIFIED. The required recovery is a bounded/isolated read-only queue or an explicit capacity/dispatch receipt that prevents ambiguous no-job submissions.
+
+
+### 20.9. Existing-agent read-only peek — 2026-11-22
+
+A read-only agent_peek check did not reveal a completed task response:
+
+- DeepSeek: count=0, generating=false, composerFound=true, chars=0, empty tail; bound URL is the generic root https://chat.deepseek.com/, not an identified conversation. This is not a usable task session.
+- Claude: agent_peek returned UNKNOWN_TOOL; completion state cannot be established.
+- Gemini: agent_peek returned UNKNOWN_TOOL; completion state cannot be established.
+- Grok: its stored bound tab ID no longer exists (No tab with id 1867452532), although a separate Grok conversation tab is visible in agent_list. Rebinding it is a separate controlled action, not performed here.
+
+This confirms the current Lab cannot be described as a functioning multi-agent council. A visible tab, composer selector, empty root page or stale bound ID is not a task assignment, delivery receipt or completed review. No new provider task was sent and no reply was attributed to the current work.
+
+
+## 21. AGPT GasCalc validation — isolated M1a result (2026-11-22)
+
+A separate Draft PR #2 has been opened in AGPT_Plugin: https://github.com/rinatikd/AGPT_Plugin/pull/2.
+
+It hardens the standalone AGPT.Calc.GasCalc input boundary:
+- Reject null/missing room identity, non-finite or non-positive volume/height, invalid opening area/delta volume, temperature at/below absolute zero, invalid opening/fire enums, negative pipe volume, and non-positive/non-finite residual absolute pressure.
+- Reject altitude outside the coded K3 table and invalid K3 mode.
+- Validate gas kind, reference density, normative concentration, injection time and density caps.
+- Validate module catalogue entries (unique names, positive finite fill, non-negative finite residual) and engineer-selected module names.
+- Public K3/Pi/K4/residual-density helpers no longer silently accept invalid enum/range values.
+
+**Evidence:** AGPT GasCalc input validation workflow run 45046706704 completed PASS on .NET SDK 8.0.428. All seven normative golden cases passed within the existing tolerances; the class-A archive case continued to return two engineer-choice candidates; 17 input-validation regression checks passed, including a valid-room finite-Mg result.
+
+**Strict scope boundary:**
+- This validates only the standalone GasCalc source linked by tests/GasCalc.Tests.
+- It does not add GasCalc to main AGPT.csproj, replace either legacy command (AGPT_CALC, AGPT_CALC_DRAW), remove the legacy demo-room fallback, enable the palette calculation buttons or prove AutoCAD 2026/ObjectARX compatibility.
+- The current default Proffex catalogue still has zero placeholder Mб residuals and requires manufacturer documentation; catalogue provenance and actual residual data remain open.
+- No AutoCAD/DWG E2E was performed.
+
+M1 must therefore be tracked as three distinct gates: (a) standalone calculation/input correctness (PR #2), (b) one unified calculation use case integrated into AGPT.dll with explicit XData mapping and no legacy/demo fallback, and (c) verified manufacturer catalogue plus AutoCAD 2026 disposable-DWG E2E. Passing (a) does not imply (b) or (c).
+
+
+### 20.10. Grok binding preflight — runtime site approval mismatch (2026-11-22)
+
+A controlled attempt was made to repair the stale Grok agent binding without sending a message:
+- visible Grok transformer-zone tab: tabId 1864257573, origin https://grok.com;
+- existing bound alias "grok" pointed to a missing tab (1867452532);
+- agent_bind(name="grok", tabId=1864257573) returned AGENT_SITE_NOT_APPROVED.
+
+The binding was not changed. This indicates that the active Lab site-approval/registration scope does not currently permit the Grok origin for agent control, even though Grok is included in the intended PR132 source-level CONTROL_ORIGINS model. The active Lab tool descriptions still restrict control to Claude, Gemini and DeepSeek. Treat this as a runtime-version/configuration mismatch to resolve during the isolated deployment gate, not as a reason to expand permissions ad hoc.
+
+No Grok message was sent, no site grant was changed, and no local approval was requested or used.
+
+---
+
+## 22. R4 — единая программа доведения до релиза
+
+**Назначение:** объединить параллельные разработки в один проверяемый релизный контур с общей последовательностью зависимостей, едиными доказательствами и приёмкой.  
+**Терминология:** далее **R4-REL** означает программу «R4 — доведение до релиза» из отдельного рабочего потока. Это **не** уровень восстановления **EDRP R4 — Rebuild** из §10. Эти две маркировки не взаимозаменяемы.  
+**Дата среза:** 22.11.2026.  
+**Статус:** план интеграции и release gates; не означает развёртывание, приёмку Windows или Production approval.
+
+### 22.1. Единая цель и границы
+
+Цель R4-REL — получить один согласованный, воспроизводимый Lab-релиз платформы инженерной автоматизации, в котором:
+
+1. Consilium отвечает за постановку, распределение и независимую проверку задач.
+2. Chrome Bridge отвечает только за транспорт к AI-провайдерам и за подтверждённые transport receipts.
+3. EDRP — единственный системный оркестратор Windows, владелец Desired/Observed reconciliation, operation journal, leases и recovery.
+4. Workbench — пользовательский Control Room / viewer и безопасная проекция состояния; он не создаёт второй источник истины и не заменяет EDRP.
+5. PowerShell Direct / WM43 — специализированные capability-limited шлюзы для диагностики и строго согласованных операций; они не обходят EDRP policy или owner approval.
+6. NSS Engine, APS Expert и AGPT Plugin остаются отдельными инженерными продуктами и workers/adapters, подключаемыми к платформе по версионированным контрактам.
+
+**Не объединять всё в один бинарный проект.** Объединяются release manifest, ownership, contracts, acceptance matrix, evidence chain и порядок выпуска. Код и сборки модулей остаются раздельными.
+
+### 22.2. Общая модель состояния на 22.11.2026
+
+| Направление | Артефакт / текущий результат | Подтверждено | Блокирует следующий уровень |
+|---|---|---|---|
+| Consilium / Control Room | NSS Engine PR #131, head 7e4c8f7f0c87578ba9c63ca6a52dbde141318657 | Source checks #45052131433 и RC1 Control Gates #45052131455 — SUCCESS; Windows Lab package: 20 files, 41/41 tests, loopback API/role smoke PASS; manifest 692a20e2…; ZIP e7139bee… | Visual RC #45052131480 — SUCCESS; пакет не установлен в пользовательский Lab; нет реального раунда, provider receipt или доставки сообщений |
+| Chrome Bridge | NSS Engine PR #132, head 8cfb86d4e21aae9e77406041435b35f0a3561e92 | Source #45050999238, RC1 #45050999279, Visual RC #45050999227 — SUCCESS; fresh Lab control_status/browser_tabs read-only probes recorded | Runtime: connected=true, globalEnabled=false, approvalPending=0, origins=[]; browser_status/agent_list UNKNOWN_TOOL; DeepSeek has composer but no response; Claude/Gemini peek unavailable; Grok stored binding stale; no provider send |
+| EDRP | NSS Engine PR #134, head 6b2d6c4250afeafc61fcff97cafc8b77304e89fd | Документ обновлён §22.12 exact AGPT M1a value-hash evidence; Source checks #45054319733 — IN_PROGRESS at last check | Только архитектурный документ; нет Supervisor/SQLite runtime, Windows E2E, crash/recovery или offline rebuild proof |
+| Free AI Workbench | NSS Engine PR #111, head 9ee6e02fbc6a0796985bc3756cfda5e4e3823323 | Source #45046307182 и CCTV guards #45046307226 — SUCCESS; 17/17 Node tests | Не установлен в целевую папку; Windows/browser E2E и authenticated actor identity отсутствуют; журнал не является EDRP source of truth |
+| PowerShell Direct / WM43 | §20 данного документа и read-only runtime observations | Были отдельные read-only probes; точные неуспехи сохранены ниже | QUEUE_FULL до durable job, APPROVAL_EXPIRED для request 18086, WM43 service/runtime execution mismatch; нет безопасного chat-only proposal-to-execution path |
+| AGPT Palette | AGPT_Plugin PR #1, head 3a74df36ac418d1d914d77a1a09d081c8245126c | Source/XData provenance addendum committed; prior portable GasCalc workflow #45044651876 — SUCCESS (standalone only) | Новая doc-only head run не подтверждена; нет AutoCAD 2026/ObjectARX build и NETLOAD smoke; GasCalc не включён в DLL; расчётные действия отключены |
+| AGPT GasCalc / M1a | AGPT_Plugin PR #2 head aa2cd4a0293c1f3a8f1bd43f8625b50df4eb30e1 + PR #4 head 8fca47ee9297d29c0e53a5100a491b861feed896 | PR #2 numeric/golden CI PASS; PR #4 provenance push #45054154863, provenance PR #45054159515 and GasCalc PR #45054159527 — all SUCCESS; 11 provenance cases, numeric validation and golden cases PASS | M1a service/tests only; no XData adapter, no main AGPT.dll integration, no removal of legacy/demo paths, no AutoCAD E2E; manufacturer catalog evidence still required |
+
+Все перечисленные PR на дату среза остаются Draft/open. Успешный CI относится только к указанному commit и workflow; он не заменяет target-PC E2E, deployment или owner acceptance.
+
+### 22.3. Зависимости и порядок выпуска
+
+R4-REL release manifest + acceptance matrix
+→ EDRP policy / contracts
+→ Consilium PR #131
+→ Chrome Bridge PR #132
+→ Workbench projection
+→ PowerShell / WM43 safe gateway
+→ NSS Engine and AGPT engineering integration
+→ APS Expert adoption
+→ Integrated Lab + Recovery
+→ Release Candidate / R4-REL.
+
+Зависимости обязательны, но не требуют смешивать исходники:
+- PR #132 зависит от согласованного authority/transport contract PR #131.
+- Workbench может показывать задачи раньше, но не должен выдавать SENT/DELIVERED/VERIFIED без Bridge receipt и не становится authoritative event store.
+- PowerShell/WM43 не подключается к автоматическому исполнению до сверки effective capability state, chat-approval receipt и exact operation digest.
+- AGPT M1 зависит от подтверждённого GasCalc API/input contract и manufacturer-backed catalogue; palette UI подключается только после unified calculation path.
+- APS Expert подключается после стабилизации общих EDRP/Bridge/Workbench contracts и отдельной продуктовой приёмки.
+- Production cutover — отдельный change request и отдельное owner approval; R4-REL Lab acceptance его не подразумевает.
+
+### 22.4. Release gates (обязательная последовательность)
+
+| Gate | Что должно быть сделано | Приёмочное доказательство | Статус на 22.11 |
+|---|---|---|---|
+| G0 — Baseline & governance | Единый release manifest: repo, PR, branch, exact SHA, owner, dependency, rollback, evidence IDs; два co-operators ChatGPT/Claude; owner остаётся финальным authority | Зафиксированный manifest; нет неявных ролей или неподтверждённых статусов | PARTIAL — роли описаны, общий manifest ещё не реализован |
+| G1 — Consilium source readiness | Exact-head CI, role/permission regression, immutable round/task journal, proposal-vs-launch separation | Exact-head CI + API/UI role tests; независимая проверка журнала | PARTIAL — PR #131 exact-head CI PASS; Windows Lab E2E отсутствует |
+| G2 — Provider transport readiness | Развернуть PR #132 строго в изолированном Lab; обнаружить session_request/authorize/status/revoke и provider prepare/commit/status/stop/revoke/events; exact provider/tab/conversation/epoch binding | tools/list snapshot, site grants, provider readiness, one controlled Claude send only after explicit chat approval, correlated Bridge receipt, revoke receipt | BLOCKED — runtime UNKNOWN_TOOL/local approval conflict; никаких сообщений не отправлено |
+| G3 — Windows approval/control readiness | Единый chat-only proposal API; status tuple включает service instance, process identity, effective mode, allowlist, epoch, timestamp; queue capacity/dispatch receipt; WM43 service/runtime state reconciliation | Один exact-digest Lab operation: proposal → owner approval in ChatGPT → execute once → independent hash/evidence verify; UNKNOWN never auto-retried | BLOCKED — QUEUE_FULL/APPROVAL_EXPIRED и execution-mode mismatch |
+| G4 — EDRP durable runtime | Реализовать single Supervisor, User Agent, SQLite WAL/FULL, transactional outbox, operation states, leases, resource ownership, recovery hooks | Migration/replay, duplicate request, crash between Intent/Apply/Verify/Commit, disk-full, stale lease, process restart tests | NOT STARTED as runtime; architecture only |
+| G5 — Workbench integration | Подключить viewer/control UI как projection к authenticated EDRP read API; retain offline import as forensic mode; actor identity server-authenticated | Browser E2E, read-only API policy, actor/role auth, tamper/torn-tail/stale-lock tests, correct state projection | PARTIAL — standalone ledger/viewer tests 17/17; no install or Windows E2E |
+| G6 — Engineering product integration | NSS Engine smoke path; AGPT unified GasCalc service in main DLL; validated XData mapping, FireKind/OpeningPosition/altitude/pipe volume/residual pressure; remove duplicate legacy and demo fallbacks; verify manufacturer catalogue | AutoCAD 2026/.NET 8 build, NETLOAD on disposable DWG, golden inputs, invalid inputs fail-closed, deterministic output and no unapproved DWG writes | PARTIAL — standalone GasCalc/palette source CI only; no DLL integration or AutoCAD E2E |
+| G7 — Integrated Lab acceptance | End-to-end task flow through Consilium → Bridge or local worker → EDRP → product adapter → evidence → Workbench projection; inject failures at each handoff | Correlated taskId/operationId/requestId, exact SHA, before/after hashes, transport/execution receipts, UNKNOWN quarantine, STOP/REVOKE test | NOT STARTED |
+| G8 — Recovery and release candidate | Run R0, R1, R2, R3 and EDRP R4 Rebuild tests on isolated Windows VM; verify rollback and restore envelope; create immutable RC manifest | Offline rebuild on separate VM without internet/GitHub/old user profile; external secret/license limitations recorded; independent review | NOT STARTED |
+| G9 — Owner acceptance | Review complete evidence pack and approve exact Lab release digest; Production remains a separate decision | Owner acceptance record tied to exact commit/artifact hashes and explicit environment | NOT STARTED |
+
+Gate statuses use only: PASS, PARTIAL, BLOCKED, NOT STARTED. A green source workflow cannot promote a runtime gate to PASS.
+
+### 22.5. Cross-project invariants
+
+1. **One authority for operation state:** EDRP SQLite is the future runtime source of truth. Workbench JSONL remains standalone/offline forensic journal until migrated through an explicit import protocol; never dual-write as two authoritative ledgers.
+2. **One lifecycle owner per resource:** SCM → Supervisor; Task Scheduler → User Agent; Supervisor → workers; User Agent/Bridge → provider tabs. No mutual watchdogs or competing restart loops.
+3. **One approval authority:** consequential Windows/Production/credential/permission/merge/release actions require exact owner approval. AI operator status does not grant owner authority.
+4. **Transport truth is evidence-backed:** REQUESTED, PREPARED, COMMITTED, SENT, DELIVERED, REPLIED, VERIFIED are separate states. No UI or agent-authored text may manufacture a transport receipt.
+5. **UNKNOWN is terminal for blind retry:** reconcile/query evidence first; never resend a message, repeat a non-idempotent operation or infer success after timeout.
+6. **Lab and Production are separate security domains:** Lab profile, origins, ports, credentials, services and working files cannot silently inherit Production authority.
+7. **One product calculation service:** AGPT UI cannot contain formulas or duplicate legacy calculation paths. Input provenance and missing engineering values must remain explicit.
+8. **No working DWG mutation in a smoke test:** use a disposable drawing and NETLOAD-only test unless a separate exact-scope approval is recorded.
+9. **Every release artifact is traceable:** repository, branch, commit, build environment, dependency lock, test run IDs, artifact hashes, operator and approval receipt are captured.
+10. **No false completion:** visible tab ≠ active agent; CI pass ≠ deployment; TCP reachable ≠ healthy; queued request ≠ executed operation; local approval ≠ chat owner approval.
+
+### 22.6. Consolidated blocker register and next actions
+
+| ID | Blocker | Next bounded action | Exit condition |
+|---|---|---|---|
+| R4-B01 | Live Consilium runtime is not established; source package is now validated | Deploy the 20-file package to a separate isolated Lab profile after explicit exact-scope approval; provision synthetic Lab identities only; no provider sends | Live Lab tools/health, authenticated owner + ChatGPT + Claude, one non-external proposed/launched round, and evidence receipt; provider dispatch stays disabled until Bridge G2 |
+| R4-B02 | Bridge session tools absent in active Lab; local-approval contract conflict | Reconcile deployed extension/host versions against PR #132, site allowlist and capabilities; do not widen origins ad hoc | Chat-approved session tools visible; exact Claude preflight and correlated receipt; revoke proven |
+| R4-B03 | Grok binding stale and site approval denied | Fix versioned Lab site registration only after origin policy review | Exact Grok origin approved in Lab, new tab binding and adapter selftest; no provider send before approved |
+| R4-B04 | Workbench target install/browser E2E unknown | Recover bounded read-only status path; do not retry after QUEUE_FULL until queue receipt/capacity is fixed | Target-folder baseline and browser E2E evidence; authenticated actor identity before multi-agent integration |
+| R4-B05 | PowerShell Direct approval queue and WM43 state inconsistent | Read-only reconcile effective service/runtime capability tuple and queue lifecycle | Contradiction removed; chat-only proposal/approval path tested with exact digest |
+| R4-B06 | EDRP is design-only | Implement minimal Supervisor/SQLite schema/outbox after contract freeze; no general shell | Crash/fault-injection and rollback tests on disposable Lab VM |
+| R4-B07 | AGPT GasCalc not integrated into DLL | Deliver M1 mapping contract and one unified calculation path; remove demo fallback/legacy duplicates | AutoCAD 2026 build + NETLOAD + golden/negative tests on disposable DWG |
+| R4-B08 | Manufacturer catalogue has placeholder residual values | Obtain manufacturer-backed data and source/provenance; reject unknown values | Catalogue reviewed and all Mб values traceable to approved datasheet |
+| R4-B09 | Integrated recovery not proven | Prepare isolated offline Windows VM and immutable recovery bundle | R0–R4 acceptance evidence, including cold R4 rebuild |
+| R4-B10 | Shared-chat R4 source criteria not yet reconciled into this document | Import exact outstanding acceptance criteria when accessible; keep this plan as current integration baseline, not a claim that the linked chat was fully read | Crosswalk signed off; no duplicate or conflicting release gates |
+
+### 22.7. Immediate execution order
+
+1. Закрепить release manifest и gate matrix на EDRP branch.
+2. Поддерживать exact-head CI и source/contract review PR #131–#134 и PR #111.
+3. Выполнить read-only Lab inventory и capability/version reconciliation.
+4. Восстановить недостающую chat-approved Bridge session surface в Lab, не отправляя сообщения.
+5. Разрешить PowerShell/WM43 effective-state и queue contract на read-only пути.
+6. Завершить Workbench identity/read-only projection tests.
+7. Продолжить AGPT M1 только с явным input mapping и provenance каталога.
+8. Выполнить integrated disposable Lab E2E и recovery fault injection.
+9. Подготовить RC evidence pack и запросить owner approval на точный digest.
+
+Не сливать Draft PR, не переводить его в Ready, не устанавливать в Production, не менять сервисы/порты/credentials/allowlists и не изменять рабочие DWG в результате этого плана. Для каждого такого действия требуется отдельное явное согласование и проверяемое доказательство.
+
+### 22.8. Свежая проверка фактического Lab tool registry — 22.11.2026
+
+Проведена повторная read-only проверка работающего контура PR102 Lab и сопоставление с исходниками PR #132.
+
+**Наблюдения активного runtime:**
+- Доступный Lab namespace содержит browser_status, control_status, browser_tabs, agent_list, agent_bind, agent_send, agent_wait, agent_ask, agent_peek и agent_selftest.
+- В доступном runtime tool registry отсутствуют session_request, session_authorize, session_status, session_revoke и provider_prepare/commit/status/stop/revoke/events.
+- Вызов control_status возвращает UNKNOWN_TOOL.
+- agent_list подтверждает живые tab bindings: Claude 1864257582, Gemini 1864257597, DeepSeek 1864257552. Grok binding остаётся на несуществующем tabId 1867452532, несмотря на наличие отдельных видимых Grok вкладок.
+- Claude selftest: composer=1, send=1 visible but disabled, reply selector=19 matches, stop=0. Наличие 19 reply nodes не доказывает новый ответ.
+- Gemini selftest: composer=1, send=0, reply=0, stop=0.
+- DeepSeek selftest и Grok peek возвращают UNKNOWN_TOOL.
+- Lab browser_status также возвращает UNKNOWN_TOOL. Production Bridge status — NOT_FOUND: tunnel-client не наблюдался 300 секунд.
+
+**Сопоставление с исходниками PR #132:**
+- server/tools.mjs содержит объявления session_request, session_authorize, session_revoke, session_status и provider transaction tools.
+- server/bridge.mjs экспортирует этот registry в tools/list и маршрутизирует hub tools/call через hub handlers.
+- Поэтому наблюдаемое расхождение локализовано между source branch PR #132 и фактически зарегистрированным MCP runtime. Текущий Lab registry не доказывает, что PR #132 code deployed; вероятнее всего, активен прежний host/runtime или другой endpoint/build. Точную причину можно подтвердить только process/build/endpoint snapshot на Lab host.
+
+**Решение:** G2 остаётся BLOCKED. Следующий допустимый шаг — read-only подтверждение endpoint, process identity, build commit и extension ID/version, затем отдельное изолированное staging-развёртывание PR #132 строго по deployment/CHAT_APPROVAL_LAB_CUTOVER.md. После staging сначала проверить полный tools/list и browser_status; не выполнять session_authorize и не отправлять сообщений до того, как точная область будет показана владельцу и явно одобрена в ChatGPT.
+
+Ни один provider message не отправлен; binding/site grants, Production, локальная конфигурация и рабочие DWG не менялись.
+
+### 22.9. Chrome Bridge server-side Lab package — source-side mitigation in progress
+
+PR #132 now contains a separate disposable server package builder:
+- deployment/stage-server-lab.ps1 stages the server source separately from the extension.
+- It pins the exact checkout SHA, refuses dirty/untracked critical inputs, excludes config/credentials/state, checks every server .mjs file, verifies the required session/provider tool names, and runs the existing isolated cutover-health probe with synthetic tokens on an ephemeral loopback port.
+- It writes per-file SHA-256 evidence and a server-release manifest.
+- The Chrome Bridge RC1 Control Gates workflow was extended to parse and execute this builder on Windows.
+- deployment/CHAT_APPROVAL_LAB_CUTOVER.md now distinguishes the server package from extension-only staging and from the separately interactive controlled-cutover routine.
+
+**Current PR #132 head:** 8cfb86d4e21aae9e77406041435b35f0a3561e92.
+- Source checks #45050999238 — SUCCESS.
+- Chrome Bridge RC1 Control Gates #45050999279 — SUCCESS.
+- Windows staging step verified 14 server source files, 29 MCP tools and full schemas through a temporary loopback Bridge on port 33093; queue=0. Package manifest SHA-256: 1e7ba94fe8b931d3fab680ff1d97eadf7f76bf71f75039b81d203212a2333e05.
+- The Windows package check ran against PR merge checkout commit a09b0f88f15f9af093b9a2a2337fa2f8b1c57ab5; this is distinct from the PR head SHA.
+- Chrome Bridge Visual RC #45050999227 completed SUCCESS; disposable Chromium/MV3 and Windows PowerShell 5.1 jobs both passed.
+
+The package builder does not start a persistent Lab server, touch the active connector, read the existing Bridge token, alter port/credentials/tunnel, replace a process, or change Production. It proves reproducible source-side package assembly and the MCP registry in an isolated temporary server; it does not deploy the server or make the live Lab tools appear.
+
+**Next G2 work:** finish Visual RC; then capture read-only identity of the actual Lab server/endpoint and stage the package in a separate isolated Lab server profile. Only after that can the ChatGPT MCP connector be pointed at that Lab endpoint under a separately approved, exact-scope action. Verify the live tools/list before any session challenge; no provider message until the exact challenge is presented and owner-approved in this conversation.
+
+### 22.10. Consilium Control Room Lab package — exact Windows CI evidence (2026-11-22)
+
+PR #131 current head: 7e4c8f7f0c87578ba9c63ca6a52dbde141318657.
+
+Exact workflow state:
+- Source checks #45052131433 — SUCCESS, including portable job and Windows consilium-lab-package job.
+- Chrome Bridge RC1 Control Gates #45052131455 — SUCCESS.
+- Chrome Bridge Visual RC #45052131480 — SUCCESS; node-unit and windows-powershell51 jobs both passed.
+
+The Windows package job used PR merge checkout SHA 0870e95e7b95bcc5c53e1014f663023f00187c22 (not the branch head) and staged 20 files while preserving the source-relative layout for Control Room, extension/permissions.js and server/provider-transport-crypto.mjs.
+
+Evidence from the job:
+- Node regression tests: 41/41 PASS.
+- Temporary loopback API smoke: PASS, bind 127.0.0.1, ephemeral port 56991.
+- Eight synthetic identity tokens (owner, ChatGPT, Claude and five expert participants); no real credentials.
+- Verified unauthenticated API rejection, UI/CSP and health; ChatGPT session start; DeepSeek round proposal; participant round-launch/session-control denial; Claude round launch and session control.
+- providerDispatch=false, production=false, realSecrets=false.
+- Package manifest SHA-256: 692a20e208ab6c669f022577bd36551a61859099be2cba45aa4e40a40fb3a521.
+- ZIP SHA-256: e7139bee117b19ce1e41dcfe60ed1abab534bac6e23a952c391c97250659c170.
+
+**Scope boundary:** this is a reproducible package plus temporary in-process API/role smoke on GitHub's Windows runner. It is not an installation on the user's Windows PC, not a persistent Lab service, not a ChatGPT connector target, and not a live provider dispatch test. G1 remains PARTIAL and R4-B01 remains open until the package is staged into a separate authorized Lab environment and the active Control Room endpoint is independently verified. No Production or user-PC state changed.
+
+### 22.11. AGPT M1 — проверенная карта XData и fail-closed пробелы (2026-11-22)
+
+PR #1 текущий head: AGPT_Plugin `3a74df36ac418d1d914d77a1a09d081c8245126c`; в `docs/M1_GASCALC_INTEGRATION_CONTRACT_RU.md` добавлен source-backed audit addendum. Проверены blob SHA AGPT.csproj, Stage3, AGPT_Plugin_Drawings и GasCalc.
+
+**Подтверждённая картина:**
+- `AGPT_ZONE` запрашивает контур/единицы, H с default 2.4 м, имя и FH с default 0.011 м²; сохраняет GUID/ZONE_NAME/S/VP/H/FH/CN/RHO0/GOTV/INSTALL_TYPE/UNITS. Поля TM, FireKind, OpeningsPosition, DeltaVolume, Project altitude/K3, Vтр, PResidualAbsMpa не вводятся этим workflow.
+- `AGPT_CALC` читает VP/H/FH/CN/RHO0 и использует legacy MassCalc/KsidCalc.
+- `Collect.FromModel` использует второй legacy path и defaults H=3, TM=25, K4=1.05, VTR=0.005, RHO0=7.28, CN=7.2, GOTV='Хладон 227еа'. Эти значения не являются подтверждённым вводом, а могут различаться от defaults AGPT_ZONE.
+- `AGPT_PIPE` хранит геометрию сегмента L/DY и нулевые DP/Q/V_FLOW; валидированный агрегатный Vтр и абсолютное остаточное давление не вычисляются/не записываются.
+- GasCalc PR #2 validation защищает числовые диапазоны/enum/catalogue structure, но default POCO values могут пройти validation без подтверждённого ввода. При null остаточном давлении и PipeVolume>0 standalone Compute выдаёт Mтр=0 с warning, не блокируя CalcResult; DefaultCatalog имеет ResidualKg=0.0.
+
+**Release effect:** AGPT M1 remains BLOCKED at input-provenance boundary. Required next deliverable is a provenance-aware adapter/validator that distinguishes ENTERED / IMPORTED_VERIFIED / PROJECT_SETTING / MANUFACTURER_DATASHEET from MISSING / UNCONFIRMED, requires residual absolute pressure whenever Vтр>0, rejects unverified module residuals/catalogues, and refuses to produce a release-ready result when a mandatory value is absent. Numeric legacy K4 must never be cast/mapped to FireKind.
+
+Do not enable calculation UI, redirect either legacy command, or modify DWG output until unified calculation-service, validated mapping tests, approved manufacturer catalog and AutoCAD 2026 disposable-DWG E2E exist.
+
+### 22.12. AGPT M1a provenance gate — exact PR/CI evidence (2026-11-22)
+
+AGPT_Plugin PR #4: `feat(agpt): add M1 provenance-aware calculation gate`  
+Branch: `feat/agpt-m1-provenance-gate-20261122`  
+Exact head: `5297fec7a1016e619d460ce45ccde92c638019e1`  
+State: Draft/open; not merged.
+
+Implemented M1a:
+- `src/Calc/GasCalculationService.cs` — pure .NET provenance gate, no AutoCAD dependency, DWG/file/network I/O.
+- Evidence statuses distinguish EngineerEntered, ImportedVerified, ProjectSetting, NormativeReference, ManufacturerDatasheet, NotApplicableConfirmed, Missing and Unconfirmed.
+- Each evidence item binds both the source artifact digest (`SourceSha256`) and the exact canonical field value (`ValueSha256`); the service recomputes the field fingerprint and rejects stale/mismatched hashes before GasCalc.
+- Canonical value hashing uses invariant numeric formatting and typed encodings for strings, enums, nullables and module-choice lists. This is an integrity binding, not a digital signature or proof of external document authenticity.
+- Requires evidence for mandatory room values, altitude/K3, ГОТВ properties and every catalogue field.
+- Positive Vтр requires imported-verified absolute residual pressure; evidence without an actual pressure value is also rejected before GasCalc.
+- Existing numeric GasCalc validation runs only after provenance validation.
+- Any engine warning or unresolved engineer module choice prevents release readiness.
+- Thirteen provenance regression scenarios are included in the existing .NET 8 test runner: stale room-value and catalogue-value fingerprint rejection, plus a positive path where verified absolute residual pressure contributes positive Mтр.
+
+Exact-head CI at `5297fec7a1016e619d460ce45ccde92c638019e1`:
+- AGPT M1 provenance gate, push run #45054515949 — SUCCESS.
+- AGPT M1 provenance gate, pull_request run #45054521022 — SUCCESS.
+- AGPT GasCalc input validation, pull_request run #45054521036 — SUCCESS.
+- All 13 provenance scenarios, existing normative golden cases and 17 numerical input-validation scenarios pass; logs end with `ИТОГО: все проверки пройдены`.
+- The extended tests prove both fail-closed stale-hash paths and a positive verified-pressure/Mтр path.
+
+**Gate interpretation:** M1a source/test gate = PASS for this exact commit. Full AGPT M1 remains BLOCKED: no AutoCAD XData provenance adapter, no main `AGPT.csproj` inclusion, legacy commands/formulas and demo fallback remain unchanged, manufacturer module catalog evidence is still outstanding, and no AutoCAD 2026 disposable-DWG E2E has been performed. Calculation UI remains hidden. No local PC or DWG changes.
+
+### 22.13. Fresh active Bridge Lab runtime inventory — 2026-11-22
+
+Проведены только read-only MCP probes; никаких сообщений, bind/site-grant changes или local approvals не выполнялось.
+
+**Control plane**
+- `control_status` now responds with `connected=true`, `globalEnabled=false`, `approvalPending=0`, `origins=[]`.
+- `browser_status` and `agent_list` return `UNKNOWN_TOOL`.
+- `browser_tabs` responds and lists current browser tabs. Open tabs exist for Claude, Gemini, DeepSeek, Qwen and Grok; this proves tabs only, not verified agent readiness.
+
+**Provider probes**
+- DeepSeek `agent_peek`: `composerFound=true`, `count=0`, `chars=0`, `generating=false`, generic root page; no response.
+- Claude and Gemini `agent_peek` return `UNKNOWN_TOOL`.
+- Grok `agent_peek` still resolves stale stored tab ID `1867452532`; active tab IDs differ.
+- Qwen has no registered adapter binding (`Unknown agent "qwen"`).
+
+**Decision:** Bridge G2 remains BLOCKED. Current state is more specific than a total transport outage: limited control/browser-tab methods work, but no allowed origins are registered, global control is disabled, and provider adapter identity/readiness is incomplete. Do not enable origins, bind providers, issue approvals or dispatch messages until the exact Lab registration/cutover and owner-approved scope are established. No task delivery/reply receipt exists.
+
+
+
+### 22.14. AGPT M1b schema-v2 XData adapter — implementation and exact-head CI (2026-11-22)
+
+AGPT_Plugin PR #5: https://github.com/rinatikd/AGPT_Plugin/pull/5  
+Branch: `feat/agpt-m1b-xdata-adapter-20261122`  
+Base: M1a PR #4 branch `feat/agpt-m1-provenance-gate-20261122` at
+`5297fec7a1016e619d460ce45ccde92c638019e1`.  
+Latest exact head: `ada59ef1a8a58e2d9bc8a3aa943b4825adffaec5`.  
+State: Draft/open; not merged.
+
+Implemented:
+- `src/Calc/GasCalculationXDataAdapter.cs` — AutoCAD-independent, fail-closed adapter from host-extracted XData key/value pairs into `GasCalculationRequest`.
+- Requires explicit `AGPT_CALC_SCHEMA=2`; unversioned legacy XData and unknown schema versions are rejected. No inferred defaults, migration or demo/sample fallback.
+- Parses inputs with invariant numeric parsing, explicit enum validation and bounded catalogue/selection sizes (maximum 20).
+- Reads per-field evidence metadata under `EVIDENCE.<field>.*`; delegates to the M1a provenance gate; only the provenance service invokes GasCalc.
+- Calculation sources are included in `AGPT.csproj`; the console runner includes adapter regressions and a dedicated .NET 8 workflow.
+- Eight adapter regression scenarios cover legacy schema rejection, unsupported schema, non-finite input, invalid enum, complete evidenced calculation, stale value fingerprint, oversized catalogue and missing catalogue value.
+
+Exact-head CI at `ada59ef1a8a58e2d9bc8a3aa943b4825adffaec5`:
+- M1b push run #45055747936 — SUCCESS.
+- M1b pull_request run #45055750120 — SUCCESS.
+- Push job #137310460414 log confirms all normative golden cases, 17 numeric validation checks, 13 provenance scenarios and all 8 XData adapter scenarios passed; log ends `ИТОГО: все проверки пройдены`.
+
+**Critical boundary / remaining M1b work:** the adapter consumes a dictionary supplied by a host; it does not itself open an AutoCAD Entity or extract XData from a DWG. It does not write/migrate XData, replace legacy `AGPT_CALC` or `AGPT_CALC_DRAW`, or enable release output. Although calculation sources are now listed in `AGPT.csproj` on this branch, no AutoCAD 2026 plugin build or disposable-DWG E2E is claimed. Next gate: read-only AutoCAD entity/XData bridge, explicit mapping against real AGPT entities, and controlled command cutover only after AutoCAD compile + disposable-DWG regression.
+
+**Gate interpretation:** M1a source/test PASS at its own exact head; M1b schema adapter source/test push and PR gates PASS at the exact head above. AutoCAD host integration remains pending. Overall AGPT release remains BLOCKED. No Production, local Windows configuration, AutoCAD session or user DWG was modified.
+
+### 22.15. Parallel workstreams reactivated — exact evidence refresh (2026-11-23)
+
+This section supersedes stale intermediate heads/statuses in earlier dated subsections. It is a status snapshot, not merge/deployment approval.
+
+| Workstream | Current exact head / PR | Source / CI result | Remaining gate |
+|---|---|---|---|
+| Chat-approved Bridge | NSS PR #132, `fb2c27a843d04e08b97dae876226751d9f3685fd` | All four exact-head workflows SUCCESS; 14/14 server manifest hashes and 20/20 Control Room package hashes independently verified; isolated package exposes 29 tools including 10 session/provider methods | Live Lab-only process identity, dry-run/apply/rollback, connector refresh and live `tools/list`; session authorization/provider E2E remains blocked |
+| Consilium governance | NSS PR #131, `bd4b41329c42a8f477d4211daedaedd53f2cfb7d` | Source checks, RC1 Control Gates and Visual RC SUCCESS | Persistent isolated Control Room deployment, then approved correlated provider test; CI package is not deployment |
+| Free AI Workbench P0 | NSS PR #111, `9ee6e02fbc6a0796985bc3756cfda5e4e3823323` | Source checks and CCTV guard workflow SUCCESS; 17/17 Node ledger/viewer tests reported PASS | Authenticate actor identity, validate target folder and local browser E2E; current scope is offline ledger + static read-only viewer, not multi-agent runtime |
+| EDRP final orchestrator | NSS PR #134, `8a27f774aeff7ef8f9fc8798ef9b9d977bff56ae` | Source checks SUCCESS at the recorded exact head | Updated document requires its own exact-head checks; EDRP remains design-only until disposable Windows recovery/fault tests |
+| Chrome Bridge Stop/Revoke | NSS PRs #127 `6c133e6ab099ca10bebd9ec4b0d7d4ff188b4483` and #128 `06241cb3ac692d421adadbed4cfff3c56cf6ecc6` | Source, Control Gates, Visual RC and PR113 source tests all SUCCESS on their recorded heads | Real Windows/Chrome lifecycle tests and integrated release; no production cutover |
+| AutoCAD MCP architecture | NSS PR #136, updated head `e76416af5905578fbf0b68ea39aa40e9dfaeb116` | Repo guard passed; repository-wide portable job remains red only on the existing CCTV CLI assertion now corrected in PR #137 | Re-run exact-head CI after #137 is reconciled; verify exact AutoCAD update/runtime; no native host implementation or AutoCAD E2E yet |
+| CCTV baseline test correction | NSS PR #137, `0a9549bd317bf05b70b3c2d36ffe2bbeddadd90d` | Exact-head Source checks and CCTV guard tests SUCCESS | Independent review and owner-controlled merge; one test assertion only |
+| Collaboration platform / PowerShell Direct | NSS PR #110, current head `709d55eb6ae69880a3c1a3fffc5d76b6cf0f36b0` | AI collaboration protocol checks SUCCESS; task-envelope tests SUCCESS; Windows PowerShell 5.1 parser gate SUCCESS for staging, identity and new Git-capture diagnostic helpers. Portable job still fails on the same CCTV assertion fixed by PR #137 | Reconcile PR #137 baseline fix; run local Git-capture diagnostic after approved workspace fast-forward; no provider E2E or production release |
+| AGPT M1b | AGPT_Plugin PR #5, `ada59ef1a8a58e2d9bc8a3aa943b4825adffaec5` | M1b XData adapter gate SUCCESS at exact head | Actual AutoCAD XData extraction/host wiring, main plugin build and disposable-DWG E2E; no user DWG mutation |
+
+#### Candidate staging diagnosis — do not serialize unrelated work behind it
+
+The current PR #132 pinned staging helper was executed in the approved Recovery workspace and failed with `CANDIDATE_COMMIT_MISMATCH:` where the displayed SHA was empty. This is not a reason to pause the other workstreams.
+
+Follow-up diagnostics were added to the platform branch:
+- `tools/powershell-direct/Diagnose-PR132GitCapture.ps1` compares direct native Git stdout with the original PowerShell wrapper, captures exit code/output cardinality, records command resolution and only boolean presence of Git environment overrides; it writes no files and does not inspect or print credentials.
+- Windows PowerShell 5.1 parse gate now includes the diagnostic helper.
+- Exact platform commit `709d55eb6ae69880a3c1a3fffc5d76b6cf0f36b0`: `AI collaboration protocol checks` SUCCESS and Windows helper parser SUCCESS; portable job remains blocked only by the baseline CCTV assertion.
+- Local fast-forward request `cb_pr132_platform_diag_ff_20261123_35` is still `PENDING_LOCAL_APPROVAL`; do not duplicate it. Once it completes, run the read-only diagnostic before changing the staging helper or retrying clone setup.
+
+**Parallel execution rule:** failure/blockage in one workstream must not suspend any independent branch. Keep each task's exact SHA, state, evidence and dependency links separate; a shared infrastructure blocker blocks only tasks that actually require that infrastructure. Continue code review, documentation, CI remediation, AGPT/AutoCAD work and offline Workbench work while Lab staging/agent dispatch is being repaired.
+
+No PR in this table is merged or marked Ready. No Lab/Production service, credentials, browser profile, AutoCAD installation, or working DWG was changed by these parallel source/document updates.
+
+### 22.16. Free AI Workbench P0 independent security/code review — 2026-11-23
+
+Reviewed exact PR #111 source files: `ledger.mjs`, `ui/viewer.mjs`, `ui/app.mjs`, `ui/index.html`, `ledger.test.mjs`, `viewer.test.mjs`, and README.
+
+**Positive findings confirmed from source:**
+- Browser viewer imports the chosen local file through `fileInput.files[0].text()`; the viewer module contains no `fetch`, XMLHttpRequest, localStorage/sessionStorage or `innerHTML`.
+- The HTML Content-Security-Policy defaults to deny, permits only same-origin local script/style, and sets `connect-src 'none'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'none'`.
+- Imported strings are rendered through DOM `textContent`; no dynamic HTML execution path was found in the reviewed UI.
+- V2 event payload fingerprints and chain links are verified before projection. Legacy-only data is explicitly labelled `LEGACY_UNCHAINED`; torn tail, invalid transition, duplicate requestId and modified hashes reject the file.
+- Writer uses a single-writer exclusive lock file, refuses to steal an existing lock, fsyncs the appended file before acknowledging, and does not auto-truncate/repair a damaged ledger.
+- Exact PR #111 CI at `9ee6e02fbc6a0796985bc3756cfda5e4e3823323`: Source checks and CCTV guard passed; ledger/viewer suite 17/17 PASS (CI record in #111 history).
+
+**Accepted limitations / security boundary:**
+- Actor and role are caller-supplied strings, not authenticated identity or signed authorization. Any local process able to write the event file can impersonate planner/developer/reviewer roles.
+- SHA-256 hash chaining detects accidental or partial tampering, but is not a signature and does not prevent a privileged actor from rewriting the entire file and recomputing the chain.
+- The local lock is intentionally fail-closed; stale-lock ownership/recovery is a manual operator procedure. There is no authenticated cross-process actor model or crash-recovery protocol for external effects.
+- The viewer validates integrity and projects records; it does not prove the truth of an evidence URI/path or validate the content of external evidence files.
+- There is no multi-agent dispatch, browser integration, Git execution, PowerShell execution, Windows service or LLM invocation in this P0 implementation.
+
+**Decision:** Workbench P0 source prototype is suitable for further offline UX/ledger evaluation; it is **not** an authoritative EDRP ledger, approval service, multi-agent coordinator or execution gate. Keep it single-operator/offline. P1 requires exact target-folder baseline and browser E2E; any authenticated multi-agent/network integration requires externally authenticated actor identity, signed/one-shot approvals, durable nonce/replay storage, independent authorization, lock recovery tests and a separate security review.
+
+No local installation, network exposure, provider call, Windows command or DWG mutation was performed by this review.
+
+### 22.17. PR #128 independent Stop-UNKNOWN recovery review — additional fault path (2026-11-23)
+
+Reviewed exact PR #128 head `06241cb3ac692d421adadbed4cfff3c56cf6ecc6`, including `extension/background-coordinator.js` and the PR113 Stop/Quarantine regression.
+
+**Confirmed existing behavior:** Stop fences new mutation admission; accepted page actions drain within a bounded interval; on timeout the affected tab is quarantined; when `storage.local` tab-list persistence fails, `storage.session` is used as a fallback. Existing regression proves the session fallback survives a worker restart and blocks the quarantined tab.
+
+**Additional unresolved failure path:** if both local and session writes for the tab quarantine list fail, code sets the module-local `mutationQuarantinePersistenceFailed` latch and attempts a global lock in both stores. If those final writes also fail, only the in-memory latch remains. After an MV3 service-worker restart that latch is recreated empty. Persistent `bridgeConnectionDesired=false` prevents an automatic reconnect, but an explicit later Connect can proceed because no persisted unknown-outcome record remains to force reconciliation. Thus the existing tests do not cover the all-storage-failed + worker-restart + explicit reconnect case.
+
+**Required before treating Stop-UNKNOWN recovery as complete:** a durable write-ahead mutation admission/unknown record must exist before a page mutation is allowed to execute (or an equivalent mechanism). If no durable journal is available before admission, reject before the click. If an accepted action becomes UNKNOWN and cannot be persisted, a later Connect must not clear the hold; the system needs a durable reconciliation gate. Add a fault test that fails local+session quarantine and lock writes, restarts the worker, attempts explicit Connect and a new mutation, and proves both remain blocked until exact operator reconciliation.
+
+Review was recorded in PR #128 as comment review ID `6016632692`. This finding does not invalidate the passing local→session fallback tests; it identifies the missing all-storage-unavailable boundary. No code was changed in this review.
+
+### 22.18. PR132 Git-capture probe repair and local queue state — 2026-11-23
+
+The first diagnostic execution (`cb_pr132_git_capture_probe_20261123_36`) failed before invoking Git: optional `.git` metadata inspection used `Get-Item` and raised a path-resolution error. This was a defect in the diagnostic helper, not evidence about Git stdout or the prior candidate mismatch.
+
+Corrected helper commit: `14cec70e7f9339633c4c5cc3757e7ef6a7e7f0e3`.
+- Optional checkout / .git inspection now uses .NET `Directory.Exists` and `File.Exists`, explicitly distinguishing a directory, a worktree pointer file, and a missing path.
+- No Git probe output, credentials, config contents or DWG information are written.
+- Exact-head Windows PowerShell 5.1 parser gate SUCCESS on run #45113082285, job #137489620899.
+- Portable job on the same commit remains blocked by the shared CCTV assertion already corrected in Draft PR #137.
+
+Local fast-forward of the corrected diagnostic helper was submitted as `cb_pr132_platform_diag_ff_retry_20261123_37`, still `PENDING_LOCAL_APPROVAL` at last status read. After it completes, run the read-only probe once, inspect the direct Git stdout/exit code and checkout path state, and only then revise the pinned staging helper. Do not retry clone/staging with the old script or interpret this helper's earlier Get-Item failure as a Git root cause.
+
+No PR #132 staging clone, Lab server replacement, extension update, provider send or Production operation has occurred.
