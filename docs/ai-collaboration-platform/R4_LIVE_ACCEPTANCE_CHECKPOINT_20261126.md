@@ -91,3 +91,29 @@ Next sequence:
 6. Close G1–G6 with dated evidence and independent review before preparing a final R4 release artifact.
 
 No Production ports 17381/17382, credentials, tunnels, provider sessions, local files or Windows processes were changed by this checkpoint.
+
+
+## 7. Follow-up Windows inventory reconciliation — 2026-11-26
+
+A second, current connector path (WM43 Unified Approval Lab) was used for read-only inspection after the earlier Windows Maintenance backend returned `Unknown tool`.
+
+### Current WM43 observations
+
+- `maintenance_status` reports Windows Maintenance **0.4.3**, mode `approval-required`, `executionEnabled=true`, and per-operation local approval. R2 TCP port **17488** is reachable.
+- `maintenance_inspect(service=R2)` reports the R2 listener owner is PID **17324**, `node.exe`, created **2026-11-19 00:09:30**. It also reports the R4 orchestrator directory present and the cutover manifest present (1170 bytes).
+- The manifest SHA256 is deliberately not exposed by this inspection action; its result says it is available only through the file-proposal workflow. No file proposal or write was initiated.
+- The inspect response labels its own execution context `executionEnabled=false` and `diagnosticsReadOnly=true`. Keep that separate from the service-level `maintenance_status` response (`executionEnabled=true`, per-operation local approval); neither grants unrestricted shell or mutation authority.
+
+### Version discrepancy resolved
+
+The earlier `Windows_Maintenance___Work_PC` connector path reported **0.4.1** but its inspect action returned `Unknown tool` / uninitialized-server errors. The current WM43 Unified Approval Lab path reports **0.4.3** and successfully returns the read-only process/staging inventory. Both report R2 port 17488 as reachable. The evidence therefore points to a stale/older connector backend or tool registry on the legacy path, not a verified downgrade of the active WM43 service. Use WM43 0.4.3 as the current observed path; retain the 0.4.1 response as historical connector evidence.
+
+### Remaining inventory gap
+
+This WM43 inspect action confirms R2 owner and basic R4 staging metadata, but it does **not** expose the PR102 Lab extension directory, 17485 StateRoot owner/ACL, manifest-derived extension ID, or the relationship between R2 and the PR102 Bridge process. Those are still unverified. PowerShell Direct Work PC probing remains deferred until 2026-11-27; do not bypass that timing through another execution route.
+
+## 8. Latest platform CI reconciliation — 2026-11-26
+
+The platform branch now points to `18dd9d23a035d794734eb7279f26a83c4f3ab33a`, the merge commit for the updated R4 acceptance checkpoint. Its exact-head GitHub check-runs are **17/17 SUCCESS**.
+
+This closes the source/CI verification for the current platform head, but does not close G1–G6 live acceptance. R4 remains **DRAFT / NO-GO for Production** until the remaining Work PC identity/ACL, real provider E2E, recovery/reboot, and operator acceptance evidence is collected.
