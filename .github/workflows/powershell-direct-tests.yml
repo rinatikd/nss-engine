@@ -49,13 +49,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Job Object smoke test failed: $LASTEXITCODE" }
 
   windows-native-addon:
-    runs-on: windows-latest
+    # node-gyp 11 does not reliably identify the VS 18 / VS 2026
+    # installation on the hosted image yet. Use the supported VS 2022
+    # image for this native build until upstream detection catches up.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
       - name: Configure Python for node-gyp
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -66,6 +70,8 @@ jobs:
       - name: Build N-API addon
         working-directory: tools/powershell-direct/native
         shell: pwsh
+        env:
+          npm_config_python: ${{ steps.setup-python.outputs.python-path }}
         run: |
           $ErrorActionPreference = 'Stop'
           npx --yes node-gyp@11.2.0 rebuild
