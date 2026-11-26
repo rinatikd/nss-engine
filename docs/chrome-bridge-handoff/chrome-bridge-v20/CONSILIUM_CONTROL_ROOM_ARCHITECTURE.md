@@ -88,7 +88,7 @@ The required tests include pre-commit stop, post-commit hazard, revoke-before-co
 A local Node.js MVP prototype is implemented in this branch and tested with 31 automated tests (12 Control Room API/UI tests, 11 event-ledger tests and 8 ProviderTransport v1 contract tests). Coverage includes the seven independently authenticated AI member identities with equal council permissions, member-proposed and member-launched rounds, participant objection/evidence-gap blocking after the core pair reaches READY_FOR_OWNER, and transport correlation, binding, fencing, UNKNOWN quarantine and epoch revocation. It contains:
 
 - loopback-only Control Room HTTP server and browser UI;
-- distinct owner credential, two independently authenticated co-operator credentials and five independently authenticated expert-participant credentials;
+- seven independently authenticated AI-member (`ai_member`) credentials with equal council permissions (ChatGPT, Claude, DeepSeek, Qwen, Kimi, Grok and Gemini); a distinct owner credential is separate;
 - round proposal and launch permissions shared by all seven AI members;
 - versioned ProviderTransport v1 contract defining prepare / commit / status / stop / revoke / events, provider-origin-tab-conversation-epoch binding, no-send preparation, fencing tokens, click evidence, UNKNOWN quarantine and independently verified STOPPED_CLEAN attestation (contract only; no live Bridge adapter is attached);
 - append-only JSONL event ledger, fsync, single-writer lock, hash chain and idempotent request IDs;
@@ -121,7 +121,7 @@ Stop closes future dispatch and increments the orchestration epoch. The UI repor
 
 ## 9. Acceptance gates before local Lab rollout
 
-- [ ] ChatGPT and Claude independently authenticate as equal co-operators; the other five authenticate as equal expert participants; owner identity is separate.
+- [ ] All seven AI identities independently authenticate as the same `ai_member` class with equal council permissions; ChatGPT + Claude form the mandatory independent dual-review pair (a review rule, not a permission tier); owner identity is separate.
 - [ ] Any of the seven AI members can propose and launch a round, with both actions recorded.
 - [ ] ChatGPT and Claude both record mandatory independent reviews; all seven AI members can submit independent reviews and objections that block progression until explicitly resolved.
 - [ ] No single AI operator can accept a decision alone; consequential decisions require owner approval.
