@@ -89,3 +89,49 @@ No breakaway flags are enabled on the per-execution Job. Descendants created thr
 - architecture/build matrix (x64 first; ARM64 only if explicitly supported).
 
 The first deliverable is now present: `native/job-object-poc.cpp` plus a `windows-latest` MSVC compile/run job. On 2026-11-26, the Windows Job Object proof-of-concept and Node.js checks passed in GitHub Actions. The smoke test demonstrates creation-time Job assignment, descendant retention after root exit, and confirmed `TerminateJobObject` completion. It does not yet test stdout/stderr, timeout/cancel races, kill-on-close after service crash, incompatible parent jobs, N-API memory ownership, or the production service. Do not wire it into production dispatch until those additional tests pass and the N-API boundary, memory ownership, cancellation races, and handle lifetime have been reviewed.
+
+## CI evidence update (2026-11-26)
+
+The Windows proof-of-concept now also exercises:
+- abrupt termination of the Job-owning process and observation that its descendant exits after the final job handle closes;
+- assignment of a child to a new Job while the host is already assigned to a parent Job in the CI environment;
+- an attempted CREATE_BREAKAWAY_FROM_JOB launch from inside the execution Job, which must fail with ERROR_ACCESS_DENIED.
+
+The corresponding commit c55b166e completed all four reported checks successfully: node-tests, windows-job-object-poc, and two portable checks. This is evidence for the tested windows-latest CI environment only; it does not establish compatibility with every Windows release, host-job policy, endpoint-security product, or deployment configuration.
+
+The breakaway test is intentionally fail-closed: if Windows unexpectedly creates the breakaway process, the test terminates that process and fails. The test currently checks the expected error code, not a generalized policy matrix for all possible parent Job Object configurations.
+
+## N-API implementation boundary (next implementation stage)
+
+The native module must not expose raw Win32 handles or rely on JavaScript finalizers for process safety. JavaScript receives an opaque, unguessable operation ID; native code owns all HANDLE values in a registry until explicit, confirmed close.
+
+Proposed JS surface:
+- start(spec) -> Promise<{ operationId, pid }>: validate native input bounds again, create Job and pipes, call CreateProcessW with PROC_THREAD_ATTRIBUTE_JOB_LIST, and resolve only after process creation and job membership are confirmed and the primary thread has resumed. A failed creation/resume must terminate/close the job and reject with operation + Win32 error.
+- wait(operationId) -> Promise<{ exitCode, stdout, stderr, truncated, processTreeExitConfirmed }>: wait asynchronously for both root process exit and Job active-process count zero; drain stdout/stderr until every inherited writer has closed; only then resolve with processTreeExitConfirmed: true. A root exit alone is never sufficient.
+- terminate(operationId, reason) -> Promise<{ terminated, processTreeExitConfirmed }>: idempotently mark cancellation under the registry lock, call TerminateJobObject once, and resolve only after the Job is empty. Capture the Win32 error immediately on the calling native thread.
+- close(operationId) -> Promise<{ closed }>: idempotently release process, job, pipe, event, and async-work resources only after wait/termination has settled. Unknown IDs return a stable UNKNOWN_OPERATION error; repeated close is a successful no-op.
+
+### Ownership and concurrency rules
+
+1. Registry entries are reference-counted native operation records. Each async work item acquires a strong reference before it leaves the JS thread and releases it in its completion callback.
+2. A per-operation mutex protects state transitions and HANDLE ownership. Never hold the registry lock while waiting on a process, pipe, or Job Object.
+3. The Job HANDLE remains owned until Job active-process count is zero and all output readers have observed EOF. No JS callback or garbage collector finalizer closes it.
+4. terminate, timeout, and service shutdown converge on one idempotent transition to TERMINATING. Only one caller issues TerminateJobObject; all callers await the same completion condition.
+5. wait and terminate run on N-API async workers; no blocking Win32 wait or pipe read runs on the Node event loop.
+6. Output capture uses bounded buffers (64 KiB per stream, matching the current runner). Once full, continue draining and discard excess bytes; never stop reading and risk blocking the child. Mark truncation explicitly.
+7. The child inherits only the intended standard handles. Agent, UI, and control-plane credentials are not placed in its environment or inherited handles.
+8. Native module shutdown rejects new starts, terminates every active Job, drains process and pipe completion within a bounded deadline, and reports unconfirmed cleanup. It must not silently unload while native workers still reference module code.
+
+### Start/cancel race
+
+A cancellation arriving while CreateProcessW is in progress sets a cancellation-requested flag on the operation record. The creation worker checks this flag immediately after successful creation and before resuming the primary thread. If set, it terminates the Job, waits for completion, closes all handles, and reports CANCELLED_DURING_START. This reduces the window but does not claim an OS-level transactional guarantee if the Node service itself is forcibly terminated during the Win32 creation call.
+
+### Build and test gates before runner integration
+
+- Compile x64 against the Node 24 N-API headers with MSVC /W4 /WX; pin the supported Node ABI/N-API version.
+- Unit tests for invalid specs, duplicate IDs, unknown IDs, and all idempotency transitions.
+- Windows tests for launch/exit, stdout/stderr capture and truncation, descendants retaining inherited output handles, cancellation during start, cancellation immediately after start, timeout with a live grandchild, repeated terminate/close, and shutdown with active jobs.
+- Handle-leak checks across repeated load/start/wait/close cycles.
+- Negative tests for unsupported PROC_THREAD_ATTRIBUTE_JOB_LIST, incompatible parent-job policies, and unexpected breakaway.
+- Integrate behind a feature flag only after native tests pass; keep the existing direct-child runner as an explicitly labelled fallback only if policy permits. Never silently fall back to uncontained execution.
+- No production cutover until disposable Work PC smoke tests confirm the actual Windows build, parent-job environment, output behavior, and shutdown semantics.
