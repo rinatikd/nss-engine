@@ -34,6 +34,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+      - name: Compile and run native operation state tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          cl.exe /nologo /std:c++17 /EHsc /W4 /WX /DUNICODE /D_UNICODE tools/powershell-direct/native/test-operation-state.cpp /Fe:build/test-operation-state.exe
+          if ($LASTEXITCODE -ne 0) { throw "Operation state test compilation failed: $LASTEXITCODE" }
+          & .\build\test-operation-state.exe
+          if ($LASTEXITCODE -ne 0) { throw "Operation state tests failed: $LASTEXITCODE" }
       - name: Compile native Job Object proof of concept
         shell: pwsh
         run: |
