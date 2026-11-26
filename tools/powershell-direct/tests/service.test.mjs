@@ -60,6 +60,18 @@ test('expiry and duplicate request IDs are rejected; workspaces are selected per
   assert.equal(outside.state,'PENDING');
 });
 
+test('terminal jobs are reclaimed so the proposal queue remains usable',()=>{
+ const x=fixture();
+ for(let i=0;i<32;i++){
+  const id='queuejob'+String(i).padStart(2,'0');
+  const p=x.service.propose({...request,requestId:id});
+  x.service.decide(id,p.sha256,false);
+ }
+ const next=x.service.propose({...request,requestId:'queuejob_next'});
+ assert.equal(next.state,'PENDING');
+ assert.equal(x.service.jobs.size,32);
+});
+
 test('request validation rejects malformed paths, NUL arguments, missing risk and excessive timeout',()=>{
  assert.throws(()=>validateExecutionSpec({...request,executable:'powershell.exe'}),/ABSOLUTE_LOCAL_PATH/);
  assert.throws(()=>validateExecutionSpec({...request,args:['bad'+String.fromCharCode(0)+'arg']}),/INVALID_ARGUMENT/);
@@ -83,7 +95,7 @@ test('approval UI renders the exact command and risk summary without exposing be
  }finally{await x.service.stop();}
 });
 
-test('ephemeral proxy requires nonce path and same-origin POST',async()=>{
+test('ephemeral proxy rejects cross-origin POST and forwards an approved local decision',async()=>{
  const x=fixture();await x.service.start();
  const nonce='b'.repeat(64),proxy=createApprovalProxy({servicePort:x.service.port,uiToken:x.service.uiToken,nonce});
  const opened=await proxy.start();
@@ -94,6 +106,11 @@ test('ephemeral proxy requires nonce path and same-origin POST',async()=>{
   const origin='http://127.0.0.1:'+opened.port;
   assert.equal((await fetch(origin+'/'+nonce+'/decide',{method:'POST',headers:{Origin:'null'},body})).status,403);
   assert.equal(x.starts(),0);
+  const approved=await fetch(origin+'/'+nonce+'/decide',{method:'POST',headers:{Origin:origin,'content-type':'application/x-www-form-urlencoded'},body});
+  assert.equal(approved.status,200);
+  assert.equal(x.starts(),1);
+  x.finish();await flush();
+  assert.equal(x.service.status(request.requestId).state,'FINISHED');
  }finally{await proxy.stop();await x.service.stop();}
 });
 
