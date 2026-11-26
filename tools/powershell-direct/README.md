@@ -25,7 +25,7 @@ This is deliberately capability-flexible, not an automatic trust system. No requ
 - Request queue, argument count/size, timeout and output size are bounded.
 - Each request expires after 90 seconds and can be approved only once.
 - A running process is not dispatched a second time by replaying an approval.
-- The timeout currently terminates the direct child only. Process-tree cleanup is not guaranteed; do not assume descendants are stopped.
+- The timeout and supervisor shutdown request termination of the direct child and wait for its `close` event. If the supervisor cannot confirm exit within the bounded shutdown window, it returns a non-zero result and reports the uncertainty. Process-tree cleanup is not guaranteed; do not assume descendants are stopped.
 - This does not bypass Windows ACLs, UAC, application prompts or other OS authorization.
 
 The assistant's risk assessment is advisory context, not a security verdict. The operator must inspect the actual command and arguments on the local approval page. For destructive, security-sensitive, credential, network, service, registry or production actions, the assistant should call out the exact scope and reversibility before requesting approval.
@@ -48,7 +48,7 @@ node --check .\tools\powershell-direct\stack-supervisor.mjs
 node --test .\tools\powershell-direct\tests\service.test.mjs
 ```
 
-Unit tests exercise the general proposal schema, immutable fingerprint, no execution before local approval, denial, one-time dispatch, expiry, working-directory validation, local UI authentication, proxy nonce and MCP authentication. These tests do not establish Windows end-to-end acceptance, tunnel health, process-tree cleanup or production readiness.
+Unit tests exercise the general proposal schema, immutable fingerprint, no execution before local approval, denial, one-time dispatch, expiry, working-directory validation, active-job cancellation on supervisor stop, local UI authentication, proxy nonce and MCP authentication. These tests do not establish Windows end-to-end acceptance, tunnel health, process-tree cleanup or production readiness.
 
 ## Not yet approved for cutover
 
