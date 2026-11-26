@@ -19,7 +19,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:ExpectedExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'
 $script:TestFixtureMode = [bool]$TestFixture
-Require (-not $TestFailDisplacedCleanup -or $TestFixture) 'Cleanup failure injection is allowed only in TestFixture mode'
 $script:TestFailDisplacedCleanup = [bool]$TestFailDisplacedCleanup
 
 $DeployFiles = @(
@@ -34,6 +33,7 @@ $DeployFiles = @(
 function Require([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw $Message }
 }
+Require (-not $TestFailDisplacedCleanup -or $TestFixture) 'Cleanup failure injection is allowed only in TestFixture mode'
 # Chrome derives an unpacked extension ID from SHA-256(DER public key):
 # take the first 16 bytes and map each hexadecimal nibble 0..15 to a..p.
 function GetChromeExtensionIdFromKey([string]$Key) {
