@@ -15,7 +15,7 @@ export function validateExecutionSpec(input){
   if(!Array.isArray(input.args)||input.args.length>MAX_ARGS)throw Error('INVALID_ARGUMENTS');
   let total=0;
   const args=input.args.map(arg=>{
-    if(typeof arg!=='string'||arg.includes('\\0')||arg.length>MAX_ARG_LENGTH)throw Error('INVALID_ARGUMENT');
+    if(typeof arg!=='string'||arg.includes('\0')||arg.length>MAX_ARG_LENGTH)throw Error('INVALID_ARGUMENT');
     total+=arg.length;
     return arg;
   });
