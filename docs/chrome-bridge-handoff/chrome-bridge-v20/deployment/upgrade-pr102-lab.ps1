@@ -222,12 +222,13 @@ if (-not [string]::IsNullOrWhiteSpace($RollbackFrom)) {
       Move-Item -LiteralPath $displaced -Destination $installed
     }
     throw
+  } finally {
+    if (Test-Path -LiteralPath $restoreStage) {
+      RemoveDisplacedDirectory $restoreStage 'RESTORE_STAGE_CLEANUP_PENDING'
+    }
   }
   RemoveDisplacedDirectory $displaced 'RESTORED_CLEANUP_PENDING'
   Write-Output '[RESTORED] Previous PR102 Lab extension restored; server, credentials and Production untouched.'
-  try {
-    if (Test-Path -LiteralPath $restoreStage) { Remove-Item -LiteralPath $restoreStage -Recurse -Force }
-  }
   return
 }
 
