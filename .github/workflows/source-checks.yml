@@ -241,7 +241,8 @@ jobs:
             'tools/powershell-direct/Inspect-PR102LabRoots.ps1',
             'tools/powershell-direct/Inspect-PR102LabRuntime.ps1',
             'tools/powershell-direct/Probe-PR102AgentAdapters.ps1',
-            'tools/powershell-direct/Prepare-PR145LabPort17485.ps1'
+            'tools/powershell-direct/Prepare-PR145LabPort17485.ps1',
+            'docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/upgrade-pr102-lab.ps1'
           )
           foreach ($file in $files) {
             $tokens = $null
