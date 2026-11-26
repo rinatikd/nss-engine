@@ -1,6 +1,6 @@
 # Windows process-tree lifecycle design
 
-Status: proposed for implementation; not yet implemented or Windows-validated.
+Status: native proof-of-concept implemented and Windows CI smoke-tested; production N-API integration is not implemented or validated.
 
 ## Problem
 
@@ -88,4 +88,4 @@ No breakaway flags are enabled on the per-execution Job. Descendants created thr
 - stdout/stderr pipe closure only after all associated writers have exited;
 - architecture/build matrix (x64 first; ARM64 only if explicitly supported).
 
-The first deliverable should be a native proof-of-concept plus Windows CI and disposable smoke tests. It must not be wired into production dispatch until those tests pass and the N-API boundary, memory ownership, cancellation races, and handle lifetime have been reviewed.
+The first deliverable is now present: `native/job-object-poc.cpp` plus a `windows-latest` MSVC compile/run job. On 2026-11-26, the Windows Job Object proof-of-concept and Node.js checks passed in GitHub Actions. The smoke test demonstrates creation-time Job assignment, descendant retention after root exit, and confirmed `TerminateJobObject` completion. It does not yet test stdout/stderr, timeout/cancel races, kill-on-close after service crash, incompatible parent jobs, N-API memory ownership, or the production service. Do not wire it into production dispatch until those additional tests pass and the N-API boundary, memory ownership, cancellation races, and handle lifetime have been reviewed.
