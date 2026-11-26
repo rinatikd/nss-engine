@@ -860,7 +860,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       }
       // Revoke-all is a global mutation fence. No accepted page action may
       // continue after the UI receives a successful clear response.
-      if (controlClearRequested || mutationStopRequested || mutationStopCount>0) {
+      if (controlClearRequested || mutationStopCount>0) {
         respond({error:'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',outcome:'NOT_PERFORMED'});
         return false;
       }
