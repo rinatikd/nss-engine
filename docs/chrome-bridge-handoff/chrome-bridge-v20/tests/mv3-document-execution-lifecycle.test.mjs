@@ -187,6 +187,7 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
   // and can put the original document into Back/Forward Cache.
   const navigation=await inject(documentIdA,()=>{document.querySelector('#navigate').click();return true;});
   assert.equal(navigation[0].documentId,documentIdA);
+  assert.equal(navigation[0].error,undefined,'fixture link click must not fail in the old document');
   // A synchronous navigation can destroy the executing realm before Chrome serializes
   // its return value; null/undefined is not treated as a navigation failure.
   const secondDocument=await until(async()=>{
