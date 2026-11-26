@@ -18,30 +18,29 @@ const clean=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(obj));};
 
 export class PowerShellApprovalService {
- constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
-   namedWorkspaceRoots=[],namedAuditDirectory=null,namedRunner,
-   engineeringWorkspaceRoots=[],engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan,
+ constructor({port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,chatReadonlyEnabled=false,
+   namedAuditDirectory=null,namedRunner,
+   engineeringAuditDirectory=null,engineeringRunner=runEngineeringPlan,
    engineeringChatVerifier=null}={}){
-  const normalizedRoot=typeof root==='string'?path.win32.normalize(root):'';
-  const driveRoot=normalizedRoot&&path.win32.parse(normalizedRoot).root.toLowerCase()===normalizedRoot.toLowerCase();
-  const pathSegments=normalizedRoot.toLowerCase().split(path.win32.sep);
-  if(!root||!path.win32.isAbsolute(root)||(port!==PORT&&port!==0)||driveRoot||
-     normalizedRoot.startsWith('\\\\')||
-     pathSegments.some(x=>['windows','system32','program files'].includes(x)))
-    throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
-  this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
+  if(port!==PORT&&port!==0)throw Error('SAFE_PORT_REQUIRED');
+  this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;
   this.chatReadonlyEnabled=chatReadonlyEnabled===true;
   if(engineeringChatVerifier!==null&&typeof engineeringChatVerifier!=='function')throw Error('CHAT_APPROVAL_VERIFIER_INVALID');
   this.engineeringChatVerifier=engineeringChatVerifier;
   this.namedPending=new Map();
+  this.stopping=false;
+  this.stopPromise=null;
+  this.backgroundJobs=new Set();
+  this.backgroundJobFailures=0;
   this.namedService=null;
   this.namedHandlers=null;
-  if(namedWorkspaceRoots.length){
-    if(!namedAuditDirectory)throw Error('NAMED_AUDIT_DIR_REQUIRED');
+  if(namedAuditDirectory){
     this.namedService=createLocalJobService({
-      approvedWorkspaceRoots:namedWorkspaceRoots,auditDirectory:namedAuditDirectory,
+      auditDirectory:namedAuditDirectory,
       runner:namedRunner,
       approveRequest:details=>new Promise(resolve=>{
+        if(this.stopping){resolve({approved:false,reason:'SERVICE_STOPPED',
+          requestId:details.requestId,planSha256:details.planSha256});return;}
         if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
           resolve({approved:false,requestId:details.requestId,
             planSha256:details.planSha256});return;
@@ -59,15 +58,15 @@ export class PowerShellApprovalService {
   }
   this.engineeringService=null;
   this.engineeringHandlers=null;
-  if(engineeringWorkspaceRoots.length){
-    if(!engineeringAuditDirectory)throw Error('ENGINEERING_AUDIT_DIR_REQUIRED');
+  if(engineeringAuditDirectory){
     this.engineeringService=createLocalJobService({
-      approvedWorkspaceRoots:engineeringWorkspaceRoots,
       auditDirectory:engineeringAuditDirectory,
-      resolvePlan:resolveEngineeringPlan,
+      resolvePlan:request=>resolveEngineeringPlan(request),
       runner:engineeringRunner,
       operationName:'engineering-operation',
       approveRequest:details=>new Promise(resolve=>{
+        if(this.stopping){resolve({approved:false,reason:'SERVICE_STOPPED',
+          requestId:details.requestId,planSha256:details.planSha256});return;}
         if(this.namedPending.has(details.requestId)||this.namedPending.size>=32){
           resolve({approved:false,requestId:details.requestId,
             planSha256:details.planSha256});return;
@@ -86,6 +85,7 @@ export class PowerShellApprovalService {
   this.jobs=new Map();this.active=null;this.server=http.createServer((req,res)=>this.route(req,res));
  }
  async redeemSignedEngineeringApproval(args){
+  if(this.stopping)throw Error('SERVICE_STOPPING');
   if(!this.engineeringChatVerifier||!this.engineeringHandlers)throw Error('CHAT_APPROVAL_NOT_CONFIGURED');
   if(!args||typeof args!=='object'||Array.isArray(args)||
      Object.keys(args).sort().join(',')!=='payload,requestId,signatureBase64Url'||
@@ -104,7 +104,7 @@ export class PowerShellApprovalService {
      grant.requestId!==args.requestId||grant.planSha256!==hash)
     throw Error('CHAT_APPROVAL_UNVERIFIED');
   const current=this.namedPending.get(args.requestId);
-  if(current!==pending||Date.now()>=pending.expiresAt||current.planSha256!==hash)
+  if(this.stopping||current!==pending||Date.now()>=pending.expiresAt||current.planSha256!==hash)
     throw Error('CHAT_APPROVAL_STALE');
   this.namedPending.delete(args.requestId);
   clearTimeout(pending.timer);
@@ -113,12 +113,38 @@ export class PowerShellApprovalService {
   return {requestId:args.requestId,planSha256:hash,
    state:'SIGNED_APPROVAL_ACCEPTED_FOR_PENDING_JOB'};
  }
+ trackBackground(promise){
+  const tracked=Promise.resolve(promise);
+  this.backgroundJobs.add(tracked);
+  // Attach a rejection observer without converting failure into success.
+  void tracked.then(
+   ()=>this.backgroundJobs.delete(tracked),
+   ()=>{this.backgroundJobFailures++;this.backgroundJobs.delete(tracked);}
+  );
+  return tracked;
+ }
+ pruneJobs(){
+  // The in-memory read-only diagnostic lane is deliberately bounded.
+  // Reclaim only terminal history; pending approvals and active jobs are never evicted.
+  const now=this.now();
+  for(const job of this.jobs.values()){
+   if(job.state==='PENDING'&&now>=job.payload.expiresAt)job.state='EXPIRED';
+  }
+  if(this.jobs.size<32)return;
+  for(const [id,job] of this.jobs){
+   if(job.state==='PENDING'||job.state==='RUNNING')continue;
+   this.jobs.delete(id);
+   if(this.jobs.size<32)return;
+  }
+ }
  propose(args){
+  if(this.stopping)throw Error('SERVICE_STOPPING');
   const id=args?.requestId;
   if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{8,80}$/.test(id))throw Error('INVALID_REQUEST_ID');
   if(this.jobs.has(id))throw Error('DUPLICATE_REQUEST_ID');
+  const spec=validateTask(args.task),workspace=this.workspaceCheck(args.workspace),time=this.now();
+  this.pruneJobs();
   if(this.jobs.size>=32)throw Error('QUEUE_FULL');
-  const spec=validateTask(args.task),workspace=this.workspaceCheck(args.workspace,this.root),time=this.now();
   const payload={id,task:args.task,workspace,exe:spec.exe,argv:[...spec.args],issuedAt:time,expiresAt:time+90000};
   const job={payload,sha256:digest(payload),state:'PENDING',result:null};
   this.jobs.set(id,job);
@@ -148,6 +174,7 @@ export class PowerShellApprovalService {
   return {requestId:id,sha256:j.sha256,state:j.state,result:j.result};
  }
  decide(id,hash,approved){
+  if(this.stopping)throw Error('SERVICE_STOPPING');
   const j=this.jobs.get(id);if(!j)throw Error('JOB_NOT_FOUND');
   if(j.state!=='PENDING')throw Error('NOT_PENDING');
   if(this.now()>=j.payload.expiresAt){j.state='EXPIRED';throw Error('APPROVAL_EXPIRED');}
@@ -155,10 +182,11 @@ export class PowerShellApprovalService {
   if(!approved){j.state='DENIED';return {state:j.state};}
   if(this.active)throw Error('ANOTHER_JOB_RUNNING');
   j.state='RUNNING';this.active=id;
-  void (async()=>{try{
-   j.result=await this.run({task:j.payload.task,workspace:j.payload.workspace,allowedRoot:this.root});
+  const execution=(async()=>{try{
+   j.result=await this.run({task:j.payload.task,workspace:j.payload.workspace});
    j.state=j.result.state==='FINISHED'?'FINISHED':'FAILED';
   }catch(e){j.result={reason:e.code||'RUNNER_ERROR'};j.state='FAILED';}finally{this.active=null;}})();
+  this.trackBackground(execution);
   return {state:'RUNNING'};
  }
  rpc(b){
@@ -166,6 +194,8 @@ export class PowerShellApprovalService {
   if(b?.jsonrpc!=='2.0')return {jsonrpc:'2.0',id,error:{code:-32600,message:'Invalid Request'}};
   if(b.method==='initialize')return {jsonrpc:'2.0',id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'powershell-direct-lab',version:'0.1.0'}}};
   if(b.method==='notifications/initialized')return null;
+  if(this.stopping&&b.method==='tools/call')return {jsonrpc:'2.0',id,
+   result:{isError:true,content:[{type:'text',text:'SERVICE_STOPPING'}]}};
   if(b.method==='tools/list')return {jsonrpc:'2.0',id,result:{tools:[
    {name:'powershell_propose',description:'Create a pending fixed read-only Windows task, requiring local browser approval before execution.',inputSchema:{type:'object',properties:{requestId:{type:'string'},task:{type:'string',enum:['git-status','git-diff-check','git-branch','git-log','chrome-lab-ports','dotnet-version','node-version','powershell-version']},workspace:{type:'string'}},required:['requestId','task','workspace'],additionalProperties:false}},
    {name:'powershell_cancel',description:'Cancel a pending proposed job without executing anything; cannot cancel an already-running command.',inputSchema:{type:'object',properties:{requestId:{type:'string'}},required:['requestId'],additionalProperties:false}},
@@ -194,7 +224,7 @@ export class PowerShellApprovalService {
      // approval may not yet have happened. Never claim a new queue entry:
      // duplicates are intentionally rejected by the exclusive audit claim.
      const promise=this.engineeringHandlers.powershell_engineering_submit(a);
-     void promise.catch(()=>{});
+     this.trackBackground(promise);
      return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify({
        requestId:a.requestId,state:'SUBMISSION_RECEIVED_STATUS_UNCONFIRMED',
        guidance:'Use powershell_engineering_status to verify durable queue state'
@@ -228,7 +258,7 @@ export class PowerShellApprovalService {
      // Never hold a remote MCP request open while waiting for local approval.
      // The separate status tool reads durable progress; same ID is not replayed.
      const jobPromise=this.namedHandlers.powershell_named_suite_submit(a);
-     void jobPromise.catch(()=>{});
+     this.trackBackground(jobPromise);
      return {jsonrpc:'2.0',id,result:{content:[{type:'text',text:JSON.stringify({
        requestId:a.requestId,state:'QUEUED_FOR_LOCAL_APPROVAL'
      })}]}};
@@ -254,6 +284,7 @@ export class PowerShellApprovalService {
  async route(req,res){
   try{
    if(req.headers.host!=='127.0.0.1:'+this.port)return send(res,403,{error:'HOST_DENIED'});
+   if(this.stopping)return send(res,503,{error:'SERVICE_STOPPING'});
    const url=new URL(req.url,'http://127.0.0.1:'+this.port);
    if(url.pathname==='/mcp'&&req.method==='POST'){
     if(!match(req.headers.authorization,'Bearer '+this.agentToken))return send(res,401,{error:'AUTH_REQUIRED'});
@@ -347,12 +378,44 @@ export class PowerShellApprovalService {
    return send(res,404,{error:'NOT_FOUND'});
   }catch(e){return send(res,400,{error:/^[A-Z0-9_]+$/.test(e.message)?e.message:'INVALID_REQUEST'});}
  }
- start(){return new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(this.port,'127.0.0.1',()=>{this.port=this.server.address().port;resolve(this);});});}
- stop(){return new Promise(resolve=>this.server.close(resolve));}
+ start(){if(this.stopping)return Promise.reject(Error('SERVICE_STOPPED'));return new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(this.port,'127.0.0.1',()=>{this.port=this.server.address().port;resolve(this);});});}
+ stop(){
+  if(this.stopPromise)return this.stopPromise;
+  this.stopping=true;
+  // Pending legacy diagnostic proposals are cancelled, never executed after
+  // shutdown begins. Already-running jobs are allowed to reach a terminal result.
+  for(const job of this.jobs.values()){
+   if(job.state==='PENDING')job.state='CANCELLED';
+  }
+  // A stopped approval UI can no longer receive an operator decision. Deny
+  // every outstanding request immediately and release its expiry timer.
+  const pending=[...this.namedPending.values()];
+  this.namedPending.clear();
+  for(const item of pending){
+   clearTimeout(item.timer);
+   item.resolve({approved:false,reason:'SERVICE_STOPPED',
+    requestId:item.requestId,planSha256:item.planSha256});
+  }
+  const closeServer=this.server.listening
+   ? new Promise((resolve,reject)=>this.server.close(error=>error?reject(error):resolve()))
+   : Promise.resolve();
+  this.stopPromise=(async()=>{
+   // Stop accepting HTTP requests, then wait for every detached submit/runner
+   // promise to publish its terminal audit state before reporting drained.
+   await closeServer;
+   while(this.backgroundJobs.size>0){
+    const batch=[...this.backgroundJobs];
+    await Promise.allSettled(batch);
+   }
+   return {drained:this.backgroundJobFailures===0,pendingDenied:pending.length,
+     backgroundJobsRemaining:this.backgroundJobs.size,
+     backgroundJobsFailed:this.backgroundJobFailures};
+  })();
+  return this.stopPromise;
+ }
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const root=process.argv[2];if(!root)throw Error('USAGE: node service.mjs WINDOWS_ALLOWED_ROOT');
- const svc=new PowerShellApprovalService({root,chatReadonlyEnabled:process.env.PS_DIRECT_CHAT_READONLY_ENABLED==='1'});await svc.start();
+ const svc=new PowerShellApprovalService({chatReadonlyEnabled:process.env.PS_DIRECT_CHAT_READONLY_ENABLED==='1'});await svc.start();
  console.error('PS_LAB_READY 127.0.0.1:'+svc.port);
  console.error('LOCAL_APPROVAL_URL http://127.0.0.1:'+svc.port+'/approve?key='+svc.uiToken);
  console.error('MCP_AGENT_TOKEN '+svc.agentToken);

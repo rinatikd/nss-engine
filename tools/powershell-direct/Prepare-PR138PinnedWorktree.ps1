@@ -3,19 +3,25 @@
 [CmdletBinding()]
 param(
  [ValidateSet('Inspect','Prepare')][string]$Mode='Inspect',
- [string]$RepositoryRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
+ [Parameter(Mandatory=$true)]
+ [ValidatePattern('^[0-9a-fA-F]{40}$')]
+ [string]$CandidateCommit,
+ [string]$RepositoryRoot='C:\Engineering\ChromeBridge-Recovery-Install-20261114',
+ [string]$WorktreeName='PowerShellDirect-PR138-graceful-drain-20261125'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 
 $workspaceExpected='C:\Engineering\ChromeBridge-Recovery-Install-20261114'
 $expectedBase='f58f44a52c569a4a45e3ffe025dc6d1f62beff58'
-$expectedSha='5f6837a8f99dd0db23f35ec84e1b4dc8c172886d'
+$candidateSha=$CandidateCommit.ToLowerInvariant()
+if($candidateSha -ceq $expectedBase){throw 'CANDIDATE_SHA_MUST_ADVANCE_BASE'}
 $expectedBranch='feat/psdirect-per-job-workspace-approval-20261123'
 $expectedRemote='github.com/rinatikd/nss-engine'
 $oldRepo=$workspaceExpected
 $workRoot=Join-Path $workspaceExpected 'work'
-$newRepo=Join-Path $workRoot 'PowerShellDirect-PR138-pinned-release-clean'
+$newRepo=Join-Path $workRoot $WorktreeName
+if($WorktreeName -notmatch '^PowerShellDirect-PR138-[A-Za-z0-9._-]+$'){throw 'PR138_WORKTREE_NAME_INVALID'}
 $git='C:\Program Files\Git\cmd\git.exe'
 
 $workspace=(Resolve-Path -LiteralPath $RepositoryRoot).ProviderPath.TrimEnd('\')
@@ -101,7 +107,7 @@ if($Mode -eq 'Inspect'){
   [pscustomobject]@{
     Result='PR138_WORKTREE_PREFLIGHT'
     PrimaryHead=$primaryHead
-    CandidateCommit=$expectedSha
+    CandidateCommit=$candidateSha
     CandidateBranch=$expectedBranch
     Destination=$newRepo
     DestinationExists=(Test-Path -LiteralPath $newRepo)
@@ -119,13 +125,14 @@ $remoteRef='refs/heads/'+$expectedBranch
 $trackingRef='refs/remotes/origin/'+$expectedBranch
 $null=InvokeGit $oldRepo @('fetch','--no-tags','origin',($remoteRef+':'+$trackingRef))
 $remoteHead=InvokeGit $oldRepo @('rev-parse',$trackingRef)
-# The target is an immutable pinned ancestor; the feature branch may contain
-# later helper/runbook-only commits without changing the staged runtime source.
-$null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$expectedSha,$remoteHead)
-$null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$expectedBase,$expectedSha)
-$null=InvokeGit $oldRepo @('worktree','add','--detach',$newRepo,$expectedSha)
+# Stage only the exact caller-supplied immutable runtime commit. It must be
+# a descendant of the protected base and an ancestor of the fetched feature
+# branch head; never resolve a moving branch name into the runtime worktree.
+$null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$candidateSha,$remoteHead)
+$null=InvokeGit $oldRepo @('merge-base','--is-ancestor',$expectedBase,$candidateSha)
+$null=InvokeGit $oldRepo @('worktree','add','--detach',$newRepo,$candidateSha)
 $actualHead=InvokeGit $newRepo @('rev-parse','HEAD')
-if($actualHead -cne $expectedSha){throw 'PR138_WORKTREE_HEAD_MISMATCH'}
+if($actualHead -cne $candidateSha){throw 'PR138_WORKTREE_HEAD_MISMATCH'}
 $actualRemote=InvokeGit $newRepo @('remote','get-url','origin')
 if((RemoteIdentity $actualRemote) -cne $expectedRemote){throw 'PR138_WORKTREE_REMOTE_MISMATCH'}
 $required=@(

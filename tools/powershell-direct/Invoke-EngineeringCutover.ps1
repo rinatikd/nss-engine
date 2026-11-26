@@ -21,12 +21,12 @@ $node='C:\Program Files\nodejs\node.exe'
 $client='C:\Engineering\chrome-bridge\codex-handoff-output\direct-cli-v21\runtime\tunnel-client.exe'
 $credential=Join-Path $env:LOCALAPPDATA 'ChromeBridge-Recovery\control-plane.dpapi'
 $audit='C:\Engineering\PowerShellDirect-Engineering-Audit-R1'
-$roots='C:\Engineering\ChromeBridge-Recovery-Install-20261114;C:\Engineering\PowerShellDirect-Engineering-Lab-R1'
 $testPaths=@(
  'tools/powershell-direct/tests/engineering.test.mjs',
  'tools/ai_collaboration/engineering-runner.test.mjs',
  'tools/powershell-direct/tests/named-suites.test.mjs',
  'tools/ai_collaboration/local_job_service.test.mjs',
+ 'tools/ai_collaboration/workspace-policy.test.mjs',
  'tools/ai_collaboration/local_mcp_dispatch.test.mjs'
 )
 function Get-Listener([int]$Port){
@@ -121,10 +121,8 @@ function Start-Engineering {
   $psi.Arguments='"'+$new+'"'
   $psi.WorkingDirectory=Split-Path $new -Parent
   $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
-  $psi.EnvironmentVariables['PS_DIRECT_ALLOWED_ROOT']='C:\Engineering'
   $psi.EnvironmentVariables['PS_DIRECT_TUNNEL_CLIENT']=$client
   $psi.EnvironmentVariables['CONTROL_PLANE_API_KEY']=$plain
-  $psi.EnvironmentVariables['PS_DIRECT_ENGINEERING_WORKSPACES']=$roots
   $psi.EnvironmentVariables['PS_DIRECT_ENGINEERING_AUDIT_DIR']=$audit
   $process=[Diagnostics.Process]::Start($psi)
   if($null -eq $process){throw 'SUPERVISOR_START_FAILED'}
@@ -189,6 +187,12 @@ if($Mode -eq 'Rehearse'){
  }|ConvertTo-Json
  return
 }
+# Hard fail closed: production cutover is disabled until a supported graceful
+# stop channel, durable phase journal, and demonstrated rollback are implemented.
+if($Mode -eq 'Cutover'){
+ throw 'CUTOVER_DISABLED_GRACEFUL_DRAIN_JOURNAL_ROLLBACK_REQUIRED'
+}
+
 # No production mutation without BOTH explicit CLI switches and console phrase.
 if(!$EnableProductionCutover -or !$RemoteAuthenticationVerified){
  throw 'PRODUCTION_CUTOVER_REQUIRES_EXPLICIT_SWITCHES'
