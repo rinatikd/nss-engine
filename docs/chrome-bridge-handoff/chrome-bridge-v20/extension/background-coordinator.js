@@ -232,6 +232,21 @@ async function awaitBounded(promise, timeoutMs) {
   return settled;
 }
 
+async function enqueueControlOperationBounded(task, options={}, timeoutMs=STOP_DRAIN_TIMEOUT_MS) {
+  const pending = enqueueControlOperation(task,options);
+  let timer;
+  const outcome = await Promise.race([
+    pending.then(value=>({settled:true,value}),error=>({settled:true,error})),
+    new Promise(resolve=>{
+      timer=setTimeout(()=>resolve({settled:false}),timeoutMs);
+    })
+  ]);
+  clearTimeout(timer);
+  if (!outcome.settled) return {settled:false,pending};
+  if (outcome.error) throw outcome.error;
+  return {settled:true,value:outcome.value,pending};
+}
+
 async function clearAllBackgroundControls(chromeApi) {
   await new BackgroundControlGrants(chromeApi).clear();
   await new SessionAuthorization(chromeApi).revoke();
@@ -337,7 +352,8 @@ async function startBackgroundTransportOnce(chromeApi, generation, startRecord) 
   if (mutationQuarantinePersistenceFailed)
     return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
   await assertNoGlobalQuarantineLock(chromeApi);
-  await controlStorageLane.catch(() => {});
+  if (!(await awaitBounded(controlStorageLane,START_DRAIN_TIMEOUT_MS)))
+    return {ok:false,reason:'BACKGROUND_CONTROL_DRAIN_UNCONFIRMED'};
   if (controlClearRequested || controlClearFailed || mutationStopCount > 0)
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
   // Restrict access before reading secrets, not after obtaining the key.
@@ -410,11 +426,20 @@ export async function stopBackgroundTransport(chromeApi, {
 
     let cleanupError = null;
     try {
-      await enqueueControlOperation(
+      const cleanup = await enqueueControlOperationBounded(
         () => clearAllBackgroundControls(chromeApi),
-        {allowDuringClear:true}
+        {allowDuringClear:true},
+        startDrainTimeoutMs
       );
-      controlClearFailed = false;
+      if (!cleanup.settled) {
+        controlClearFailed = true;
+        cleanupError = Error('BACKGROUND_CONTROL_CLEAR_UNCONFIRMED');
+        // The queued clear may complete later, but the durable global lock
+        // remains and no automatic continuation may reopen this session.
+        void cleanup.pending.catch(()=>{});
+      } else {
+        controlClearFailed = false;
+      }
     } catch (error) {
       controlClearFailed = true;
       cleanupError = error;
@@ -524,11 +549,17 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             let cleanupError=null;
             const drained=await drainMutationLanes(chromeApi);
             try {
-              await enqueueControlOperation(
+              const cleanup=await enqueueControlOperationBounded(
                 () => clearAllBackgroundControls(chromeApi),
                 {allowDuringClear:true}
               );
-              controlClearFailed=false;
+              if (!cleanup.settled) {
+                controlClearFailed=true;
+                cleanupError=Error('BACKGROUND_CONTROL_CLEAR_UNCONFIRMED');
+                void cleanup.pending.catch(()=>{});
+              } else {
+                controlClearFailed=false;
+              }
             } catch (error) {
               controlClearFailed=true;
               cleanupError=error;
@@ -632,11 +663,17 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         let cleanupError=null;
         const drained=await drainMutationLanes(chromeApi);
         try {
-          await enqueueControlOperation(
+          const cleanup=await enqueueControlOperationBounded(
             () => clearAllBackgroundControls(chromeApi),
             {allowDuringClear:true}
           );
-          controlClearFailed=false;
+          if (!cleanup.settled) {
+            controlClearFailed=true;
+            cleanupError=Error('BACKGROUND_CONTROL_CLEAR_UNCONFIRMED');
+            void cleanup.pending.catch(()=>{});
+          } else {
+            controlClearFailed=false;
+          }
         } catch(error) {
           controlClearFailed=true;
           cleanupError=error;
@@ -692,10 +729,15 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             if (sessionStatus.active && sessionStatus.origins.includes(origin))
               throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
             revokeWriteStarted=true;
-            await enqueueControlOperation(
+            const revokeWrite=await enqueueControlOperationBounded(
               () => new BackgroundControlGrants(chromeApi).revoke(tabId),
               {tabId,allowFencedTab:true}
             );
+            if (!revokeWrite.settled) {
+              const error=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
+              error.quarantinedTabs=[tabId];
+              throw error;
+            }
             return {ok:true,tabId};
           } catch (error) {
             // Preserve known precondition denials. Only a failed attempted
