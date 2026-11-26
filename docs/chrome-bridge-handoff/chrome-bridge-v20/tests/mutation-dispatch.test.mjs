@@ -160,7 +160,7 @@ test('changed target metadata after approval blocks browser_click',async()=>{
  f.chromeApi.scripting.executeScript=async payload=>{
    const result=await realInject(payload);
    if(payload.args[0]==='describe' && ++descriptions===2)
-     return [{result:{...result[0].result,text:'Different target'}}];
+     return [{...result[0],result:{...result[0].result,text:'Different target'}}];
    return result;
  };
  await assert.rejects(execute(cmd('browser_click'),f),/TARGET_CHANGED_AFTER_APPROVAL/);
@@ -429,11 +429,14 @@ test('provider_prepare failures after a lost no-send receipt stay NOT_PERFORMED'
     const original=f.chromeApi.scripting.executeScript;
     f.chromeApi.scripting.executeScript=async payload=>{
       if(payload.args[0]==='provider_prepare') {
-        if(mode==='explicit-preflight-failure') return [{result:{
-          error:'PROVIDER_SEND_BUTTON_NOT_READY',
-          dispatchState:'NOT_PERFORMED',
-          sideEffect:'composer-cleared'
-        }}];
+        if(mode==='explicit-preflight-failure') {
+          const injected=await original(payload);
+          return [{...injected[0],result:{
+            error:'PROVIDER_SEND_BUTTON_NOT_READY',
+            dispatchState:'NOT_PERFORMED',
+            sideEffect:'composer-cleared'
+          }}];
+        }
         throw Error('INJECTION_RESPONSE_LOST');
       }
       return original(payload);
@@ -455,10 +458,13 @@ test('provider_commit page receipt classifies pre-click failure as NOT_PERFORMED
   const f=providerFixture();
   const original=f.chromeApi.scripting.executeScript;
   f.chromeApi.scripting.executeScript=async payload=>{
-    if(payload.args[0]==='provider_commit') return [{result:{
-      error:'PROVIDER_PREPARED_DRAFT_MISMATCH',
-      dispatchState:'NOT_PERFORMED'
-    }}];
+    if(payload.args[0]==='provider_commit') {
+      const injected=await original(payload);
+      return [{...injected[0],result:{
+        error:'PROVIDER_PREPARED_DRAFT_MISMATCH',
+        dispatchState:'NOT_PERFORMED'
+      }}];
+    }
     return original(payload);
   };
   await assert.rejects(dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{
@@ -474,11 +480,14 @@ test('provider_commit page receipt after click boundary remains UNKNOWN and carr
   const f=providerFixture();
   const original=f.chromeApi.scripting.executeScript;
   f.chromeApi.scripting.executeScript=async payload=>{
-    if(payload.args[0]==='provider_commit') return [{result:{
-      error:'SEND_CLICK_RESULT_UNVERIFIED',
-      dispatchState:'UNKNOWN',
-      sideEffect:'send-click-may-have-fired'
-    }}];
+    if(payload.args[0]==='provider_commit') {
+      const injected=await original(payload);
+      return [{...injected[0],result:{
+        error:'SEND_CLICK_RESULT_UNVERIFIED',
+        dispatchState:'UNKNOWN',
+        sideEffect:'send-click-may-have-fired'
+      }}];
+    }
     return original(payload);
   };
   await assert.rejects(dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{
