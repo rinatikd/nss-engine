@@ -250,3 +250,27 @@ Observed capabilities in the current source:
 6. Only then implement the Control UI flow and real Chrome Lab tests.
 
 **Updated decision:** ProviderJournal is a strong existing foundation, so a wholly new provider journal is not required. However, it is not sufficient by itself to unlock Chrome tab quarantine. Generic mutation coverage and browser execution quiescence remain prerequisites; otherwise keep the affected tab/global lock quarantined.
+
+
+## 13. Source review update — Bridge orchestration and SendJournal
+
+Further inspection of `server/bridge.mjs`, `server/send-journal.mjs`, and `server/tools.mjs` refines the coverage map:
+
+- `provider_prepare` and `provider_commit` are orchestrated through `ProviderJournal`. The server writes the provider transaction boundary before enqueueing the corresponding page action, validates the page receipt, then persists the terminal state. Startup recovery marks in-flight provider transactions UNKNOWN.
+- `agent_send` is separately protected by `SendJournal`. It writes a request entry with initial status UNKNOWN before enqueueing `agent_send`; duplicate request IDs are not dispatched again; the journal stores HMAC fingerprints and transport metadata, not message bodies or replies. Writes use a lock, temporary file, fsync, and atomic rename. A failed settle leaves the write-ahead UNKNOWN record in place.
+- The Bridge command queue retains the single-writer slot after a dispatched timeout and marks the command UNKNOWN until a late acknowledgement arrives or the Bridge process is deliberately restarted. This avoids overlapping a still-running DOM action within that process.
+- The documented tool surface exposes provider status/revoke/stop/events, including signed provider quiescence evidence. These mechanisms are useful inputs to recovery, not a general browser-tab unlock operation.
+
+### Corrected mutation coverage matrix
+
+| Mutation class | Existing durable evidence | Remaining recovery limitation |
+| --- | --- | --- |
+| `provider_prepare` | ProviderJournal write-ahead and validated prepare receipt; restart converts in-flight state to UNKNOWN | May leave an unsent composer draft; journal state alone does not terminate a still-running old page script |
+| `provider_commit` | ProviderJournal write-ahead, validated click receipt, UNKNOWN on ambiguity; no automatic retry | UNKNOWN means submission may have happened; requires provider-side reconciliation and execution-context quiescence |
+| `agent_send` | SendJournal write-ahead UNKNOWN, duplicate suppression, HMAC fingerprints, durable settle | Transport/delivery ambiguity remains UNKNOWN; does not itself prove old page script stopped |
+| `browser_click` / `browser_fill` | Coordinator mutation lanes/fences and Bridge single-writer queue | No equivalent durable operation journal found in the reviewed path; keep quarantine sticky unless separate durable evidence is added |
+| Session-wide Revoke / Control UI clear | Durable coordinator global pending record and affected tab list | Does not resolve each operation's side effect or prove browser execution quiescence |
+
+### Updated prerequisite
+
+Do not build a duplicate journal for provider_prepare/provider_commit or agent_send. First expose a narrow read-only recovery evidence API over the existing ProviderJournal and SendJournal, with exact identity checks and authenticated access. Add write-ahead operation coverage for `browser_click` / `browser_fill` if these remain supported mutation paths under the relevant control scope. Then add browser execution quiescence evidence. Until all evidence for an affected tab is terminal and consistent, do not unlock that tab.
