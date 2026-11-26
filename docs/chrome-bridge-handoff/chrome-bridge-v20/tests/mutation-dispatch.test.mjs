@@ -268,21 +268,24 @@ test('unclassified revalidation errors emit safe REVALIDATION code and never sen
 
 
 function providerFixture({deny=false,conversationChanged=false,grant=true}={}) {
-  const state={injections:[],approvalCount:0,allowAt:true};
+  const state={injections:[],targets:[],approvalCount:0,allowAt:true,documentId:'document-provider-0001'};
   const chromeApi={
     tabs:{get:async()=>({id:9,url:'https://claude.ai/chat/abcdefghi',title:'Test'})},
     storage:{local:{get:async key=>key==='sites'
       ?{sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:{adapters:'{}'}}},
     permissions:{contains:async()=>true},
-    scripting:{executeScript:async({args})=>{
-      const [name,details]=args;state.injections.push(name);
-      if(name==='agent_context')return [{result:{verified:true,origin:'https://claude.ai',
-        conversationId:conversationChanged&&!state.allowAt?'other12345':'abcdefghi'}}];
-      if(name==='provider_prepare')return [{result:{prepared:true,requestId:details.requestId,preparedId:details.preparedId,
+    scripting:{executeScript:async({args,target,world})=>{
+      const [name,details]=args;state.injections.push(name);state.targets.push({target,world,name});
+      const response=result=>[{
+        documentId:target.documentIds?.[0]||state.documentId,frameId:0,result
+      }];
+      if(name==='agent_context')return response({verified:true,origin:'https://claude.ai',
+        conversationId:conversationChanged&&!state.allowAt?'other12345':'abcdefghi'});
+      if(name==='provider_prepare')return response({prepared:true,requestId:details.requestId,preparedId:details.preparedId,
         expiresAt:details.expiresAt,payloadHash:details.payloadHash,
-        sideEffect:'composer-filled-no-send',clickedSend:false}}];
-      if(name==='provider_commit')return [{result:{clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,payloadHash:details.payloadHash,clickedAt:new Date().toISOString()}}];
-      return [{result:{ok:true}}];
+        sideEffect:'composer-filled-no-send',clickedSend:false});
+      if(name==='provider_commit')return response({clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,payloadHash:details.payloadHash,clickedAt:new Date().toISOString()});
+      return response({ok:true});
     }}
   };
   const approvals={request:async()=>{state.approvalCount++;state.allowAt=false;if(deny)throw Error('USER_DENIED');}};
