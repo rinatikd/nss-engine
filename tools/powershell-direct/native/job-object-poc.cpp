@@ -207,7 +207,31 @@ static bool verify_nested_job_assignment(const wchar_t* self) {
   return true;
 }
 
+
+static int breakaway_probe(const wchar_t* self) {
+  std::wstring command = L"\"" + std::wstring(self) + L"\" --child";
+  STARTUPINFOW si{}; si.cb = sizeof(si);
+  PROCESS_INFORMATION pi{};
+  if (CreateProcessW(self, command.data(), nullptr, nullptr, FALSE,
+                     CREATE_BREAKAWAY_FROM_JOB, nullptr, nullptr, &si, &pi)) {
+    CloseHandle(pi.hThread);
+    TerminateProcess(pi.hProcess, 9);
+    WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hProcess);
+    std::fwprintf(stderr, L"FAIL: CREATE_BREAKAWAY_FROM_JOB escaped the execution Job\n");
+    return 1;
+  }
+  const DWORD error = GetLastError();
+  if (error != ERROR_ACCESS_DENIED) {
+    std::fwprintf(stderr, L"FAIL: breakaway rejected with unexpected Win32 error %lu\n", error);
+    return 2;
+  }
+  std::wprintf(L"PASS: CREATE_BREAKAWAY_FROM_JOB rejected with ERROR_ACCESS_DENIED\n");
+  return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
+  if (argc >= 2 && wcscmp(argv[1], L"--breakaway-probe") == 0) return breakaway_probe(argv[0]);
   if (argc >= 2 && wcscmp(argv[1], L"--kill-on-close-owner") == 0) return kill_on_close_owner(argv[0]);
   if (argc >= 2 && wcscmp(argv[1], L"--child") == 0) return child_mode(false, argv[0]);
   if (argc >= 2 && wcscmp(argv[1], L"--spawn-descendant") == 0) return child_mode(true, argv[0]);
@@ -216,6 +240,14 @@ int wmain(int argc, wchar_t** argv) {
   if (!GetModuleFileNameW(nullptr, self, MAX_PATH)) fail(L"GetModuleFileNameW");
   if (!verify_kill_on_close(self)) return 5;
   if (!verify_nested_job_assignment(self)) return 6;
+  ManagedProcess breakaway{};
+  const std::wstring breakaway_command = L"\\\"" + std::wstring(self) + L"\\\" --breakaway-probe";
+  if (!start_in_job(self, breakaway_command, nullptr, breakaway)) fail(L"start breakaway probe");
+  if (WaitForSingleObject(breakaway.process, 10000) != WAIT_OBJECT_0) { TerminateJobObject(breakaway.job, 9); return 7; }
+  DWORD breakaway_exit = 99;
+  if (!GetExitCodeProcess(breakaway.process, &breakaway_exit)) fail(L"GetExitCodeProcess breakaway");
+  CloseHandle(breakaway.process); CloseHandle(breakaway.job);
+  if (breakaway_exit != 0) return 8;
   std::wstring command = L"\"" + std::wstring(self) + L"\" --spawn-descendant";
   ManagedProcess p{};
   if (!start_in_job(self, command, nullptr, p)) fail(L"start_in_job");
