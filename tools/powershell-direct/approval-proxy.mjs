@@ -2,6 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 
 const randomHex=()=>crypto.randomBytes(32).toString('hex');
+const settlesWithin=(promise,ms)=>new Promise(resolve=>{const timer=setTimeout(()=>resolve(false),ms);Promise.resolve(promise).then(()=>{clearTimeout(timer);resolve(true)},()=>{clearTimeout(timer);resolve(false)});});
 const json=(res,status,error)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify({error}));};
 
 export function createApprovalProxy({servicePort=17486,uiToken,nonce=randomHex(),port=0}={}){
@@ -57,7 +58,7 @@ export function createApprovalProxy({servicePort=17486,uiToken,nonce=randomHex()
    const closed=new Promise(done=>server.close(()=>done(true)));
    server.closeIdleConnections?.();
    server.closeAllConnections?.();
-   Promise.race([closed,new Promise(done=>setTimeout(()=>done(false),timeoutMs))]).then(resolve);
+   settlesWithin(closed,timeoutMs).then(resolve);
   })
  };
 }
