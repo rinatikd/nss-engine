@@ -43,15 +43,7 @@ $observed | Format-Table -AutoSize
 Write-Host 'PREFLIGHT_PASS. Ports 17487 and 17381/17382 were not touched.'
 if($Mode -eq 'Check'){Write-Host 'CHECK_ONLY; to replace the verified stack use -Mode Cutover.';return}
 
-# Capture the runtime key BEFORE stopping the old instance.
-if([string]::IsNullOrWhiteSpace($env:CONTROL_PLANE_API_KEY)){
-  $secure=Read-Host 'Enter CONTROL_PLANE_API_KEY (hidden)' -AsSecureString
-  $env:CONTROL_PLANE_API_KEY=[System.Net.NetworkCredential]::new('', $secure).Password
-  Remove-Variable secure -ErrorAction SilentlyContinue
-}
-if([string]::IsNullOrWhiteSpace($env:CONTROL_PLANE_API_KEY)){throw 'RUNTIME_KEY_REQUIRED'}
-
-# Re-check all owners, to avoid PID reuse or replacing the wrong profile.
+# No control-plane API key is needed by this supervisor or tunnel child.\n\n# Re-check all owners, to avoid PID reuse or replacing the wrong profile.
 foreach($entry in $observed){
  $conn=Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $entry.Port -State Listen -ErrorAction Stop
  $p=Get-CimInstance Win32_Process -Filter "ProcessId=$($entry.PID)"
