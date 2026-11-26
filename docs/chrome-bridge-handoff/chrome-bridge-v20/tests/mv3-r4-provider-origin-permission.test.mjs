@@ -112,7 +112,21 @@ globalThis.__r4PermissionGate={permittedTab,BackgroundControlGrants};
     },12000,'SERVICE_WORKER');
     workerCdp=await Cdp.connect(worker.webSocketDebuggerUrl);
     await workerCdp.call('Runtime.enable');
-    await until(()=>workerCdp.eval('typeof chrome!=="undefined" && !!chrome.storage?.session && !!chrome.tabs?.create'),8000,'WORKER_API');
+    await until(()=>workerCdp.eval('typeof chrome!=="undefined" && !!chrome.storage?.local && !!chrome.runtime?.id'),8000,'WORKER_CONTEXT');
+    const apiDiagnostic=await workerCdp.eval(`JSON.stringify({
+      runtime:typeof chrome.runtime?.id,
+      storageLocal:!!chrome.storage?.local,
+      storageSession:!!chrome.storage?.session,
+      tabsCreate:typeof chrome.tabs?.create,
+      permissionsContains:typeof chrome.permissions?.contains,
+      scripting:typeof chrome.scripting?.executeScript
+    })`);
+    console.log('[R4 WORKER API]',apiDiagnostic);
+    const api=JSON.parse(apiDiagnostic);
+    assert.equal(api.storageSession,true,'Chrome storage.session must be available to the real Grant store');
+    assert.equal(api.tabsCreate,'function','Chrome tabs.create must be available to the disposable worker');
+    assert.equal(api.permissionsContains,'function','Chrome permissions.contains must be available');
+    assert.equal(api.scripting,'function','Chrome scripting.executeScript must be available');
 
     const result=await workerCdp.eval(`(async()=>{
       const {permittedTab,BackgroundControlGrants}=globalThis.__r4PermissionGate||{};
