@@ -1,0 +1,14 @@
+{
+  "name": "powershell-direct-native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows x64 N-API bootstrap for PowerShell Direct process lifecycle",
+  "gypfile": true,
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "test": "node test-load.mjs"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}
