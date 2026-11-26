@@ -25,6 +25,17 @@ if ($global:LASTEXITCODE -ne 0 -or $sourceSha -notmatch '^[0-9a-f]{40}$') {
 }
 $sourceInputs = @('extension','deployment/verify-candidate-source.ps1','deployment/upgrade-pr102-lab.ps1')
 
+# Fault injection must never be available for a real workstation invocation.
+$injectionRejected = $false
+try {
+  & $updater -LabRoot 'C:\\not-a-real-lab' -ExpectedSourceSha ('0' * 40) -TestFailDisplacedCleanup
+} catch {
+  if ($_.Exception.Message -like '*Cleanup failure injection is allowed only in TestFixture mode*') {
+    $injectionRejected = $true
+  } else { throw }
+}
+if (-not $injectionRejected) { throw 'Test cleanup fault injection was not rejected outside TestFixture mode' }
+
 # A non-ignored untracked file inside a copied input directory must fail closed.
 $dirtyFile = Join-Path $sourceExtension '.pr102-candidate-dirty-test.mjs'
 [IO.File]::WriteAllText($dirtyFile,'synthetic untracked candidate source')
