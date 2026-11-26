@@ -25,6 +25,7 @@ let mutationStopRequested = false;
 let mutationStopCount = 0;
 let mutationQuarantinePersistenceFailed = false;
 let controlStorageLane = Promise.resolve();
+let revocationFenceLane = Promise.resolve();
 let controlClearRequested = false;
 let controlClearFailed = false;
 
@@ -34,6 +35,13 @@ function coordinatorError(code, dispatchState='NOT_PERFORMED') {
 
 // Grants, Revoke and global clear all mutate the same session-storage object.
 // One FIFO prevents stale read/modify/write snapshots from overwriting each other.
+function enqueueRevocationFence(task) {
+  const next = revocationFenceLane.catch(() => {}).then(task);
+  revocationFenceLane = next;
+  void next.catch(() => {});
+  return next;
+}
+
 function enqueueControlOperation(task, {
   tabId=null, allowDuringClear=false, allowFencedTab=false
 }={}) {
@@ -807,7 +815,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             return error;
           };
           try {
-            const fence=await persistTabRevocationFence(chromeApi,tabId);
+            const fence=await enqueueRevocationFence(()=>persistTabRevocationFence(chromeApi,tabId));
             if (!fence.persisted) throw await unknownRevoke();
             fenceStores=fence.stores;
 
@@ -827,7 +835,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             );
             if (!revokeWrite.settled) throw await unknownRevoke();
 
-            if (!await clearTabRevocationFence(chromeApi,tabId,fenceStores))
+            if (!await enqueueRevocationFence(()=>clearTabRevocationFence(chromeApi,tabId,fenceStores)))
               throw await unknownRevoke();
             fenceCleared=true;
             return {ok:true,tabId};
@@ -837,7 +845,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             // permanent quarantine rather than reopening the tab.
             if (!keepFence && fenceStores.length && !fenceCleared) {
               try {
-                fenceCleared=await clearTabRevocationFence(chromeApi,tabId,fenceStores);
+                fenceCleared=await enqueueRevocationFence(()=>clearTabRevocationFence(chromeApi,tabId,fenceStores));
               } catch { fenceCleared=false; }
               if (!fenceCleared) throw await unknownRevoke();
             }
