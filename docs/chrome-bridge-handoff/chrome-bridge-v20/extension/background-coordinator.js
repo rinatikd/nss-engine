@@ -112,12 +112,12 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
 
   const local = await chromeApi.storage.local.get([
-    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock'
+    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock','bridgeMutationRevokingTabs'
   ]);
   let session = {};
   if (chromeApi.storage.session?.get) {
     session = await chromeApi.storage.session.get([
-      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock'
+      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock','bridgeMutationRevokingTabs'
     ]);
   }
   if (local.bridgeMutationQuarantineLock === true ||
