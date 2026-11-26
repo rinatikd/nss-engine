@@ -17,7 +17,7 @@ export class PowerShellApprovalService {
   if(!root||!path.win32.isAbsolute(root)||normalized===path.win32.parse(normalized).root||
     normalized.startsWith('\\\\')||port!==PORT&&port!==0)throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
   this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;
-  this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;this.jobs=new Map();this.active=null;
+  this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;this.jobs=new Map();this.active=null;this.activeController=null;this.activePromise=null;
   this.server=http.createServer((req,res)=>this.route(req,res));
  }
  propose(args){
@@ -57,12 +57,12 @@ export class PowerShellApprovalService {
   if(!match(hash,job.sha256))throw Error('HASH_MISMATCH');
   if(!approved){job.state='DENIED';return {state:job.state};}
   if(this.active)throw Error('ANOTHER_JOB_RUNNING');
-  job.state='RUNNING';this.active=id;
-  void (async()=>{try{
-    job.result=await this.run({spec:job.payload.spec,workspace:job.payload.workspace});
-    job.state=job.result.state==='FINISHED'&&job.result.exitCode===0?'FINISHED':'FAILED';
+  job.state='RUNNING';this.active=id;this.activeController=new AbortController();
+  this.activePromise=(async()=>{try{
+    job.result=await this.run({spec:job.payload.spec,workspace:job.payload.workspace,signal:this.activeController.signal});
+    job.state=job.result.state==='FINISHED'&&job.result.exitCode===0?'FINISHED':job.result.state==='CANCELLED'?'CANCELLED':'FAILED';
    }catch(e){job.result={reason:/^[A-Z0-9_]+$/.test(e.message)?e.message:e.code||'RUNNER_ERROR'};job.state='FAILED';}
-   finally{this.active=null;}
+   finally{this.active=null;this.activeController=null;this.activePromise=null;}
   })();
   return {state:'RUNNING'};
  }
@@ -121,7 +121,14 @@ export class PowerShellApprovalService {
   }catch(e){return send(res,400,{error:/^[A-Z0-9_]+$/.test(e.message)?e.message:'INVALID_REQUEST'});}
  }
  start(){return new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(this.port,'127.0.0.1',()=>{this.port=this.server.address().port;resolve(this);});});}
- stop(){return new Promise(resolve=>this.server.close(resolve));}
+ async stop({timeoutMs=5000}={}){
+  const closed=new Promise(resolve=>this.server.close(()=>resolve(true)));
+  if(this.activeController)this.activeController.abort();
+  const active=this.activePromise;
+  const completed=active?await Promise.race([active.then(()=>true),new Promise(resolve=>setTimeout(()=>resolve(false),timeoutMs))]):true;
+  await closed;
+  return completed;
+ }
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  console.error('SUPERVISOR_REQUIRED: start stack-supervisor.mjs so local approval proxy is available.');
