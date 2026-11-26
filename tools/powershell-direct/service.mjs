@@ -126,11 +126,14 @@ export class PowerShellApprovalService {
  start(){return new Promise((resolve,reject)=>{this.server.once('error',reject);this.server.listen(this.port,'127.0.0.1',()=>{this.port=this.server.address().port;resolve(this);});});}
  async stop({timeoutMs=5000}={}){
   const closed=new Promise(resolve=>this.server.close(()=>resolve(true)));
+  this.server.closeIdleConnections?.();
   if(this.activeController)this.activeController.abort();
   const active=this.activePromise;
   const completed=active?await Promise.race([active.then(()=>true),new Promise(resolve=>setTimeout(()=>resolve(false),timeoutMs))]):true;
-  await closed;
-  return completed;
+  // Do not let a stalled local HTTP client keep shutdown pending indefinitely.
+  this.server.closeAllConnections?.();
+  const serverClosed=await Promise.race([closed,new Promise(resolve=>setTimeout(()=>resolve(false),timeoutMs))]);
+  return completed&&serverClosed;
  }
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
