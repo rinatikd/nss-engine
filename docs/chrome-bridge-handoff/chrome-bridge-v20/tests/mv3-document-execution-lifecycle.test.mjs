@@ -183,8 +183,10 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
    return result[0]?.result==='done';
   },4000,'ASYNC_SIDE_EFFECT');
   
-  // Navigate to another document in the same tab and prove its documentId changes.
-  await worker.eval('(async()=>await chrome.tabs.update('+tabId+',{url:'+JSON.stringify(origin+'/b')+'}))()');
+  // Use a real same-origin link navigation so Chromium creates a history entry
+  // and can put the original document into Back/Forward Cache.
+  const navigation=await inject(documentIdA,()=>{document.querySelector('#navigate').click();return true;});
+  assert.equal(navigation[0].result,true);
   const secondDocument=await until(async()=>{
    const frame=await activeFrame(origin+'/b');
    return frame&&frame.documentId!==documentIdA?frame:null;
