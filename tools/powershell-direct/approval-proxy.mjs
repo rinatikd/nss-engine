@@ -53,6 +53,11 @@ export function createApprovalProxy({servicePort=17486,uiToken,nonce=randomHex()
     url:'http://127.0.0.1:'+server.address().port+'/'+nonce+'/approve'
    }));
   }),
-  stop:()=>new Promise(resolve=>server.close(resolve))
+  stop:({timeoutMs=5000}={})=>new Promise(resolve=>{
+   const closed=new Promise(done=>server.close(()=>done(true)));
+   server.closeIdleConnections?.();
+   server.closeAllConnections?.();
+   Promise.race([closed,new Promise(done=>setTimeout(()=>done(false),timeoutMs))]).then(resolve);
+  })
  };
 }
