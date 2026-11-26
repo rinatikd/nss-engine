@@ -29,13 +29,13 @@ async function stopTunnelChild(timeoutMs=5000){
 async function shutdown(signal='STOP'){
  if(stopping)return;
  stopping=true;
- process.stdout.write('STOPPING_STACK '+signal+'\\n');
+ process.stdout.write('STOPPING_STACK '+signal+'\n');
  try{await proxy?.stop();}catch{}
  const tunnelStopped=await stopTunnelChild();
  try{await service.stop();}catch{}
- process.stdout.write('LOCAL_SERVICE_AND_APPROVAL_PROXY_STOPPED\\n');
- if(tunnelStopped)process.stdout.write('TUNNEL_CHILD_EXIT_CONFIRMED\\n');
- else process.stderr.write('TUNNEL_TERMINATION_UNCONFIRMED: process may still be running\\n');
+ process.stdout.write('LOCAL_SERVICE_AND_APPROVAL_PROXY_STOPPED\n');
+ if(tunnelStopped)process.stdout.write('TUNNEL_CHILD_EXIT_CONFIRMED\n');
+ else process.stderr.write('TUNNEL_TERMINATION_UNCONFIRMED: process may still be running\n');
  process.exitCode=tunnelStopped?0:1;
 }
 process.on('SIGINT',()=>{void shutdown('SIGINT');});
