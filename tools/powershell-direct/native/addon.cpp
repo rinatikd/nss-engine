@@ -8,14 +8,78 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #pragma comment(lib, "bcrypt.lib")
 
 namespace {
+// Move-only HANDLE owner. A null/invalid handle is a no-op; ownership is
+// transferred explicitly and every successfully adopted HANDLE is closed once.
+class UniqueHandle {
+ public:
+  UniqueHandle() noexcept = default;
+  explicit UniqueHandle(HANDLE handle) noexcept : handle_(handle) {}
+  ~UniqueHandle() { reset(); }
+
+  UniqueHandle(const UniqueHandle&) = delete;
+  UniqueHandle& operator=(const UniqueHandle&) = delete;
+
+  UniqueHandle(UniqueHandle&& other) noexcept
+      : handle_(other.release()) {}
+  UniqueHandle& operator=(UniqueHandle&& other) noexcept {
+    if (this != &other) reset(other.release());
+    return *this;
+  }
+
+  HANDLE get() const noexcept { return handle_; }
+  explicit operator bool() const noexcept {
+    return handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE;
+  }
+  HANDLE release() noexcept {
+    HANDLE result = handle_;
+    handle_ = nullptr;
+    return result;
+  }
+  void reset(HANDLE replacement = nullptr) noexcept {
+    if (*this) CloseHandle(handle_);
+    handle_ = replacement;
+  }
+
+ private:
+  HANDLE handle_ = nullptr;
+};
+
+static_assert(!std::is_copy_constructible<UniqueHandle>::value,
+              "HANDLE ownership must not be copied");
+static_assert(std::is_nothrow_move_constructible<UniqueHandle>::value,
+              "HANDLE ownership transfer must be noexcept");
+
+enum class OperationState {
+  kRegistered,
+  kStarting,
+  kRunning,
+  kTerminating,
+  kCompleted,
+  kClosed
+};
+
 struct OperationRecord {
-  // Native HANDLE ownership will be added here in the next lifecycle increment.
+  OperationState state = OperationState::kRegistered;
+
+  // Declaration order is intentional: members are destroyed in reverse order,
+  // so pipe endpoints and process/thread handles close before the Job HANDLE.
+  // The job remains owned until the lifecycle implementation confirms that
+  // the job is empty and output readers have reached EOF.
+  UniqueHandle job;
+  UniqueHandle process;
+  UniqueHandle primary_thread;
+  UniqueHandle stdout_read;
+  UniqueHandle stdout_write;
+  UniqueHandle stderr_read;
+  UniqueHandle stderr_write;
 };
 
 std::mutex registry_mutex;
