@@ -20,3 +20,26 @@ jobs:
           python-version: '3.12'
       - name: Run isolated state-machine contract tests
         run: python -m unittest discover -v -s tools/ai_collaboration -p 'test_*.py'
+
+  recovery-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run recovery state-machine and Windows identity contract tests
+        run: node --test tools/ai_collaboration/recovery/*.test.mjs
+      - name: Parse every recovery PowerShell script with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $files = @(Get-ChildItem 'tools/ai_collaboration/recovery' -Filter '*.ps1' -File)
+          if ($files.Count -lt 10) { throw 'Expected the complete recovery PowerShell script set' }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { throw ($file.Name + ': ' + ($errors | Out-String)) }
+            Write-Output ('[PASS] PowerShell 5.1 parse: ' + $file.Name)
+          }
