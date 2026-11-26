@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {backgroundControlUiState} from '../extension/background-control-ui-state.js';
+import {backgroundControlUiState,backgroundRevokeErrorMessage} from '../extension/background-control-ui-state.js';
 
 test('Control button remains disabled outside background mode',()=>{
   assert.equal(backgroundControlUiState({connected:true,mutationEnabled:true}).grantAllDisabled,true);
@@ -36,4 +36,19 @@ test('grant state unavailable fails closed while coordinator is not reachable',(
   });
   assert.equal(state.grantAllDisabled,true);
   assert.equal(state.revokeAllDisabled,true);
+});
+
+test('revoke error message exposes UNKNOWN and quarantined tab IDs without trusting malformed values',()=>{
+  assert.equal(
+    backgroundRevokeErrorMessage({
+      error:'BACKGROUND_STOP_UNCONFIRMED',
+      outcome:'UNKNOWN',
+      quarantinedTabs:[62,63,62,'64',-1]
+    }),
+    'UNKNOWN: BACKGROUND_STOP_UNCONFIRMED; карантин вкладок: 62, 63'
+  );
+  assert.equal(
+    backgroundRevokeErrorMessage({error:'untrusted text',quarantinedTabs:[]}),
+    'REVOKE_FAILED'
+  );
 });
