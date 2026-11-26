@@ -5,7 +5,7 @@
 ## Operating model
 
 This edition does not use a fixed task-ID allowlist. It accepts a general process request consisting of:
-- an absolute local executable path;
+- an absolute executable path (local or UNC);
 - an exact argument array (never a shell command string);
 - a workspace under the configured allowed root;
 - a purpose and preliminary risk assessment;
@@ -19,7 +19,7 @@ This is deliberately capability-flexible, not an automatic trust system. No requ
 
 - Uses `spawn(..., {shell:false})`; no shell interpolation by the service.
 - Exact executable path and argument array are included in the immutable proposal fingerprint.
-- Workspace must resolve inside `PS_DIRECT_ALLOWED_ROOT`.
+- Workspace is selected per request and must resolve to an existing absolute directory; it is not restricted to a fixed project root.
 - No elevation is requested; the child runs with the supervisor's current Windows user privileges.
 - Child environment is restricted to ordinary Windows runtime variables; control-plane and agent credentials are not passed to the executed process.
 - Request queue, argument count/size, timeout and output size are bounded.
