@@ -422,7 +422,9 @@ test('per-tab Revoke persists its admission fence across an MV3 worker restart',
   const revoked=await revoke;
   assert.equal(revoked.ok,true);
   assert.deepEqual(c.data.bridgeMutationRevokingTabs,[],
-    'the durable pending marker is removed only after the grant-store revoke is confirmed');
+    'the local durable pending marker is removed only after the grant-store revoke is confirmed');
+  assert.deepEqual(c.session.bridgeMutationRevokingTabs,[],
+    'the session fallback marker is also removed after the grant-store revoke is confirmed');
 });
 
 test('per-tab Revoke refuses to partially revoke an origin-wide Session Authorization lease',async()=>{
