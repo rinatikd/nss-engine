@@ -81,7 +81,9 @@ test('expired pending jobs are reclaimed even when nobody polled their status',(
  x.advance(90000);
  const next=x.service.propose({...request,requestId:'expirejob_next'});
  assert.equal(next.state,'PENDING');
- assert.equal(x.service.jobs.size,1);
+ assert.equal(x.service.jobs.size,32);
+ assert.equal(x.service.jobs.has('expirejob00'),false);
+ assert.equal(x.service.jobs.has('expirejob_next'),true);
 });
 
 test('request validation rejects malformed paths, NUL arguments, missing risk and excessive timeout',()=>{
