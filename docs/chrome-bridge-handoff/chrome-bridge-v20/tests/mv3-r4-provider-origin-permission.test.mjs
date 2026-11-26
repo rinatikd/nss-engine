@@ -1,6 +1,5 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -80,10 +79,10 @@ test('R4 disposable Chrome accepts the exact Claude origin and grants/revokes on
   for(const name of modules){
     fs.copyFileSync(path.join(root,'extension',name),path.join(extension,name));
   }
-  fs.writeFileSync(path.join(extension,'background.js'),`// Test-only worker: load the production permission/grant modules unchanged.
-import './permissions.js';
-import './read-only-dispatch.js';
-import './background-control-grants.js';
+  fs.writeFileSync(path.join(extension,'background.js'),`// Test-only worker: statically import the production modules unchanged.
+import {permittedTab} from './read-only-dispatch.js';
+import {BackgroundControlGrants} from './background-control-grants.js';
+globalThis.__r4PermissionGate={permittedTab,BackgroundControlGrants};
 `);
   fs.writeFileSync(path.join(extension,'manifest.json'),JSON.stringify({
     manifest_version:3,
@@ -106,20 +105,19 @@ import './background-control-grants.js';
     ],{stdio:'ignore',detached:true});
 
     const port=await debugPort(profile);
-    const extensionId=[...crypto.createHash('sha256').update(path.resolve(extension)).digest('hex').slice(0,32)]
-      .map(char=>'abcdefghijklmnop'[parseInt(char,16)]).join('');
     const worker=await until(async()=>{
       const list=await targets(port);
       return list.find(target=>target.type==='service_worker'&&
-        target.url==='chrome-extension://'+extensionId+'/background.js'&&target.webSocketDebuggerUrl);
+        /^chrome-extension:\/\/[a-p]{32}\/background\.js$/.test(target.url)&&target.webSocketDebuggerUrl);
     },12000,'SERVICE_WORKER');
     workerCdp=await Cdp.connect(worker.webSocketDebuggerUrl);
     await workerCdp.call('Runtime.enable');
     await until(()=>workerCdp.eval('typeof chrome!=="undefined" && !!chrome.storage?.session && !!chrome.tabs?.create'),8000,'WORKER_API');
 
     const result=await workerCdp.eval(`(async()=>{
-      const {permittedTab}=await import(chrome.runtime.getURL('read-only-dispatch.js'));
-      const {BackgroundControlGrants}=await import(chrome.runtime.getURL('background-control-grants.js'));
+      const {permittedTab,BackgroundControlGrants}=globalThis.__r4PermissionGate||{};
+      if(typeof permittedTab!=='function'||typeof BackgroundControlGrants!=='function')
+        throw Error('R4_PERMISSION_GATE_MODULES_NOT_READY');
       const url='https://claude.ai/chat/r4fixture0001';
       const tab=await chrome.tabs.create({url,active:false});
       await new Promise(resolve=>setTimeout(resolve,250));
