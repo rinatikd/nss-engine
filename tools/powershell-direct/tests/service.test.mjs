@@ -15,6 +15,7 @@ function fixture(){
  let now=1000,starts=0,finish;
  const service=new PowerShellApprovalService({root:'C:\\Engineering',port:0,now:()=>now,
   workspaceCheck:(candidate)=>{if(candidate!==workspace&&candidate!=='C:\\Windows\\System32')throw Error('WORKSPACE_DENIED');return candidate;},
+  identityCheck:(executable)=>({path:executable,sha256:'a'.repeat(64),size:123}),
   run:async({spec,workspace:cwd,expectedExecutable})=>{starts++;assert.equal(spec.executable,request.executable);assert.equal(expectedExecutable.sha256,'a'.repeat(64));assert.equal(cwd,workspace);
    return await new Promise(resolve=>finish=()=>resolve({state:'FINISHED',exitCode:0,stdout:'OK',stderr:''}));}
  });
