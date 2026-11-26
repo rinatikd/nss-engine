@@ -10,6 +10,7 @@ const match=(a,b)=>{const x=Buffer.from(typeof a==='string'?a:''),y=Buffer.from(
 const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(obj));};
+const settlesWithin=(promise,ms)=>new Promise(resolve=>{const timer=setTimeout(()=>resolve(false),ms);Promise.resolve(promise).then(()=>{clearTimeout(timer);resolve(true)},()=>{clearTimeout(timer);resolve(false)});});
 
 export class PowerShellApprovalService {
  constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,identityCheck=executableIdentity}={}){
@@ -129,10 +130,10 @@ export class PowerShellApprovalService {
   this.server.closeIdleConnections?.();
   if(this.activeController)this.activeController.abort();
   const active=this.activePromise;
-  const completed=active?await Promise.race([active.then(()=>true),new Promise(resolve=>setTimeout(()=>resolve(false),timeoutMs))]):true;
+  const completed=active?await settlesWithin(active,timeoutMs):true;
   // Do not let a stalled local HTTP client keep shutdown pending indefinitely.
   this.server.closeAllConnections?.();
-  const serverClosed=await Promise.race([closed,new Promise(resolve=>setTimeout(()=>resolve(false),timeoutMs))]);
+  const serverClosed=await settlesWithin(closed,timeoutMs);
   return completed&&serverClosed;
  }
 }
