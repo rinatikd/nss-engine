@@ -93,6 +93,7 @@ test('ephemeral approval proxy never exposes UI token and enforces same-origin P
  const proxy=createApprovalProxy({servicePort:x.service.port,uiToken:x.service.uiToken,nonce});
  const opened=await proxy.start();
  try{
+  const p=x.service.propose(req);
   const page=await fetch(opened.url);
   assert.equal(page.status,200);
   const html=await page.text();
@@ -100,7 +101,6 @@ test('ephemeral approval proxy never exposes UI token and enforces same-origin P
   assert.doesNotMatch(html,new RegExp(x.service.uiToken));
   assert.doesNotMatch(opened.url,new RegExp(x.service.uiToken));
   assert.match(opened.url,new RegExp(nonce));
-  const p=x.service.propose(req);
   const body=new URLSearchParams({id:req.requestId,sha256:p.sha256,approved:'yes'});
   const origin='http://127.0.0.1:'+opened.port;
   const rejected=await fetch(origin+'/'+nonce+'/decide',{method:'POST',headers:{Origin:'null'},body});
