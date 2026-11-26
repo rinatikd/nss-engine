@@ -7,7 +7,7 @@
 This edition does not use a fixed task-ID allowlist. It accepts a general process request consisting of:
 - an absolute executable path (local or UNC);
 - an exact argument array (never a shell command string);
-- a workspace under the configured allowed root;
+- an existing absolute working directory selected for this request;
 - a purpose and preliminary risk assessment;
 - a bounded timeout.
 
@@ -48,7 +48,7 @@ node --check .\tools\powershell-direct\stack-supervisor.mjs
 node --test .\tools\powershell-direct\tests\service.test.mjs
 ```
 
-Unit tests exercise the general proposal schema, immutable fingerprint, no execution before local approval, denial, one-time dispatch, expiry, workspace containment, local UI authentication, proxy nonce and MCP authentication. These tests do not establish Windows end-to-end acceptance, tunnel health, process-tree cleanup or production readiness.
+Unit tests exercise the general proposal schema, immutable fingerprint, no execution before local approval, denial, one-time dispatch, expiry, working-directory validation, local UI authentication, proxy nonce and MCP authentication. These tests do not establish Windows end-to-end acceptance, tunnel health, process-tree cleanup or production readiness.
 
 ## Not yet approved for cutover
 
