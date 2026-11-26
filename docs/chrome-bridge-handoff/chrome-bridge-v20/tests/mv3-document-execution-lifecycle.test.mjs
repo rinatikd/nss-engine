@@ -84,7 +84,7 @@ test('disposable Chrome verifies exact-document execution, cooperative cancellat
  const extension=path.join(directory,'extension'),profile=path.join(directory,'profile');
  fs.mkdirSync(extension);fs.mkdirSync(profile);
  fs.writeFileSync(path.join(extension,'background.js'),
-  "chrome.runtime.onInstalled.addListener(()=>{});\\n");
+  "chrome.runtime.onInstalled.addListener(()=>{});");
  fs.writeFileSync(path.join(extension,'manifest.json'),JSON.stringify({
   manifest_version:3,name:'R4 document lifecycle disposable test',version:'0.0.1',
   background:{service_worker:'background.js',type:'module'},
