@@ -25,3 +25,25 @@ jobs:
           node --check tools/powershell-direct/stack-supervisor.mjs
       - name: PowerShell Direct unit and HTTP tests
         run: node --test tools/powershell-direct/tests/service.test.mjs
+
+  windows-job-object-poc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Compile native Job Object proof of concept
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          cl.exe /nologo /std:c++17 /EHsc /W4 /WX /DUNICODE /D_UNICODE tools/powershell-direct/native/job-object-poc.cpp /Fe:build/job-object-poc.exe
+          if ($LASTEXITCODE -ne 0) { throw "MSVC compilation failed: $LASTEXITCODE" }
+      - name: Run descendant containment and termination smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\build\job-object-poc.exe
+          if ($LASTEXITCODE -ne 0) { throw "Job Object smoke test failed: $LASTEXITCODE" }
