@@ -2,7 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {runApproved,validateExecutionSpec,canonicalWorkspace} from './runner.mjs';
+import {runApproved,validateExecutionSpec,canonicalWorkspace,executableIdentity} from './runner.mjs';
 
 const PORT=17486;
 const secret=()=>crypto.randomBytes(32).toString('hex');
@@ -12,12 +12,12 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 const send=(res,status,obj)=>{res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(JSON.stringify(obj));};
 
 export class PowerShellApprovalService {
- constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace}={}){
+ constructor({root,port=PORT,agentToken=secret(),uiToken=secret(),now=Date.now,run=runApproved,workspaceCheck=canonicalWorkspace,identityCheck=executableIdentity}={}){
   const normalized=typeof root==='string'?path.win32.normalize(root):'';
   if(!root||!path.win32.isAbsolute(root)||normalized===path.win32.parse(normalized).root||
     normalized.startsWith('\\\\')||port!==PORT&&port!==0)throw Error('SAFE_ROOT_AND_PORT_REQUIRED');
   this.root=root;this.port=port;this.agentToken=agentToken;this.uiToken=uiToken;
-  this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;this.jobs=new Map();this.active=null;this.activeController=null;this.activePromise=null;
+  this.now=now;this.run=run;this.workspaceCheck=workspaceCheck;this.identityCheck=identityCheck;this.jobs=new Map();this.active=null;this.activeController=null;this.activePromise=null;
   this.server=http.createServer((req,res)=>this.route(req,res));
  }
  propose(args){
@@ -34,11 +34,14 @@ export class PowerShellApprovalService {
   if(this.jobs.size>=32)throw Error('QUEUE_FULL');
   const spec=validateExecutionSpec(args);
   const workspace=this.workspaceCheck(args.workspace,this.root),time=this.now();
-  const payload={id,spec,workspace,issuedAt:time,expiresAt:time+90000};
+  const executableIdentity=this.identityCheck(spec.executable);
+  if(!executableIdentity||typeof executableIdentity.path!=='string'||!/^[a-f0-9]{64}$/.test(executableIdentity.sha256))
+    throw Error('EXECUTABLE_IDENTITY_UNAVAILABLE');
+  const payload={id,spec,workspace,executableIdentity,issuedAt:time,expiresAt:time+90000};
   const job={payload,sha256:digest(payload),state:'PENDING',result:null};
   this.jobs.set(id,job);
   return {requestId:id,sha256:job.sha256,state:job.state,executable:spec.executable,args:spec.args,
-    purpose:spec.purpose,riskAssessment:spec.riskAssessment,workspace,timeoutMs:spec.timeoutMs,expiresAt:payload.expiresAt};
+    executableIdentity, purpose:spec.purpose,riskAssessment:spec.riskAssessment,workspace,timeoutMs:spec.timeoutMs,expiresAt:payload.expiresAt};
  }
  cancel(id){
   const job=this.jobs.get(id);if(!job)throw Error('JOB_NOT_FOUND');
@@ -59,7 +62,7 @@ export class PowerShellApprovalService {
   if(this.active)throw Error('ANOTHER_JOB_RUNNING');
   job.state='RUNNING';this.active=id;this.activeController=new AbortController();
   this.activePromise=(async()=>{try{
-    job.result=await this.run({spec:job.payload.spec,workspace:job.payload.workspace,signal:this.activeController.signal});
+    job.result=await this.run({spec:job.payload.spec,workspace:job.payload.workspace,expectedExecutable:job.payload.executableIdentity,signal:this.activeController.signal});
     job.state=job.result.state==='FINISHED'&&job.result.exitCode===0?'FINISHED':job.result.state==='CANCELLED'?'CANCELLED':'FAILED';
    }catch(e){job.result={reason:/^[A-Z0-9_]+$/.test(e.message)?e.message:e.code||'RUNNER_ERROR'};job.state='FAILED';}
    finally{this.active=null;this.activeController=null;this.activePromise=null;}
