@@ -70,6 +70,9 @@ test('R4 disposable Chrome accepts the exact Claude origin and grants/revokes on
   const extension=path.join(dir,'extension');
   const profile=path.join(dir,'profile');
   fs.mkdirSync(extension);fs.mkdirSync(profile);
+  fs.mkdirSync(path.join(profile,'Default'),{recursive:true});
+  fs.writeFileSync(path.join(profile,'Default','Preferences'),
+    JSON.stringify({extensions:{ui:{developer_mode:true}}}));
   const modules=[
     'read-only-dispatch.js','background-control-grants.js',
     'permissions.js','page.js','secrets.js','adapters.js'
