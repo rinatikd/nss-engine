@@ -35,12 +35,14 @@ int main() {
 
   std::atomic<unsigned int> terminal_winners{0};
   std::thread terminate([&]() {
-    if (state.try_transition(OperationState::kTerminating)) {
+    if (state.compare_transition(OperationState::kRunning,
+                                 OperationState::kTerminating)) {
       terminal_winners.fetch_add(1, std::memory_order_relaxed);
     }
   });
   std::thread complete([&]() {
-    if (state.try_transition(OperationState::kCompleted)) {
+    if (state.compare_transition(OperationState::kRunning,
+                                 OperationState::kCompleted)) {
       terminal_winners.fetch_add(1, std::memory_order_relaxed);
     }
   });
