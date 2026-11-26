@@ -24,6 +24,12 @@ export function executableIdentity(candidate){
   }finally{fs.closeSync(fd);}
 }
 
+export function assertExecutableIdentity(actual,expected){
+  if(!actual||!expected||actual.path!==expected.path||actual.sha256!==expected.sha256)
+    throw Error('EXECUTABLE_IDENTITY_MISMATCH');
+  return true;
+}
+
 export function validateExecutionSpec(input){
   if(!input||typeof input!=='object')throw Error('EXECUTION_SPEC_REQUIRED');
   const executable=input.executable;
@@ -72,8 +78,7 @@ export async function runApproved({spec,workspace,spawnImpl=spawn,envSource=proc
   if(process.platform!=='win32')throw Error('WINDOWS_ONLY');
   if(signal?.aborted)return {state:'CANCELLED',exitCode:null,reason:'CANCELLED_BEFORE_START',stdout:'',stderr:'',elapsedMs:0};
   const identity=executableIdentity(checked.executable);
-  if(expectedExecutable&&(identity.path!==expectedExecutable.path||identity.sha256!==expectedExecutable.sha256))
-    throw Error('EXECUTABLE_IDENTITY_MISMATCH');
+  if(expectedExecutable)assertExecutableIdentity(identity,expectedExecutable);
   const executable=identity.path;
   const cwd=workspace;
   return await new Promise(resolve=>{
