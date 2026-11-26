@@ -48,9 +48,9 @@ if ($null -ne $task) {
 
 & $entrypoint -Mode Verify | Out-Null
 
-$releasePrefix = 'C:\Engineering\ChromeBridge-Recovery-Release'
+$releaseRoot = [IO.Path]::GetFullPath('C:\Engineering\ChromeBridge-Recovery-Release').TrimEnd('\')
 $fullScriptRoot = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
-if (-not $fullScriptRoot.StartsWith($releasePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+if ($fullScriptRoot -ine $releaseRoot) {
   throw 'INSTALL_ONLY_FROM_REVIEWED_RELEASE_COPY'
 }
 
