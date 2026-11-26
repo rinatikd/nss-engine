@@ -37,6 +37,11 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
         run: node --test tests/mv3-browser-smoke.test.mjs
+      - name: Verify exact-document targeting, cooperative cancellation and BFCache in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-document-execution-lifecycle.test.mjs
       - name: Exercise actual MV3 offscreen recovery without UI
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         env:
