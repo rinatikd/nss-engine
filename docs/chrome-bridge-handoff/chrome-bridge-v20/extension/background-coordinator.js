@@ -798,7 +798,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           try {
             const fence=await persistTabRevocationFence(chromeApi,tabId);
             if (!fence.persisted) throw await unknownRevoke();
-            fenceStores=fence.store;
+            fenceStores=fence.stores;
 
             const pending=mutationLanes.get(tabId);
             const settled=await awaitBounded(pending,STOP_DRAIN_TIMEOUT_MS);
