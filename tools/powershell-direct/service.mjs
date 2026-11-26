@@ -24,6 +24,12 @@ export class PowerShellApprovalService {
   const id=args?.requestId;
   if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{8,80}$/.test(id))throw Error('INVALID_REQUEST_ID');
   if(this.jobs.has(id))throw Error('DUPLICATE_REQUEST_ID');
+  if(this.jobs.size>=32){
+   for(const [oldId,oldJob] of this.jobs){
+    if(oldJob.state!=='PENDING'&&oldJob.state!=='RUNNING')this.jobs.delete(oldId);
+    if(this.jobs.size<32)break;
+   }
+  }
   if(this.jobs.size>=32)throw Error('QUEUE_FULL');
   const spec=validateExecutionSpec(args);
   const workspace=this.workspaceCheck(args.workspace,this.root),time=this.now();
