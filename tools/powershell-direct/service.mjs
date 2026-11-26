@@ -80,7 +80,7 @@ export class PowerShellApprovalService {
   }catch(e){return {jsonrpc:'2.0',id,result:{isError:true,content:[{type:'text',text:e.message}]}};}
   return {jsonrpc:'2.0',id,error:{code:-32601,message:'Method not found'}};
  }
- async read(req,limit=8192){
+ async read(req,limit=131072){
   let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>limit)throw Error('BODY_TOO_LARGE');chunks.push(chunk);}
   return Buffer.concat(chunks).toString('utf8');
  }
