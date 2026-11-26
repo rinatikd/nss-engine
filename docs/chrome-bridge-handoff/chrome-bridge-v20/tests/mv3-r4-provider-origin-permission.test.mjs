@@ -1,0 +1,158 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawn,spawnSync} from 'node:child_process';
+
+const root=path.resolve(import.meta.dirname,'..');
+const browser=process.env.CHROME_BIN;
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const until=async(fn,timeout,label)=>{
+  const end=Date.now()+timeout;
+  while(Date.now()<end){
+    try{const value=await fn();if(value)return value;}catch{}
+    await sleep(100);
+  }
+  throw Error('R4_PROVIDER_ORIGIN_'+label+'_TIMEOUT');
+};
+async function debugPort(profile){
+  const file=path.join(profile,'DevToolsActivePort');
+  return until(()=>fs.existsSync(file)?Number(fs.readFileSync(file,'utf8').split(/\r?\n/)[0]):0,12000,'DEBUG_PORT');
+}
+async function targets(port){
+  return (await fetch('http://127.0.0.1:'+port+'/json/list')).json();
+}
+class Cdp{
+  constructor(ws){
+    this.ws=ws;this.seq=0;this.pending=new Map();
+    ws.addEventListener('message',event=>{
+      const message=JSON.parse(event.data);
+      if(!message.id)return;
+      const pending=this.pending.get(message.id);
+      if(!pending)return;
+      this.pending.delete(message.id);
+      message.error?pending.reject(Error(JSON.stringify(message.error))):pending.resolve(message.result);
+    });
+  }
+  static async connect(url){
+    const ws=new WebSocket(url);
+    await new Promise((resolve,reject)=>{
+      ws.addEventListener('open',resolve,{once:true});
+      ws.addEventListener('error',reject,{once:true});
+    });
+    return new Cdp(ws);
+  }
+  call(method,params={}){
+    const id=++this.seq;
+    return new Promise((resolve,reject)=>{
+      this.pending.set(id,{resolve,reject});
+      this.ws.send(JSON.stringify({id,method,params}));
+    });
+  }
+  async eval(expression){
+    const result=await this.call('Runtime.evaluate',{
+      expression,awaitPromise:true,returnByValue:true
+    });
+    if(result.exceptionDetails)throw Error(result.exceptionDetails.text||'CDP_EVALUATION_FAILED');
+    return result.result?.value;
+  }
+  close(){this.ws.close();}
+}
+
+test('R4 disposable Chrome accepts the exact Claude origin and grants/revokes only its tab', {timeout:60000},async()=>{
+  if(!browser||!fs.existsSync(browser))throw Error('CHROME_FOR_TESTING_REQUIRED');
+  const display=spawnSync('which',['xvfb-run'],{encoding:'utf8'});
+  if(display.status!==0)throw Error('XVFB_REQUIRED');
+
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bridge-r4-origin-'));
+  const extension=path.join(dir,'extension');
+  const profile=path.join(dir,'profile');
+  fs.mkdirSync(extension);fs.mkdirSync(profile);
+  const modules=[
+    'read-only-dispatch.js','background-control-grants.js',
+    'permissions.js','page.js','secrets.js','adapters.js'
+  ];
+  for(const name of modules){
+    fs.copyFileSync(path.join(root,'extension',name),path.join(extension,name));
+  }
+  fs.writeFileSync(path.join(extension,'background.js'),`// Test-only worker: load the production permission/grant modules unchanged.
+import './permissions.js';
+import './read-only-dispatch.js';
+import './background-control-grants.js';
+`);
+  fs.writeFileSync(path.join(extension,'manifest.json'),JSON.stringify({
+    manifest_version:3,
+    name:'R4 provider origin permission gate',
+    version:'0.2.0',
+    background:{service_worker:'background.js',type:'module'},
+    permissions:['storage','scripting','tabs'],
+    host_permissions:['https://claude.ai/*']
+  }));
+
+  let chromeProc,workerCdp;
+  try{
+    chromeProc=spawn(display.stdout.trim(),[
+      '-a',browser,'--no-sandbox','--disable-gpu','--disable-dev-shm-usage',
+      '--no-first-run','--no-default-browser-check','--disable-background-networking',
+      '--host-resolver-rules=MAP claude.ai 127.0.0.1',
+      '--remote-allow-origins=*','--user-data-dir='+profile,
+      '--load-extension='+extension,'--disable-extensions-except='+extension,
+      '--remote-debugging-port=0','about:blank'
+    ],{stdio:'ignore',detached:true});
+
+    const port=await debugPort(profile);
+    const extensionId=[...crypto.createHash('sha256').update(path.resolve(extension)).digest('hex').slice(0,32)]
+      .map(char=>'abcdefghijklmnop'[parseInt(char,16)]).join('');
+    const worker=await until(async()=>{
+      const list=await targets(port);
+      return list.find(target=>target.type==='service_worker'&&
+        target.url==='chrome-extension://'+extensionId+'/background.js'&&target.webSocketDebuggerUrl);
+    },12000,'SERVICE_WORKER');
+    workerCdp=await Cdp.connect(worker.webSocketDebuggerUrl);
+    await workerCdp.call('Runtime.enable');
+    await until(()=>workerCdp.eval('typeof chrome!=="undefined" && !!chrome.storage?.session && !!chrome.tabs?.create'),8000,'WORKER_API');
+
+    const result=await workerCdp.eval(`(async()=>{
+      const {permittedTab}=await import(chrome.runtime.getURL('read-only-dispatch.js'));
+      const {BackgroundControlGrants}=await import(chrome.runtime.getURL('background-control-grants.js'));
+      const url='https://claude.ai/chat/r4fixture0001';
+      const tab=await chrome.tabs.create({url,active:false});
+      await new Promise(resolve=>setTimeout(resolve,250));
+      const current=await chrome.tabs.get(tab.id);
+      await chrome.storage.local.set({sites:{
+        'https://claude.ai':{mode:'chat',adapter:'claude'}
+      }});
+      const hostPermission=await chrome.permissions.contains({origins:['https://claude.ai/*']});
+      const permitted=await permittedTab(chrome,tab.id);
+      const grants=new BackgroundControlGrants(chrome);
+      const grant=await grants.grant({tabId:tab.id,durationMinutes:15,localGesture:true});
+      const active=await grants.activeGrants();
+      await grants.revoke(tab.id);
+      const afterRevoke=await grants.activeGrants();
+      await chrome.tabs.remove(tab.id);
+      return {
+        url:current.url,origin:permitted.origin,adapter:permitted.site.adapter,
+        hostPermission,grantTabId:grant.tabId,activeGrantCount:active.length,
+        afterRevokeCount:afterRevoke.length
+      };
+    })()`);
+
+    assert.equal(result.url,'https://claude.ai/chat/r4fixture0001','tab must retain the exact provider HTTPS origin');
+    assert.equal(result.origin,'https://claude.ai');
+    assert.equal(result.adapter,'claude');
+    assert.equal(result.hostPermission,true,'manifest host permission must cover the exact provider origin');
+    assert.ok(Number.isSafeInteger(result.grantTabId)&&result.grantTabId>0);
+    assert.equal(result.activeGrantCount,1,'the real BackgroundControlGrants module must expose one effective tab grant');
+    assert.equal(result.afterRevokeCount,0,'the real BackgroundControlGrants module must revoke the tab grant');
+    console.log('[R4 ORIGIN GATE] exact provider origin, permittedTab, session grant and revoke passed');
+  }finally{
+    workerCdp?.close();
+    if(chromeProc&&!chromeProc.killed){
+      try{process.kill(-chromeProc.pid,'SIGTERM');}catch{chromeProc.kill('SIGTERM');}
+    }
+    try{fs.rmSync(dir,{recursive:true,force:true,maxRetries:12,retryDelay:200});}
+    catch(error){console.warn('[R4 ORIGIN GATE] disposable profile cleanup deferred:',error.code);}
+  }
+});
