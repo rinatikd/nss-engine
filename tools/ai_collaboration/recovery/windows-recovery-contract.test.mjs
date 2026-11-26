@@ -29,10 +29,10 @@ test('restore never kills an occupying PID or a running tunnel',async()=>{
 
 test('Windows auto-start is opt-in as current user and non-admin',async()=>{
   const s=await read('Register-StackRecovery.ps1');
-  assert.match(s,/\[string\]\$Mode='Check'/);
+  assert.match(s,/\[string\]\$Mode\s*=\s*'Check'/);
   assert.match(s,/New-ScheduledTaskTrigger\s+-AtLogOn\s+-User\s+\$userId/);
   assert.match(s,/-LogonType Interactive -RunLevel Limited/);
-  assert.match(s,/if\(\$Mode -eq 'Unregister'\)/);
+  assert.match(s,/if\s*\(\$Mode -eq 'Unregister'\)/);
   assert.doesNotMatch(s,/-RunLevel Highest|SYSTEM|LocalSystem/);
 });
 
@@ -58,7 +58,7 @@ test('manifest integrity is required by both logon task and desktop shortcut',as
   const register=await read('Register-StackRecovery.ps1');
   const verify=await read('Invoke-VerifiedRecovery.ps1');
   assert.match(register,/Invoke-VerifiedRecovery\.ps1/);
-  assert.match(register,/& \$script -Mode Verify/);
+  assert.match(register,/&\s+\$entrypoint\s+-Mode\s+Verify/);
   assert.match(verify,/RECOVERY_FILE_HASH_MISMATCH/);
   assert.match(verify,/Get-FileHash.*SHA256/);
 });
