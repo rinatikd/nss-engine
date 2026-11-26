@@ -98,8 +98,8 @@ export class PowerShellApprovalService {
     const pending=[...this.jobs.values()].filter(j=>this.status(j.payload.id).state==='PENDING');
     const rows=pending.map(j=>{
      const p=j.payload;
-     const command=[p.spec.executable,...p.spec.args].map(esc).join(' ');
-     return '<section><h3>'+esc(p.spec.purpose)+'</h3><p><b>Риск:</b> '+esc(p.spec.riskAssessment)+'</p><p><b>Рабочая папка:</b> '+esc(p.workspace)+'</p><p><b>Программа и аргументы:</b><br><code>'+command+'</code></p><p><b>Тайм-аут:</b> '+p.spec.timeoutMs+' мс</p><p><b>SHA-256:</b> <code>'+esc(j.sha256)+'</code></p><form method="POST" action="decide"><input type="hidden" name="id" value="'+esc(p.id)+'"><input type="hidden" name="sha256" value="'+esc(j.sha256)+'"><button name="approved" value="yes">Approve once</button> <button name="approved" value="no">Deny</button></form></section><hr>';
+     const command=esc(JSON.stringify({executable:p.spec.executable,args:p.spec.args},null,2));
+     return '<section><h3>'+esc(p.spec.purpose)+'</h3><p><b>Риск:</b> '+esc(p.spec.riskAssessment)+'</p><p><b>Рабочая папка:</b> '+esc(p.workspace)+'</p><p><b>Точная программа и массив аргументов (JSON):</b><pre><code>'+command+'</code></pre></p><p><b>Тайм-аут:</b> '+p.spec.timeoutMs+' мс</p><p><b>SHA-256:</b> <code>'+esc(j.sha256)+'</code></p><form method="POST" action="decide"><input type="hidden" name="id" value="'+esc(p.id)+'"><input type="hidden" name="sha256" value="'+esc(j.sha256)+'"><button name="approved" value="yes">Approve once</button> <button name="approved" value="no">Deny</button></form></section><hr>';
     }).join('');
     res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"});
     return res.end('<!doctype html><html><meta charset="utf-8"><h2>Локальное подтверждение PowerShell Direct</h2><p>Проверь назначение, риски, папку и точную команду. Подтверждай только согласованное действие.</p>'+(rows||'<p>Нет ожидающих запросов.</p>')+'</html>');
