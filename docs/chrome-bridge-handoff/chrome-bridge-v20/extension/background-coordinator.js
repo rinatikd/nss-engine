@@ -959,6 +959,10 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         // drain await. A replacement MV3 worker must not reopen the tab while
         // the accepted mutation or grant-store revoke is still unresolved.
         mutationFencedTabs.set(tabId,(mutationFencedTabs.get(tabId)||0)+1);
+        // A per-tab Revoke must not wait for a stale approval dialog to expire.
+        // Cancel only this tab's pending approvals before the first async drain;
+        // the mutation lane then settles as BLOCKED without entering pageAction.
+        approvals.cancelTab(tabId);
         const revoke=async()=>{
           let revokeWriteStarted=false;
           let fenceStores=[];
