@@ -44,6 +44,17 @@ export class ApprovalBroker {
     this.onChange(this.list());
     return {...item,approved:approved===true};
   }
+  revokeTab(tabId) {
+    if (!Number.isSafeInteger(tabId) || tabId <= 0) throw Error('INVALID_TAB_ID');
+    const revoked=[];
+    for (const [id,item] of this.pending) {
+      if (item.tabId !== tabId) continue;
+      this.pending.delete(id);
+      revoked.push(id);
+    }
+    if (revoked.length) this.onChange(this.list());
+    return revoked;
+  }
   revokeAll() {
     this.pending.clear();
     this.onChange([]);
