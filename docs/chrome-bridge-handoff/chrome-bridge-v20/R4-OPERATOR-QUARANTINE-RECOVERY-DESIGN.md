@@ -217,3 +217,36 @@ No real provider chat submission is permitted for these tests. Use a local deter
 8. Only after all gates pass, enable the operator unlock action in a separately versioned release candidate.
 
 **Current decision: NO-GO for quarantine unlock implementation that relies only on existing in-memory lanes or current Revoke markers.** The durable operation journal and command-specific side-effect reconciliation are prerequisites. Until then, keep quarantine sticky and R4 unreleased.
+
+
+## 12. Source review update — existing ProviderJournal
+
+A focused review of `server/provider-journal.mjs` on the #167 code head found that the repository already has a substantial durable provider transaction journal. The design above must reuse and extend this mechanism where appropriate rather than creating a second unrelated provider journal.
+
+Observed capabilities in the current source:
+- JSONL append-only transaction records with sequence numbers, previous-record hash, HMAC record validation, and fail-closed handling for malformed, oversized, or unreadable journal files.
+- Inter-process lock around load/append and projection refresh; append path uses fsync.
+- Provider transaction states include `PREPARING`, `PREPARED`, `COMMITTING`, `SENT`, `REPLIED`, `UNKNOWN`, `NOT_PERFORMED`, `BLOCKED`, `REVOKED`, `STOP_REQUESTED`, `STOPPED_CLEAN`, and `STOP_AFTER_COMMIT`.
+- Startup recovery converts transactions found in `PREPARING`, `PREPARED`, or `COMMITTING` to `UNKNOWN` with reason `BRIDGE_RESTART`.
+- `beginPrepare` / `completePrepare` and `beginCommit` / `completeCommit` persist provider transaction boundaries; commit completion requires a validated clicked-send receipt.
+- `status`, per-tab outstanding transaction counts, epoch revocation, and stop/quiescence methods exist. `STOPPED_CLEAN` carries a signed quiescence attestation, and unresolved transaction states prevent a clean stop.
+- Epoch revocation converts uncertain in-flight provider transactions to `UNKNOWN`, not a clean terminal success.
+
+### Important limitations still to close
+
+1. This is a **server-side provider transaction journal**, not proof that every extension-side page mutation (including generic `browser_click`, `browser_fill`, or `agent_send`) is durably journaled before injection.
+2. The ProviderJournal's restart recovery marks in-flight provider transactions UNKNOWN; it does not prove that an old injected page script has ceased execution.
+3. The journal's per-tab stop/quiescence evidence is provider-transaction scoped. It is not automatically a global Chrome page-execution quiescence proof for every mutation type.
+4. A `REQUEST_NOT_FOUND` status is only useful as evidence when the caller has established the correct journal lineage, bridge epoch, exact identity, and complete authoritative journal. It must not be used as a generic absence-means-not-performed shortcut.
+5. The existing journal does not itself implement the Control UI operator reconciliation/unlock workflow for `bridgeMutationQuarantinedTabs` or `bridgeMutationQuarantineLock`.
+
+### Revised implementation sequence
+
+1. Add an explicit adapter/service contract that correlates coordinator mutation admission with ProviderJournal transaction identity and epoch. Verify the correlation survives Worker replacement.
+2. Extend durable write-ahead coverage to generic page mutation classes, or explicitly exclude them from automatic recovery and require persistent quarantine.
+3. Reuse ProviderJournal terminal states and signed quiescence attestations for provider operations; do not mint a second conflicting source of truth.
+4. Define a separate, narrowly scoped browser-execution quiescence proof for injected page scripts. Until this exists, a provider journal terminal record alone is insufficient to unlock a tab if an old page execution may still be active.
+5. Add recovery state and audit records in a separate layer, with exact generation/token compare-and-swap and no grant restoration.
+6. Only then implement the Control UI flow and real Chrome Lab tests.
+
+**Updated decision:** ProviderJournal is a strong existing foundation, so a wholly new provider journal is not required. However, it is not sufficient by itself to unlock Chrome tab quarantine. Generic mutation coverage and browser execution quiescence remain prerequisites; otherwise keep the affected tab/global lock quarantined.
