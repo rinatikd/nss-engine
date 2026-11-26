@@ -173,6 +173,36 @@ async function persistMutationQuarantine(chromeApi, tabIds) {
   }
 }
 
+async function persistGlobalQuarantineLock(chromeApi) {
+  try {
+    await chromeApi.storage.local.set({bridgeMutationQuarantineLock:true});
+    return {persisted:true,store:'local'};
+  } catch {
+    try {
+      await chromeApi.storage.session.set({bridgeMutationQuarantineLock:true});
+      return {persisted:true,store:'session'};
+    } catch {
+      mutationQuarantinePersistenceFailed = true;
+      return {persisted:false,store:null};
+    }
+  }
+}
+
+async function assertNoGlobalQuarantineLock(chromeApi) {
+  if (mutationQuarantinePersistenceFailed)
+    throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE','BLOCKED');
+  let local,session;
+  try {
+    local=await chromeApi.storage.local.get('bridgeMutationQuarantineLock');
+    session=await chromeApi.storage.session.get('bridgeMutationQuarantineLock');
+  } catch {
+    throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE','BLOCKED');
+  }
+  if (local.bridgeMutationQuarantineLock===true ||
+      session.bridgeMutationQuarantineLock===true)
+    throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE','BLOCKED');
+}
+
 async function drainMutationLanes(chromeApi, timeoutMs=STOP_DRAIN_TIMEOUT_MS) {
   const entries = [...mutationLanes.entries()];
   if (!entries.length) return {drained:true,tabIds:[],quarantinePersisted:true};
@@ -306,6 +336,7 @@ async function startBackgroundTransportOnce(chromeApi, generation, startRecord) 
     return {ok:false,reason:'BACKGROUND_CONTROL_CLEAR_FAILED'};
   if (mutationQuarantinePersistenceFailed)
     return {ok:false,reason:'MUTATION_QUARANTINE_STATE_UNAVAILABLE'};
+  await assertNoGlobalQuarantineLock(chromeApi);
   await controlStorageLane.catch(() => {});
   if (controlClearRequested || controlClearFailed || mutationStopCount > 0)
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
@@ -396,10 +427,13 @@ export async function stopBackgroundTransport(chromeApi, {
     const stopConfirmed = await stopOffscreenTransport(chromeApi);
 
     const unknown = !intentPersisted || !startDrained ||
-      !mutationDrain.drained || !stopConfirmed;
+      !mutationDrain.drained || !stopConfirmed || Boolean(cleanupError);
     if (!stopConfirmed || !startDrained || !mutationDrain.drained || cleanupError || !intentPersisted) {
       const code = !stopConfirmed || !startDrained || !mutationDrain.drained || !intentPersisted
         ? 'BACKGROUND_STOP_UNCONFIRMED' : 'BACKGROUND_CONTROL_CLEAR_FAILED';
+      // Any uncertain global Stop/clear outcome blocks a future Start until
+      // an operator-controlled recovery/reconciliation clears this durable lock.
+      await persistGlobalQuarantineLock(chromeApi);
       updateStatus({state:'unknown',connected:false,error:code});
       const error = Error(code);
       error.outcome = unknown ? 'UNKNOWN' : 'NOT_PERFORMED';
@@ -507,8 +541,10 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
               error.quarantinedTabs=drained.tabIds;
               throw error;
             }
-            if (cleanupError)
-              throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','NOT_PERFORMED');
+            if (cleanupError) {
+              await persistGlobalQuarantineLock(chromeApi);
+              throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+            }
             return {revoked:true};
           }
           if (name==='session_status') return sessionAuthorization.status(msg.command.bridgeEpoch);
@@ -613,8 +649,10 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           error.quarantinedTabs=drained.tabIds;
           throw error;
         }
-        if (cleanupError)
-          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','NOT_PERFORMED');
+        if (cleanupError) {
+          await persistGlobalQuarantineLock(chromeApi);
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+        }
         return {ok:true};
       })().then(respond,error=>respond({
         error:error.message,
