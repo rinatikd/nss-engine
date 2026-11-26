@@ -403,7 +403,7 @@ export async function stopBackgroundTransport(chromeApi, {
   updateStatus({state:'disconnected',connected:false,error:null});
   return {ok:true,quarantinedTabs:[]};
 }
-export function installBackgroundCoordinator(chromeApi) {
+export function installBackgroundCoordinator(chromeApi, options={}) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
     if (!msg || msg.target !== 'bridge-coordinator' || !trustedCoordinatorSender(sender,chromeApi))
       return false;
@@ -578,31 +578,106 @@ export function installBackgroundCoordinator(chromeApi) {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
       }
-      void Promise.all([
-        new BackgroundControlGrants(chromeApi).clear(),
-        new SessionAuthorization(chromeApi).revoke(),
-        chromeApi.storage.local.set({bridgeMutationLabMode:false})
-      ]).then(()=>respond({ok:true}),e=>respond({error:e.message}));
+      // Revoke-all is a global mutation fence. No accepted page action may
+      // continue after the UI receives a successful clear response.
+      controlClearRequested = true;
+      void (async()=>{
+        let cleanupError=null;
+        const drained=await drainMutationLanes(chromeApi);
+        try {
+          await enqueueControlOperation(
+            () => clearAllBackgroundControls(chromeApi),
+            {allowDuringClear:true}
+          );
+          controlClearFailed=false;
+        } catch(error) {
+          controlClearFailed=true;
+          cleanupError=error;
+        } finally {
+          if (!mutationStopRequested && mutationStopCount===0)
+            controlClearRequested=false;
+        }
+        if (!drained.drained) {
+          const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+          error.quarantinedTabs=drained.tabIds;
+          throw error;
+        }
+        if (cleanupError)
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','NOT_PERFORMED');
+        return {ok:true};
+      })().then(respond,error=>respond({
+        error:error.message,
+        outcome:error.outcome || 'NOT_PERFORMED',
+        quarantinedTabs:Array.isArray(error.quarantinedTabs)?error.quarantinedTabs:[]
+      }));
       return true;
     }
     if (msg.type === 'grant-background-control' || msg.type === 'revoke-background-control') {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
       }
-      const run=async()=>{
-        const grants=new BackgroundControlGrants(chromeApi);
-        if (msg.type==='revoke-background-control') {
-          await grants.revoke(msg.tabId);return {ok:true};
-        }
-        const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
-          ['bridgeMutationLabMode','bridgeConnectionDesired']);
-        if(bridgeMutationLabMode!==true || bridgeConnectionDesired!==true)
-          throw Error('BACKGROUND_CONTROL_DISABLED');
-        return grants.grant({
-          tabId:msg.tabId,durationMinutes:msg.durationMinutes,localGesture:msg.localGesture===true
-        });
-      };
-      void run().then(respond,e=>respond({error:e.message}));
+      if (!Number.isSafeInteger(msg.tabId) || msg.tabId<=0) {
+        respond({error:'INVALID_TAB_ID'}); return false;
+      }
+
+      if (msg.type==='revoke-background-control') {
+        const tabId=msg.tabId;
+        // Fence this tab synchronously, then drain accepted work before the
+        // grant-store write. A session-wide lease cannot be represented as a
+        // per-tab grant and must be revoked through session_revoke instead.
+        mutationFencedTabs.set(tabId,(mutationFencedTabs.get(tabId)||0)+1);
+        const revoke=async()=>{
+          try {
+            const pending=mutationLanes.get(tabId);
+            const settled=await awaitBounded(pending,STOP_DRAIN_TIMEOUT_MS);
+            if (!settled) {
+              const persisted=await persistMutationQuarantine(chromeApi,[tabId]);
+              const error=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
+              error.quarantinedTabs=[tabId];
+              error.quarantinePersisted=persisted.persisted;
+              throw error;
+            }
+            const {origin}=await permittedTab(chromeApi,tabId);
+            const sessionStatus=await new SessionAuthorization(chromeApi).status();
+            if (sessionStatus.active && sessionStatus.origins.includes(origin))
+              throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
+            await enqueueControlOperation(
+              () => new BackgroundControlGrants(chromeApi).revoke(tabId),
+              {tabId,allowFencedTab:true}
+            );
+            return {ok:true,tabId};
+          } finally {
+            const remaining=(mutationFencedTabs.get(tabId)||1)-1;
+            if (remaining>0) mutationFencedTabs.set(tabId,remaining);
+            else mutationFencedTabs.delete(tabId);
+          }
+        };
+        void revoke().then(respond,error=>respond({
+          error:error.message,
+          outcome:error.outcome || 'NOT_PERFORMED',
+          quarantinedTabs:Array.isArray(error.quarantinedTabs)?error.quarantinedTabs:[]
+        }));
+        return true;
+      }
+
+      let accepted;
+      try {
+        accepted=enqueueControlOperation(async()=>{
+          const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
+            ['bridgeMutationLabMode','bridgeConnectionDesired']
+          );
+          if (mutationStopRequested || controlClearRequested ||
+              bridgeMutationLabMode!==true || bridgeConnectionDesired!==true)
+            throw coordinatorError('BACKGROUND_CONTROL_DISABLED','BLOCKED');
+          return new BackgroundControlGrants(chromeApi).grant({
+            tabId:msg.tabId,durationMinutes:msg.durationMinutes,localGesture:msg.localGesture===true
+          });
+        },{tabId:msg.tabId});
+      } catch(error) {
+        respond({error:error.message});
+        return false;
+      }
+      void accepted.then(respond,error=>respond({error:error.message}));
       return true;
     }
     if (msg.type === 'approval-list') {
@@ -630,7 +705,7 @@ export function installBackgroundCoordinator(chromeApi) {
       return true;
     }
     if (msg.type === 'stop-background') {
-      void stopBackgroundTransport(chromeApi).then(() => respond({ok:true}),e=>respond({ok:false,reason:e.message}));
+      void stopBackgroundTransport(chromeApi,options).then(respond,e=>respond({ok:false,reason:e.message,outcome:e.outcome || 'UNKNOWN',quarantinedTabs:Array.isArray(e.quarantinedTabs)?e.quarantinedTabs:[]}));
       return true;
     }
     return false;
