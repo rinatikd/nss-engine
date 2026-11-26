@@ -101,3 +101,17 @@ The local Windows PC becomes the primary testing host:
 - For real Windows acceptance, record exact source SHA, suite, exit code, elapsed time, sanitized stdout/stderr, OS and environment, artifacts and SHA256. Verify by running `node --test tools/ai_collaboration/local_test_runner.test.mjs` and `python -m unittest discover -s tools/ai_collaboration -p 'test_*.py' -v` in a locally approved isolated checkout.
 
 Codex CLI availability and integration checks remain deferred through 2026-11-27.
+
+
+## Main baseline synchronization checkpoint — 2026-11-26
+
+The common repository baseline advanced after CCTV Release 2 was merged:
+
+- Current main commit: `5bb86dff8f8a50483956fac5237d1f6942926855` (merge of PR #150).
+- PR #110 source head at this checkpoint: `674e1fad2b64910b470222c5f17c87cd1df4e8eb`.
+- GitHub's current PR merge candidate: `918c740b4dd9b17cac843706e04a327ab79ac140`, which compares as 513 commits ahead / 0 behind current main.
+- The exact merged tree was inspected at that merge-candidate SHA. `work/NSS_TKK_Editor_v0.2/modules/cctv/test_cctv_core.py` contains the corrected assertion `Observe, м: 23.0`; the old branch-head file still contains the superseded dictionary-style expectation.
+- The older Source checks run #45452312461 failed on the pre-PR150 merge baseline and is historical, not proof that the current PR merge candidate still fails.
+- PR #110's Source checks use the default pull-request checkout, which resolves the merge candidate. A new branch commit is being added to trigger fresh CI against this current main merge baseline; do not promote the gate until those exact runs complete.
+
+No merge of PR #110, deployment, Production change or local Windows mutation is performed by this synchronization checkpoint.
