@@ -184,9 +184,11 @@ test('service shutdown closes a stalled local HTTP client within its bound',asyn
  const socket=net.connect(x.service.port,'127.0.0.1');
  await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
  socket.write('POST /mcp HTTP/1.1\\r\\nHost: 127.0.0.1:'+x.service.port+'\\r\\nAuthorization: Bearer '+x.service.agentToken+'\\r\\nContent-Length: 1000\\r\\n\\r\\n{');
+ const socketClosed=new Promise(resolve=>socket.once('close',()=>resolve(true)));
  const started=Date.now();
  const stopped=await x.service.stop({timeoutMs:250});
  assert.equal(stopped,true);
+ assert.equal(await Promise.race([socketClosed,new Promise(resolve=>setTimeout(()=>resolve(false),500))]),true);
  assert.ok(Date.now()-started<1500);
  assert.equal(socket.destroyed,true);
 });
