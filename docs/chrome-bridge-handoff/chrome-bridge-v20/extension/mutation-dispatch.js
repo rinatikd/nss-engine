@@ -198,6 +198,7 @@ export async function dispatchMutation(cmd, chromeApi, {
   if (expires<=now()) throw Error('COMMAND_EXPIRED');
   let adapter;
   let preflight;
+  let preflightInjection;
   if (cmd.name === 'agent_send') {
     if (typeof cmd.args.text !== 'string' || !cmd.args.text.trim() ||
         cmd.args.text.length > 12000) throw Error('INVALID_PROMPT');
@@ -212,7 +213,7 @@ export async function dispatchMutation(cmd, chromeApi, {
     adapter = mergeAdapters(overrides)[CONTROL_ORIGINS[origin]] ||
       DEFAULT_ADAPTERS[CONTROL_ORIGINS[origin]];
     if (!adapter || adapter.origin !== origin) throw Error('ADAPTER_ORIGIN_MISMATCH');
-    const preflightInjection = await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    preflightInjection = await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
     preflight = preflightInjection.result;
     if (!preflight.verified || preflight.origin!==origin ||
         preflight.conversationId!==cmd.args.expectedConversationId)
@@ -220,7 +221,7 @@ export async function dispatchMutation(cmd, chromeApi, {
   } else {
     if (typeof cmd.args.selector!=='string' || !cmd.args.selector ||
         cmd.args.selector.length>300) throw Error('INVALID_SELECTOR');
-    const preflightInjection = await inject(chromeApi,tab.id,origin,'describe',
+    preflightInjection = await inject(chromeApi,tab.id,origin,'describe',
       {selector:cmd.args.selector});
     preflight = preflightInjection.result;
     if (cmd.name === 'browser_fill' &&
@@ -256,15 +257,16 @@ export async function dispatchMutation(cmd, chromeApi, {
     throw Error('CONTROL_GRANT_EXPIRED');
 
   let args;
+  let currentInjection;
   if (cmd.name === 'agent_send') {
-    const currentInjection = await inject(chromeApi,tab.id,origin,'agent_context',{adapter},preflightInjection.documentId);
+    currentInjection = await inject(chromeApi,tab.id,origin,'agent_context',{adapter},preflightInjection.documentId);
     const current = currentInjection.result;
     if (!current.verified || current.origin!==origin ||
         current.conversationId!==cmd.args.expectedConversationId)
       throw Error('CONVERSATION_CHANGED_AFTER_APPROVAL');
     args={...cmd.args,adapter,controlExpires:refreshedGrant};
   } else {
-    const currentInjection=await inject(chromeApi,tab.id,origin,'describe',
+    currentInjection=await inject(chromeApi,tab.id,origin,'describe',
       {selector:cmd.args.selector},preflightInjection.documentId);
     const current=currentInjection.result;
     if (current.tag!==preflight.tag || current.text!==preflight.text ||
