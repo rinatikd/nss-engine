@@ -82,8 +82,8 @@ Only the provider website and its adapter DOM are synthetic. Do not stub or repl
 2. Open two provider tabs A and B on the same synthetic HTTPS origin, each with a valid conversation route.
 3. Configure the temporary site's adapter and host permission; verify both tabs appear in `browser_tabs`.
 4. Obtain separate per-tab Grants through the real control UI.
-5. Bind A and B to separate MCP agent names using the supported agent-binding tool.
-6. Start a `provider_prepare` for A and hold its Approval pending using the actual approval UI/session.
+5. Bind A and B to separate MCP agent names using the actual MCP tool `agent_bind({name, tabId})`; the server's `provider_prepare` handler rejects tabs that are not present in its agent registry.
+6. Start a `provider_prepare` for A and hold its Approval pending using the actual approval UI/session. The MCP schema requires the complete identity tuple plus `message` and SHA-256 `payloadHash`; the server accepts either an active owner-approved Session Authorization lease or the legacy explicit one-action approval path.
 7. Start a `provider_prepare` for B and hold its Approval pending as well.
 8. Invoke per-tab Revoke for A through the real control UI.
 9. Assert:
@@ -96,7 +96,7 @@ Only the provider website and its adapter DOM are synthetic. Do not stub or repl
 
 ### B. Global Revoke cancels all pending approvals
 
-1. Re-establish fresh Grants and pending approvals for A and B.
+1. Re-establish fresh Grants and pending approvals for A and B. Ensure the test has a valid Session Authorization context if using the session path; otherwise exercise the legacy one-action approval path consistently.
 2. Invoke `session_revoke` through the real MCP tool route (and separately test the UI clear-all path if it has distinct semantics).
 3. Assert:
    - both pending approvals are cancelled before mutation-lane drain completes;
