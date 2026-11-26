@@ -3,15 +3,14 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <node_api.h>
-#include "operation-state.h"
+#include "synchronized-operation-state.h"
+#include "operation-registry.h"
 
 #include <array>
 #include <deque>
-#include <mutex>
+#include <memory>
 #include <string>
 #include <type_traits>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 #pragma comment(lib, "bcrypt.lib")
@@ -59,9 +58,9 @@ static_assert(std::is_nothrow_move_constructible<UniqueHandle>::value,
               "HANDLE ownership transfer must be noexcept");
 
 using powershell_direct::OperationState;
-using powershell_direct::can_transition;
+using powershell_direct::SynchronizedOperationState;
 struct OperationRecord {
-  OperationState state = OperationState::kRegistered;
+  SynchronizedOperationState lifecycle;
 
   // Declaration order is intentional: members are destroyed in reverse order,
   // so pipe endpoints and process/thread handles close before the Job HANDLE.
@@ -76,11 +75,7 @@ struct OperationRecord {
   UniqueHandle stderr_write;
 };
 
-std::mutex registry_mutex;
-std::unordered_map<std::string, OperationRecord> active_operations;
-std::unordered_set<std::string> closed_operations;
-std::deque<std::string> closed_operation_order;
-constexpr size_t kClosedOperationTombstoneLimit = 4096;
+powershell_direct::OperationRegistry<OperationRecord> operation_registry;
 
 napi_value throw_error(napi_env env, const char* code, const char* message) {
   napi_value error, code_value, message_value;
@@ -118,10 +113,8 @@ napi_value create_operation(napi_env env, napi_callback_info) {
       return throw_error(env, "OPERATION_ID_GENERATION_FAILED",
                          "BCryptGenRandom failed");
     }
-    std::lock_guard<std::mutex> lock(registry_mutex);
-    if (active_operations.find(id) == active_operations.end() &&
-        closed_operations.find(id) == closed_operations.end()) {
-      active_operations.emplace(id, OperationRecord{});
+    auto record = std::make_shared<OperationRecord>();
+    if (operation_registry.insert_if_absent(id, record)) {
       registered = true;
       break;
     }
@@ -132,8 +125,13 @@ napi_value create_operation(napi_env env, napi_callback_info) {
   }
   napi_value result;
   if (napi_create_string_utf8(env, id.c_str(), id.size(), &result) != napi_ok) {
-    std::lock_guard<std::mutex> lock(registry_mutex);
-    active_operations.erase(id);
+    // No OS resources exist at this bootstrap stage. Roll back only this ID.
+    auto record = operation_registry.find(id);
+    if (record) {
+      record->lifecycle.compare_transition(OperationState::kRegistered,
+                                           OperationState::kClosed);
+      operation_registry.erase_and_tombstone(id, record);
+    }
     return throw_error(env, "NAPI_STRING_CREATION_FAILED",
                        "Could not return the operation ID");
   }
@@ -170,34 +168,36 @@ napi_value close_operation(napi_env env, napi_callback_info info) {
     }
   }
 
-  {
-    std::lock_guard<std::mutex> lock(registry_mutex);
-    const auto active = active_operations.find(id);
-    if (active != active_operations.end()) {
-      // A registered record owns no OS resources and can be closed. Once
-      // lifecycle workers exist, only COMPLETED may be closed; active states
-      // must remain registered until wait/termination and pipe EOF settle.
-      if (active->second.state != OperationState::kRegistered &&
-          active->second.state != OperationState::kCompleted) {
-        return throw_error(env, "OPERATION_NOT_TERMINAL",
-                           "operation cannot be closed before completion");
-      }
-      if (!can_transition(active->second.state, OperationState::kClosed)) {
-        return throw_error(env, "INVALID_STATE_TRANSITION",
-                           "operation cannot transition to CLOSED");
-      }
-      active->second.state = OperationState::kClosed;
-      active_operations.erase(active);
-      closed_operations.insert(id);
-      closed_operation_order.push_back(id);
-      while (closed_operation_order.size() > kClosedOperationTombstoneLimit) {
-        closed_operations.erase(closed_operation_order.front());
-        closed_operation_order.pop_front();
-      }
-    } else if (closed_operations.find(id) == closed_operations.end()) {
+  // Retain the record after releasing the registry lock. This avoids
+  // registry-lock/state-lock inversion and remains safe if another caller
+  // concurrently removes the record from the registry.
+  auto record = operation_registry.find(id);
+  if (!record) {
+    if (!operation_registry.is_closed(id)) {
       return throw_error(env, "UNKNOWN_OPERATION",
                          "operation ID is not registered");
     }
+  } else {
+    const bool closed_registered =
+        record->lifecycle.compare_transition(OperationState::kRegistered,
+                                             OperationState::kClosed);
+    const bool closed_completed = closed_registered ||
+        record->lifecycle.compare_transition(OperationState::kCompleted,
+                                             OperationState::kClosed);
+    if (closed_registered || closed_completed) {
+      if (!operation_registry.erase_and_tombstone(id, record)) {
+        // A different closer may already have completed the registry removal.
+        if (!operation_registry.is_closed(id)) {
+          return throw_error(env, "OPERATION_REGISTRY_RACE",
+                             "operation registry changed during close");
+        }
+      }
+    } else if (record->lifecycle.snapshot() != OperationState::kClosed) {
+      return throw_error(env, "OPERATION_NOT_TERMINAL",
+                         "operation cannot be closed before completion");
+    }
+    // CLOSED is idempotent while the record is retained by a concurrent
+    // closer, and remains idempotent after its tombstone is installed.
   }
   napi_value result;
   napi_get_boolean(env, true, &result);
