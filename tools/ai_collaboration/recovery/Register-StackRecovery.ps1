@@ -66,7 +66,7 @@ Write-Host 'RECOVERY_TASK_REGISTERED'
 
 if ($DesktopShortcut) {
   $desktop = [Environment]::GetFolderPath('Desktop')
-  $link = Join-Path $desktop 'Восстановить Chrome Bridge.lnk'
+  $link = Join-Path $desktop 'Restore Chrome Bridge.lnk'
   $shell = New-Object -ComObject WScript.Shell
   $shortcut = $shell.CreateShortcut($link)
   $shortcut.TargetPath = $powerShellExe
