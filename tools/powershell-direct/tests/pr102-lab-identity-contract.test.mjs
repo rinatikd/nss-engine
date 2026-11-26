@@ -16,6 +16,10 @@ test('current PR102 inventory scripts target the dedicated 17485 StateRoot', () 
     assert.doesNotMatch(source, /ChromeBridge-PR102-17484-State/, name);
   }
   assert.match(updater, /ChromeBridge-PR102-17485-State/);
+  assert.match(updater, /ExpectedExtensionId = 'nhflbnfcaicihaepdcjacdmaddagcmcj'/);
+  assert.match(updater, /GetChromeExtensionIdFromKey/);
+  assert.match(updater, /AssertExpectedExtensionIdentity \$m/);
+  assert.match(updater, /if \(\$script:TestFixtureMode\) \{ return \}/);
   assert.match(roots, /nhflbnfcaicihaepdcjacdmaddagcmcj/);
   assert.match(runtime, /nhflbnfcaicihaepdcjacdmaddagcmcj/);
 });
