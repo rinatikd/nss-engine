@@ -354,54 +354,59 @@ export async function stopBackgroundTransport(chromeApi, {
   approvals.stop();
   updateStatus({state:'stopping',connected:false,error:null});
 
-  let intentPersisted = true;
   try {
-    // Persist the stop intent before cleanup so an MV3 worker restart cannot
-    // re-open the mutation path from stale desired-state flags.
-    await chromeApi.storage.local.set({
-      bridgeConnectionDesired:false,bridgeMutationLabMode:false
-    });
-  } catch {
-    intentPersisted = false;
+    let intentPersisted = true;
     try {
-      await chromeApi.storage.session.set({bridgeMutationQuarantineLock:true});
+      // Persist the stop intent before cleanup so an MV3 worker restart cannot
+      // re-open the mutation path from stale desired-state flags.
+      await chromeApi.storage.local.set({
+        bridgeConnectionDesired:false,bridgeMutationLabMode:false
+      });
     } catch {
-      mutationQuarantinePersistenceFailed = true;
+      intentPersisted = false;
+      try {
+        await chromeApi.storage.session.set({bridgeMutationQuarantineLock:true});
+      } catch {
+        mutationQuarantinePersistenceFailed = true;
+      }
     }
+
+    let cleanupError = null;
+    try {
+      await enqueueControlOperation(
+        () => clearAllBackgroundControls(chromeApi),
+        {allowDuringClear:true}
+      );
+      controlClearFailed = false;
+    } catch (error) {
+      controlClearFailed = true;
+      cleanupError = error;
+    }
+
+    // A Start accepted before Stop may still be creating the offscreen document
+    // or sending its START message. Drain it first, then send the final STOP.
+    const startDrained = await awaitBounded(pendingStart,startDrainTimeoutMs);
+    const mutationDrain = await drainMutationLanes(chromeApi,stopDrainTimeoutMs);
+    const stopConfirmed = await stopOffscreenTransport(chromeApi);
+
+    const unknown = !intentPersisted || !startDrained ||
+      !mutationDrain.drained || !stopConfirmed;
+    if (!stopConfirmed || !startDrained || !mutationDrain.drained || cleanupError || !intentPersisted) {
+      const code = !stopConfirmed || !startDrained || !mutationDrain.drained || !intentPersisted
+        ? 'BACKGROUND_STOP_UNCONFIRMED' : 'BACKGROUND_CONTROL_CLEAR_FAILED';
+      updateStatus({state:'unknown',connected:false,error:code});
+      const error = Error(code);
+      error.outcome = unknown ? 'UNKNOWN' : 'NOT_PERFORMED';
+      if (mutationDrain.tabIds.length) error.quarantinedTabs = mutationDrain.tabIds;
+      throw error;
+    }
+
+    updateStatus({state:'disconnected',connected:false,error:null});
+    return {ok:true,quarantinedTabs:[]};
+  } finally {
+    mutationStopCount = Math.max(0,mutationStopCount - 1);
+    if (mutationStopCount===0) controlClearRequested=false;
   }
-
-  let cleanupError = null;
-  try {
-    await enqueueControlOperation(
-      () => clearAllBackgroundControls(chromeApi),
-      {allowDuringClear:true}
-    );
-    controlClearFailed = false;
-  } catch (error) {
-    controlClearFailed = true;
-    cleanupError = error;
-  }
-
-  // A Start accepted before Stop may still be creating the offscreen document
-  // or sending its START message. Drain it first, then send the final STOP.
-  const startDrained = await awaitBounded(pendingStart,startDrainTimeoutMs);
-  const mutationDrain = await drainMutationLanes(chromeApi,stopDrainTimeoutMs);
-  const stopConfirmed = await stopOffscreenTransport(chromeApi);
-
-  const unknown = !intentPersisted || !startDrained ||
-    !mutationDrain.drained || !stopConfirmed;
-  if (!stopConfirmed || !startDrained || !mutationDrain.drained || cleanupError || !intentPersisted) {
-    const code = !stopConfirmed || !startDrained || !mutationDrain.drained || !intentPersisted
-      ? 'BACKGROUND_STOP_UNCONFIRMED' : 'BACKGROUND_CONTROL_CLEAR_FAILED';
-    updateStatus({state:'unknown',connected:false,error:code});
-    const error = Error(code);
-    error.outcome = unknown ? 'UNKNOWN' : 'NOT_PERFORMED';
-    if (mutationDrain.tabIds.length) error.quarantinedTabs = mutationDrain.tabIds;
-    throw error;
-  }
-
-  updateStatus({state:'disconnected',connected:false,error:null});
-  return {ok:true,quarantinedTabs:[]};
 }
 export function installBackgroundCoordinator(chromeApi, options={}) {
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
