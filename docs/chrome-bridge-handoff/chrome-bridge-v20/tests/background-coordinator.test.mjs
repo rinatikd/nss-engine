@@ -452,28 +452,6 @@ test('per-tab Revoke write failure returns UNKNOWN and quarantines the tab',asyn
   assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[48]);
 });
 
-test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a durable global reconnect lock',async()=>{
-  const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeSessionAuthorization'});
-  await startBackgroundTransport(c);
-  c.session.bridgeSessionAuthorization=sessionLease();
-  installBackgroundCoordinator(c);
-  const stop=await sendCoordinator(c,'stop-background');
-  assert.equal(stop.ok,false);
-  assert.equal(stop.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
-  assert.equal(stop.outcome,'UNKNOWN',
-    'some grants may already have been cleared even though Session Authorization removal failed');
-  assert.equal(c.data.bridgeMutationQuarantineLock,true);
-  const restarted=await startBackgroundTransport(c);
-  assert.equal(restarted.ok,false);
-  assert.equal(restarted.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
-
-  const clear=await sendCoordinator(c,'clear-background-controls');
-  assert.equal(clear.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
-  assert.equal(clear.outcome,'UNKNOWN',
-    'the Control UI must not claim NOT_PERFORMED after a partial revoke');
-});
-
-
 test('session_authorize failure to clear legacy grants sets a durable global lock',async()=>{
   const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeBackgroundControlGrants'});
   await startBackgroundTransport(c);
@@ -497,4 +475,25 @@ test('session_authorize failure to clear legacy grants sets a durable global loc
   const restart=await startBackgroundTransport(c);
   assert.equal(restart.ok,false);
   assert.equal(restart.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
+});
+
+test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a durable global reconnect lock',async()=>{
+  const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeSessionAuthorization'});
+  await startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  installBackgroundCoordinator(c);
+  const stop=await sendCoordinator(c,'stop-background');
+  assert.equal(stop.ok,false);
+  assert.equal(stop.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(stop.outcome,'UNKNOWN',
+    'some grants may already have been cleared even though Session Authorization removal failed');
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+  const restarted=await startBackgroundTransport(c);
+  assert.equal(restarted.ok,false);
+  assert.equal(restarted.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
+
+  const clear=await sendCoordinator(c,'clear-background-controls');
+  assert.equal(clear.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(clear.outcome,'UNKNOWN',
+    'the Control UI must not claim NOT_PERFORMED after a partial revoke');
 });
