@@ -58,7 +58,7 @@ export async function runApproved({spec,workspace,spawnImpl=spawn,envSource=proc
   if(!fs.statSync(executable).isFile())throw Error('EXECUTABLE_NOT_FILE');
   const cwd=workspace;
   return await new Promise(resolve=>{
-    let stdout=Buffer.alloc(0),stderr=Buffer.alloc(0),finished=false,timer;
+    let stdout=Buffer.alloc(0),stderr=Buffer.alloc(0),finished=false,timedOut=false,timer;
     const started=Date.now();
     let child;
     try{
@@ -79,10 +79,12 @@ export async function runApproved({spec,workspace,spawnImpl=spawn,envSource=proc
         elapsedMs:Date.now()-started});
     };
     child.on('error',e=>finish('FAILED_TO_START',null,e.code||'SPAWN_FAILED'));
-    child.on('close',(code,signal)=>finish(signal?'TERMINATED':'FINISHED',code,signal));
+    child.on('close',(code,signal)=>finish(timedOut?'TIMEOUT':signal?'TERMINATED':'FINISHED',code,timedOut?'EXECUTION_TIMEOUT_DIRECT_CHILD_ONLY':signal));
     timer=setTimeout(()=>{
+      timedOut=true;
       try{child.kill('SIGKILL');}catch{}
-      finish('TIMEOUT',null,'EXECUTION_TIMEOUT_DIRECT_CHILD_ONLY');
+      // Keep the job RUNNING until the direct child actually emits close.
+      // If termination cannot be confirmed, the service remains fail-safe busy.
     },checked.timeoutMs);
   });
 }
