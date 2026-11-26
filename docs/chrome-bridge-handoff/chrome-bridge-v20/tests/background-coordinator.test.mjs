@@ -283,6 +283,42 @@ async function prepareLab(c,tabId) {
   return tabId;
 }
 
+test('per-tab Revoke cancels a pending approval before draining the mutation lane',async()=>{
+  const tabId=74;
+  const c=fakeChrome({...LAB_STATE});
+  await prepareLab(c,tabId);
+  // Exercise the per-tab grant path rather than origin-wide Session Authorization.
+  delete c.session.bridgeSessionAuthorization;
+  c.session.bridgeBackgroundControlGrants={
+    [String(tabId)]:{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  const listener=c.listeners.at(-1);
+  const mutation=sendCoordinatorTo(c,listener,'dispatch',{
+    command:providerPrepare(tabId)
+  },'transport-host.html');
+
+  let pending=[];
+  for(let i=0;i<30;i++){
+    const state=await sendCoordinatorTo(c,listener,'approval-list');
+    pending=state?.pending||[];
+    if(pending.some(item=>item.tabId===tabId))break;
+    await delay(5);
+  }
+  assert.equal(pending.filter(item=>item.tabId===tabId).length,1,
+    'provider_prepare must be waiting for explicit approval');
+
+  const revoked=await sendCoordinatorTo(c,listener,'revoke-background-control',{tabId});
+  const result=await mutation;
+  assert.equal(revoked.ok,true);
+  assert.equal(result.error,'APPROVAL_CANCELLED');
+  assert.equal(result.dispatchState,'BLOCKED');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.[String(tabId)],undefined,
+    'the per-tab grant must be removed');
+  assert.equal(c.calls.some(call=>call[0]==='script'&&call[1]==='provider_prepare'),
+    false,'a cancelled approval must never enter the mutating page action');
+  assert.equal((await sendCoordinatorTo(c,listener,'approval-list')).pending.length,0);
+});
+
 test('per-tab Revoke also clears a stale marker in a store whose new write failed transiently',async()=>{
   const c=fakeChrome({...LAB_STATE,bridgeMutationRevokingTabs:[73]},{
     failLocalSetOnce:'bridgeMutationRevokingTabs'
