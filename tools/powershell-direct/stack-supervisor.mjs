@@ -2,6 +2,7 @@
 import {spawn} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
 import {PowerShellApprovalService} from './service.mjs';
 import {createApprovalProxy} from './approval-proxy.mjs';
 
@@ -41,6 +42,13 @@ async function shutdown(signal='STOP'){
 process.on('SIGINT',()=>{void shutdown('SIGINT');});
 process.on('SIGTERM',()=>{void shutdown('SIGTERM');});
 
+async function assertHealthPortFree(){
+ const probe=net.createServer();
+ await new Promise((resolve,reject)=>{
+  probe.once('error',reject);
+  probe.listen(18086,'127.0.0.1',()=>probe.close(resolve));
+ });
+}
 async function waitForHealth(timeoutMs=15000){
  const deadline=Date.now()+timeoutMs;
  while(Date.now()<deadline){
@@ -55,6 +63,7 @@ async function waitForHealth(timeoutMs=15000){
 }
 
 try{
+ await assertHealthPortFree();
  await service.start();
  proxy=createApprovalProxy({servicePort:service.port,uiToken:service.uiToken});
  const approval=await proxy.start();
