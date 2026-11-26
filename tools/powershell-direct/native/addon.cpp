@@ -5,6 +5,7 @@
 #include <node_api.h>
 
 #include <array>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -20,16 +21,17 @@ struct OperationRecord {
 std::mutex registry_mutex;
 std::unordered_map<std::string, OperationRecord> active_operations;
 std::unordered_set<std::string> closed_operations;
+std::deque<std::string> closed_operation_order;
+constexpr size_t kClosedOperationTombstoneLimit = 4096;
 
 napi_value throw_error(napi_env env, const char* code, const char* message) {
-  napi_value error, code_value;
-  napi_create_string_utf8(env, code, NAPI_AUTO_LENGTH, &code_value);
-  napi_create_error(env, code_value, nullptr, &error);
-  napi_set_named_property(env, error, "message", [&]() {
-    napi_value value;
-    napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &value);
-    return value;
-  }());
+  napi_value error, code_value, message_value;
+  if (napi_create_string_utf8(env, code, NAPI_AUTO_LENGTH, &code_value) != napi_ok ||
+      napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &message_value) != napi_ok ||
+      napi_create_error(env, code_value, message_value, &error) != napi_ok) {
+    napi_throw_error(env, code, message);
+    return nullptr;
+  }
   napi_throw(env, error);
   return nullptr;
 }
@@ -61,13 +63,21 @@ napi_value create_operation(napi_env env, napi_callback_info) {
     if (active_operations.find(id) == active_operations.end() &&
         closed_operations.find(id) == closed_operations.end()) {
       active_operations.emplace(id, OperationRecord{});
-      napi_value result;
-      napi_create_string_utf8(env, id.c_str(), id.size(), &result);
-      return result;
+      break;
     }
   }
-  return throw_error(env, "OPERATION_ID_COLLISION",
-                     "Could not allocate a unique operation ID");
+  if (id.empty() || active_operations.find(id) == active_operations.end()) {
+    return throw_error(env, "OPERATION_ID_COLLISION",
+                       "Could not allocate a unique operation ID");
+  }
+  napi_value result;
+  if (napi_create_string_utf8(env, id.c_str(), id.size(), &result) != napi_ok) {
+    std::lock_guard<std::mutex> lock(registry_mutex);
+    active_operations.erase(id);
+    return throw_error(env, "NAPI_STRING_CREATION_FAILED",
+                       "Could not return the operation ID");
+  }
+  return result;
 }
 
 napi_value close_operation(napi_env env, napi_callback_info info) {
@@ -106,6 +116,11 @@ napi_value close_operation(napi_env env, napi_callback_info info) {
     if (active != active_operations.end()) {
       active_operations.erase(active);
       closed_operations.insert(id);
+      closed_operation_order.push_back(id);
+      while (closed_operation_order.size() > kClosedOperationTombstoneLimit) {
+        closed_operations.erase(closed_operation_order.front());
+        closed_operation_order.pop_front();
+      }
     } else if (closed_operations.find(id) == closed_operations.end()) {
       return throw_error(env, "UNKNOWN_OPERATION",
                          "operation ID is not registered");
