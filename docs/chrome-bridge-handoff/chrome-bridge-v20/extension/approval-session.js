@@ -48,6 +48,17 @@ export class ApprovalSession {
     else waiter.reject(Error('USER_DENIED'));
     return { id: result.id, approved: result.approved };
   }
+  cancelTab(tabId) {
+    const ids=this.broker.revokeTab(tabId);
+    for (const id of ids) {
+      const waiter=this.waiters.get(id);
+      if (!waiter) continue;
+      this.unschedule(waiter.timer);
+      this.waiters.delete(id);
+      waiter.reject(Error('APPROVAL_CANCELLED'));
+    }
+    return ids.length;
+  }
   stop() {
     for (const entry of this.waiters.values()) {
       this.unschedule(entry.timer);
