@@ -56,8 +56,18 @@ int main() {
     return EXIT_FAILURE;
   }
 
-  if (state.try_transition(OperationState::kClosed)) {
-    std::cerr << "FAIL: active/terminating state must not close\n";
+  if (final_state == OperationState::kTerminating) {
+    if (state.try_transition(OperationState::kClosed)) {
+      std::cerr << "FAIL: TERMINATING state must not close\n";
+      return EXIT_FAILURE;
+    }
+    if (!state.try_transition(OperationState::kCompleted) ||
+        !state.try_transition(OperationState::kClosed)) {
+      std::cerr << "FAIL: TERMINATING -> COMPLETED -> CLOSED sequence\n";
+      return EXIT_FAILURE;
+    }
+  } else if (!state.try_transition(OperationState::kClosed)) {
+    std::cerr << "FAIL: COMPLETED -> CLOSED transition\n";
     return EXIT_FAILURE;
   }
   std::cout << "PASS: synchronized operation state concurrency tests\n";
