@@ -319,6 +319,53 @@ test('per-tab Revoke cancels a pending approval before draining the mutation lan
   assert.equal((await sendCoordinatorTo(c,listener,'approval-list')).pending.length,0);
 });
 
+test('per-tab Revoke blocks a late approval created after asynchronous preflight',async()=>{
+  const tabId=76;
+  let markPreflightStarted,releasePreflight;
+  const preflightStarted=new Promise(resolve=>{markPreflightStarted=resolve;});
+  const holdPreflight=new Promise(resolve=>{releasePreflight=resolve;});
+  const c=fakeChrome({...LAB_STATE},{
+    executeScript:async({name,details,origin,tabId:targetTab})=>{
+      if(name==='agent_context'){
+        markPreflightStarted();
+        await holdPreflight;
+        return [{result:{verified:true,origin:'https://claude.ai',conversationId:'conversation_001'}}];
+      }
+      if(name==='provider_prepare') return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+      return [{result:{ok:true}}];
+    }
+  });
+  await prepareLab(c,tabId);
+  delete c.session.bridgeSessionAuthorization;
+  c.session.bridgeBackgroundControlGrants={
+    [String(tabId)]:{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  const listener=c.listeners.at(-1);
+  const mutation=sendCoordinatorTo(c,listener,'dispatch',{
+    command:providerPrepare(tabId)
+  },'transport-host.html');
+
+  await preflightStarted;
+  // Revoke installs the synchronous in-memory fence before its first Storage
+  // await. Release preflight only after that event handler has run.
+  const revoke=sendCoordinatorTo(c,listener,'revoke-background-control',{tabId});
+  releasePreflight();
+  const [revoked,result]=await Promise.all([revoke,mutation]);
+
+  assert.equal(revoked.ok,true);
+  assert.equal(result.error,'TAB_MUTATION_REVOKING');
+  assert.equal(result.dispatchState,'BLOCKED');
+  assert.equal((await sendCoordinatorTo(c,listener,'approval-list')).pending.length,0,
+    'a late approval must not be registered after Revoke cancellation');
+  assert.equal(c.calls.some(call=>call[0]==='script'&&call[1]==='provider_prepare'),false,
+    'the mutating page action must never be entered');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.[String(tabId)],undefined);
+});
+
 test('global Revoke cancels pending approvals across tabs before draining mutation lanes',async()=>{
   for(const mode of ['session_revoke','clear-background-controls']){
     const c=fakeChrome({...LAB_STATE});
