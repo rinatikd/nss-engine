@@ -9,6 +9,7 @@ import { safeConnectionErrorCode, backgroundConnectionStatusLabel } from './conn
 import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
+import { backgroundRevokeErrorMessage } from './background-control-ui-state.js';
 
 const $ = (id) => document.getElementById(id);
 const BRIDGE = 'http://127.0.0.1:17381';
@@ -503,7 +504,7 @@ $('backgroundRevokeAll').onclick=async event=>{
     const result=await chrome.runtime.sendMessage({
       target:'bridge-coordinator',type:'clear-background-controls'
     });
-    if (!result?.ok) throw Error(result?.error||'REVOKE_FAILED');
+    if (!result?.ok) throw Error(backgroundRevokeErrorMessage(result));
     $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
     window.dispatchEvent(new Event('bridge-background-grants-changed'));
   } catch(e) {
