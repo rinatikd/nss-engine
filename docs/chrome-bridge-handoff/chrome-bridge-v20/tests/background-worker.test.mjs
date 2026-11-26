@@ -46,3 +46,15 @@ test('offscreen host never reads browserToken from storage',()=>{
  const worker=source('transport-worker.js');
  assert.doesNotMatch(worker,/chrome\.tabs|chrome\.scripting/);
 });
+
+
+test('offscreen Stop is confirmed only after the transport Worker returns its stopped ACK',()=>{
+ const host=source('transport-host.js');
+ const worker=source('transport-worker.js');
+ assert.match(host,/data\?\.type === 'stopped'/);
+ assert.match(host,/WORKER_STOP_UNCONFIRMED/);
+ assert.match(host,/STOP_ACK_TIMEOUT_MS/);
+ assert.match(host,/worker\.postMessage\(\{type:'stop',stopId\}\)/);
+ assert.match(worker,/transport\?\.stop\(\)/);
+ assert.match(worker,/type:'stopped',stopId:msg\.stopId/);
+});
