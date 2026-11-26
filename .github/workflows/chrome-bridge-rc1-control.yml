@@ -1,0 +1,88 @@
+name: Chrome Bridge RC1 Control Gates
+on:
+  push:
+    branches:
+      - release/chrome-bridge-v0.2.0-background-rc1
+  pull_request:
+    paths:
+      - 'docs/chrome-bridge-handoff/chrome-bridge-v20/**'
+      - '.github/workflows/chrome-bridge-rc1-control.yml'
+permissions:
+  contents: read
+jobs:
+  control-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check RC1 modules
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          node --check extension/control-targets.js
+          node --check extension/control-ui-guard.js
+          node --check extension/background-control-ui-state.js
+          node --check extension/control.js
+          node --check extension/background-coordinator.js
+          node --check extension/background-control-grants.js
+          node --check extension/read-only-dispatch.js
+          node --check tests/control-tab-url-guard.test.mjs
+          node --check extension/coordinator-ack.js
+          node --check extension/background-mode-reconnect.js
+      - name: Validate release package assembler PowerShell syntax
+        shell: pwsh
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path (Get-Location) 'deployment/build-rc-final-lab-package.ps1'),
+            [ref]$null, [ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+
+      - name: Validate isolated MCP server Lab package
+        shell: pwsh
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path (Get-Location) 'deployment/stage-server-lab.ps1'),
+            [ref]$null, [ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+          $sourceSha = (git rev-parse HEAD).Trim()
+          $package = Join-Path $env:RUNNER_TEMP 'chrome-bridge-pr132-server-lab-package'
+          & .\deployment\stage-server-lab.ps1 -CandidateRoot (Get-Location).Path -OutputRoot $package -CommitSha $sourceSha
+          if ($LASTEXITCODE -ne 0) { throw 'Isolated MCP server Lab package validation failed' }
+          $manifest = Get-Content -LiteralPath (Join-Path $package 'server-release-manifest.json') -Raw | ConvertFrom-Json
+          if ($manifest.sourceCommit -ne $sourceSha -or $manifest.health -ne 'ISOLATED_MCP_TOOLS_LIST_INITIALIZE_BROWSER_STATUS_PASS') {
+            throw 'Lab server package manifest does not match the tested source commit'
+          }
+
+      - name: Upload immutable PR132 MCP server Lab package
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-bridge-pr132-server-lab-package
+          path: |
+            ${{ runner.temp }}/chrome-bridge-pr132-server-lab-package/server/**
+            ${{ runner.temp }}/chrome-bridge-pr132-server-lab-package/deployment/cutover-health.mjs
+            ${{ runner.temp }}/chrome-bridge-pr132-server-lab-package/server-release-manifest.json
+            ${{ runner.temp }}/chrome-bridge-pr132-server-lab-package/expected-tools.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify MCP registry, agent dispatch and Session Authorization
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          node --test tests/bridge.test.mjs tests/session-authorization.test.mjs tests/provider-journal.test.mjs tests/send-journal.test.mjs tests/send-outcome.test.mjs tests/agent-send-concurrency.test.mjs
+          node --check server/bridge.mjs
+          node --check server/tools.mjs
+          node --check extension/session-authorization.js
+      - name: Independent RC1 regression matrix
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          node --test tests/control-tab-url-guard.test.mjs
+          node --test tests/mutation-dispatch.test.mjs
+          node --test tests/approval-session.test.mjs
+          node --test tests/control-ui-single-entry.test.mjs tests/background-mode-reconnect.test.mjs tests/coordinator-ack.test.mjs tests/control-targets.test.mjs tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/background-control-grants.test.mjs tests/background-coordinator.test.mjs tests/read-only-dispatch.test.mjs tests/background-readonly-security.test.mjs tests/transport-recovery-security.test.mjs

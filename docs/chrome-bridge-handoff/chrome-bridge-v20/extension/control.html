@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chrome Bridge — LAB (17484)</title>
+<link rel="stylesheet" href="style.css">
+<main>
+  <p class="eyebrow">AGENT HUB · LAB · 17484</p>
+  <h1>Chrome Bridge — LAB</h1>
+  <p>Управление подключениями и диагностикой AI-агентов. В фоновом режиме чтение работает при закрытой панели. Для подтверждения действий управления откройте панель.</p>
+
+  <section>
+    <h2>1. Подключение</h2>
+    <label>Ключ браузера (browserToken)<input id="token" type="password" autocomplete="off"></label>
+    <div class="row"><button id="connect">Подключить</button><button id="stop" class="secondary">Остановить</button></div>
+    <p id="keyStorageStatus" class="hint" role="status">Ключ сохраняется только после успешной проверки связи с сервером.</p>
+    <button id="forgetKey" class="secondary" type="button">Удалить сохранённый ключ</button>
+    <p class="hint">Ключ хранится только в профиле этого расширения Chrome и недоступен обычным веб-страницам. Не сохраняйте его на общем компьютере. Это не заменяет локальных разрешений Control.</p>
+    <label class="check"><input id="backgroundMode" type="checkbox">Экспериментальный фоновый режим (диагностика и чтение разрешённых страниц; без отправки сообщений и изменения страниц)</label>
+    <p id="backgroundModeStatus" class="hint">Фоновый режим отключён. До завершения миграции подтверждений используется обычное окно управления.</p>
+    <label class="check"><input id="mutationLab" type="checkbox">Экспериментальное управление во фоновом режиме — каждое действие требует подтверждения (только Claude, Gemini, DeepSeek)</label>
+    <div class="row">
+      <label>Срок разрешения<select id="backgroundGrantMinutes"><option value="15">15 минут</option><option value="60">60 минут</option></select></label>
+    </div>
+    <div class="row"><button id="backgroundGrantAll" class="secondary">Подключить управление ко всем разрешённым сайтам</button><button id="backgroundRevokeAll" class="secondary">Отключить управление всеми сайтами</button></div>
+    <p id="backgroundGrantPrerequisite" class="hint" role="status">Проверяем условия подключения общего управления…</p>
+    <p class="hint">Общая кнопка действует только на открытые вкладки разрешённых AI-чатов Claude, Gemini и DeepSeek, в экспериментальном режиме управления и на ограниченный срок. Каждая команда по-прежнему подтверждается отдельно.</p>
+    <p id="backgroundGrantStatus" class="hint">По умолчанию управление отключено. Для отправки нужен отдельный запрос подтверждения.</p>
+        <p id="status" role="status">Отключено</p>
+  </section>
+
+  <section>
+    <p>Управление доступно для Claude, Gemini и DeepSeek только после отдельного локального разрешения. Grok, Qwen и Cursor пока доступны для диагностики и чтения. Никакие действия не выполняются автоматически.</p><h2>2. Сайты</h2>
+    <label>Срок локального разрешения Control<select id="controlDuration"><option value="240">4 часа</option><option value="180">3 часа</option><option value="60">1 час</option></select></label>
+    <div class="row">
+      <label>Тип<select id="mode"><option value="read">Обычный сайт (чтение)</option><option value="chat">ИИ-чат (агентский режим)</option></select></label>
+      <label id="adapterWrap" hidden>Адаптер<select id="adapter"></select></label>
+    </div>
+    <label>Адрес сайта<input id="origin" placeholder="https://claude.ai"></label>
+    <div class="row"><button id="grant">Добавить сайт</button><button id="revoke" class="secondary">Отозвать все сайты</button></div>
+    <ul id="sites"></ul>
+
+  </section>
+
+  <section>
+    <h2>3. Безопасность</h2>
+    <label class="check"><input id="actions" type="checkbox">Разрешить запросы на нажатия и ввод (browser_click / browser_fill — каждый подтверждается ниже)</label>
+    <p id="controlGlobalState" role="status">Глобальное разрешение действий: ВЫКЛ</p>
+    <p class="hint">В обычном режиме общий переключатель разрешает запросы действий только вместе с локальным разрешением сайта. В фоновом режиме он намеренно недоступен: используйте экспериментальное управление и общую кнопку выше; каждое действие подтверждается отдельно.</p>
+    <label class="check"><input id="confirmReads" type="checkbox">Подтверждать каждое чтение страницы (browser_read)</label>
+  </section>
+
+  <section id="visualDebugSection">
+    <h2>Визуальная диагностика вкладки (экспериментальная)</h2>
+    <p class="hint">Снимок остаётся только в этом окне. Не захватывайте страницы с паролями, ключами и личной информацией. Отправка снимка другим AI отключена.</p>
+    <label>Идентификатор вкладки (tabId, из browser_tabs)<input id="visualTabId" type="number" min="1" inputmode="numeric" placeholder="Например, 1864253125"></label>
+    <button id="visualCapture" class="secondary">Сфотографировать выбранную вкладку</button>
+    <p id="visualStatus" role="status">Снимок не выполнялся</p>
+    <img id="visualPreview" alt="Предпросмотр снимка вкладки (только локально)" hidden style="max-width:100%;max-height:480px;object-fit:contain;border:1px solid #888">
+    <button id="visualClear" class="secondary">Удалить локальный снимок</button>
+  </section>
+
+  <section>
+    <h2>Запросы на подтверждение</h2>
+    <div id="approvals"><p class="hint">Нет ожидающих запросов.</p></div>
+    <div id="backgroundApprovals" aria-live="polite" hidden></div>
+  </section>
+
+  <section>
+    <h2>Монитор команд</h2>
+    <p id="taskState" role="status">Ожидание подключения</p>
+    <progress id="taskProgress" max="100" value="0"></progress>
+    <p id="taskTimes" class="hint"></p>
+  </section>
+  <section>
+    <h2>Журнал (без содержимого страниц)</h2>
+    <pre id="log"></pre>
+  </section>
+
+  <details>
+    <summary>Адаптеры чатов (JSON, накладываются поверх встроенных)</summary>
+    <p class="hint">Селекторы интерфейсов могут устареть. Пример: {"chatgpt":{"send":"button[data-testid='send-button']"}}. Проверка: agent_selftest.</p>
+    <textarea id="adapterJson" rows="8" spellcheck="false">{}</textarea>
+    <button id="saveAdapters" class="secondary">Сохранить адаптеры</button>
+    <p id="adapterMsg" class="hint"></p>
+  </details>
+</main>
+<script type="module" src="control.js"></script>
+<script type="module" src="control-ui-guard.js"></script>
+

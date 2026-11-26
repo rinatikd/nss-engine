@@ -1,0 +1,40 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {ApprovalBroker} from '../extension/approval-broker.js';
+let now=1000;
+const broker=()=>new ApprovalBroker({now:()=>now});
+const command=(id='approval-1')=>({id,command:'agent_send',origin:'https://claude.ai',tabId:42,expires:now+30000});
+test('requires bounded command-specific approval request',()=>{
+ now=1000;
+ const b=broker();
+ assert.throws(()=>b.request({...command(),origin:'http://claude.ai'}),/INVALID_ORIGIN/);
+ assert.throws(()=>b.request({...command(),origin:'https://claude.ai.evil'}),/INVALID_ORIGIN/);
+ assert.throws(()=>b.request({...command(),command:'agent_peek'}),/COMMAND_NOT_APPROVABLE/);
+ assert.throws(()=>b.request({...command(),expires:now+180000}),/INVALID_APPROVAL_EXPIRY/);
+ b.request(command());
+ assert.equal(b.list().length,1);
+ assert.throws(()=>b.request(command()),/DUPLICATE_APPROVAL/);
+});
+test('rejects decision without explicit gesture and expires pending requests',()=>{
+ now=1000;
+ const b=broker();
+ b.request(command());
+ assert.throws(()=>b.decide({id:'approval-1',approved:true,trustedUserGesture:false}),/USER_GESTURE_REQUIRED/);
+ assert.equal(b.list().length,1);
+ now=31000;
+ assert.equal(b.list().length,0);
+ assert.throws(()=>b.decide({id:'approval-1',approved:true,trustedUserGesture:true}),/NOT_FOUND/);
+});
+test('decision consumes approval exactly once and preserves command binding',()=>{
+ now=1000;
+ const b=broker();
+ b.request(command());
+ const decision=b.decide({id:'approval-1',approved:false,trustedUserGesture:true});
+ assert.equal(decision.approved,false);
+ assert.equal(decision.origin,'https://claude.ai');
+ assert.equal(decision.tabId,42);
+ assert.throws(()=>b.decide({id:'approval-1',approved:true,trustedUserGesture:true}),/NOT_FOUND/);
+ b.request(command('approval-2'));
+ b.revokeAll();
+ assert.deepEqual(b.list(),[]);
+});
