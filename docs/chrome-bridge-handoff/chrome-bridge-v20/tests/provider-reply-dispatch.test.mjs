@@ -58,7 +58,7 @@ test('identity mismatch, wrong URL and missing host permission fail closed',asyn
  }});
  await assert.rejects(()=>dispatchReadOnly(baseCommand,badConversation.chromeApi),/INVALID_PROVIDER_REPLY_SNAPSHOT/);
  const changed=fixture({changedUrl:true});
- await assert.rejects(()=>dispatchReadOnly(baseCommand,changed.chromeApi),/TAB_CHANGED_DURING_READ/);
+ await assert.rejects(()=>dispatchReadOnly(baseCommand,changed.chromeApi),/TAB_CHANGED_DURING_PROVIDER_REPLY_READ/);
  const denied=fixture({permission:false});
  await assert.rejects(()=>dispatchReadOnly(baseCommand,denied.chromeApi),/HOST_PERMISSION_MISSING/);
 });
