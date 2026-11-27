@@ -177,8 +177,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
     await until(()=>control.eval('document.querySelectorAll("#backgroundGrantList .approval").length===2'),12000,'GRANTS');
   } catch(error) {
     const ui=await control.eval('JSON.stringify({trusted:window.__r4GrantClickTrusted,status:document.querySelector("#status")?.textContent,grantStatus:document.querySelector("#backgroundGrantStatus")?.textContent,prerequisite:document.querySelector("#backgroundGrantPrerequisite")?.textContent,mode:document.querySelector("#backgroundMode")?.checked,lab:document.querySelector("#mutationLab")?.checked,rows:document.querySelector("#backgroundGrantList")?.textContent})');
-    const state=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');
-    const tabsState=await worker.eval('(async()=>JSON.stringify({tabs:(await chrome.tabs.query({})).filter(t=>(t.url||"").startsWith("https://claude.ai/")).map(t=>({id:t.id,url:t.url})),permission:await chrome.permissions.contains({origins:["https://claude.ai/*"]})}))()');
+    const state=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');    const tabsState=await worker.eval('(async()=>JSON.stringify({tabs:(await chrome.tabs.query({})).filter(t=>(t.url||"").startsWith("https://claude.ai/")).map(t=>({id:t.id,url:t.url})),permission:await chrome.permissions.contains({origins:["https://claude.ai/*"]})}))()');
     console.error('[R4 GRANT DIAGNOSTIC]',ui,state,tabsState);
     throw error;
   }
@@ -357,8 +356,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // provider mutation. B has no Grant and remains a clean unrelated tab.
   await control.eval('window.confirm=()=>true;chrome.storage.local.set({bridgeMutationLabMode:true})');
   await until(()=>control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get("bridgeMutationRevocationPending"),chrome.storage.session.get("bridgeMutationRevocationPending")]);return l.bridgeMutationRevocationPending?.pending===true||s.bridgeMutationRevocationPending?.pending===true})()'),5000,'GLOBAL_FENCE_STILL_PRESENT');
-  const staleBind=await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});
-  await until(()=>pageB.eval('document.readyState==="complete"&&location.href==="https://claude.ai/chat/r4scenarioDB001"'),
+  const staleBind=await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});  await until(()=>pageB.eval('document.readyState==="complete"&&location.href==="https://claude.ai/chat/r4scenarioDB001"'),
     10000,'TAB_B_READY_FOR_STALE_FENCE_PROBE');
   const stalePeek=await rpc('agent_peek',{name:'r4_d_stale_after_restart',maxChars:100});
   const stale=make('r4Drequest0002','r4Dtask0002',tabs.b,'r4scenarioDB001',
@@ -395,7 +393,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   await pageA.eval('document.documentElement.dataset.r4ReleaseCommitReceipt="true";true');
   await until(()=>pageA.eval('document.documentElement.dataset.r4CommitReceiptHeld!=="true"'),8000,'PAGE_ACTION_RECEIPT_RELEASED');
   await until(()=>control.eval('!!document.querySelector("#quarantineList button")'),10000,'QUARANTINE_RECONCILE_BUTTON_READY');
-  const terminalEvidence=await control.eval('(async()=>{const q=await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"quarantine-status"});const p=await chrome.scripting.executeScript({target:{tabId:${tabs.a}},world:"ISOLATED",func:()=>({terminal:globalThis.__chromeBridgeMutationTerminal||null,lock:globalThis.__chromeBridgeMutationLock||null,href:location.href,origin:location.origin})});return{record:q.records?.find(r=>r.tabId===${tabs.a})||null,globalPending:q.globalPending||null,page:p?.[0]?.result||null,documentId:p?.[0]?.documentId||null}})()');
+  const terminalEvidence=await control.eval('(async(tabId)=>{const q=await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"quarantine-status"});const p=await chrome.scripting.executeScript({target:{tabId},world:"ISOLATED",func:()=>({terminal:globalThis.__chromeBridgeMutationTerminal||null,lock:globalThis.__chromeBridgeMutationLock||null,href:location.href,origin:location.origin})});return{record:q.records?.find(r=>r.tabId===tabId)||null,globalPending:q.globalPending||null,page:p?.[0]?.result||null,documentId:p?.[0]?.documentId||null}})('+tabs.a+')');
   console.log('[R4 D TERMINAL EVIDENCE DIAGNOSTIC]',JSON.stringify(terminalEvidence));
   await clickTrusted(control,'document.querySelector("#quarantineList button")');
   await until(async()=>{
