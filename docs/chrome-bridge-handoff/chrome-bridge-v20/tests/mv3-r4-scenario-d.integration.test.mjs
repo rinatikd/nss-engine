@@ -396,7 +396,13 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   await until(()=>pageA.eval('document.documentElement.dataset.r4CommitReceiptHeld!=="true"'),8000,'PAGE_ACTION_RECEIPT_RELEASED');
   await until(()=>control.eval('!!document.querySelector("#quarantineList button")'),10000,'QUARANTINE_RECONCILE_BUTTON_READY');
   await clickTrusted(control,'document.querySelector("#quarantineList button")');
-  await until(()=>control.eval('document.querySelector("#quarantineRecoveryStatus")?.textContent.includes("UNKNOWN; повтор не выполнялся")'),10000,'OPERATOR_RECONCILIATION_COMPLETE');
+  await until(async()=>{
+    const status=await control.eval('document.querySelector("#quarantineRecoveryStatus")?.textContent||""');
+    if(status.includes('UNKNOWN; повтор не выполнялся'))return true;
+    if(status.startsWith('Карантин сохранён:'))
+      throw Error('OPERATOR_RECONCILIATION_REJECTED:'+status);
+    return false;
+  },10000,'OPERATOR_RECONCILIATION_COMPLETE');
 
   const reconciledStorage=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"]),chrome.storage.session.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"])]);return{localTabs:l.bridgeMutationQuarantinedTabs||[],sessionTabs:s.bridgeMutationQuarantinedTabs||[],localRecords:l.bridgeMutationQuarantineRecords||{},sessionRecords:s.bridgeMutationQuarantineRecords||{},localAudit:l.bridgeMutationQuarantineAudit||[],sessionAudit:s.bridgeMutationQuarantineAudit||[],localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null}})()');
   assert.deepEqual(reconciledStorage.localTabs,[]);
