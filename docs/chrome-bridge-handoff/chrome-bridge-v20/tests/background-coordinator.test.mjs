@@ -13,7 +13,7 @@ function fakeChrome(data={},options={}) {
     calls,listeners,data,session,
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
-      get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
+      get:async keys=>keys===null?{...data}:Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
       set:async next=>{
         const failedKey=Object.keys(next).find(key=>
           options.failLocalSet===true || options.failLocalSet===key ||
@@ -101,7 +101,7 @@ test('background start restricts storage before reading and creates offscreen ho
   const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
   const result=await startBackgroundTransport(c);
   assert.equal(result.ok,true);
-  assert.deepEqual(c.calls.map(x=>x[0]),['restrict','create','message']);
+  assert.deepEqual(c.calls.map(x=>x[0]),['restrict','restrict','create','message']);
 });
 test('manual Stop supersedes a start that is waiting for offscreen host creation',async()=>{
   const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
@@ -993,3 +993,4 @@ test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a dura
   assert.equal(clear.outcome,'UNKNOWN',
     'the Control UI must not claim NOT_PERFORMED after a partial revoke');
 });
+
