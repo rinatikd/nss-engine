@@ -395,6 +395,8 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   await pageA.eval('document.documentElement.dataset.r4ReleaseCommitReceipt="true";true');
   await until(()=>pageA.eval('document.documentElement.dataset.r4CommitReceiptHeld!=="true"'),8000,'PAGE_ACTION_RECEIPT_RELEASED');
   await until(()=>control.eval('!!document.querySelector("#quarantineList button")'),10000,'QUARANTINE_RECONCILE_BUTTON_READY');
+  const terminalEvidence=await control.eval('(async()=>{const q=await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"quarantine-status"});const p=await chrome.scripting.executeScript({target:{tabId:${tabs.a}},world:"ISOLATED",func:()=>({terminal:globalThis.__chromeBridgeMutationTerminal||null,lock:globalThis.__chromeBridgeMutationLock||null,href:location.href,origin:location.origin})});return{record:q.records?.find(r=>r.tabId===${tabs.a})||null,globalPending:q.globalPending||null,page:p?.[0]?.result||null,documentId:p?.[0]?.documentId||null}})()');
+  console.log('[R4 D TERMINAL EVIDENCE DIAGNOSTIC]',JSON.stringify(terminalEvidence));
   await clickTrusted(control,'document.querySelector("#quarantineList button")');
   await until(async()=>{
     const status=await control.eval('document.querySelector("#quarantineRecoveryStatus")?.textContent||""');
