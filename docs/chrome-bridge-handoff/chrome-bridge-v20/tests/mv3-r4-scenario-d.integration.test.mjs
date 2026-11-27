@@ -11,13 +11,58 @@ import net from 'node:net';
 import {createBridge} from '../server/bridge.mjs';
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const until=async(fn,ms,label)=>{const end=Date.now()+ms;let last;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch(e){last=e.message;}await sleep(150);}throw Error('R4_D_'+label+'_TIMEOUT '+(last||''));};
+const bounded= (promise,ms,label)=>new Promise((resolve,reject)=>{
+ const timer=setTimeout(()=>reject(Error(label+'_TIMEOUT')),ms);
+ Promise.resolve(promise).then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});
+});
+const boundedFetch=async(url,options={},timeoutMs=10000)=>{
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+ try{return await fetch(url,{...options,signal:controller.signal});}
+ finally{clearTimeout(timer);}
+};
+const until=async(fn,ms,label)=>{
+ const end=Date.now()+ms;let last;
+ while(Date.now()<end){
+  try{const v=await bounded(Promise.resolve().then(fn),Math.min(12000,end-Date.now()),'R4_D_'+label+'_PROBE');if(v)return v;}
+  catch(e){last=e.message;}
+  await sleep(150);
+ }
+ throw Error('R4_D_'+label+'_TIMEOUT '+(last||''));
+};
 class Cdp{
- constructor(ws){this.ws=ws;this.seq=0;this.pending=new Map();ws.addEventListener('message',e=>{const m=JSON.parse(e.data),p=this.pending.get(m.id);if(!p)return;this.pending.delete(m.id);m.error?p.reject(Error(JSON.stringify(m.error))):p.resolve(m.result);});}
- static async connect(url){const ws=new WebSocket(url);await new Promise((r,j)=>{ws.addEventListener('open',r,{once:true});ws.addEventListener('error',j,{once:true});});return new Cdp(ws);}
- call(method,params={}){const id=++this.seq;return new Promise((resolve,reject)=>{this.pending.set(id,{resolve,reject});this.ws.send(JSON.stringify({id,method,params}));});}
+ constructor(ws){
+  this.ws=ws;this.seq=0;this.pending=new Map();
+  ws.addEventListener('message',e=>{
+   let m;try{m=JSON.parse(e.data);}catch{return;}
+   const pending=this.pending.get(m.id);if(!pending)return;
+   this.pending.delete(m.id);
+   m.error?pending.reject(Error(JSON.stringify(m.error))):pending.resolve(m.result);
+  });
+  const failPending=()=>{for(const [id,pending] of this.pending){this.pending.delete(id);pending.reject(Error('CDP_SOCKET_CLOSED'));}};
+  ws.addEventListener('close',failPending);ws.addEventListener('error',failPending);
+ }
+ static async connect(url){
+  const ws=new WebSocket(url);
+  await bounded(new Promise((resolve,reject)=>{
+   ws.addEventListener('open',resolve,{once:true});
+   ws.addEventListener('error',()=>reject(Error('CDP_CONNECT_FAILED')),{once:true});
+  }),10000,'CDP_CONNECT');
+  return new Cdp(ws);
+ }
+ call(method,params={}){
+  const id=++this.seq;
+  return new Promise((resolve,reject)=>{
+   const timer=setTimeout(()=>{this.pending.delete(id);reject(Error('CDP_CALL_TIMEOUT '+method));},12000);
+   this.pending.set(id,{
+    resolve:value=>{clearTimeout(timer);resolve(value);},
+    reject:error=>{clearTimeout(timer);reject(error);}
+   });
+   try{this.ws.send(JSON.stringify({id,method,params}));}
+   catch(error){this.pending.delete(id);clearTimeout(timer);reject(error);}
+  });
+ }
  async eval(expression){const r=await this.call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text);return r.result?.value;}
- close(){this.ws.close();}
+ close(){for(const [id,pending] of this.pending){this.pending.delete(id);pending.reject(Error('CDP_CLIENT_CLOSED'));}try{this.ws.close();}catch{}}
 }
 async function clickTrusted(cdp,expr){
  const p=await cdp.eval('(()=>{const e='+expr+';if(!e)throw Error("TARGET_MISSING");e.scrollIntoView({block:"center",inline:"center"});const r=e.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return{x,y,insideViewport:x>=0&&y>=0&&x<innerWidth&&y<innerHeight,hitMatches:!!hit&&(hit===e||e.contains(hit)),hitTag:hit?.tagName||null,targetTag:e.tagName,rect:{left:r.left,top:r.top,width:r.width,height:r.height}}})()');
