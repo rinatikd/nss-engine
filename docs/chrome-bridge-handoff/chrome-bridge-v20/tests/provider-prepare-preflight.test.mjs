@@ -59,7 +59,8 @@ test('provider_prepare failures after injection remain no-send outcomes while pr
   assert.match(commitCatch,/error\?\.sideEffect/);
   assert.match(page,/providerPrepareMutationStarted = true/);
   assert.match(page,/failure\.sideEffect = providerPrepareMutationStarted \? 'composer-draft-state-unverified' : 'none'/);
-  assert.match(page,/providerCommitClickStarted = true;\s*sendButtons\[0\]\.click\(\)/);
+  assert.match(page,/providerCommitClickStarted = true;/);
+  assert.match(page,/mutationSideEffectStarted = true;\s*sendButtons\[0\]\.click\(\)/);
   assert.match(page,/failure\.dispatchState = providerCommitClickStarted \? 'UNKNOWN' : 'NOT_PERFORMED'/);
   assert.match(page,/send-click-may-have-fired/);
   assert.match(journal,/typeof data\.sideEffect==='string'\?\{sideEffect:data\.sideEffect\}:\{\}/);
