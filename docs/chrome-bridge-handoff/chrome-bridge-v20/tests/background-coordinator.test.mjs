@@ -31,24 +31,29 @@ function fakeChrome(data={},options={}) {
     }},
     tabs:{get:async id=>({id,url:'https://claude.ai/chat/conversation_001'})},
     permissions:{contains:async()=>true},
-    scripting:{executeScript:async({target,args})=>{
+    scripting:{executeScript:async({target,args,world})=>{
       const [name,details,origin]=args;
       calls.push(['script',name,target.tabId]);
-      if (options.executeScript)
-        return options.executeScript({name,details,origin,tabId:target.tabId,session,data,calls});
-      if (name==='agent_context') return [{result:{
-        verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
-      }}];
-      if (name==='provider_prepare') return [{result:{
-        prepared:true,clickedSend:false,requestId:details.requestId,
-        preparedId:details.preparedId,payloadHash:details.payloadHash,
-        sideEffect:'composer-filled-no-send'
-      }}];
-      if (name==='provider_commit') return [{result:{
-        clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,
-        payloadHash:details.payloadHash,clickedAt:new Date().toISOString()
-      }}];
-      return [{result:{ok:true}}];
+      const raw=options.executeScript
+        ? await options.executeScript({name,details,origin,tabId:target.tabId,session,data,calls,target,world})
+        : name==='agent_context' ? [{result:{
+            verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+          }}]
+          : name==='provider_prepare' ? [{result:{
+              prepared:true,clickedSend:false,requestId:details.requestId,
+              preparedId:details.preparedId,payloadHash:details.payloadHash,
+              sideEffect:'composer-filled-no-send'
+            }}]
+            : name==='provider_commit' ? [{result:{
+                clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,
+                payloadHash:details.payloadHash,clickedAt:new Date().toISOString()
+              }}]
+              : [{result:{ok:true}}];
+      return raw.map(entry=>({
+        ...entry,
+        documentId:entry.documentId || target.documentIds?.[0] || 'fake-document-'+target.tabId,
+        frameId:Number.isInteger(entry.frameId)?entry.frameId:0
+      }));
     }},
     runtime:{
       id:'ext-mock-id',

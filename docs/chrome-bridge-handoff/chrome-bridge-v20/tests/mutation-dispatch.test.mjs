@@ -5,7 +5,8 @@ import {dispatchMutation} from '../extension/mutation-dispatch.js';
 function fixture({
   changed=false,deny=false,expiredGrant=false,badOrigin=false,conversationChanged=false
 }={}) {
-  const state={injections:[],approvalCount:0,allowAt:true,grant:Date.now()+120000};
+  const state={injections:[],targets:[],approvalCount:0,allowAt:true,
+    documentId:'document-main-0001',grant:Date.now()+120000};
   const url=badOrigin?'https://not-allowed.example/app':'https://claude.ai/chat/abcdefghi';
   const chromeApi={
     tabs:{get:async()=>({id:9,url:changed && !state.allowAt ?
@@ -13,16 +14,20 @@ function fixture({
     storage:{local:{get:async key=>key==='sites'?
       {sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:{adapters:'{}'}}},
     permissions:{contains:async()=>true},
-    scripting:{executeScript:async({args})=>{
+    scripting:{executeScript:async({args,target,world})=>{
       const [name,details]=args;
       state.injections.push(name);
-      if(name==='describe')return [{result:{
-        tag:'button',text:'Send',href:'',formAction:'',type:'button'}}];
-      if(name==='agent_context')return [{result:{
+      state.targets.push({target,world,name});
+      const response=result=>[{
+        documentId:target.documentIds?.[0]||state.documentId,frameId:0,result
+      }];
+      if(name==='describe')return response({
+        tag:'button',text:'Send',href:'',formAction:'',type:'button'});
+      if(name==='agent_context')return response({
         verified:true,origin:'https://claude.ai',
         conversationId:conversationChanged && !state.allowAt?'other':'abcdefghi'
-      }}];
-      return [{result:{ok:true,sent:name==='agent_send'}}];
+      });
+      return response({ok:true,sent:name==='agent_send'});
     }}
   };
   const approvals={request:async() => {
@@ -46,6 +51,111 @@ test('click executes only after fresh site/target revalidation and approval',asy
  assert.deepEqual(await execute(cmd(),f),{ok:true,sent:false});
  assert.deepEqual(f.state.injections,['describe','describe','browser_click']);
  assert.equal(f.state.approvalCount,1);
+});
+
+test('every mutation injection is explicitly isolated and pinned after the first document capture',async()=>{
+ const f=fixture();
+ await execute(cmd('browser_click'),f);
+ assert.deepEqual(f.state.targets.map(x=>x.name),['describe','describe','browser_click']);
+ assert.deepEqual(f.state.targets[0].target,{tabId:9});
+ for(const call of f.state.targets) assert.equal(call.world,'ISOLATED');
+ for(const call of f.state.targets.slice(1))
+   assert.deepEqual(call.target,{tabId:9,documentIds:[f.state.documentId]});
+
+ const send=fixture();
+ await execute(cmd('agent_send'),send);
+ assert.deepEqual(send.state.targets.map(x=>x.target),[
+   {tabId:9},
+   {tabId:9,documentIds:[send.state.documentId]},
+   {tabId:9,documentIds:[send.state.documentId]}
+ ]);
+ assert.ok(send.state.targets.every(x=>x.world==='ISOLATED'));
+});
+
+test('provider prepare and commit pin all post-preflight injections to the same document',async()=>{
+ for(const name of ['provider_prepare','provider_commit']) {
+   const f=providerFixture();
+   await dispatchMutation(providerCommand(name),f.chromeApi,{
+     approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'doc-bound-provider'
+   });
+   assert.deepEqual(f.state.targets.map(x=>x.target),[
+     {tabId:9},
+     {tabId:9,documentIds:[f.state.documentId]},
+     {tabId:9,documentIds:[f.state.documentId]}
+   ],name);
+   assert.ok(f.state.targets.every(x=>x.world==='ISOLATED'),name);
+ }
+});
+
+test('stale exact-document injection fails closed and is never rebound to the active tab document',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ let mutationCalls=0;
+ f.chromeApi.scripting.executeScript=async payload=>{
+   if(payload.args[0]==='browser_click') {
+     mutationCalls++;
+     assert.deepEqual(payload.target,{tabId:9,documentIds:[f.state.documentId]});
+     throw Error('No frame with given document id found');
+   }
+   return original(payload);
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),error=>{
+   assert.equal(error.message,'DOCUMENT_BOUND_INJECTION_FAILED');
+   assert.equal(error.dispatchState,'UNKNOWN');
+   return true;
+ });
+ assert.equal(mutationCalls,1);
+ assert.equal(f.state.targets.some(x=>x.name==='browser_click'),false,
+   'a rejected stale-document request must not be retried with a tab-only target');
+});
+
+test('document identity missing from initial injection blocks approval and mutation',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ f.chromeApi.scripting.executeScript=async payload=>{
+   if(payload.args[0]==='describe') {
+     return [{frameId:0,result:{tag:'button',text:'Send',href:'',formAction:'',type:'button'}}];
+   }
+   return original(payload);
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),error=>{
+   assert.equal(error.message,'INJECTION_DOCUMENT_IDENTITY_UNAVAILABLE');
+   assert.equal(error.dispatchState,'NOT_PERFORMED');
+   return true;
+ });
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(f.state.injections.includes('browser_click'),false);
+});
+
+test('tab navigation during initial document capture blocks before presenting approval',async()=>{
+ const f=fixture();
+ let reads=0;
+ f.chromeApi.tabs.get=async id=>({
+   id,url:++reads>=3?'https://claude.ai/chat/replaced_document_001':
+     'https://claude.ai/chat/abcdefghi',title:'Test'
+ });
+ await assert.rejects(execute(cmd('browser_click'),f),/TAB_CHANGED_AFTER_APPROVAL/);
+ assert.equal(f.state.approvalCount,0);
+ assert.equal(f.state.injections.includes('browser_click'),false);
+});
+
+test('incomplete result identity after a document-targeted mutation remains UNKNOWN',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ let mutationCalls=0;
+ f.chromeApi.scripting.executeScript=async payload=>{
+   if(payload.args[0]==='browser_click') {
+     mutationCalls++;
+     return [{frameId:0,result:{ok:true}}];
+   }
+   return original(payload);
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),error=>{
+   assert.equal(error.message,'INJECTION_DOCUMENT_IDENTITY_UNAVAILABLE');
+   assert.equal(error.dispatchState,'UNKNOWN');
+   return true;
+ });
+ assert.equal(mutationCalls,1);
 });
 test('denial, navigation and revoked grants prevent page mutation',async()=>{
  for (const opts of [{deny:true},{changed:true},{expiredGrant:true}]){
@@ -155,7 +265,7 @@ test('changed target metadata after approval blocks browser_click',async()=>{
  f.chromeApi.scripting.executeScript=async payload=>{
    const result=await realInject(payload);
    if(payload.args[0]==='describe' && ++descriptions===2)
-     return [{result:{...result[0].result,text:'Different target'}}];
+     return [{...result[0],result:{...result[0].result,text:'Different target'}}];
    return result;
  };
  await assert.rejects(execute(cmd('browser_click'),f),/TARGET_CHANGED_AFTER_APPROVAL/);
@@ -201,8 +311,8 @@ test('unknown outcome after DOM send injection remains UNKNOWN',async()=>{
   return original(payload);
  };
  await assert.rejects(execute(cmd('agent_send'),f),e=>{
-  assert.equal(e.message,'INJECTION_RESPONSE_LOST');
-  assert.equal(e.dispatchState,undefined);
+  assert.equal(e.message,'DOCUMENT_BOUND_INJECTION_FAILED');
+  assert.equal(e.dispatchState,'UNKNOWN');
   return true;
  });
  assert.equal(f.state.injections.includes('agent_send'),false);
@@ -263,21 +373,24 @@ test('unclassified revalidation errors emit safe REVALIDATION code and never sen
 
 
 function providerFixture({deny=false,conversationChanged=false,grant=true}={}) {
-  const state={injections:[],approvalCount:0,allowAt:true};
+  const state={injections:[],targets:[],approvalCount:0,allowAt:true,documentId:'document-provider-0001'};
   const chromeApi={
     tabs:{get:async()=>({id:9,url:'https://claude.ai/chat/abcdefghi',title:'Test'})},
     storage:{local:{get:async key=>key==='sites'
       ?{sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:{adapters:'{}'}}},
     permissions:{contains:async()=>true},
-    scripting:{executeScript:async({args})=>{
-      const [name,details]=args;state.injections.push(name);
-      if(name==='agent_context')return [{result:{verified:true,origin:'https://claude.ai',
-        conversationId:conversationChanged&&!state.allowAt?'other12345':'abcdefghi'}}];
-      if(name==='provider_prepare')return [{result:{prepared:true,requestId:details.requestId,preparedId:details.preparedId,
+    scripting:{executeScript:async({args,target,world})=>{
+      const [name,details]=args;state.injections.push(name);state.targets.push({target,world,name});
+      const response=result=>[{
+        documentId:target.documentIds?.[0]||state.documentId,frameId:0,result
+      }];
+      if(name==='agent_context')return response({verified:true,origin:'https://claude.ai',
+        conversationId:conversationChanged&&!state.allowAt?'other12345':'abcdefghi'});
+      if(name==='provider_prepare')return response({prepared:true,requestId:details.requestId,preparedId:details.preparedId,
         expiresAt:details.expiresAt,payloadHash:details.payloadHash,
-        sideEffect:'composer-filled-no-send',clickedSend:false}}];
-      if(name==='provider_commit')return [{result:{clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,payloadHash:details.payloadHash,clickedAt:new Date().toISOString()}}];
-      return [{result:{ok:true}}];
+        sideEffect:'composer-filled-no-send',clickedSend:false});
+      if(name==='provider_commit')return response({clickedSend:true,requestId:details.requestId,preparedId:details.preparedId,payloadHash:details.payloadHash,clickedAt:new Date().toISOString()});
+      return response({ok:true});
     }}
   };
   const approvals={request:async()=>{state.approvalCount++;state.allowAt=false;if(deny)throw Error('USER_DENIED');}};
@@ -421,11 +534,14 @@ test('provider_prepare failures after a lost no-send receipt stay NOT_PERFORMED'
     const original=f.chromeApi.scripting.executeScript;
     f.chromeApi.scripting.executeScript=async payload=>{
       if(payload.args[0]==='provider_prepare') {
-        if(mode==='explicit-preflight-failure') return [{result:{
-          error:'PROVIDER_SEND_BUTTON_NOT_READY',
-          dispatchState:'NOT_PERFORMED',
-          sideEffect:'composer-cleared'
-        }}];
+        if(mode==='explicit-preflight-failure') {
+          const injected=await original(payload);
+          return [{...injected[0],result:{
+            error:'PROVIDER_SEND_BUTTON_NOT_READY',
+            dispatchState:'NOT_PERFORMED',
+            sideEffect:'composer-cleared'
+          }}];
+        }
         throw Error('INJECTION_RESPONSE_LOST');
       }
       return original(payload);
@@ -447,10 +563,13 @@ test('provider_commit page receipt classifies pre-click failure as NOT_PERFORMED
   const f=providerFixture();
   const original=f.chromeApi.scripting.executeScript;
   f.chromeApi.scripting.executeScript=async payload=>{
-    if(payload.args[0]==='provider_commit') return [{result:{
-      error:'PROVIDER_PREPARED_DRAFT_MISMATCH',
-      dispatchState:'NOT_PERFORMED'
-    }}];
+    if(payload.args[0]==='provider_commit') {
+      const injected=await original(payload);
+      return [{...injected[0],result:{
+        error:'PROVIDER_PREPARED_DRAFT_MISMATCH',
+        dispatchState:'NOT_PERFORMED'
+      }}];
+    }
     return original(payload);
   };
   await assert.rejects(dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{
@@ -466,11 +585,14 @@ test('provider_commit page receipt after click boundary remains UNKNOWN and carr
   const f=providerFixture();
   const original=f.chromeApi.scripting.executeScript;
   f.chromeApi.scripting.executeScript=async payload=>{
-    if(payload.args[0]==='provider_commit') return [{result:{
-      error:'SEND_CLICK_RESULT_UNVERIFIED',
-      dispatchState:'UNKNOWN',
-      sideEffect:'send-click-may-have-fired'
-    }}];
+    if(payload.args[0]==='provider_commit') {
+      const injected=await original(payload);
+      return [{...injected[0],result:{
+        error:'SEND_CLICK_RESULT_UNVERIFIED',
+        dispatchState:'UNKNOWN',
+        sideEffect:'send-click-may-have-fired'
+      }}];
+    }
     return original(payload);
   };
   await assert.rejects(dispatchMutation(providerCommand('provider_commit'),f.chromeApi,{

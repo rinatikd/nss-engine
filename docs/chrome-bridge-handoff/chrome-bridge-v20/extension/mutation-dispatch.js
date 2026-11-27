@@ -13,11 +13,37 @@ const MUTATIONS = new Set(['browser_click', 'browser_fill', 'agent_send', 'provi
 const MAX_APPROVAL_MS = 90_000;
 const nowExpired = (cmd, now) => !Number.isFinite(cmd?.expires) || now() >= cmd.expires;
 
-async function inject(chromeApi, tabId, origin, name, args) {
-  const out = await chromeApi.scripting.executeScript({
-    target:{ tabId }, func:pageAction, args:[name,args,origin]
-  });
-  const result = out?.[0]?.result;
+async function inject(chromeApi, tabId, origin, name, args, documentId=null) {
+  const target = Number.isSafeInteger(tabId) && typeof documentId==='string' && documentId
+    ? {tabId,documentIds:[documentId]}
+    : {tabId};
+  let out;
+  try {
+    out = await chromeApi.scripting.executeScript({
+      target,world:'ISOLATED',func:pageAction,args:[name,args,origin]
+    });
+  } catch (cause) {
+    if (documentId) {
+      // Once a command is sent to an exact document, a rejected/missing
+      // result is ambiguous: never fall back to the active tab's new document.
+      throw Object.assign(Error('DOCUMENT_BOUND_INJECTION_FAILED'),{
+        dispatchState:'UNKNOWN'
+      });
+    }
+    throw cause;
+  }
+  if (!Array.isArray(out) || out.length!==1 ||
+      typeof out[0]?.documentId!=='string' || !out[0].documentId ||
+      out[0].frameId!==0) {
+    // A tab-scoped preflight has not mutated anything; a document-scoped
+    // mutation may already have run even if Chrome returned incomplete metadata.
+    throw Object.assign(Error('INJECTION_DOCUMENT_IDENTITY_UNAVAILABLE'),{
+      dispatchState:documentId?'UNKNOWN':'NOT_PERFORMED'
+    });
+  }
+  if (documentId && out[0].documentId!==documentId)
+    throw Object.assign(Error('INJECTION_DOCUMENT_IDENTITY_MISMATCH'),{dispatchState:'UNKNOWN'});
+  const result = out[0]?.result;
   if (!result || result.error) {
     const error = Error(result?.error || 'INJECTION_FAILED');
     if (result?.dispatchState) error.dispatchState = result.dispatchState;
@@ -25,7 +51,7 @@ async function inject(chromeApi, tabId, origin, name, args) {
     if (result?.failure) error.failure = normalizeFailure(result.failure,{stage:'PAGE_ACTION',code:'PAGE_ACTION_FAILED'});
     throw error;
   }
-  return result;
+  return {result,documentId:out[0].documentId,frameId:out[0].frameId};
 }
 function exactCommand(cmd) {
   if (!cmd || !MUTATIONS.has(cmd.name) || !cmd.args ||
@@ -73,9 +99,12 @@ async function dispatchProviderMutation(cmd, chromeApi, {
     try{overrides=JSON.parse(adapters||'{}');}catch{throw Error('INVALID_ADAPTER_CONFIGURATION');}
     const adapter=mergeAdapters(overrides)[providerId];
     if(!adapter||adapter.origin!==origin)throw Error('ADAPTER_ORIGIN_MISMATCH');
-    const preflight=await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    const preflightInjection=await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    const preflight=preflightInjection.result;
     if(!preflight.verified||preflight.origin!==origin||preflight.conversationId!==conversationId)
       throw Error('CONVERSATION_NOT_BOUND');
+    // The tab URL must still match the pre-approval snapshot after document capture.
+    await boundTab(chromeApi,tab.id,tab.url,origin);
     if(cmd.name==='provider_prepare') {
       if(typeof args.message!=='string'||!args.message.trim()||args.message.length>100000||
          findSecret(args.message)||!/^[a-f0-9]{64}$/.test(args.payloadHash||'')||
@@ -109,7 +138,8 @@ async function dispatchProviderMutation(cmd, chromeApi, {
       ? await sessionAuthorization.require({origin,tabId,command:cmd.name,bridgeEpoch:cmd.bridgeEpoch})
       : await controlGrant(origin,tabId);
     if(!Number.isFinite(refreshedGrant)||refreshedGrant<=now())throw Error('CONTROL_GRANT_EXPIRED');
-    const current=await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    const currentInjection=await inject(chromeApi,tab.id,origin,'agent_context',{adapter},preflightInjection.documentId);
+    const current=currentInjection.result;
     if(!current.verified||current.origin!==origin||current.conversationId!==conversationId)
       throw Error('CONVERSATION_CHANGED_AFTER_APPROVAL');
     if(!(await stillEnabled()))throw Error('BACKGROUND_CONTROL_STOPPED');
@@ -122,7 +152,8 @@ async function dispatchProviderMutation(cmd, chromeApi, {
           expectedOrigin:origin,expectedConversationId:conversationId,controlExpires:refreshedGrant};
     stage='PAGE_ACTION';
     executionStarted=true;
-    const result=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs);
+    const finalInjection=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs,currentInjection.documentId);
+    const result=finalInjection.result;
     if(cmd.name==='provider_prepare') {
       if(result?.prepared!==true||result.clickedSend!==false||result.requestId!==requestId||
          result.sideEffect!=='composer-filled-no-send'||result.preparedId!==args.preparedId||
@@ -185,6 +216,7 @@ export async function dispatchMutation(cmd, chromeApi, {
   if (expires<=now()) throw Error('COMMAND_EXPIRED');
   let adapter;
   let preflight;
+  let preflightInjection;
   if (cmd.name === 'agent_send') {
     if (typeof cmd.args.text !== 'string' || !cmd.args.text.trim() ||
         cmd.args.text.length > 12000) throw Error('INVALID_PROMPT');
@@ -199,19 +231,25 @@ export async function dispatchMutation(cmd, chromeApi, {
     adapter = mergeAdapters(overrides)[CONTROL_ORIGINS[origin]] ||
       DEFAULT_ADAPTERS[CONTROL_ORIGINS[origin]];
     if (!adapter || adapter.origin !== origin) throw Error('ADAPTER_ORIGIN_MISMATCH');
-    preflight = await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    preflightInjection = await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    preflight = preflightInjection.result;
     if (!preflight.verified || preflight.origin!==origin ||
         preflight.conversationId!==cmd.args.expectedConversationId)
       throw Error('CONVERSATION_CHANGED');
   } else {
     if (typeof cmd.args.selector!=='string' || !cmd.args.selector ||
         cmd.args.selector.length>300) throw Error('INVALID_SELECTOR');
-    preflight = await inject(chromeApi,tab.id,origin,'describe',
+    preflightInjection = await inject(chromeApi,tab.id,origin,'describe',
       {selector:cmd.args.selector});
+    preflight = preflightInjection.result;
     if (cmd.name === 'browser_fill' &&
         (typeof cmd.args.text!=='string' || cmd.args.text.length>10000 ||
          findSecret(cmd.args.text))) throw Error('INVALID_OR_SENSITIVE_FILL');
   }
+
+  // Recheck tab URL/origin after capturing the preflight document. Approval
+  // must not be presented for a different same-origin navigation.
+  await boundTab(chromeApi,tab.id,tab.url,origin);
 
   // Only metadata is surfaced in the queue. Do not persist prompt contents.
   const approvalId='m-'+uuid();
@@ -241,15 +279,18 @@ export async function dispatchMutation(cmd, chromeApi, {
     throw Error('CONTROL_GRANT_EXPIRED');
 
   let args;
+  let currentInjection;
   if (cmd.name === 'agent_send') {
-    const current = await inject(chromeApi,tab.id,origin,'agent_context',{adapter});
+    currentInjection = await inject(chromeApi,tab.id,origin,'agent_context',{adapter},preflightInjection.documentId);
+    const current = currentInjection.result;
     if (!current.verified || current.origin!==origin ||
         current.conversationId!==cmd.args.expectedConversationId)
       throw Error('CONVERSATION_CHANGED_AFTER_APPROVAL');
     args={...cmd.args,adapter,controlExpires:refreshedGrant};
   } else {
-    const current=await inject(chromeApi,tab.id,origin,'describe',
-      {selector:cmd.args.selector});
+    currentInjection=await inject(chromeApi,tab.id,origin,'describe',
+      {selector:cmd.args.selector},preflightInjection.documentId);
+    const current=currentInjection.result;
     if (current.tag!==preflight.tag || current.text!==preflight.text ||
         current.href!==preflight.href || current.formAction!==preflight.formAction)
       throw Error('TARGET_CHANGED_AFTER_APPROVAL');
@@ -260,7 +301,8 @@ export async function dispatchMutation(cmd, chromeApi, {
   // At most one dispatch. Failed confirmations are UNKNOWN, never retried.
   stage='PAGE_ACTION';
   executionStarted=true;
-  const result=await inject(chromeApi,tab.id,origin,cmd.name,args);
+  const finalInjection=await inject(chromeApi,tab.id,origin,cmd.name,args,currentInjection.documentId);
+  const result=finalInjection.result;
   return result?.text ? {...result,text:redact(result.text)} : result;
   } catch(error) {
     // This flag can only be set if the single DOM mutation injection has NOT
