@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import https from 'node:https';
+import http from 'node:http';
 import net from 'node:net';
 import {spawn,spawnSync} from 'node:child_process';
 class Cdp {
@@ -153,7 +154,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       res.writeHead(200,{'content-type':'text/html; charset=utf-8'});
       res.end(html);
     });
-  const proxy=net.createServer();
+  const proxy=http.createServer();
   proxy.on('connect',(req,client,head)=>{
     if(req.url!=='claude.ai:443'){client.end('HTTP/1.1 403 Forbidden\r\n\r\n');return;}
     const upstream=net.connect(8443,'127.0.0.1');
