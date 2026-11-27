@@ -76,6 +76,37 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  fs.mkdirSync(ext);fs.mkdirSync(profile);fs.mkdirSync(path.join(profile,'Default'),{recursive:true});
  fs.writeFileSync(path.join(profile,'Default','Preferences'),JSON.stringify({extensions:{ui:{developer_mode:true}}}));
  for(const n of fs.readdirSync(new URL('../extension/',import.meta.url))){const src=new URL('../extension/'+n,import.meta.url);if(/\.(js|html|css)$/.test(n)&&fs.statSync(src).isFile())fs.writeFileSync(path.join(ext,n),fs.readFileSync(src,'utf8').replaceAll('http://127.0.0.1:17381','http://127.0.0.1:17481'));}
+  // Test-only receiver in the disposable MV3 worker. Production sources
+  // and the production coordinator trust policy remain untouched.
+  const backgroundPath=path.join(ext,'background.js');
+  let backgroundSource=fs.readFileSync(backgroundPath,'utf8');
+  backgroundSource+=\`
+chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
+  if(message?.target!=='r4-test-terminal-probe') return false;
+  const evidence=message.evidence;
+  let senderOrigin=null;
+  try { senderOrigin=new URL(sender.url).origin; } catch {}
+  const valid=sender?.id===chrome.runtime.id &&
+    Number.isSafeInteger(sender?.tab?.id) && sender.tab.id>0 &&
+    sender.frameId===0 && typeof sender.documentId==='string' &&
+    sender.documentId.length>0 && typeof sender.url==='string' &&
+    evidence?.schemaVersion===1 &&
+    typeof evidence.requestId==='string' &&
+    evidence.origin===senderOrigin &&
+    typeof evidence.conversationId==='string' &&
+    Number.isFinite(evidence.startedAt) &&
+    Number.isFinite(evidence.completedAt) &&
+    evidence.completedAt>=evidence.startedAt;
+  if(!valid){sendResponse({ok:false,error:'SENDER_OR_EVIDENCE_INVALID'});return false;}
+  const envelope={schemaVersion:1,tabId:sender.tab.id,documentId:sender.documentId,
+    frameId:sender.frameId,url:sender.url,evidence};
+  void chrome.storage.local.set({r4TestTerminalEvidence:envelope})
+    .then(()=>sendResponse({ok:true,tabId:sender.tab.id,documentId:sender.documentId}))
+    .catch(()=>sendResponse({ok:false,error:'TEST_EVIDENCE_WRITE_FAILED'}));
+  return true;
+});
+\`;
+  fs.writeFileSync(backgroundPath,backgroundSource);
  // Test-only receipt hold in the disposable extension copy. The real
  // provider_commit click happens first; only its post-click receipt is held,
  // reproducing an uncertain in-flight side effect during worker/Bridge restart.
@@ -102,7 +133,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
       }
       const clickedAt = new Date().toISOString();`;
  const finallyMarker='  } finally {\n    releaseActionLock();';
- const finallyHook='  } finally {\n    releaseActionLock();\n    document.documentElement.dataset.r4TestFinallyReached = "true";\n    try {\n      const evidence = globalThis.__chromeBridgeMutationTerminal || null;\n      await chrome.storage.local.set({r4TestTerminalEvidence: evidence});\n      document.documentElement.dataset.r4TestStorageWrite = "ok";\n    } catch (error) {\n      document.documentElement.dataset.r4TestStorageWrite = "failed:" + String(error?.message || error).slice(0,120);\n    }';
+  const finallyHook='  } finally {\n    releaseActionLock();\n    document.documentElement.dataset.r4TestFinallyReached = "true";\n    try {\n      const evidence = globalThis.__chromeBridgeMutationTerminal || null;\n      const response = await chrome.runtime.sendMessage({target:"r4-test-terminal-probe",evidence});\n      document.documentElement.dataset.r4TestRuntimeMessage = response?.ok ? "ok" : "failed:" + String(response?.error || "NO_ACK");\n    } catch (error) {\n      document.documentElement.dataset.r4TestRuntimeMessage = "failed:" + String(error?.message || error).slice(0,120);\n    }';
  assert.ok(pageActionSource.includes(finallyMarker),'PROVIDER_COMMIT_FINALLY_HOOK_MARKER_MISSING');
  pageActionSource=pageActionSource.replace(finallyMarker,finallyHook);
  assert.ok(pageActionSource.includes(commitClickMarker),'PROVIDER_COMMIT_HOOK_MARKER_MISSING');
@@ -402,8 +433,8 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.equal(finallyReached,true,'the original pageAction must reach its finally path after the held receipt is released');
   await until(()=>pageA.eval('document.documentElement.dataset.r4TestStorageWrite!==undefined'),8000,'PAGE_ACTION_TERMINAL_STORAGE_PROBE_SETTLED');
   await until(()=>control.eval('!!document.querySelector("#quarantineList button")'),10000,'QUARANTINE_RECONCILE_BUTTON_READY');
-  const terminalEvidence=await control.eval('(async(tabId)=>{const q=await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"quarantine-status"});const p=await chrome.scripting.executeScript({target:{tabId},world:"ISOLATED",func:()=>({terminal:globalThis.__chromeBridgeMutationTerminal||null,lock:globalThis.__chromeBridgeMutationLock||null,href:location.href,origin:location.origin})});return{record:q.records?.find(r=>r.tabId===tabId)||null,globalPending:q.globalPending||null,page:p?.[0]?.result||null,documentId:p?.[0]?.documentId||null}})('+tabs.a+')');
-  terminalEvidence.fixturePage=await pageA.eval('(()=>({held:document.documentElement.dataset.r4CommitReceiptHeld||null,release:document.documentElement.dataset.r4ReleaseCommitReceipt||null,finallyReached:document.documentElement.dataset.r4TestFinallyReached||null,storageWrite:document.documentElement.dataset.r4TestStorageWrite||null}))()');
+   const terminalEvidence=await control.eval('(async(tabId)=>{const q=await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"quarantine-status"});const stored=await chrome.storage.local.get("r4TestTerminalEvidence");const p=await chrome.scripting.executeScript({target:{tabId},world:"ISOLATED",func:()=>({terminal:globalThis.__chromeBridgeMutationTerminal||null,lock:globalThis.__chromeBridgeMutationLock||null,href:location.href,origin:location.origin})});return{record:q.records?.find(r=>r.tabId===tabId)||null,globalPending:q.globalPending||null,page:p?.[0]?.result||null,documentId:p?.[0]?.documentId||null,durableTestEvidence:stored.r4TestTerminalEvidence||null}})('+tabs.a+')');
+  terminalEvidence.fixturePage=await pageA.eval('(()=>({held:document.documentElement.dataset.r4CommitReceiptHeld||null,release:document.documentElement.dataset.r4ReleaseCommitReceipt||null,finallyReached:document.documentElement.dataset.r4TestFinallyReached||null,runtimeMessage:document.documentElement.dataset.r4TestRuntimeMessage||null}))()');
   terminalEvidence.durableTestEvidence=await control.eval('(async()=>{const r=await chrome.storage.local.get("r4TestTerminalEvidence");return r.r4TestTerminalEvidence||null})()');
   console.log('[R4 D TERMINAL EVIDENCE DIAGNOSTIC]',JSON.stringify(terminalEvidence));
   await clickTrusted(control,'document.querySelector("#quarantineList button")');
