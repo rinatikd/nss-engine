@@ -146,7 +146,18 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
  const cert=spawnSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',key,'-out',crt,'-days','1','-subj','/CN=claude.ai','-addext','subjectAltName=DNS:claude.ai'],{encoding:'utf8'});assert.equal(cert.status,0,'TLS_FIXTURE_CERT_FAILED');
  const html='<!doctype html><html><body><div class="font-claude-response">Fixture baseline</div><div contenteditable="true" class="ProseMirror" role="textbox" style="min-height:42px;min-width:240px;border:1px solid #777"></div><button type="button" data-testid="chat-input-send">Send</button><script>document.querySelector("button").addEventListener("click",e=>{e.currentTarget.dataset.clicked="true";e.currentTarget.dataset.clickCount=String(Number(e.currentTarget.dataset.clickCount||"0")+1)})</script></body></html>';
  const sockets=new Set();
- const trackSocket=socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));return socket;};
+ const trackSocket=socket=>{
+  sockets.add(socket);
+  // Bridge restart intentionally tears down an in-flight disposable TLS
+  // tunnel. Node may report that peer close as ECONNRESET on the accepted
+  // TLS socket; consume only that expected fixture-lifecycle condition.
+  socket.on('error',error=>{
+    if(error?.code==='ECONNRESET')return;
+    console.error('[R4 D FIXTURE SOCKET ERROR]',error?.code||'UNKNOWN',error?.message||String(error));
+  });
+  socket.once('close',()=>sockets.delete(socket));
+  return socket;
+ };
  const tls=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(crt)},(req,res)=>{if(!/^\/chat\/[A-Za-z0-9_-]{8,128}$/.test(new URL(req.url,'https://claude.ai').pathname)){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/html'});res.end(html);});
  tls.on('connection',socket=>trackSocket(socket));
  let chrome=null,worker=null,control=null,pageA=null,pageB=null,bridge=null,proxy=null,rpcId=0;
