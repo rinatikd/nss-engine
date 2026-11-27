@@ -98,8 +98,17 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
   await until(async()=>(await rpc('browser_status')).queued>=2,10000,'B_QUEUED');
   await sleep(500);assert.equal(await control.eval('document.querySelectorAll("#backgroundApprovals .approval").length'),1,'B must not create a parallel approval');
   const revokeExpr='[...document.querySelectorAll("#backgroundGrantList .approval")].find(e=>e.textContent.includes('+JSON.stringify(String(tabs.a))+'))?.querySelector("button")';
+  await control.eval('window.__r4RevokeClickTrusted=null;document.querySelector("#backgroundGrantList").addEventListener("click",e=>{if(e.target?.tagName==="BUTTON")window.__r4RevokeClickTrusted=e.isTrusted},{capture:true})');
   await clickTrusted(control,revokeExpr);
-  const grantText=await until(async()=>{const s=await control.eval('JSON.stringify([...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>e.textContent))');return s.includes(String(tabs.a))?null:s;},12000,'A_REVOKED');
+  let grantText;
+  try {
+    grantText=await until(async()=>{const s=await control.eval('JSON.stringify([...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>e.textContent))');return s.includes(String(tabs.a))?null:s;},12000,'A_REVOKED');
+  } catch(error) {
+    const ui=await control.eval('JSON.stringify({trusted:window.__r4RevokeClickTrusted,status:document.querySelector("#status")?.textContent,grantStatus:document.querySelector("#backgroundGrantStatus")?.textContent,rows:[...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>({text:e.textContent,buttonDisabled:e.querySelector("button")?.disabled})),lab:document.querySelector("#mutationLab")?.checked})');
+    const coordinator=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');
+    console.error('[R4 REVOKE DIAGNOSTIC]',ui,coordinator);
+    throw Error(error.message+' '+ui+' '+coordinator);
+  }
   assert.ok(!grantText.includes(String(tabs.a))&&grantText.includes(String(tabs.b)));
   const aResult=await Promise.race([aTracked,sleep(12000).then(()=>{throw Error('A_NOT_CANCELLED');})]);
   assert.equal(aResult.state,'BLOCKED');assert.equal(aSettled,true);
