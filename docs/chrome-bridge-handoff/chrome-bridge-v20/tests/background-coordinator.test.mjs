@@ -1016,6 +1016,15 @@ test('session_revoke fences new provider work and drains an already accepted pag
   const late=await sendCoordinator(c,'dispatch',{command:providerPrepare(47)},'transport-host.html');
   assert.equal(late.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
   assert.equal(revokeDone,false);
+  const persistedFence=c.data.bridgeMutationRevocationPending;
+  assert.equal(persistedFence?.pending,true);
+  assert.equal(persistedFence.operations.length,1);
+  assert.equal(persistedFence.operations[0].requestId,providerPrepare(46).args.requestId);
+  assert.equal(persistedFence.operations[0].operationId?.length>0,true,
+    'the global Revoke fence must include the active write-ahead operation ID');
+  assert.equal(persistedFence.operations[0].documentId,'fake-document-46',
+    'the global Revoke fence must bind the exact Chrome document');
+  assert.equal(persistedFence.operations[0].frameId,0);
 
   releaseResolve();
   const completed=await mutation;
