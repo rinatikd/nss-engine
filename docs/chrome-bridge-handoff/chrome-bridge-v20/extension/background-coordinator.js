@@ -759,6 +759,20 @@ async function clearGlobalRevocationFence(chromeApi, record, stores) {
 }
 
 async function readQuarantineSnapshot(chromeApi) {
+  // Quarantine records and local-machine operator audit are security state.
+  // Restrict both stores before every read, including UI-only status/reconcile
+  // flows that may run before the normal transport-start path.
+  if (!chromeApi.storage.local?.setAccessLevel ||
+      !chromeApi.storage.session?.setAccessLevel)
+    throw coordinatorError('QUARANTINE_STORAGE_ACCESS_RESTRICTION_UNAVAILABLE','BLOCKED');
+  try {
+    await Promise.all([
+      chromeApi.storage.local.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'}),
+      chromeApi.storage.session.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'})
+    ]);
+  } catch {
+    throw coordinatorError('QUARANTINE_STORAGE_ACCESS_RESTRICTION_UNAVAILABLE','BLOCKED');
+  }
   const keys=[
     'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineRecords',
     'bridgeMutationQuarantineAudit','bridgeMutationRevokingTabs',
