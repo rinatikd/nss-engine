@@ -10,14 +10,25 @@ import {spawn,spawnSync} from 'node:child_process';
 class Cdp {
   constructor(ws) {
     this.ws=ws;this.sequence=0;this.pending=new Map();
+    const failPending=reason=>{
+      for(const [id,pending] of this.pending){
+        this.pending.delete(id);
+        clearTimeout(pending.timer);
+        pending.reject(Error('CDP_SOCKET_CLOSED '+reason));
+      }
+    };
     ws.addEventListener('message',event=>{
-      const message=JSON.parse(event.data);
+      let message;
+      try{message=JSON.parse(event.data);}catch{return;}
       if(!message.id)return;
       const pending=this.pending.get(message.id);
       if(!pending)return;
       this.pending.delete(message.id);
+      clearTimeout(pending.timer);
       message.error?pending.reject(Error(JSON.stringify(message.error))):pending.resolve(message.result);
     });
+    ws.addEventListener('close',()=>failPending('close'));
+    ws.addEventListener('error',()=>failPending('error'));
   }
   static async connect(url) {
     const ws=new WebSocket(url);
@@ -30,8 +41,17 @@ class Cdp {
   call(method,params={}) {
     const id=++this.sequence;
     return new Promise((resolve,reject)=>{
-      this.pending.set(id,{resolve,reject});
-      this.ws.send(JSON.stringify({id,method,params}));
+      const timer=setTimeout(()=>{
+        this.pending.delete(id);
+        reject(Error('CDP_CALL_TIMEOUT '+method+' id='+id));
+      },15000);
+      this.pending.set(id,{
+        timer,
+        resolve:value=>{clearTimeout(timer);resolve(value);},
+        reject:error=>{clearTimeout(timer);reject(error);}
+      });
+      try{this.ws.send(JSON.stringify({id,method,params}));}
+      catch(error){this.pending.delete(id);clearTimeout(timer);reject(error);}
     });
   }
   async eval(expression) {
@@ -41,7 +61,13 @@ class Cdp {
     if(response.exceptionDetails)throw Error(response.exceptionDetails.text||'CDP_EVALUATION_FAILED');
     return response.result?.value;
   }
-  close(){this.ws.close();}
+  close(){
+    for(const [id,pending] of this.pending){
+      this.pending.delete(id);clearTimeout(pending.timer);
+      pending.reject(Error('CDP_CLIENT_CLOSED'));
+    }
+    this.ws.close();
+  }
 }
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -133,6 +159,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     const sw=await until(async()=>(await targets()).find(t=>
       t.type==='service_worker'&&t.url==='chrome-extension://'+extensionId+'/background.js'&&t.webSocketDebuggerUrl),
       15000,'SERVICE_WORKER');
+    console.log('[R4 MUTATION CANCEL STEP] service worker target found');
     worker=await Cdp.connect(sw.webSocketDebuggerUrl);
     await worker.call('Runtime.enable');
     await until(()=>worker.eval('typeof globalThis.__r4PageAction==="function"'),10000,'PAGE_ACTION_EXPORT');
@@ -144,6 +171,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       'func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})});'+
       'return r?.[0]?.documentId?{documentId:r[0].documentId,result:r[0].result}:null})()'),
       20000,'PROVIDER_PAGE_READY');
+    console.log('[R4 MUTATION CANCEL STEP] provider fixture page ready');
     assert.equal(pageInfo.result.origin,'https://claude.ai');
     const documentId=pageInfo.documentId;
     const target={tabId,documentIds:[documentId]};
@@ -173,14 +201,17 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     const preemptedClickCount=await worker.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(preemptedClickCount,'0','a pre-injection Revoke tombstone must block a late page action');
+    console.log('[R4 MUTATION CANCEL STEP] pre-injection tombstone passed');
 
     const safeId='operation_cancel_safe_0001';
     const safeMutation=invoke('browser_click',{
       operationId:safeId,selector:'#r4Action',controlExpires:Date.now()+120000
     });
     await until(async()=> (await inspect())?.state==='RUNNING',5000,'SAFE_OPERATION_REGISTERED');
+    console.log('[R4 MUTATION CANCEL STEP] operation registered before side effect');
     const cancel=await invoke('cancel_operation',{operationId:safeId,timeoutMs:2000});
     const cancelledMutation=await safeMutation;
+    console.log('[R4 MUTATION CANCEL STEP] cooperative cancellation receipt received');
     assert.equal(cancel.result.operationId,safeId);
     assert.equal(cancel.result.safeToRelease,true);
     assert.equal(cancel.result.state,'CANCELLED_BEFORE_SIDE_EFFECT');
@@ -215,6 +246,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     const clickCount=await worker.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(clickCount,'1','a late cancellation must not misclassify a fired click as NOT_PERFORMED');
+    console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
     console.log('[R4 MUTATION CANCEL REAL] exact-document cancellation before boundary PASS; after-boundary cancellation refused');
   }finally{
     worker?.close();
