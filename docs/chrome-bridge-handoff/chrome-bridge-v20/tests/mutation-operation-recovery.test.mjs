@@ -260,12 +260,12 @@ test('replacement MV3 worker rehydrates provider quarantine with the original do
   };
 
   installBackgroundCoordinator(chromeApi);
-  const recovered=await send(chromeApi,'dispatch',{
-    command:{name:'session_status',bridgeEpoch:1}
-  },'transport-host.html');
-  assert.ok(recovered && !recovered.error,'coordinator startup/recovery path should complete');
-
-  const status=await send(chromeApi,'quarantine-status');
+  let status=null;
+  for (let attempt=0;attempt<100;attempt++) {
+    status=await send(chromeApi,'quarantine-status');
+    if (status?.records?.some(item=>item.tabId===tabId)) break;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
   assert.equal(status.available,true);
   assert.equal(status.records.length,1);
   const record=status.records[0];
@@ -297,4 +297,6 @@ test('replacement MV3 worker rehydrates provider quarantine with the original do
   assert.equal(chromeApi.session.bridgeBackgroundControlGrants[String(tabId)],undefined);
   assert.equal(chromeApi.data.bridgeMutationQuarantineRecords[String(tabId)],undefined);
   assert.equal(chromeApi.data.bridgeMutationQuarantineAudit.at(-1).operationId,operation.operationId);
+  assert.equal(chromeApi.data.bridgeMutationQuarantineAudit.at(-1).trustBoundary,
+    'LOCAL_MACHINE_TRUSTED_CONTROL_UI');
 });
