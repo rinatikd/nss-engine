@@ -8,7 +8,7 @@ import {MutationOperationJournal} from '../extension/mutation-operation-journal.
 
 if (!globalThis.crypto) globalThis.crypto=webcrypto;
 
-function fixture({failSessionSet=false}={}) {
+function fixture({failSessionSet=false,probeMutation=null}={}) {
   const data={
     bridgeBackgroundMode:true,
     bridgeConnectionDesired:true,
@@ -39,7 +39,21 @@ function fixture({failSessionSet=false}={}) {
     storage:{local,session:sessionStorage},
     tabs:{get:async id=>({id,url:'https://claude.ai/chat/conversation_001'})},
     permissions:{contains:async()=>true},
-    scripting:{executeScript:async({target,args})=>{
+    scripting:{executeScript:async({target,args,func,world})=>{
+      if (typeof func==='function' && !Array.isArray(args)) {
+        calls.push(['quarantine-probe',target.tabId,world]);
+        const raw=probeMutation
+          ? await probeMutation({target,tabId:target.tabId,world,calls,data,session})
+          : [{result:{
+              href:'https://claude.ai/chat/conversation_001',
+              origin:'https://claude.ai',lock:null,terminal:null
+            }}];
+        return raw.map(entry=>({
+          ...entry,
+          documentId:entry.documentId || target.documentIds?.[0] || 'synthetic-document-'+target.tabId,
+          frameId:Number.isInteger(entry.frameId)?entry.frameId:0
+        }));
+      }
       const [name]=args;
       calls.push(['inject',name,target.tabId]);
       const result=name==='describe'
@@ -207,3 +221,80 @@ test('per-tab Revoke preserves quarantine for a completed generic click without 
   assert.deepEqual(chromeApi.session.bridgeBackgroundControlGrants,{});
 });
 
+test('replacement MV3 worker rehydrates provider quarantine with the original document binding and exact-document proof',async()=>{
+  const tabId=79005;
+  const documentId='document-provider-recovery-79005';
+  const requestId='r4request79005';
+  const payloadHash='a'.repeat(64);
+  const preparedId='prepared_79005';
+  let probedDocumentId='replacement-document-79005';
+  const chromeApi=fixture({probeMutation:async()=>[{
+    result:{
+      href:'https://claude.ai/chat/conversation_001',
+      origin:'https://claude.ai',lock:null,
+      terminal:{
+        schemaVersion:1,requestId,command:'provider_commit',
+        origin:'https://claude.ai',conversationId:'conversation_001',
+        startedAt:injectionStartedAt,completedAt:Date.now(),
+        state:'COMMIT_CLICK_ATTEMPTED',clickAttempted:true,clickReturned:true,
+        payloadHash,preparedId
+      }
+    },
+    documentId:probedDocumentId,frameId:0
+  }]});
+  const store=journal(chromeApi,'operation_provider_recovery_0005');
+  const operation=await store.begin({
+    command:'provider_commit',tabId,origin:'https://claude.ai',
+    url:'https://claude.ai/chat/conversation_001',documentId,frameId:0,
+    conversationId:'conversation_001',requestId,taskId:'task_79005',
+    providerId:'claude',preparedId,payloadHash,epoch:1
+  });
+  await store.markInjecting(operation.operationId,{documentId,frameId:0});
+  // Read the write-ahead record to obtain its authoritative INJECTING timestamp.
+  const beforeRecovery=await store.list();
+  const journalRecord=beforeRecovery.find(item=>item.operationId===operation.operationId);
+  const injectionStartedAt=journalRecord.events.find(event=>event.phase==='INJECTING').at;
+  await new Promise(resolve=>setTimeout(resolve,3));
+  chromeApi.session.bridgeBackgroundControlGrants={
+    [String(tabId)]:{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+
+  installBackgroundCoordinator(chromeApi);
+  const recovered=await send(chromeApi,'dispatch',{
+    command:{name:'session_status',bridgeEpoch:1}
+  },'transport-host.html');
+  assert.ok(recovered && !recovered.error,'coordinator startup/recovery path should complete');
+
+  const status=await send(chromeApi,'quarantine-status');
+  assert.equal(status.available,true);
+  assert.equal(status.records.length,1);
+  const record=status.records[0];
+  assert.equal(record.reconcilable,true);
+  assert.equal(record.operationId,operation.operationId);
+  assert.equal(record.documentId,documentId);
+  assert.equal(record.requestId,requestId);
+  assert.equal(record.command,'provider_commit');
+  assert.equal(record.startedAt,injectionStartedAt);
+
+  const wrongDocument=await send(chromeApi,'reconcile-quarantine',{
+    tabId,token:record.token,confirmed:true,localGesture:true
+  });
+  assert.equal(wrongDocument.ok,false);
+  assert.equal(wrongDocument.error,'QUARANTINE_DOCUMENT_IDENTITY_CHANGED');
+  assert.deepEqual(chromeApi.data.bridgeMutationQuarantinedTabs,[tabId]);
+  assert.ok(chromeApi.session.bridgeBackgroundControlGrants[String(tabId)],
+    'a stale/replacement document must not revoke or unlock the quarantined scope');
+
+  probedDocumentId=documentId;
+  const reconciled=await send(chromeApi,'reconcile-quarantine',{
+    tabId,token:record.token,confirmed:true,localGesture:true
+  });
+  assert.equal(reconciled.ok,true);
+  assert.equal(reconciled.operationId,operation.operationId);
+  assert.equal(reconciled.deliveryState,'UNKNOWN');
+  assert.match(reconciled.warning,/DO_NOT_REPLAY/);
+  assert.deepEqual(chromeApi.data.bridgeMutationQuarantinedTabs,[]);
+  assert.equal(chromeApi.session.bridgeBackgroundControlGrants[String(tabId)],undefined);
+  assert.equal(chromeApi.data.bridgeMutationQuarantineRecords[String(tabId)],undefined);
+  assert.equal(chromeApi.data.bridgeMutationQuarantineAudit.at(-1).operationId,operation.operationId);
+});
