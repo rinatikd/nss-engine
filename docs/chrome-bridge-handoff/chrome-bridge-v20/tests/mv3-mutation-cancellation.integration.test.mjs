@@ -87,8 +87,19 @@ async function until(fn,timeout,label){
   const end=Date.now()+timeout;
   let last='';
   while(Date.now()<end){
-    try{const value=await fn();if(value)return value;}catch(error){last=error?.message||String(error);}
-    await sleep(50);
+    const remaining=end-Date.now();
+    let timer;
+    try{
+      const value=await Promise.race([
+        Promise.resolve().then(fn),
+        new Promise((_,reject)=>{
+          timer=setTimeout(()=>reject(Error('STEP_ATTEMPT_TIMEOUT')),Math.min(2000,remaining));
+        })
+      ]);
+      if(value)return value;
+    }catch(error){last=error?.message||String(error);}
+    finally{clearTimeout(timer);}
+    if(Date.now()<end)await sleep(50);
   }
   throw Error('R4_MUTATION_CANCEL_'+label+'_TIMEOUT '+last);
 }
@@ -172,7 +183,16 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       const file=path.join(profile,'DevToolsActivePort');
       return fs.existsSync(file)?Number(fs.readFileSync(file,'utf8').split(/\r?\n/)[0]):0;
     },15000,'DEBUG_PORT');
-    const targets=async()=>(await(await fetch('http://127.0.0.1:'+debugPort+'/json/list')).json());
+    console.log('[R4 MUTATION CANCEL STEP] DevTools endpoint file found on port '+debugPort);
+    const targets=async()=>{
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),2500);
+      try{
+        const response=await fetch('http://127.0.0.1:'+debugPort+'/json/list',{signal:controller.signal});
+        if(!response.ok)throw Error('CDP_TARGETS_HTTP_'+response.status);
+        return await response.json();
+      }finally{clearTimeout(timer);}
+    };
     const harnessTarget=await until(async()=>(await targets()).find(t=>
       t.type==='page'&&t.url==='chrome-extension://'+extensionId+'/harness.html'&&t.webSocketDebuggerUrl),
       15000,'EXTENSION_HARNESS_PAGE');
