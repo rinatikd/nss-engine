@@ -123,8 +123,10 @@ test('R4 Scenario B: trusted global Revoke cancels A, blocks queued B and surviv
   assert.equal(bResult.state,'BLOCKED','queued B must be rejected after global Control is disabled');
   const ui=JSON.parse(await control.eval('JSON.stringify({grants:[...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>e.textContent),pending:document.querySelectorAll("#backgroundApprovals .approval").length,status:document.querySelector("#backgroundGrantStatus").textContent,lab:document.querySelector("#mutationLab").checked})'));
   assert.deepEqual(ui.grants,[],'global Revoke must remove every per-tab Grant from the Control UI');
-  assert.equal(ui.pending,0,'global Revoke must remove every pending Approval');
+  assert.equal(ui.pending,0,'global Revoke must immediately remove every pending Approval from the UI');
   assert.equal(ui.lab,false,'global Revoke must disable the mutation lab');
+  const approvalState=JSON.parse(await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"approval-list"})))()'));
+  assert.deepEqual(approvalState.pending,[],'coordinator must have no pending approval after global Revoke');
 
   const coordinator=JSON.parse(await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()'));
   assert.equal(coordinator.available,true);assert.equal(coordinator.grantsKnown,true);
