@@ -440,8 +440,14 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   assert.equal(reconciledStorage.sessionFence,null);
   assert.ok(reconciledStorage.localAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
     e.requestId===identity.requestId&&typeof e.globalFenceToken==='string'));
-  assert.ok(reconciledStorage.sessionAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
+  // Quarantine metadata is local-first; session storage is only the
+  // worker-lifetime fallback. The durable local audit is therefore required,
+  // while a session audit is required only if this record also existed there.
+  assert.ok(reconciledStorage.localAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
     e.requestId===identity.requestId&&typeof e.globalFenceToken==='string'));
+  if (terminalEvidence.record.store.includes('session'))
+    assert.ok(reconciledStorage.sessionAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
+      e.requestId===identity.requestId&&typeof e.globalFenceToken==='string'));
 
   // Reconciliation changes only tab admission/quarantine. It must never rewrite
   // the provider journal's UNKNOWN delivery outcome or send a second click.
