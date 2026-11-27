@@ -159,6 +159,11 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   await clickTrusted(control,'document.querySelector("#backgroundRevokeAll")');
   await until(()=>control.eval('window.__r4GlobalRevokeTrusted===true'),3000,'GLOBAL_REVOKE_TRUSTED');
   await until(()=>control.eval('document.querySelector("#backgroundGrantStatus").textContent.includes("Ошибка отключения: UNKNOWN: BACKGROUND_STOP_UNCONFIRMED")'),20000,'GLOBAL_REVOKE_UNKNOWN');
+  const unknownUi=JSON.parse(await control.eval('JSON.stringify({grants:[...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>e.textContent),approvals:[...document.querySelectorAll("#backgroundApprovals .approval")].map(e=>e.textContent),error:document.querySelector("#backgroundGrantStatus").textContent,lab:document.querySelector("#mutationLab").checked})'));
+  assert.deepEqual(unknownUi.grants,[],'UNKNOWN global Revoke must refresh stale per-tab Grant rows');
+  assert.deepEqual(unknownUi.approvals,[],'UNKNOWN global Revoke must remove cancelled Approval rows from the Control UI');
+  assert.equal(unknownUi.lab,false,'UNKNOWN global Revoke must leave mutation mode disabled');
+  assert.ok(unknownUi.error.includes('UNKNOWN: BACKGROUND_STOP_UNCONFIRMED'));
   const fenceState=await worker.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationRevocationPending","bridgeMutationQuarantinedTabs","bridgeMutationQuarantineLock","bridgeMutationLabMode"]),chrome.storage.session.get(["bridgeMutationRevocationPending","bridgeMutationQuarantinedTabs","bridgeMutationQuarantineLock","bridgeBackgroundControlGrants"])]);return{localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null,localQuarantined:l.bridgeMutationQuarantinedTabs||[],sessionQuarantined:s.bridgeMutationQuarantinedTabs||[],localLock:l.bridgeMutationQuarantineLock===true,sessionLock:s.bridgeMutationQuarantineLock===true,localLab:l.bridgeMutationLabMode===true,sessionGrants:s.bridgeBackgroundControlGrants||{}}})()');
   assert.equal(fenceState.localFence?.pending===true||fenceState.sessionFence?.pending===true,true,
     'Global Revoke must leave a durable pending fence when an accepted mutation cannot be proven drained');
