@@ -229,7 +229,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // global fence, not merely the UI mode switch, rejects a stale post-restart
   // provider mutation. B has no Grant and remains a clean unrelated tab.
   await worker.eval('chrome.storage.local.set({bridgeMutationLabMode:true})');
-  await until(()=>worker.eval('chrome.storage.local.get("bridgeMutationRevocationPending").then(x=>x.bridgeMutationRevocationPending?.pending===true)'),5000,'GLOBAL_FENCE_STILL_PRESENT');
+  await until(()=>worker.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get("bridgeMutationRevocationPending"),chrome.storage.session.get("bridgeMutationRevocationPending")]);return l.bridgeMutationRevocationPending?.pending===true||s.bridgeMutationRevocationPending?.pending===true})()'),5000,'GLOBAL_FENCE_STILL_PRESENT');
   await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});
   const stale=make('r4Drequest0002','r4Dtask0002',tabs.b,'r4scenarioDB001',
     'This post-restart stale mutation must be blocked by durable global fence');
