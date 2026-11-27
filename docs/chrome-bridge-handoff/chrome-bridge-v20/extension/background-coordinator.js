@@ -52,7 +52,7 @@ function enqueueControlOperation(task, {
   if (!allowDuringClear && controlClearFailed)
     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
   if (!allowDuringClear && controlClearRequested)
-    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
 
   const next = controlStorageLane.catch(() => {}).then(() => {
     if (!allowFencedTab && tabId !== null && mutationFencedTabs.has(tabId))
@@ -62,7 +62,7 @@ function enqueueControlOperation(task, {
     if (!allowDuringClear && controlClearFailed)
       throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
     if (!allowDuringClear && controlClearRequested)
-      throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+      throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
     return task();
   });
   controlStorageLane = next;
@@ -78,7 +78,7 @@ function enqueueTabMutation(tabId, task) {
   if (controlClearFailed)
     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
   if (controlClearRequested)
-    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
   if (mutationQuarantinePersistenceFailed)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
   if (mutationFencedTabs.has(tabId))
@@ -93,7 +93,7 @@ function enqueueTabMutation(tabId, task) {
     if (controlClearFailed)
       throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
     if (controlClearRequested)
-      throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+      throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
     if (mutationQuarantinePersistenceFailed)
       throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
     if (mutationFencedTabs.has(tabId))
@@ -115,7 +115,7 @@ async function assertMutationAllowed(chromeApi, tabId) {
   if (controlClearFailed)
     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED');
   if (controlClearRequested)
-    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
   if (mutationQuarantinePersistenceFailed)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
   if (mutationFencedTabs.has(tabId))
@@ -145,7 +145,7 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
   if (local.bridgeMutationRevocationPending?.pending === true ||
       session.bridgeMutationRevocationPending?.pending === true)
-    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
 
   const localRevoking = Array.isArray(local.bridgeMutationRevokingTabs)
     ? local.bridgeMutationRevokingTabs : [];
@@ -653,7 +653,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         // mutations synchronously before any storage/browser await.
         const sessionControlChange = name==='session_authorize' || name==='session_revoke';
         if (sessionControlChange && controlClearRequested)
-          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
         if (sessionControlChange) controlClearRequested = true;
         if (name==='session_revoke') approvals.stop();
         let globalRevocationFence=null;
