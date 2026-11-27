@@ -1356,7 +1356,7 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
       payloadHash:record.payloadHash,preparedId:record.preparedId,startedAt:record.startedAt
     }]
   };
-  const failures={failSessionSet:'bridgeMutationRevocationPending'};
+  const failures={failSessionSet:null};
   let pageState={
     lock:null,
     terminal:{
@@ -1367,20 +1367,21 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
       payloadHash:'d'.repeat(64),preparedId:'prepared_0080'
     }
   };
+  const failureOptions={
+    failSessionSet:null,
+    probeMutation:async()=>[{
+      result:{href:'https://claude.ai/chat/conversation_001',origin:'https://claude.ai',
+        lock:pageState.lock,terminal:pageState.terminal},
+      documentId:'document-r4-80',frameId:0
+    }]
+  };
   const c=fakeChrome({
     ...LAB_STATE,
     sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}},
     bridgeMutationQuarantinedTabs:[tabId],
     bridgeMutationQuarantineRecords:{[String(tabId)]:record},
     bridgeMutationRevocationPending:pending
-  },{
-    ...failures,
-    probeMutation:async()=>[{
-      result:{href:'https://claude.ai/chat/conversation_001',origin:'https://claude.ai',
-        lock:pageState.lock,terminal:pageState.terminal},
-      documentId:'document-r4-80',frameId:0
-    }]
-  });
+  },failureOptions);
   await c.storage.session.set({
     bridgeMutationQuarantinedTabs:[tabId],
     bridgeMutationQuarantineRecords:{[String(tabId)]:record},
@@ -1390,6 +1391,10 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
     }}
   });
   installBackgroundCoordinator(c);
+
+  // Seed both durable copies first; only then simulate a session-store failure
+  // during the reconciliation's partial global-fence cleanup.
+  failureOptions.failSessionSet='bridgeMutationRevocationPending';
 
   const first=await sendCoordinator(c,'reconcile-quarantine',{
     tabId,token,confirmed:true,localGesture:true
