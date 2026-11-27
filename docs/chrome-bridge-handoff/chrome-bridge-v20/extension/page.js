@@ -9,6 +9,7 @@ export async function pageAction(name, args, expectedOrigin) {
   let releaseActionLock = () => {};
   let providerPrepareMutationStarted = false;
   let providerCommitClickStarted = false;
+  let providerCommitClickReturned = false;
   let mutationSideEffectStarted = false;
   let agentSendDraftMutationStarted = false;
   let trackedOperation = null;
@@ -165,9 +166,31 @@ export async function pageAction(name, args, expectedOrigin) {
     if (['browser_click','browser_fill','agent_send','provider_prepare','provider_commit'].includes(name)) {
       const key='__chromeBridgeMutationLock';
       if (window[key]) throw Error('TAB_MUTATION_BUSY');
-      const lock={requestId:typeof args.requestId==='string'?args.requestId:'local-'+Date.now(),name};
+      const lock={
+        requestId:typeof args.requestId==='string'?args.requestId:'local-'+Date.now(),
+        name,startedAt:Date.now(),origin:location.origin,conversationId:conversationId()
+      };
       window[key]=lock;
-      releaseActionLock=()=>{if(window[key]===lock)delete window[key];};
+      releaseActionLock=()=>{
+        if (name==='provider_prepare' || name==='provider_commit') {
+          // A terminal record exists only after this exact isolated-world
+          // execution reaches finally. A worker restart or missing lock alone
+          // is never treated as proof that the page action ended.
+          window.__chromeBridgeMutationTerminal={
+            schemaVersion:1,requestId:lock.requestId,command:name,
+            origin:lock.origin,conversationId:lock.conversationId,
+            startedAt:lock.startedAt,completedAt:Date.now(),
+            state:name==='provider_commit'
+              ? (providerCommitClickStarted?'COMMIT_CLICK_ATTEMPTED':'COMMIT_NOT_CLICKED')
+              : (providerPrepareMutationStarted?'PREPARE_MUTATION_FINISHED':'PREPARE_NO_MUTATION'),
+            clickAttempted:providerCommitClickStarted,
+            clickReturned:providerCommitClickReturned,
+            payloadHash:typeof args.payloadHash==='string'?args.payloadHash:null,
+            preparedId:typeof args.preparedId==='string'?args.preparedId:null
+          };
+        }
+        if(window[key]===lock)delete window[key];
+      };
     }
 
     if (name === 'exists') return { found: !!one(args.selector), loaded: document.readyState === 'complete' };
@@ -454,6 +477,7 @@ export async function pageAction(name, args, expectedOrigin) {
       providerCommitClickStarted = true;
       mutationSideEffectStarted = true;
       sendButtons[0].click();
+      providerCommitClickReturned = true;
       const clickedAt = new Date().toISOString();
       await sleep(1200);
       const confirmed = qa(A.stop).some(vis) || replies().length > baseline;

@@ -13,11 +13,13 @@
 
 ## Current implementation finding
 
-The coordinator persists per-tab quarantine in `bridgeMutationQuarantinedTabs` and a global fail-closed lock in `bridgeMutationQuarantineLock`. The Control UI reports failed clear/revoke outcomes and affected tab IDs. The reviewed coordinator/UI paths do not expose a dedicated operator reconciliation workflow that proves an uncertain page action has ended and then safely clears quarantine/global lock.
+The baseline stack persisted per-tab quarantine in `bridgeMutationQuarantinedTabs` and a global fail-closed lock in `bridgeMutationQuarantineLock`, but did not expose a dedicated operator reconciliation workflow.
 
-The existing `clear-background-controls` command is a Revoke/Clear operation; it is **not** proof that an earlier UNKNOWN action completed. It must not be treated as a quarantine-unlock operation.
+A candidate implementation is now being developed on `fix/r4-operator-quarantine-reconciliation-20261127` (Draft PR #185). It adds an operation-bound quarantine record, an isolated-world terminal marker written only when the original page action reaches its `finally` block, an explicit Control UI confirmation, exact tab/origin/conversation/request/token checks, and a durable operator audit event. Recovered global Revoke records now retain operation identity; the global admission fence remains until every affected tab has its own terminal evidence and audit event. Partial fence cleanup is designed to remain retryable.
 
-**Release blocker:** define, implement, independently review, and test an explicit operator recovery/reconciliation path before R4 production release. Until then, quarantine is intentionally sticky. No automatic unlock is permitted.
+This is **implementation in review, not an accepted release capability** until the new unit tests and real disposable-MV3 Scenario D integration test pass on the exact PR head and the code receives independent security/lifecycle review.
+
+The existing `clear-background-controls` command remains a Revoke/Clear operation; it is **not** proof that an earlier UNKNOWN action completed. It must not be treated as a quarantine-unlock operation. A ProviderJournal delivery outcome of `UNKNOWN` remains `UNKNOWN` after operator reconciliation; the workflow must never retry or claim successful delivery.
 
 ## Acceptance scenarios
 
@@ -70,33 +72,38 @@ For every scenario capture: expected result, actual result, timestamped coordina
 
 **PASS criteria:** UI status matches coordinator outcome; retry cannot silently unlock quarantined tabs.
 
-### E. Quarantine recovery / operator reconciliation — currently NOT IMPLEMENTED
+### E. Quarantine recovery / operator reconciliation — candidate implementation; acceptance pending
 
-Before release, define a separately authorized recovery action with all of these safeguards:
+Candidate implementation is present on `fix/r4-operator-quarantine-reconciliation-20261127`. Its contract is intentionally narrow:
 
-- Explicit operator initiation from the trusted Control UI; no background or timer-driven recovery.
-- Show exact affected tab IDs, quarantine reason, originating Revoke token/epoch when available, and time of the uncertain operation.
-- Prove the old page operation is no longer in flight. A Worker restart, elapsed timeout, successful Revoke-all, tab inactivity, or missing in-memory lane is not sufficient proof by itself.
-- Reconcile authoritative grant/session state and verify no pending global or per-tab Revoke marker remains.
-- Require a fresh explicit confirmation scoped to the displayed tab(s); global unlock requires a separate explicit confirmation and proof for every affected tab.
-- Persist an append-only audit record of operator, scope, evidence, decision, and result. If audit persistence fails, keep quarantine.
-- Clear only the exact reconciled quarantine entries using compare-and-swap/token matching; preserve unrelated or newer quarantine entries.
-- On any missing evidence, storage disagreement, stale token, or partial write, retain quarantine and report UNKNOWN.
-- Never clear the global quarantine lock while any tab remains unresolved.
+1. The operator must initiate reconciliation from the trusted Control UI and confirm the exact tab/request/command shown. No timer, background process, Revoke retry, or automatic unlock invokes it.
+2. The UI displays the tab ID, request ID, command, reason, and conversation identity. Missing operation identity is non-reconcilable.
+3. The coordinator checks both storage areas, the exact quarantine token, the current approved provider origin and conversation route, and the exact current main-frame URL/document. It then probes the extension isolated world for the live mutation lock and its matching terminal marker.
+4. A still-live lock, missing terminal marker, mismatched request/command/origin/conversation/payload/prepared ID, changed document/URL, stale token, global quarantine lock, or timeout is a denial. Quarantine remains.
+5. For a recovered global Revoke, operation identity is persisted with the durable global fence. The global admission fence remains until every affected tab has an individual terminal-evidence check and corresponding audit event.
+6. The audit event is stored before any deny marker is removed. It records the exact tab, request, command, origin, conversation, global fence token, timestamps, terminal state, click-attempt/return status, and document ID. Audit write failure is fail-closed.
 
-**Acceptance criteria:** positive recovery test with authoritative proof; negative tests for stale token, missing proof, partial storage failure, unrelated quarantine entry, and concurrent new Revoke; audit record verified; all failures remain fail-closed.
+**Identity limitation:** the current audit proves a trusted local Control UI gesture and explicit confirmation, but it does not authenticate a named human operator. Production acceptance must either explicitly accept the local-machine trust boundary or add a verified operator identity source. Do not describe this audit as per-person accountability.
+7. Only the matching tab token is removed. Global fence cleanup is attempted before deleting the last tab record, so a partial storage failure leaves a visible, retryable quarantine. Other or newer entries are preserved.
+8. Reconciliation is **not** a delivery acknowledgement. If a Send click was attempted, the UI explicitly reports `UNKNOWN` and `DO NOT REPLAY`; ProviderJournal remains unchanged. For a prepare-only action, the operator must inspect/clear any remaining draft before starting a new request.
+9. A global `bridgeMutationQuarantineLock` caused by storage failure is outside this workflow and requires separate investigation; this UI will not clear it.
+
+**Required acceptance before release:** pass unit tests for active action, missing/stale proof, multi-tab global fence, storage failure and retry; pass the real disposable Chrome MV3 Scenario D integration that attempts reconciliation while held, then releases the original page action and verifies successful exact reconciliation with no duplicate Send click; independently review the implementation. Until all are complete, this gate is **PENDING / NO-GO**.
 
 ## Evidence and release decision
 
 | Gate | Evidence required | Status |
 | --- | --- | --- |
-| Source/CI for #165–#167 | Exact-head green checks; retain check-run URLs and SHAs | CI reported green; independent review pending |
-| Per-tab Revoke in real Chrome MV3 | Scenarios A and B with logs and storage snapshots | NOT RUN |
-| Global Session Revoke in real Chrome MV3 | Scenario C with Worker restart | NOT RUN |
-| Control UI clear/retry | Scenario D with UI and coordinator evidence | NOT RUN |
-| Operator quarantine recovery | Scenario E implemented, independently reviewed, and tested | BLOCKED — workflow absent |
-| Independent security/lifecycle review | Signed or attributable PASS/FAIL review of the combined stack | PENDING |
-| Release packaging/rollback | Immutable artifact inventory, isolated install, rollback rehearsal | PENDING |
+| Source/CI for R4 A–D stack | Exact-head Visual RC, Source checks, and RC1 Control Gates | PASS on #182 head `ffa2cc220c6f64b44cb3b3a224c60dacaafe32bc`; not a review or production acceptance |
+| Scenario A — per-tab Revoke | Real disposable Chrome MV3 + HTTP MCP; A/B grant isolation; no Send click | PASS, Visual RC run `45931300044` |
+| Scenario B — global Revoke | Trusted UI, queued mutation cancellation, durable clearing, worker reload | PASS, Visual RC run `45931300044` |
+| Scenario C — late approval race | Ten repeated real MV3 race attempts | PASS 10/10, Visual RC run `45931300044` |
+| Scenario D — uncertain commit recovery | One Send click, lost receipt, Revoke UNKNOWN, worker/Bridge restart, journal UNKNOWN, durable fence | PASS on #182 head, Visual RC run `45931300044`; operator reconciliation not yet included |
+| Windows synthetic upgrade/rollback | Staged preflight, apply, restore prior extension files | PASS in CI; local/operator Windows acceptance still pending |
+| Operator quarantine recovery | Scenario E implementation, unit tests and real-MV3 integration on exact PR head | PENDING — PR #185 exact-head CI pending |
+| Independent security/lifecycle review | Attributable review of combined stack, including failure paths | PENDING |
+| Release packaging and rollback | Immutable artifact inventory and independent install/rollback rehearsal | PENDING |
+| Live provider acceptance | Explicitly approved end-to-end send/reply/revoke for each supported provider | NOT RUN / NOT ACCEPTED |
 
 ## Release rule
 

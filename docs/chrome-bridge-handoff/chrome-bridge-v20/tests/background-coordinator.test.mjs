@@ -13,7 +13,7 @@ function fakeChrome(data={},options={}) {
     calls,listeners,data,session,
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
-      get:async keys=>keys===null?{...data}:Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
+      get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
       set:async next=>{
         const failedKey=Object.keys(next).find(key=>
           options.failLocalSet===true || options.failLocalSet===key ||
@@ -51,7 +51,18 @@ function fakeChrome(data={},options={}) {
     }},
     tabs:{get:async id=>({id,url:'https://claude.ai/chat/conversation_001'})},
     permissions:{contains:async()=>true},
-    scripting:{executeScript:async({target,args,world})=>{
+    scripting:{executeScript:async({target,args,world,func})=>{
+      if (typeof func==='function' && !Array.isArray(args)) {
+        calls.push(['quarantine-probe',target.tabId,world]);
+        const raw=options.probeMutation
+          ? await options.probeMutation({tabId:target.tabId,target,world,calls,data,session})
+          : [{result:{href:'https://claude.ai/chat/conversation_001',
+              origin:'https://claude.ai',lock:null,terminal:null}}];
+        return raw.map(entry=>({
+          ...entry,documentId:entry.documentId || target.documentIds?.[0] || 'fake-document-'+target.tabId,
+          frameId:Number.isInteger(entry.frameId)?entry.frameId:0
+        }));
+      }
       const [name,details,origin]=args;
       calls.push(['script',name,target.tabId]);
       const raw=options.executeScript
@@ -101,7 +112,7 @@ test('background start restricts storage before reading and creates offscreen ho
   const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
   const result=await startBackgroundTransport(c);
   assert.equal(result.ok,true);
-  assert.deepEqual(c.calls.map(x=>x[0]),['restrict','restrict','create','message']);
+  assert.deepEqual(c.calls.map(x=>x[0]),['restrict','create','message']);
 });
 test('manual Stop supersedes a start that is waiting for offscreen host creation',async()=>{
   const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
@@ -859,7 +870,13 @@ test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN
   const c=fakeChrome({...LAB_STATE});
   await prepareLab(c,62);
   const pending={
-    pending:true,token:'prior-worker-revoke-001',affectedTabs:[62],startedAt:Date.now()-100
+    pending:true,token:'prior-worker-revoke-001',affectedTabs:[62],startedAt:Date.now()-100,
+    operations:[{
+      tabId:62,requestId:'r4request000062',command:'provider_commit',
+      taskId:'task_000062',providerId:'claude',origin:'https://claude.ai',
+      conversationId:'conversation_001',epoch:1,payloadHash:'c'.repeat(64),
+      preparedId:'prepared_0062',startedAt:Date.now()-200
+    }]
   };
   c.data.bridgeMutationRevocationPending=pending;
   c.session.bridgeMutationRevocationPending=pending;
@@ -885,8 +902,15 @@ test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN
     'prior-worker tabs must remain durably quarantined in local or session storage'
   );
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
-  assert.equal(c.data.bridgeMutationRevocationPending,null);
-  assert.equal(c.session.bridgeMutationRevocationPending,null);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true,
+    'the recovered global admission fence must remain until operator reconciliation');
+  assert.equal(c.session.bridgeMutationRevocationPending?.pending,true);
+  const q=c.data.bridgeMutationQuarantineRecords?.['62'] ||
+    c.session.bridgeMutationQuarantineRecords?.['62'];
+  assert.equal(q?.requestId,'r4request000062');
+  assert.equal(q?.command,'provider_commit');
+  assert.equal(q?.reconcilable,true,
+    'the durable global fence must preserve enough operation identity for evidence-bound recovery');
 });
 
 test('session_revoke fences new provider work and drains an already accepted page action',async()=>{
@@ -996,3 +1020,459 @@ test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a dura
     'the Control UI must not claim NOT_PERFORMED after a partial revoke');
 });
 
+
+test('quarantine status fails closed when local and session global fence copies disagree under the same token',async()=>{
+  const c=fakeChrome({...LAB_STATE});
+  await prepareLab(c,83);
+  const local={
+    pending:true,token:'global-same-token-000083',startedAt:Date.now()-500,
+    affectedTabs:[83],operations:[{tabId:83,requestId:'r4request000083',
+      command:'provider_commit',origin:'https://claude.ai',conversationId:'conversation_001'}]
+  };
+  const session={
+    ...local,affectedTabs:[84],operations:[{...local.operations[0],tabId:84}]
+  };
+  c.data.bridgeMutationRevocationPending=local;
+  c.session.bridgeMutationRevocationPending=session;
+  const status=await sendCoordinator(c,'quarantine-status');
+  assert.equal(status.available,false);
+  assert.equal(status.error,'GLOBAL_REVOCATION_FENCE_STORE_CONFLICT');
+});
+
+test('quarantine status rejects malformed persisted quarantine record identities',async()=>{
+  const c=fakeChrome({...LAB_STATE});
+  await prepareLab(c,85);
+  c.data.bridgeMutationQuarantinedTabs=[85];
+  c.data.bridgeMutationQuarantineRecords={'85':{
+    schemaVersion:1,tabId:86,token:'qtoken-mismatch-000085',
+    startedAt:Date.now()-1000,quarantinedAt:Date.now()-500,reconcilable:false
+  }};
+  const status=await sendCoordinator(c,'quarantine-status');
+  assert.equal(status.available,false);
+  assert.equal(status.error,'QUARANTINE_RECORDS_UNAVAILABLE');
+});
+
+test('operator reconciliation refuses an empty affected-tab set even with a valid terminal marker',async()=>{
+  const tabId=86,now=Date.now(),token='qtoken-empty-scope-000086',requestId='r4request000086';
+  const record={
+    schemaVersion:1,tabId,token,requestId,command:'provider_commit',
+    taskId:'task_000086',providerId:'claude',origin:'https://claude.ai',
+    conversationId:'conversation_001',epoch:1,payloadHash:'f'.repeat(64),
+    preparedId:'prepared_0086',startedAt:now-1000,quarantinedAt:now-500,
+    reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true
+  };
+  const pending={pending:true,token:'global-empty-scope-000086',
+    affectedTabs:[],operations:[],startedAt:now-800};
+  const c=fakeChrome({...LAB_STATE,
+    sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}},
+    bridgeMutationQuarantinedTabs:[tabId],
+    bridgeMutationQuarantineRecords:{[String(tabId)]:record},
+    bridgeMutationRevocationPending:pending
+  },{
+    probeMutation:async()=>[{
+      result:{href:'https://claude.ai/chat/conversation_001',origin:'https://claude.ai',lock:null,
+        terminal:{schemaVersion:1,requestId,command:'provider_commit',origin:'https://claude.ai',
+          conversationId:'conversation_001',startedAt:now-900,completedAt:Date.now(),
+          state:'COMMIT_CLICK_ATTEMPTED',clickAttempted:true,clickReturned:true,
+          payloadHash:'f'.repeat(64),preparedId:'prepared_0086'}},
+      documentId:'document-r4-86',frameId:0
+    }]
+  });
+  await c.storage.session.set({
+    bridgeMutationQuarantinedTabs:[tabId],
+    bridgeMutationQuarantineRecords:{[String(tabId)]:record},
+    bridgeMutationRevocationPending:pending
+  });
+  installBackgroundCoordinator(c);
+  const result=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId,token,confirmed:true,localGesture:true
+  });
+  assert.equal(result.ok,false);
+  assert.equal(result.error,'GLOBAL_FENCE_SCOPE_INVALID');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[tabId]);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+});
+
+test('global Revoke snapshots the active mutation context instead of a later queued request',async()=>{
+  const tabId=87;
+  const c=fakeChrome({...LAB_STATE});
+  await prepareLab(c,tabId);
+  delete c.session.bridgeSessionAuthorization;
+  c.session.bridgeBackgroundControlGrants={
+    [String(tabId)]:{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  const listener=c.listeners.at(-1);
+  const firstCommand=providerPrepare(tabId);
+  firstCommand.args.requestId='r4request000087';
+  firstCommand.args.taskId='task_000087';
+  const secondCommand=providerPrepare(tabId);
+  secondCommand.args.requestId='r4request000088';
+  secondCommand.args.taskId='task_000088';
+
+  const first=sendCoordinatorTo(c,listener,'dispatch',{command:firstCommand},'transport-host.html');
+  let approvals=[];
+  for(let i=0;i<30;i++){
+    approvals=(await sendCoordinatorTo(c,listener,'approval-list'))?.pending||[];
+    if(approvals.some(item=>item.tabId===tabId))break;
+    await delay(5);
+  }
+  assert.equal(approvals.filter(item=>item.tabId===tabId).length,1,
+    'the first operation must be the active request awaiting Approval');
+
+  const second=sendCoordinatorTo(c,listener,'dispatch',{command:secondCommand},'transport-host.html');
+  await delay(25);
+  const clear=sendCoordinatorTo(c,listener,'clear-background-controls');
+  let fence=null;
+  for(let i=0;i<50;i++){
+    fence=c.data.bridgeMutationRevocationPending;
+    if(fence?.pending===true)break;
+    await delay(5);
+  }
+  assert.equal(fence?.pending,true,'Global Revoke must persist its fence before draining');
+  assert.equal(fence.operations.length,1);
+  assert.equal(fence.operations[0].tabId,tabId);
+  assert.equal(fence.operations[0].requestId,firstCommand.args.requestId,
+    'the active operation identity must be persisted');
+  assert.equal(fence.operations[0].taskId,firstCommand.args.taskId);
+  assert.notEqual(fence.operations[0].requestId,secondCommand.args.requestId,
+    'the later queued request must not overwrite the active operation context');
+
+  const [firstResult,secondResult,clearResult]=await Promise.all([first,second,clear]);
+  assert.ok(['APPROVAL_CANCELLED','BACKGROUND_CONTROL_CLEAR_IN_PROGRESS'].includes(firstResult.error));
+  assert.equal(secondResult.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(clearResult.ok,true);
+  assert.deepEqual(c.session.bridgeBackgroundControlGrants||{},{});
+  assert.equal(c.data.bridgeMutationRevocationPending,null);
+});
+
+test('operator quarantine reconciliation requires exact terminal evidence and leaves delivery UNKNOWN',async()=>{
+  const tabId=79,now=Date.now(),quarantineToken='quarantine-token-r4-79',
+    globalToken='global-revoke-token-r4-79',requestId='r4request000079';
+  const record={
+    schemaVersion:1,tabId,token:quarantineToken,requestId,
+    command:'provider_commit',taskId:'task_000079',providerId:'claude',
+    origin:'https://claude.ai',conversationId:'conversation_001',epoch:1,
+    payloadHash:'b'.repeat(64),preparedId:'prepared_0079',
+    startedAt:now-2000,quarantinedAt:now-500,
+    reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true
+  };
+  const pending={
+    pending:true,token:globalToken,affectedTabs:[tabId],startedAt:now-1000,
+    operations:[{
+      tabId,requestId,command:record.command,taskId:record.taskId,providerId:record.providerId,
+      origin:record.origin,conversationId:record.conversationId,epoch:record.epoch,
+      payloadHash:record.payloadHash,preparedId:record.preparedId,startedAt:record.startedAt
+    }]
+  };
+  let pageState={
+    lock:{requestId, name:'provider_commit',startedAt:now-1900},
+    terminal:null
+  };
+  const c=fakeChrome({
+    ...LAB_STATE,
+    sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}},
+    bridgeMutationQuarantinedTabs:[tabId],
+    bridgeMutationQuarantineRecords:{[String(tabId)]:record},
+    bridgeMutationRevocationPending:pending
+  },{
+    probeMutation:async()=>[{
+      result:{
+        href:'https://claude.ai/chat/conversation_001',
+        origin:'https://claude.ai',
+        lock:pageState.lock,
+        terminal:pageState.terminal
+      },
+      documentId:'document-r4-79',frameId:0
+    }]
+  });
+  await c.storage.session.set({
+    bridgeMutationQuarantinedTabs:[tabId],
+    bridgeMutationQuarantineRecords:{[String(tabId)]:record},
+    bridgeMutationRevocationPending:pending,
+    bridgeBackgroundControlGrants:{[String(tabId)]:{
+      origin:record.origin,expires:Date.now()+60000
+    }}
+  });
+  installBackgroundCoordinator(c);
+
+  const status=await sendCoordinator(c,'quarantine-status');
+  assert.equal(status.available,true);
+  assert.equal(status.records.length,1);
+  assert.equal(status.records[0].requestId,requestId);
+  assert.equal(status.records[0].reconcilable,true);
+
+  const unconfirmed=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId,token:quarantineToken,confirmed:true,localGesture:false
+  });
+  assert.equal(unconfirmed.ok,false);
+  assert.equal(unconfirmed.error,'OPERATOR_CONFIRMATION_REQUIRED');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[tabId]);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+
+  const running=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId,token:quarantineToken,confirmed:true,localGesture:true
+  });
+  assert.equal(running.ok,false);
+  assert.equal(running.error,'QUARANTINE_ACTION_STILL_RUNNING');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[tabId]);
+  assert.equal(c.session.bridgeMutationQuarantinedTabs[0],tabId);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+  assert.equal(c.calls.filter(x=>x[0]==='script'&&x[1]==='provider_commit').length,0,
+    'reconciliation must never re-dispatch provider_commit');
+
+  c.session.bridgeSessionAuthorization=sessionLease();
+  const sessionBlocked=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId,token:quarantineToken,confirmed:true,localGesture:true
+  });
+  assert.equal(sessionBlocked.ok,false);
+  assert.equal(sessionBlocked.error,'SESSION_WIDE_REVOCATION_REQUIRED');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[tabId]);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+  assert.ok(c.session.bridgeBackgroundControlGrants?.[String(tabId)],
+    'an active session refusal must leave the surviving per-tab Grant untouched');
+  delete c.session.bridgeSessionAuthorization;
+
+  pageState={
+    lock:null,
+    terminal:{
+      schemaVersion:1,requestId,command:'provider_commit',
+      origin:'https://claude.ai',conversationId:'conversation_001',
+      startedAt:now-1900,completedAt:Date.now(),
+      state:'COMMIT_CLICK_ATTEMPTED',clickAttempted:true,clickReturned:true,
+      payloadHash:'b'.repeat(64),preparedId:'prepared_0079'
+    }
+  };
+  const reconciled=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId,token:quarantineToken,confirmed:true,localGesture:true
+  });
+  assert.equal(reconciled.ok,true);
+  assert.equal(reconciled.state,'RECONCILED');
+  assert.equal(reconciled.deliveryState,'UNKNOWN');
+  assert.equal(reconciled.terminalState,'COMMIT_CLICK_ATTEMPTED');
+  assert.match(reconciled.warning,/DO_NOT_REPLAY/);
+  assert.equal(reconciled.deliveryState,'UNKNOWN');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.[String(tabId)],undefined);
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[]);
+  assert.deepEqual(c.session.bridgeMutationQuarantinedTabs,[]);
+  assert.deepEqual(c.data.bridgeMutationQuarantineRecords,{});
+  assert.deepEqual(c.session.bridgeMutationQuarantineRecords,{});
+  assert.equal(c.data.bridgeMutationRevocationPending,null);
+  assert.equal(c.session.bridgeMutationRevocationPending,null);
+  for (const auditStore of [c.data.bridgeMutationQuarantineAudit,c.session.bridgeMutationQuarantineAudit]) {
+    assert.equal(auditStore.length,1);
+    assert.equal(auditStore[0].type,'OPERATOR_RECONCILE');
+    assert.equal(auditStore[0].requestId,requestId);
+    assert.equal(auditStore[0].globalFenceToken,globalToken);
+    assert.equal(auditStore[0].evidence.clickAttempted,true);
+  }
+  const postStatus=await sendCoordinator(c,'quarantine-status');
+  assert.equal(postStatus.records.length,0);
+  assert.equal(postStatus.globalPending,null);
+  assert.equal(c.calls.filter(x=>x[0]==='quarantine-probe').length,3);
+  assert.equal(c.calls.filter(x=>x[0]==='script'&&x[1]==='provider_commit').length,0);
+});
+
+
+test('quarantine reconciliation rejects a global fence operation identity mismatch',async()=>{
+  const tabId=82,now=Date.now(),requestId='r4request000082',token='quarantine-token-r4-82';
+  const record={
+    schemaVersion:1,tabId,token,requestId,command:'provider_commit',
+    taskId:'task_000082',providerId:'claude',origin:'https://claude.ai',
+    conversationId:'conversation_001',epoch:1,payloadHash:'e'.repeat(64),
+    preparedId:'prepared_0082',startedAt:now-1000,quarantinedAt:now-500,
+    reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true
+  };
+  const pending={
+    pending:true,token:'global-r4-mismatch',affectedTabs:[tabId],startedAt:now-800,
+    operations:[{tabId,requestId:'different_request_000082',command:'provider_commit',
+      origin:'https://claude.ai',conversationId:'conversation_001',startedAt:now-1000}]
+  };
+  const c=fakeChrome({
+    ...LAB_STATE,sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}},
+    bridgeMutationQuarantinedTabs:[tabId],
+    bridgeMutationQuarantineRecords:{[String(tabId)]:record},
+    bridgeMutationRevocationPending:pending
+  },{
+    probeMutation:async()=>[{
+      result:{href:'https://claude.ai/chat/conversation_001',origin:'https://claude.ai',lock:null,
+        terminal:{schemaVersion:1,requestId,command:'provider_commit',origin:'https://claude.ai',
+          conversationId:'conversation_001',startedAt:now-900,completedAt:Date.now(),
+          state:'COMMIT_CLICK_ATTEMPTED',clickAttempted:true,clickReturned:true,
+          payloadHash:'e'.repeat(64),preparedId:'prepared_0082'}},
+      documentId:'document-r4-82',frameId:0
+    }]
+  });
+  await c.storage.session.set({
+    bridgeMutationQuarantinedTabs:[tabId],
+    bridgeMutationQuarantineRecords:{[String(tabId)]:record},
+    bridgeMutationRevocationPending:pending,
+    bridgeBackgroundControlGrants:{[String(tabId)]:{
+      origin:record.origin,expires:Date.now()+60000
+    }}
+  });
+  installBackgroundCoordinator(c);
+  const result=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId,token,confirmed:true,localGesture:true
+  });
+  assert.equal(result.ok,false);
+  assert.equal(result.error,'GLOBAL_FENCE_OPERATION_IDENTITY_MISMATCH');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[tabId]);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+  assert.equal(c.data.bridgeMutationQuarantineAudit,undefined);
+});
+
+test('partial global fence cleanup keeps quarantine retryable until the final store is reconciled',async()=>{
+  const tabId=80,now=Date.now(),token='quarantine-token-r4-80',
+    globalToken='global-revoke-token-r4-80',requestId='r4request000080';
+  const record={
+    schemaVersion:1,tabId,token,requestId,command:'provider_commit',
+    taskId:'task_000080',providerId:'claude',origin:'https://claude.ai',
+    conversationId:'conversation_001',epoch:1,payloadHash:'d'.repeat(64),
+    preparedId:'prepared_0080',startedAt:now-2000,quarantinedAt:now-500,
+    reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true
+  };
+  const pending={
+    pending:true,token:globalToken,affectedTabs:[tabId],startedAt:now-1000,
+    operations:[{
+      tabId,requestId,command:record.command,taskId:record.taskId,providerId:record.providerId,
+      origin:record.origin,conversationId:record.conversationId,epoch:record.epoch,
+      payloadHash:record.payloadHash,preparedId:record.preparedId,startedAt:record.startedAt
+    }]
+  };
+  const failures={failSessionSet:'bridgeMutationRevocationPending'};
+  let pageState={
+    lock:null,
+    terminal:{
+      schemaVersion:1,requestId,command:'provider_commit',
+      origin:'https://claude.ai',conversationId:'conversation_001',
+      startedAt:now-1900,completedAt:Date.now(),
+      state:'COMMIT_CLICK_ATTEMPTED',clickAttempted:true,clickReturned:true,
+      payloadHash:'d'.repeat(64),preparedId:'prepared_0080'
+    }
+  };
+  const c=fakeChrome({
+    ...LAB_STATE,
+    sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}},
+    bridgeMutationQuarantinedTabs:[tabId],
+    bridgeMutationQuarantineRecords:{[String(tabId)]:record},
+    bridgeMutationRevocationPending:pending
+  },{
+    ...failures,
+    probeMutation:async()=>[{
+      result:{href:'https://claude.ai/chat/conversation_001',origin:'https://claude.ai',
+        lock:pageState.lock,terminal:pageState.terminal},
+      documentId:'document-r4-80',frameId:0
+    }]
+  });
+  await c.storage.session.set({
+    bridgeMutationQuarantinedTabs:[tabId],
+    bridgeMutationQuarantineRecords:{[String(tabId)]:record},
+    bridgeMutationRevocationPending:pending,
+    bridgeBackgroundControlGrants:{[String(tabId)]:{
+      origin:record.origin,expires:Date.now()+60000
+    }}
+  });
+  installBackgroundCoordinator(c);
+
+  const first=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId,token,confirmed:true,localGesture:true
+  });
+  assert.equal(first.ok,false);
+  assert.equal(first.error,'GLOBAL_FENCE_CLEAR_UNCONFIRMED');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[tabId],
+    'the tab quarantine must remain until both durable global fence copies can be cleared');
+  assert.deepEqual(c.session.bridgeMutationQuarantinedTabs,[tabId]);
+  assert.equal(c.data.bridgeMutationQuarantineRecords[String(tabId)]?.token,token);
+  assert.equal(c.session.bridgeMutationQuarantineRecords[String(tabId)]?.token,token);
+  assert.equal(c.data.bridgeMutationRevocationPending,null,
+    'the local copy may already have been cleared before the session write failed');
+  assert.equal(c.session.bridgeMutationRevocationPending?.token,globalToken);
+
+  failures.failSessionSet=null;
+  const retry=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId,token,confirmed:true,localGesture:true
+  });
+  assert.equal(retry.ok,true);
+  assert.equal(retry.state,'RECONCILED');
+  assert.equal(retry.deliveryState,'UNKNOWN');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[]);
+  assert.deepEqual(c.session.bridgeMutationQuarantinedTabs,[]);
+  assert.equal(c.data.bridgeMutationRevocationPending,null);
+  assert.equal(c.session.bridgeMutationRevocationPending,null);
+  assert.ok(c.data.bridgeMutationQuarantineAudit.length>=2,
+    'audit entries must be append-only across a retry after partial cleanup');
+});
+
+
+test('global quarantine fence remains until every affected tab has its own terminal audit',async()=>{
+  const now=Date.now(),globalToken='global-r4-multi-001';
+  const specs=[79,81].map(tabId=>({
+    tabId,token:'qtoken-'+tabId,requestId:'r4request'+String(tabId).padStart(6,'0'),
+    command:'provider_commit',taskId:'task_'+String(tabId).padStart(6,'0'),
+    providerId:'claude',origin:'https://claude.ai',conversationId:'conversation_001',
+    epoch:1,payloadHash:String(tabId).repeat(64).slice(0,64),
+    preparedId:'prepared_'+String(tabId).padStart(4,'0'),
+    startedAt:now-3000,quarantinedAt:now-1000,
+    reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true,schemaVersion:1
+  }));
+  const records=Object.fromEntries(specs.map(r=>[String(r.tabId),r]));
+  const pending={
+    pending:true,token:globalToken,affectedTabs:[79,81],startedAt:now-900,
+    operations:specs.map(({tabId,requestId,command,taskId,providerId,origin,conversationId,epoch,payloadHash,preparedId,startedAt})=>
+      ({tabId,requestId,command,taskId,providerId,origin,conversationId,epoch,payloadHash,preparedId,startedAt}))
+  };
+  const c=fakeChrome({
+    ...LAB_STATE,
+    sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}},
+    bridgeMutationQuarantinedTabs:[79,81],
+    bridgeMutationQuarantineRecords:records,
+    bridgeMutationRevocationPending:pending
+  },{
+    probeMutation:async({tabId})=>{
+      const r=records[String(tabId)];
+      return [{
+        result:{
+          href:'https://claude.ai/chat/conversation_001',origin:'https://claude.ai',lock:null,
+          terminal:{
+            schemaVersion:1,requestId:r.requestId,command:r.command,
+            origin:r.origin,conversationId:r.conversationId,
+            startedAt:now-2500,completedAt:Date.now(),
+            state:'COMMIT_CLICK_ATTEMPTED',clickAttempted:true,clickReturned:true,
+            payloadHash:r.payloadHash,preparedId:r.preparedId
+          }
+        },documentId:'document-'+tabId,frameId:0
+      }];
+    }
+  });
+  await c.storage.session.set({
+    bridgeMutationQuarantinedTabs:[79,81],
+    bridgeMutationQuarantineRecords:records,
+    bridgeMutationRevocationPending:pending
+  });
+  installBackgroundCoordinator(c);
+
+  const first=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId:79,token:records['79'].token,confirmed:true,localGesture:true
+  });
+  assert.equal(first.ok,true);
+  assert.equal(first.deliveryState,'UNKNOWN');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[81]);
+  assert.deepEqual(c.session.bridgeMutationQuarantinedTabs,[81]);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+  assert.equal(c.session.bridgeMutationRevocationPending?.pending,true,
+    'one tab reconciliation must not clear a global fence while another tab is unresolved');
+
+  const second=await sendCoordinator(c,'reconcile-quarantine',{
+    tabId:81,token:records['81'].token,confirmed:true,localGesture:true
+  });
+  assert.equal(second.ok,true);
+  assert.equal(second.deliveryState,'UNKNOWN');
+  assert.deepEqual(c.data.bridgeMutationQuarantinedTabs,[]);
+  assert.deepEqual(c.session.bridgeMutationQuarantinedTabs,[]);
+  assert.equal(c.data.bridgeMutationRevocationPending,null);
+  assert.equal(c.session.bridgeMutationRevocationPending,null);
+  const audit=c.data.bridgeMutationQuarantineAudit;
+  assert.equal(audit.length,2);
+  assert.deepEqual(audit.map(e=>e.tabId),[79,81]);
+  assert.ok(audit.every(e=>e.globalFenceToken===globalToken));
+});

@@ -610,8 +610,120 @@ async function refreshBackgroundGrantList() {
       safeConnectionErrorCode(error?.message || 'BACKGROUND_GRANTS_UNAVAILABLE');
   }
 }
+async function refreshQuarantineStatus() {
+  const root=$('quarantineList'),statusNode=$('quarantineRecoveryStatus');
+  if (!root || !statusNode) return;
+  try {
+    const snapshot=await chrome.runtime.sendMessage({
+      target:'bridge-coordinator',type:'quarantine-status'
+    });
+    if (snapshot?.available!==true)
+      throw Error(snapshot?.error || 'QUARANTINE_STATUS_UNAVAILABLE');
+    root.replaceChildren();
+    if (!Array.isArray(snapshot.records) || snapshot.records.length===0) {
+      const empty=document.createElement('p');
+      empty.className='hint';
+      empty.textContent='Неразрешённых карантинов нет.';
+      root.append(empty);
+    }
+    for (const record of snapshot.records || []) {
+      const row=document.createElement('div');
+      row.className='approval';
+      const title=document.createElement('strong');
+      title.textContent='Вкладка '+record.tabId+' · '+(record.command || 'операция неизвестна');
+      const detail=document.createElement('p');
+      detail.className='hint';
+      detail.textContent='requestId: '+(record.requestId || 'не сохранён')+
+        '\nПричина: '+(record.reasonCode || 'UNKNOWN')+
+        '\nРазговор: '+(record.conversationId || 'не подтверждён');
+      const warning=document.createElement('p');
+      warning.className='hint';
+      warning.textContent=record.command==='provider_prepare'
+        ? 'PREPARE: Send не нажимался. Черновик мог остаться в composer; перед новой подготовкой проверьте и при необходимости очистите поле вручную.'
+        : 'COMMIT: Send мог быть нажат. Доставка остаётся UNKNOWN; не повторяйте запрос и сначала проверьте исходный разговор.';
+      row.append(title,detail,warning);
+      if (record.reconcilable===true && typeof record.token==='string' && snapshot.globalLock!==true) {
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='secondary';
+        button.textContent='Проверить завершение и снять карантин…';
+        button.addEventListener('click',async event=>{
+          if (event.isTrusted!==true || button.disabled) return;
+          const confirmation=[
+            'Подтвердите операторскую сверку карантина.',
+            'Вкладка: '+record.tabId,
+            'Команда: '+record.command,
+            'requestId: '+record.requestId,
+            '',
+            'Система проверит, что исходный скрипт завершился в той же вкладке и разговоре.',
+            record.command==='provider_prepare'
+              ? 'PREPARE: Send не нажимался; черновик мог остаться в composer.'
+              : 'COMMIT: Send мог быть нажат; доставка остаётся UNKNOWN.',
+            record.command==='provider_prepare'
+              ? 'Перед новой подготовкой проверьте и вручную очистите оставшийся черновик.'
+              : 'Не отправляйте тот же запрос повторно; сначала проверьте исходный разговор.',
+            '',
+            'Снять только этот карантин?'
+          ].join('\n');
+          if (!window.confirm(confirmation)) return;
+          button.disabled=true;
+          try {
+            const result=await chrome.runtime.sendMessage({
+              target:'bridge-coordinator',type:'reconcile-quarantine',
+              tabId:record.tabId,token:record.token,
+              confirmed:true,localGesture:event.isTrusted===true
+            });
+            if (!result?.ok || result.state!=='RECONCILED')
+              throw Error(result?.error || 'QUARANTINE_RECONCILIATION_FAILED');
+            await refreshBackgroundGrantList();
+            await refreshQuarantineStatus();
+            const outcomeMessage=result.deliveryState==='UNKNOWN'
+              ? 'Доставка остаётся UNKNOWN; повтор не выполнялся. Проверьте исходный разговор.'
+              : record.command==='provider_prepare' && result.terminalState==='PREPARE_MUTATION_FINISHED'
+                ? 'Send не нажимался; черновик мог остаться в composer. Проверьте и вручную очистите поле перед новой подготовкой.'
+                : 'Send не нажимался; доставка исходного запроса не выполнялась.';
+            statusNode.textContent='Карантин вкладки '+record.tabId+
+              ' снят после подтверждения завершения page-action. '+outcomeMessage;
+          } catch(error) {
+            button.disabled=false;
+            const failureCode=safeConnectionErrorCode(
+              error?.message || 'QUARANTINE_RECONCILIATION_FAILED'
+            );
+            await refreshQuarantineStatus();
+            statusNode.textContent='Карантин сохранён: '+failureCode+
+              '. Global Revoke fence остаётся закрытым до успешной сверки.';
+          }
+        });
+        row.append(button);
+      } else {
+        const blocked=document.createElement('p');
+        blocked.className='hint';
+        blocked.textContent=snapshot.globalLock===true
+          ? 'Снятие недоступно: действует отдельная глобальная quarantine lock. Требуется отдельное расследование.'
+          : 'Недостаточно сохранённых данных для безопасной сверки. Карантин остаётся активным.';
+        row.append(blocked);
+      }
+      root.append(row);
+    }
+    if (snapshot.globalPending?.affectedTabs?.length) {
+      statusNode.textContent='Глобальный Revoke fence ожидает сверки вкладок: '+
+        snapshot.globalPending.affectedTabs.join(', ');
+    } else if (snapshot.globalLock===true) {
+      statusNode.textContent='Действует глобальная quarantine lock; автоматическое снятие запрещено.';
+    } else if (!snapshot.records?.length) {
+      statusNode.textContent='Глобальной блокировки и неразрешённых карантинов нет.';
+    }
+  } catch(error) {
+    root.textContent='Состояние карантина недоступно. Действия восстановления отключены.';
+    statusNode.textContent=safeConnectionErrorCode(error?.message || 'QUARANTINE_STATUS_UNAVAILABLE');
+  }
+}
+
 window.addEventListener('bridge-background-grants-changed',()=>{
   void refreshBackgroundGrantList();
+});
+window.addEventListener('bridge-background-grants-changed',()=>{
+  void refreshQuarantineStatus();
 });
 
 async function updateBackgroundStatus() {
@@ -638,6 +750,7 @@ async function updateBackgroundStatus() {
     refreshGrantLabels();
     await showBackgroundApprovals();
     await refreshBackgroundGrantList();
+    await refreshQuarantineStatus();
   } catch (e) {
     setStatus('Фоновый координатор недоступен: ' + safeConnectionErrorCode(e?.message));
   }

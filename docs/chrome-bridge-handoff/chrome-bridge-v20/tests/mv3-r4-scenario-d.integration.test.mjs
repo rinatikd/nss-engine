@@ -91,6 +91,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
           const timer = setInterval(() => {
             if (document.documentElement.dataset.r4ReleaseCommitReceipt === 'true') {
               clearInterval(timer);
+              document.documentElement.dataset.r4CommitReceiptHeld = 'false';
               resolve();
             }
           }, 10);
@@ -351,7 +352,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // Re-enable only the disposable profile's lab flag to prove the durable
   // global fence, not merely the UI mode switch, rejects a stale post-restart
   // provider mutation. B has no Grant and remains a clean unrelated tab.
-  await control.eval('chrome.storage.local.set({bridgeMutationLabMode:true})');
+  await control.eval('window.confirm=()=>true;chrome.storage.local.set({bridgeMutationLabMode:true})');
   await until(()=>control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get("bridgeMutationRevocationPending"),chrome.storage.session.get("bridgeMutationRevocationPending")]);return l.bridgeMutationRevocationPending?.pending===true||s.bridgeMutationRevocationPending?.pending===true})()'),5000,'GLOBAL_FENCE_STILL_PRESENT');
   const staleBind=await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});
   await until(()=>pageB.eval('document.readyState==="complete"&&location.href==="https://claude.ai/chat/r4scenarioDB001"'),
@@ -373,7 +374,48 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
     'the durable pending global Revoke fence must reject new mutations after restart');
   const finalPage=await pageB.eval('(()=>({draft:(document.querySelector("[contenteditable=true]")?.innerText||"").trim(),clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true"}))()');
   assert.equal(finalPage.draft,'');assert.equal(finalPage.clicked,false);
-  console.log('[R4 SCENARIO D PASS] Send clicked once; receipt lost; Revoke returned UNKNOWN and quarantined A; MV3 + Bridge restarted; journal UNKNOWN; grants never reappeared; stale post-restart mutation BLOCKED by durable global fence');
+
+  // The operator recovery panel must not clear quarantine while the original
+  // pageAction is still held after its one real fixture Send click.
+  await until(()=>control.eval('document.querySelector("#quarantineList")?.textContent.includes("r4Drequest0001")'),15000,'QUARANTINE_UI_READY');
+  assert.ok(await control.eval('!!document.querySelector("#quarantineList button")'),
+    'the exact quarantined provider action must be exposed for operator review');
+  await clickTrusted(control,'document.querySelector("#quarantineList button")');
+  await until(()=>control.eval('document.querySelector("#quarantineRecoveryStatus")?.textContent.includes("QUARANTINE_")'),8000,'ACTIVE_ACTION_RECONCILIATION_DENIED');
+  const stillQuarantined=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationQuarantinedTabs","bridgeMutationRevocationPending"]),chrome.storage.session.get(["bridgeMutationQuarantinedTabs","bridgeMutationRevocationPending"])]);return{localTabs:l.bridgeMutationQuarantinedTabs||[],sessionTabs:s.bridgeMutationQuarantinedTabs||[],localFence:l.bridgeMutationRevocationPending?.pending===true,sessionFence:s.bridgeMutationRevocationPending?.pending===true}})()');
+  assert.ok(stillQuarantined.localTabs.includes(tabs.a)||stillQuarantined.sessionTabs.includes(tabs.a));
+  assert.equal(stillQuarantined.localFence||stillQuarantined.sessionFence,true,
+    'the global fence must remain while the original pageAction has not reached its terminal marker');
+
+  // Release only the held receipt in the disposable fixture. The original
+  // pageAction finally block writes its isolated-world terminal marker.
+  await pageA.eval('document.documentElement.dataset.r4ReleaseCommitReceipt="true";true');
+  await until(()=>pageA.eval('document.documentElement.dataset.r4CommitReceiptHeld!=="true"'),8000,'PAGE_ACTION_RECEIPT_RELEASED');
+  await until(()=>control.eval('!!document.querySelector("#quarantineList button")'),10000,'QUARANTINE_RECONCILE_BUTTON_READY');
+  await clickTrusted(control,'document.querySelector("#quarantineList button")');
+  await until(()=>control.eval('document.querySelector("#quarantineRecoveryStatus")?.textContent.includes("UNKNOWN; повтор не выполнялся")'),10000,'OPERATOR_RECONCILIATION_COMPLETE');
+
+  const reconciledStorage=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"]),chrome.storage.session.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"])]);return{localTabs:l.bridgeMutationQuarantinedTabs||[],sessionTabs:s.bridgeMutationQuarantinedTabs||[],localRecords:l.bridgeMutationQuarantineRecords||{},sessionRecords:s.bridgeMutationQuarantineRecords||{},localAudit:l.bridgeMutationQuarantineAudit||[],sessionAudit:s.bridgeMutationQuarantineAudit||[],localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null}})()');
+  assert.deepEqual(reconciledStorage.localTabs,[]);
+  assert.deepEqual(reconciledStorage.sessionTabs,[]);
+  assert.deepEqual(reconciledStorage.localRecords,{});
+  assert.deepEqual(reconciledStorage.sessionRecords,{});
+  assert.equal(reconciledStorage.localFence,null);
+  assert.equal(reconciledStorage.sessionFence,null);
+  assert.ok(reconciledStorage.localAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
+    e.requestId===identity.requestId&&typeof e.globalFenceToken==='string'));
+  assert.ok(reconciledStorage.sessionAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
+    e.requestId===identity.requestId&&typeof e.globalFenceToken==='string'));
+
+  // Reconciliation changes only tab admission/quarantine. It must never rewrite
+  // the provider journal's UNKNOWN delivery outcome or send a second click.
+  const stillUnknown=await rpc('provider_status',statusIdentity);
+  assert.equal(stillUnknown.state,'UNKNOWN');
+  assert.equal(stillUnknown.clickedSend,undefined);
+  const noDuplicateClick=await pageA.eval('(()=>({buttonCount:document.querySelector("[data-testid=chat-input-send]")?.dataset.clickCount||"0",clickCount:document.documentElement.dataset.r4CommitClickCount||"0"}))()');
+  assert.equal(noDuplicateClick.buttonCount,'1');
+  assert.equal(noDuplicateClick.clickCount,'1');
+  console.log('[R4 SCENARIO D PASS] Send clicked once; receipt lost; Revoke UNKNOWN/quarantined; MV3 + Bridge restart; operator reconciliation required terminal evidence; UNKNOWN retained; no replay or duplicate click');
  }finally{
   clearTimeout(watchdog);
   control?.close();pageA?.close();pageB?.close();worker?.close();

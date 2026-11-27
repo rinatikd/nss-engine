@@ -27,6 +27,12 @@
     <p class="hint">Общая кнопка действует только на открытые вкладки разрешённых AI-чатов Claude, Gemini и DeepSeek, в экспериментальном режиме управления и на ограниченный срок. Каждая команда по-прежнему подтверждается отдельно.</p>
     <p id="backgroundGrantStatus" class="hint">По умолчанию управление отключено. Для отправки нужен отдельный запрос подтверждения.</p>
     <div id="backgroundGrantList" aria-live="polite"><p class="hint">Нет активных разрешений по вкладкам.</p></div>
+    <div id="quarantineRecovery" aria-live="polite">
+      <h3>Восстановление карантина</h3>
+      <p class="hint">Снятие карантина возможно только после подтверждения, что исходная page-action завершилась в той же вкладке и разговоре. Для отправки с неопределённым результатом статус доставки остаётся UNKNOWN. Не повторяйте исходный запрос.</p>
+      <div id="quarantineList"><p class="hint">Неразрешённых карантинов нет.</p></div>
+      <p id="quarantineRecoveryStatus" class="hint" role="status">Проверка состояния карантина…</p>
+    </div>
         <p id="status" role="status">Отключено</p>
   </section>
 
