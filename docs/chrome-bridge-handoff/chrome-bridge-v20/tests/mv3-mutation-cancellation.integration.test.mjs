@@ -30,11 +30,23 @@ class Cdp {
     ws.addEventListener('close',()=>failPending('close'));
     ws.addEventListener('error',()=>failPending('error'));
   }
-  static async connect(url) {
+  static async connect(url,label='target') {
     const ws=new WebSocket(url);
     await new Promise((resolve,reject)=>{
-      ws.addEventListener('open',resolve,{once:true});
-      ws.addEventListener('error',reject,{once:true});
+      let settled=false;
+      const finish=(error)=>{
+        if(settled)return;
+        settled=true;
+        clearTimeout(timer);
+        error?reject(error):resolve();
+      };
+      const timer=setTimeout(()=>{
+        try{ws.close();}catch{}
+        finish(Error('CDP_CONNECT_TIMEOUT '+label));
+      },10000);
+      ws.addEventListener('open',()=>finish(),{once:true});
+      ws.addEventListener('error',()=>finish(Error('CDP_CONNECT_FAILED '+label)),{once:true});
+      ws.addEventListener('close',()=>finish(Error('CDP_CONNECT_CLOSED '+label)),{once:true});
     });
     return new Cdp(ws);
   }
@@ -99,6 +111,11 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
   fs.writeFileSync(path.join(ext,'page.js'),pageSource);
   fs.writeFileSync(path.join(ext,'background.js'),
     "import {pageAction} from './page.js';\nglobalThis.__r4PageAction=pageAction;\n");
+  fs.writeFileSync(path.join(ext,'harness.html'),
+    '<!doctype html><meta charset="utf-8"><title>R4 cancellation harness</title>'+
+    '<script type="module" src="harness.js"></script>');
+  fs.writeFileSync(path.join(ext,'harness.js'),
+    "import {pageAction} from './page.js';\nglobalThis.__r4PageAction=pageAction;\n");
   const extensionId=[...crypto.createHash('sha256').update(path.resolve(ext)).digest('hex').slice(0,32)]
     .map(c=>'abcdefghijklmnop'[parseInt(c,16)]).join('');
   fs.writeFileSync(path.join(ext,'manifest.json'),JSON.stringify({
@@ -139,7 +156,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     client.on('close',()=>upstream.destroy());
     upstream.on('close',()=>client.destroy());
   });
-  let chrome=null,worker=null;
+  let chrome=null,harness=null;
   try{
     await new Promise((resolve,reject)=>{tls.once('error',reject);tls.listen(8443,'127.0.0.1',resolve);});
     await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve);});
@@ -156,17 +173,18 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       return fs.existsSync(file)?Number(fs.readFileSync(file,'utf8').split(/\r?\n/)[0]):0;
     },15000,'DEBUG_PORT');
     const targets=async()=>(await(await fetch('http://127.0.0.1:'+debugPort+'/json/list')).json());
-    const sw=await until(async()=>(await targets()).find(t=>
-      t.type==='service_worker'&&t.url==='chrome-extension://'+extensionId+'/background.js'&&t.webSocketDebuggerUrl),
-      15000,'SERVICE_WORKER');
-    console.log('[R4 MUTATION CANCEL STEP] service worker target found');
-    worker=await Cdp.connect(sw.webSocketDebuggerUrl);
-    await worker.call('Runtime.enable');
-    await until(()=>worker.eval('typeof globalThis.__r4PageAction==="function"'),10000,'PAGE_ACTION_EXPORT');
+    const harnessTarget=await until(async()=>(await targets()).find(t=>
+      t.type==='page'&&t.url==='chrome-extension://'+extensionId+'/harness.html'&&t.webSocketDebuggerUrl),
+      15000,'EXTENSION_HARNESS_PAGE');
+    console.log('[R4 MUTATION CANCEL STEP] disposable extension harness page found');
+    harness=await Cdp.connect(harnessTarget.webSocketDebuggerUrl,'extension-harness');
+    await harness.call('Runtime.enable');
+    await until(()=>harness.eval('typeof globalThis.__r4PageAction==="function"'),10000,'PAGE_ACTION_EXPORT');
+    console.log('[R4 MUTATION CANCEL STEP] extension harness ready');
 
-    const tab=await worker.eval('(async()=>chrome.tabs.create({url:"https://claude.ai/chat/r4mutationcancel01",active:true}))()');
+    const tab=await harness.eval('(async()=>chrome.tabs.create({url:"https://claude.ai/chat/r4mutationcancel01",active:true}))()');
     const tabId=tab.id;
-    const pageInfo=await until(()=>worker.eval('(async()=>{const t=await chrome.tabs.get('+tabId+');'+
+    const pageInfo=await until(()=>harness.eval('(async()=>{const t=await chrome.tabs.get('+tabId+');'+
       'if(t.status!=="complete")return null;const r=await chrome.scripting.executeScript({target:{tabId:'+tabId+'},'+
       'func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})});'+
       'return r?.[0]?.documentId?{documentId:r[0].documentId,result:r[0].result}:null})()'),
@@ -176,10 +194,10 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     const documentId=pageInfo.documentId;
     const target={tabId,documentIds:[documentId]};
     const origin='https://claude.ai';
-    const invoke=(name,args)=>worker.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const invoke=(name,args)=>harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
       'target:'+JSON.stringify(target)+',world:"ISOLATED",func:globalThis.__r4PageAction,'+
       'args:'+JSON.stringify([name,args,origin])+'});return out[0]})()');
-    const inspect=()=>worker.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const inspect=()=>harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
       'target:'+JSON.stringify(target)+',world:"ISOLATED",func:id=>({state:globalThis.__chromeBridgeOperationRegistry?.[id]?.state,'+
       'sideEffectStarted:globalThis.__chromeBridgeOperationRegistry?.[id]?.sideEffectStarted===true}),'+
       'args:["operation_cancel_safe_0001"]});return out[0]?.result})()');
@@ -198,7 +216,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     assert.equal(preemptedMutation.result.error,'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT');
     assert.equal(preemptedMutation.result.dispatchState,'NOT_PERFORMED');
     assert.equal(preemptedMutation.result.sideEffect,'none');
-    const preemptedClickCount=await worker.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const preemptedClickCount=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(preemptedClickCount,'0','a pre-injection Revoke tombstone must block a late page action');
     console.log('[R4 MUTATION CANCEL STEP] pre-injection tombstone passed');
@@ -224,7 +242,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     assert.equal(repeatedCancel.result.operationId,safeId);
     assert.equal(repeatedCancel.result.safeToRelease,true,'a repeat Revoke must receive the same safe terminal proof');
     assert.equal(repeatedCancel.result.state,'CANCELLED_BEFORE_SIDE_EFFECT');
-    const afterCancel=await worker.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const afterCancel=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(afterCancel,'0','a cancelled pre-boundary operation must not click');
 
@@ -243,13 +261,13 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       operationId:committedId,selector:'#r4Action',controlExpires:Date.now()+120000
     });
     assert.equal(replayedMutation.result.error,'MUTATION_OPERATION_ALREADY_SEEN');
-    const clickCount=await worker.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const clickCount=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(clickCount,'1','a late cancellation must not misclassify a fired click as NOT_PERFORMED');
     console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
     console.log('[R4 MUTATION CANCEL REAL] exact-document cancellation before boundary PASS; after-boundary cancellation refused');
   }finally{
-    worker?.close();
+    harness?.close();
     if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
     if(tls.listening)await new Promise(resolve=>tls.close(resolve));
     if(proxy.listening)await new Promise(resolve=>proxy.close(resolve));
