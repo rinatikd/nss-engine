@@ -110,7 +110,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  const trackSocket=socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));return socket;};
  const tls=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(crt)},(req,res)=>{if(!/^\/chat\/[A-Za-z0-9_-]{8,128}$/.test(new URL(req.url,'https://claude.ai').pathname)){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/html'});res.end(html);});
  tls.on('connection',socket=>trackSocket(socket));
- let chrome=null,browserCdp=null,worker=null,control=null,pageA=null,pageB=null,bridge=null,proxy=null,rpcId=0;
+ let chrome=null,worker=null,control=null,pageA=null,pageB=null,bridge=null,proxy=null,rpcId=0;
  const watchdog=setTimeout(()=>{
   console.error('[R4 D WATCHDOG] force-closing disposable Chrome and fixture sockets');
   for(const socket of sockets)socket.destroy();
@@ -145,8 +145,6 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   chrome=spawn(xvfb.stdout.trim(),['-a',browser,'--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-first-run','--no-default-browser-check','--disable-background-networking','--ignore-certificate-errors','--proxy-server=http://127.0.0.1:'+proxyPort,'--remote-allow-origins=*','--user-data-dir='+profile,'--load-extension='+ext,'--disable-extensions-except='+ext,'--remote-debugging-port=0','about:blank'],{stdio:'ignore',detached:true});
   const port=await until(()=>{const p=path.join(profile,'DevToolsActivePort');return fs.existsSync(p)?Number(fs.readFileSync(p,'utf8').split(/\r?\n/)[0]):0;},15000,'DEBUG_PORT');
   const targets=async()=>(await(await boundedFetch('http://127.0.0.1:'+port+'/json/list',{},6000)).json());
-  const version=await(await boundedFetch('http://127.0.0.1:'+port+'/json/version',{},6000)).json();
-  browserCdp=await Cdp.connect(version.webSocketDebuggerUrl,'browser-target');
   const w=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),15000,'WORKER');
   const originalWorkerTargetId=w.id;
   worker=await Cdp.connect(w.webSocketDebuggerUrl,'worker-initial');await worker.call('Runtime.enable');
@@ -256,16 +254,22 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
     sleep(3000)
   ]);
   worker.close();worker=null;
-  // Reattach through browser-level CDP, not the replacement worker socket.
-  // Chromium can publish a fresh MV3 target while Runtime.enable remains
-  // blocked by the intentionally unresolved executeScript from the old page.
-  const createdControl=await browserCdp.call('Target.createTarget',{
-    url:'chrome-extension://'+extensionId+'/control.html'
-  });
-  assert.ok(createdControl.targetId,'CONTROL_TARGET_CREATE_FAILED');
+  // Match the known-good MV3 reload ordering from Scenario B: wait until
+  // Chromium exposes a replacement service-worker target first, reconnect to
+  // that worker, then let the new worker create its own Control page. Opening
+  // chrome-extension:// pages before extension reload has completed can make
+  // Chromium reject the navigation as ERR_BLOCKED_BY_CLIENT.
+  await sleep(500);
+  const restartedWorker=await until(async()=>(await targets()).find(x=>
+    x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&
+    x.webSocketDebuggerUrl&&x.id!==originalWorkerTargetId),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
+  assert.notEqual(restartedWorker.id,originalWorkerTargetId,'MV3_RELOAD_MUST_CREATE_A_NEW_WORKER_TARGET');
+  worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl,'worker-after-reload');
+  await worker.call('Runtime.enable');
+  await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'RESTARTED_WORKER_API');
+  await worker.eval('(async()=>chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true}))()');
   const afterControl=await until(async()=>(await targets()).find(x=>
-    x.id===createdControl.targetId&&x.type==='page'&&
-    x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),
+    x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),
     15000,'CONTROL_AFTER_RESTART');
   control=await Cdp.connect(afterControl.webSocketDebuggerUrl,'control-after-reload');
   await control.call('Runtime.enable');
@@ -280,10 +284,6 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
       .map(x=>({id:x.id,type:x.type,url:x.url,title:x.title,ws:!!x.webSocketDebuggerUrl}));
     throw Error(error.message+' CONTROL_PAGE='+snapshot+' CONTROL_TARGETS='+JSON.stringify(pageTargets));
   }
-  const restartedWorker=await until(async()=>(await targets()).find(x=>
-    x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&
-    x.webSocketDebuggerUrl&&x.id!==originalWorkerTargetId),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
-  assert.notEqual(restartedWorker.id,originalWorkerTargetId,'MV3_RELOAD_MUST_CREATE_A_NEW_WORKER_TARGET');
   const tabAAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDA001'&&x.webSocketDebuggerUrl),15000,'TAB_A_AFTER_RESTART');
   pageA=await Cdp.connect(tabAAfter.webSocketDebuggerUrl,'provider-tab-a-after-reload');await pageA.call('Runtime.enable');
   const tabBAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDB001'&&x.webSocketDebuggerUrl),15000,'TAB_B_AFTER_RESTART');
@@ -365,7 +365,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   console.log('[R4 SCENARIO D PASS] Send clicked once; receipt lost; Revoke returned UNKNOWN and quarantined A; MV3 + Bridge restarted; journal UNKNOWN; grants never reappeared; stale post-restart mutation BLOCKED by durable global fence');
  }finally{
   clearTimeout(watchdog);
-  control?.close();pageA?.close();pageB?.close();worker?.close();browserCdp?.close();
+  control?.close();pageA?.close();pageB?.close();worker?.close();
   for(const socket of sockets)socket.destroy();
   if(chrome&&chrome.exitCode===null){
     try{process.kill(-chrome.pid,'SIGKILL');}catch{try{chrome.kill('SIGKILL');}catch{}}
