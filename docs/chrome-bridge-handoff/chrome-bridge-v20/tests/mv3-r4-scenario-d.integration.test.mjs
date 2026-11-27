@@ -119,19 +119,16 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   });
   const identity=make('r4Drequest0001','r4Dtask0001',tabs.a,'r4scenarioDA001',
     'Scenario D commit will be clicked once, then its receipt is deliberately lost');
-  const prepareResult=await rpc('provider_prepare',identity);
-  assert.equal(prepareResult.state,'PENDING_APPROVAL');
+  const preparePromise=rpc('provider_prepare',identity);
   await until(()=>control.eval('document.querySelectorAll("#backgroundApprovals .approval").length===1'),15000,'PREPARE_APPROVAL');
   assert.ok((await control.eval('document.querySelector("#backgroundApprovals .approval").textContent')).includes(String(tabs.a)));
   const approvePrepare='[...document.querySelectorAll("#backgroundApprovals .approval")].find(e=>e.textContent.includes('+JSON.stringify(String(tabs.a))+'))?.querySelector("button:not(.danger)")';
   await clickTrusted(control,approvePrepare);
-  const prepared=await Promise.race([
-    prepareResult.state==='PREPARED'?Promise.resolve(prepareResult):sleep(100).then(()=>rpc('provider_status',identity)),
+  const preparedResult=await Promise.race([
+    preparePromise,
     sleep(30000).then(()=>{throw Error('D_PREPARE_NOT_COMPLETED');})
   ]);
-  let preparedResult=prepared;
-  if(preparedResult.state!=='PREPARED')
-    preparedResult=await until(async()=>{const s=await rpc('provider_status',identity);return s.state==='PREPARED'?s:null;},20000,'PREPARED_STATUS');
+  assert.equal(preparedResult.state,'PREPARED','provider_prepare must complete only after the real Control approval');
   assert.equal(preparedResult.state,'PREPARED');
   assert.equal(preparedResult.sideEffect,'composer-filled-no-send');
   assert.equal(preparedResult.clickedSend,false);
@@ -246,7 +243,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  }finally{
   control?.close();worker?.close();
   if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
-  if(bridge?.listening)await new Promise(r=>bridge.close(r));
+  if(bridge?.listening)await new Promise(r=>{bridge.close(r);bridge.closeAllConnections?.();});
   if(tls.listening)await new Promise(r=>tls.close(r));
   if(proxy?.listening)await new Promise(r=>proxy.close(r));
   try{fs.rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}catch(e){console.warn('[R4 D] fixture cleanup deferred',e.code);}
