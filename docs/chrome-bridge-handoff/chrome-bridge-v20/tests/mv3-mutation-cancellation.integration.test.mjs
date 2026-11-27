@@ -252,12 +252,26 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     console.log('[R4 MUTATION CANCEL STEP] provider fixture tab created id='+tabId);
     diagnosticPhase='provider page readiness and documentId probe';
     console.log('[R4 MUTATION CANCEL STEP] probing provider documentId');
-    const pageInfo=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.get('+tabId+',t=>{'+
-      'if(chrome.runtime.lastError||t?.status!=="complete"){resolve(null);return;}'+
-      'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,'+
-      'clicks:document.querySelector("#r4Action")?.dataset.clickCount})},r=>{'+
-      'if(chrome.runtime.lastError||!r?.[0]?.documentId){resolve(null);return;}'+
-      'resolve({documentId:r[0].documentId,result:r[0].result});});}))())'),
+    // Dispatch both Chrome API calls without awaiting their callback-backed
+    // completion inside Runtime.evaluate. Poll a plain result object through
+    // separate CDP evaluations so a pending Chrome callback cannot strand
+    // the Node test runner's top-level await.
+    diagnosticPhase='provider tabs.get dispatch';
+    await harness.eval('globalThis.__r4ProviderPageProbe={phase:"tabs_get_dispatched",tabsGetCalls:1,tabsGetCallback:false,executeCalls:0,executeCallback:false,lastError:null,result:null};'+
+      'chrome.tabs.get('+tabId+',t=>{'+
+      'const tabError=chrome.runtime.lastError;'+
+      'globalThis.__r4ProviderPageProbe.tabsGetCallback=true;'+
+      'if(tabError){globalThis.__r4ProviderPageProbe.lastError=tabError.message;globalThis.__r4ProviderPageProbe.phase="tabs_get_error";return;}'+
+      'if(t?.status!=="complete"){globalThis.__r4ProviderPageProbe.phase="tab_not_complete";return;}'+
+      'globalThis.__r4ProviderPageProbe.phase="execute_dispatched";globalThis.__r4ProviderPageProbe.executeCalls++;'+
+      'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})},r=>{'+
+      'const executeError=chrome.runtime.lastError;'+
+      'globalThis.__r4ProviderPageProbe.executeCallback=true;'+
+      'if(executeError){globalThis.__r4ProviderPageProbe.lastError=executeError.message;globalThis.__r4ProviderPageProbe.phase="execute_error";return;}'+
+      'if(!r?.[0]?.documentId){globalThis.__r4ProviderPageProbe.phase="document_id_missing";return;}'+
+      'globalThis.__r4ProviderPageProbe.result={documentId:r[0].documentId,result:r[0].result};globalThis.__r4ProviderPageProbe.phase="complete";});});true');
+    diagnosticPhase='provider page readiness and documentId callback';
+    const pageInfo=await until(()=>harness.eval('globalThis.__r4ProviderPageProbe?.result||null'),
       20000,'PROVIDER_PAGE_READY');
     console.log('[R4 MUTATION CANCEL STEP] provider fixture page ready');
     diagnosticPhase='mutation operation assertions';
