@@ -273,8 +273,16 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       'if(!r?.[0]?.documentId){globalThis.__r4ProviderPageProbe.phase="document_id_missing";return;}'+
       'globalThis.__r4ProviderPageProbe.result={documentId:r[0].documentId,result:r[0].result};globalThis.__r4ProviderPageProbe.phase="complete";});});true');
     diagnosticPhase='provider page readiness and documentId callback';
-    const pageInfo=await until(()=>harness.eval('globalThis.__r4ProviderPageProbe?.result||null'),
-      20000,'PROVIDER_PAGE_READY');
+    let pageInfo;
+    try {
+      pageInfo=await until(()=>harness.eval('globalThis.__r4ProviderPageProbe?.result||null'),
+        20000,'PROVIDER_PAGE_READY');
+    } catch(error) {
+      const probe=await harness.eval('JSON.stringify(globalThis.__r4ProviderPageProbe||null)').catch(e=>'PROBE_READ_FAILED:'+e.message);
+      const tabs=await harness.eval('(async()=>new Promise(resolve=>chrome.tabs.query({},t=>resolve(t.map(x=>({id:x.id,url:x.url,status:x.status,pendingUrl:x.pendingUrl}))))))()').catch(e=>'TABS_READ_FAILED:'+e.message);
+      console.error('[R4 MUTATION CANCEL PROVIDER PROBE FAILURE]',JSON.stringify({error:error.message,probe,tabs}));
+      throw error;
+    }
     console.log('[R4 MUTATION CANCEL STEP] provider fixture page ready');
     diagnosticPhase='mutation operation assertions';
     assert.equal(pageInfo.result.origin,'https://claude.ai');
