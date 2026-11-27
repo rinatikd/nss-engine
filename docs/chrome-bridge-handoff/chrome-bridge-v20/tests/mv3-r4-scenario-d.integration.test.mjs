@@ -171,6 +171,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
 
   // Restart MV3 while the page action receipt is still held. Do not release
   // the hold: after the Send click, execution state is ambiguous by design.
+  control.close();control=null;
   try { await worker.eval('chrome.runtime.reload();true'); } catch {}
   worker.close();worker=null;
   const restartedWorker=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
@@ -202,10 +203,11 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.ok(recovered.quarantineId,'unknown commit must carry a quarantine reference');
   const events=await rpc('provider_events',{after:0,limit:1000});
   const eventRows=Array.isArray(events)?events:(events.events||events.records||[]);
-  assert.ok(eventRows.some(e=>e.type==='commit.started'||e.event==='commit.started'),
-    'journal must persist commit.started before the page click');
-  assert.ok(!eventRows.some(e=>e.type==='commit.completed'||e.event==='commit.completed'),
-    'there must be no commit.completed receipt after the interrupted page action');
+  const requestEvents=eventRows.filter(e=>e.requestId===identity.requestId);
+  assert.ok(requestEvents.some(e=>e.state==='DISPATCHED'),
+    'journal must persist the DISPATCHED commit.started state before the page click');
+  assert.ok(!requestEvents.some(e=>e.state==='SENT'||e.state==='REPLIED'),
+    'there must be no SENT or REPLIED receipt after the interrupted page action');
 
   // Replacement worker/control view must keep the grant store empty and
   // retain durable global pending fence + tab quarantine.
