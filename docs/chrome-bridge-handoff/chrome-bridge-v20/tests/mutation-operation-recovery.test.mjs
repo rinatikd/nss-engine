@@ -397,3 +397,52 @@ test('replacement MV3 worker honors exact durable reconciliation audit and does 
     ['ACCEPTED','INJECTING','UNKNOWN'],
     'audit acknowledgement must not rewrite or erase immutable UNKNOWN journal history');
 });
+
+test('recovered global Revoke clears cleanly when the prior worker operation is proven aborted before injection',async()=>{
+  const chromeApi=fixture();
+  const tabId=79008;
+  const operationId='operation_global_revoke_preinject_0008';
+  const requestId='r4request79008';
+  const documentId='document-preinject-79008';
+  const payloadHash='9'.repeat(64);
+  const preparedId='prepared_79008';
+  const store=journal(chromeApi,operationId);
+  const operation=await store.begin({
+    command:'provider_commit',tabId,origin:'https://claude.ai',
+    url:'https://claude.ai/chat/conversation_001',documentId,frameId:0,
+    conversationId:'conversation_001',requestId,taskId:'task_79008',
+    providerId:'claude',preparedId,payloadHash,epoch:1
+  });
+  const pending={
+    pending:true,token:'global-preinject-r4-79008',affectedTabs:[tabId],
+    startedAt:Date.now()-100,
+    operations:[{
+      tabId,operationId,requestId,command:'provider_commit',
+      taskId:'task_79008',providerId:'claude',origin:'https://claude.ai',
+      conversationId:'conversation_001',documentId,frameId:0,
+      epoch:1,payloadHash,preparedId,startedAt:operation.createdAt
+    }]
+  };
+  await chromeApi.storage.local.set({bridgeMutationRevocationPending:pending});
+  await chromeApi.storage.session.set({bridgeMutationRevocationPending:pending});
+
+  installBackgroundCoordinator(chromeApi);
+  const revoked=await send(chromeApi,'dispatch',{
+    command:{
+      name:'session_revoke',bridgeEpoch:1,expires:Date.now()+60000,args:{}
+    }
+  },'transport-host.html');
+
+  assert.equal(revoked.result?.revoked,true,'a pre-injection operation has no page side effect to reconcile');
+  const history=await store.list();
+  assert.deepEqual(history[0].events.map(event=>event.phase),
+    ['ACCEPTED','ABORTED_BEFORE_INJECTION']);
+  assert.equal(chromeApi.data.bridgeMutationRevocationPending,null);
+  assert.equal(chromeApi.session.bridgeMutationRevocationPending,null);
+  assert.equal(chromeApi.data.bridgeMutationQuarantinedTabs,undefined);
+  assert.equal(chromeApi.session.bridgeMutationQuarantinedTabs,undefined);
+  assert.equal(chromeApi.data.bridgeMutationQuarantineRecords,undefined);
+  assert.equal(chromeApi.session.bridgeMutationQuarantineRecords,undefined);
+  assert.equal(chromeApi.data.bridgeMutationQuarantineLock,undefined);
+  assert.equal(chromeApi.session.bridgeMutationQuarantineLock,undefined);
+});
