@@ -10,6 +10,53 @@ import { findSecret, redact } from './secrets.js';
 import { normalizeFailure } from './failure-contract.js';
 import { MutationOperationJournal } from './mutation-operation-journal.js';
 
+export async function cancelMutationOperation(chromeApi,record,{timeoutMs=2000}={}) {
+  if (!record || record.events?.at(-1)?.phase!=='INJECTING' ||
+      !Number.isSafeInteger(record.tabId) || typeof record.documentId!=='string' ||
+      !record.documentId || typeof record.origin!=='string' ||
+      typeof record.operationId!=='string')
+    return {found:false,safeToRelease:false,reason:'OPERATION_NOT_INJECTING'};
+  let tab;
+  try { tab=await chromeApi.tabs.get(record.tabId); }
+  catch { return {found:false,safeToRelease:false,reason:'TAB_UNAVAILABLE'}; }
+  if (typeof tab?.url!=='string' || !tab.url.startsWith(record.origin+'/'))
+    return {found:false,safeToRelease:false,reason:'TAB_DOCUMENT_CHANGED'};
+  let last={found:false,safeToRelease:false,reason:'OPERATION_NOT_REGISTERED'};
+  // The write-ahead INJECTING event precedes executeScript. Retry the exact
+  // document-targeted cancel briefly in case the original injection has not
+  // yet registered its operation in the isolated world.
+  for (let attempt=0;attempt<4;attempt++) {
+    let out;
+    try {
+      out=await chromeApi.scripting.executeScript({
+        target:{tabId:record.tabId,documentIds:[record.documentId]},
+        world:'ISOLATED',func:pageAction,
+        args:['cancel_operation',{operationId:record.operationId,timeoutMs},record.origin]
+      });
+    } catch {
+      return {found:false,safeToRelease:false,reason:'EXACT_DOCUMENT_UNAVAILABLE'};
+    }
+    if (!Array.isArray(out) || out.length!==1 || out[0]?.documentId!==record.documentId ||
+        out[0]?.frameId!==0)
+      return {found:false,safeToRelease:false,reason:'CANCEL_DOCUMENT_IDENTITY_MISMATCH'};
+    const result=out[0]?.result;
+    if (!result || result.error)
+      return {found:false,safeToRelease:false,reason:'CANCEL_RECEIPT_INVALID'};
+    if (result.operationId!==record.operationId)
+      return {found:false,safeToRelease:false,reason:'CANCEL_OPERATION_ID_MISMATCH'};
+    last=result;
+    if (result.safeToRelease===true) {
+      if (!['CANCELLED_BEFORE_SIDE_EFFECT','NO_SIDE_EFFECT'].includes(result.state) ||
+          result.sideEffectStarted!==false)
+        return {found:false,safeToRelease:false,reason:'CANCEL_RECEIPT_STATE_INVALID'};
+      return result;
+    }
+    if (result.found===true || result.sideEffectStarted===true) return result;
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  return last;
+}
+
 const MUTATIONS = new Set(['browser_click', 'browser_fill', 'agent_send', 'provider_prepare', 'provider_commit']);
 const MAX_APPROVAL_MS = 90_000;
 const nowExpired = (cmd, now) => !Number.isFinite(cmd?.expires) || now() >= cmd.expires;
@@ -72,7 +119,12 @@ async function boundTab(chromeApi, tabId, originalUrl, origin) {
 async function settleOperationError(journal,operation,error,executionStarted) {
   if(!journal || !operation?.operationId) return;
   try {
-    if(!executionStarted) {
+    if(executionStarted && error?.message==='MUTATION_CANCELLED_BEFORE_SIDE_EFFECT' &&
+        error?.dispatchState==='NOT_PERFORMED') {
+      await journal.cancelledBeforeSideEffect(operation.operationId,{
+        code:'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT',documentId:operation.documentId
+      });
+    } else if(!executionStarted) {
       await journal.abortBeforeInjection(operation.operationId,{
         code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')
           ? error.message : 'MUTATION_ABORTED_BEFORE_INJECTION'
@@ -187,9 +239,10 @@ async function dispatchProviderMutation(cmd, chromeApi, {
     const pageArgs=cmd.name==='provider_prepare'
       ? {adapter,requestId,epoch,message:args.message,payloadHash:args.payloadHash,preparedId:args.preparedId,
           expiresAt:args.expiresAt,expectedOrigin:origin,expectedConversationId:conversationId,
-          controlExpires:refreshedGrant}
+          controlExpires:refreshedGrant,operationId:operation.operationId}
       : {adapter,requestId,epoch,payloadHash:args.payloadHash,preparedId:args.preparedId,fencingToken:args.fencingToken,
-          expectedOrigin:origin,expectedConversationId:conversationId,controlExpires:refreshedGrant};
+          expectedOrigin:origin,expectedConversationId:conversationId,
+          controlExpires:refreshedGrant,operationId:operation.operationId};
     stage='PAGE_ACTION';
     await operationJournal.markInjecting(operation.operationId,{
       documentId:currentInjection.documentId,frameId:currentInjection.frameId
@@ -349,7 +402,7 @@ export async function dispatchMutation(cmd, chromeApi, {
     if (!current.verified || current.origin!==origin ||
         current.conversationId!==cmd.args.expectedConversationId)
       throw Error('CONVERSATION_CHANGED_AFTER_APPROVAL');
-    args={...cmd.args,adapter,controlExpires:refreshedGrant};
+    args={...cmd.args,adapter,controlExpires:refreshedGrant,operationId:operation.operationId};
   } else {
     currentInjection=await inject(chromeApi,tab.id,origin,'describe',
       {selector:cmd.args.selector},preflightInjection.documentId);
@@ -357,7 +410,7 @@ export async function dispatchMutation(cmd, chromeApi, {
     if (current.tag!==preflight.tag || current.text!==preflight.text ||
         current.href!==preflight.href || current.formAction!==preflight.formAction)
       throw Error('TARGET_CHANGED_AFTER_APPROVAL');
-    args={...cmd.args,controlExpires:refreshedGrant,
+    args={...cmd.args,controlExpires:refreshedGrant,operationId:operation.operationId,
       expect:{tag:current.tag,text:current.text}};
   }
   if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');

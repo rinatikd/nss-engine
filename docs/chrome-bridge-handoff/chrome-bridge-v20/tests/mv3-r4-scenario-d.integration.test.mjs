@@ -353,10 +353,21 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // provider mutation. B has no Grant and remains a clean unrelated tab.
   await control.eval('chrome.storage.local.set({bridgeMutationLabMode:true})');
   await until(()=>control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get("bridgeMutationRevocationPending"),chrome.storage.session.get("bridgeMutationRevocationPending")]);return l.bridgeMutationRevocationPending?.pending===true||s.bridgeMutationRevocationPending?.pending===true})()'),5000,'GLOBAL_FENCE_STILL_PRESENT');
-  await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});
+  const staleBind=await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});
+  await until(()=>pageB.eval('document.readyState==="complete"&&location.href==="https://claude.ai/chat/r4scenarioDB001"'),
+    10000,'TAB_B_READY_FOR_STALE_FENCE_PROBE');
+  const stalePeek=await rpc('agent_peek',{name:'r4_d_stale_after_restart',maxChars:100});
   const stale=make('r4Drequest0002','r4Dtask0002',tabs.b,'r4scenarioDB001',
     'This post-restart stale mutation must be blocked by durable global fence');
   const staleResult=await rpc('provider_prepare',stale);
+  const coordinatorProbe=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');
+  console.log('[R4 D STALE REQUEST DIAGNOSTIC]',JSON.stringify({
+    bind:staleBind,
+    page:await pageB.eval('JSON.stringify({href:location.href,readyState:document.readyState,title:document.title})'),
+    peek:{url:stalePeek.url,origin:stalePeek.origin,conversationId:stalePeek.conversationId,chars:stalePeek.chars},
+    coordinator:JSON.parse(coordinatorProbe),
+    result:staleResult
+  }));
   assert.equal(staleResult.state,'BLOCKED');
   assert.equal(staleResult.reasonCode,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
     'the durable pending global Revoke fence must reject new mutations after restart');

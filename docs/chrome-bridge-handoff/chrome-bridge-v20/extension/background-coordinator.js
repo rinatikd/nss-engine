@@ -1,6 +1,6 @@
 import { dispatchReadOnly, permittedTab } from './read-only-dispatch.js';
 import { ApprovalSession } from './approval-session.js';
-import { dispatchMutation } from './mutation-dispatch.js';
+import { dispatchMutation, cancelMutationOperation } from './mutation-dispatch.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
 import { SessionAuthorization } from './session-authorization.js';
 import { normalizeFailure } from './failure-contract.js';
@@ -272,6 +272,32 @@ async function quarantineUnreconciledGenericActions(chromeApi,scopeTabIds=null) 
     throw error;
   }
   return affected;
+}
+
+async function cancelActiveMutationOperations(chromeApi,scopeTabIds=null) {
+  let records;
+  try {
+    records=await mutationOperationJournalFor(chromeApi).list();
+  } catch {
+    await persistGlobalQuarantineLock(chromeApi);
+    throw coordinatorError('MUTATION_OPERATION_JOURNAL_UNAVAILABLE','UNKNOWN');
+  }
+  const scope=Array.isArray(scopeTabIds)?new Set(scopeTabIds):null;
+  const pending=records.filter(record=>{
+    if (scope && !scope.has(record.tabId)) return false;
+    return record.events.at(-1)?.phase==='INJECTING';
+  });
+  const results=[];
+  for (const record of pending) {
+    const result=await cancelMutationOperation(chromeApi,record,{timeoutMs:1800});
+    results.push({
+      operationId:record.operationId,tabId:record.tabId,
+      safeToRelease:result?.safeToRelease===true,
+      reason:typeof result?.reason==='string'?result.reason:
+        result?.state||'CANCELLATION_NOT_CONFIRMED'
+    });
+  }
+  return results;
 }
 
 async function persistTabRevocationFence(chromeApi, tabId) {
@@ -673,6 +699,7 @@ export async function stopBackgroundTransport(chromeApi, {
     // A Start accepted before Stop may still be creating the offscreen document
     // or sending its START message. Drain it first, then send the final STOP.
     const startDrained = await awaitBounded(pendingStart,startDrainTimeoutMs);
+    await cancelActiveMutationOperations(chromeApi);
     const mutationDrain = await drainMutationLanes(chromeApi,stopDrainTimeoutMs);
     await quarantineUnreconciledGenericActions(chromeApi);
     const stopConfirmed = await stopOffscreenTransport(chromeApi);
@@ -829,6 +856,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                 throw error;
               }
             }
+            await cancelActiveMutationOperations(chromeApi);
             const drained=await drainMutationLanes(chromeApi);
             await quarantineUnreconciledGenericActions(chromeApi);
             try {
@@ -1018,6 +1046,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       // Revoke-all cancels every outstanding approval before draining lanes.
       approvals.stop();
       void (async()=>{
+        await ensureMutationOperationRecovery(chromeApi);
         const fence=await enqueueRevocationFence(
           ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
         );
@@ -1036,6 +1065,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           }
         }
         let cleanupError=null;
+        await cancelActiveMutationOperations(chromeApi);
         const drained=await drainMutationLanes(chromeApi);
         await quarantineUnreconciledGenericActions(chromeApi);
         try {
@@ -1118,10 +1148,12 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             return error;
           };
           try {
+            await ensureMutationOperationRecovery(chromeApi);
             const fence=await enqueueRevocationFence(()=>persistTabRevocationFence(chromeApi,tabId));
             if (!fence.persisted) throw await unknownRevoke();
             fenceStores=fence.stores;
 
+            await cancelActiveMutationOperations(chromeApi,[tabId]);
             const pending=mutationLanes.get(tabId);
             const settled=await awaitBounded(pending,STOP_DRAIN_TIMEOUT_MS);
             if (!settled) throw await unknownRevoke();
