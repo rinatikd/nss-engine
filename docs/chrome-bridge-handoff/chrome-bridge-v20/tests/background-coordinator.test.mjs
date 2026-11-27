@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startBackgroundTransport, stopBackgroundTransport, installBackgroundCoordinator} from '../extension/background-coordinator.js';
+import {MutationOperationJournal} from '../extension/mutation-operation-journal.js';
 
 function fakeChrome(data={},options={}) {
   const listeners=[];
@@ -912,15 +913,27 @@ test('clear-background-controls persists a global revoke fence across worker res
 test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN',async()=>{
   const c=fakeChrome({...LAB_STATE});
   await prepareLab(c,62);
+  const operationJournal=new MutationOperationJournal(c,{
+    uuid:()=> 'operation_recovered_000062'
+  });
+  const operation=await operationJournal.begin({
+    command:'provider_commit',tabId:62,origin:'https://claude.ai',
+    url:'https://claude.ai/chat/conversation_001',
+    documentId:'document-62',frameId:0,
+    conversationId:'conversation_001',requestId:'r4request000062',
+    taskId:'task_000062',providerId:'claude',preparedId:'prepared_0062',
+    payloadHash:'c'.repeat(64),epoch:1
+  });
+  await operationJournal.markInjecting(operation.operationId,{
+    documentId:'document-62',frameId:0
+  });
   const pending={
     pending:true,token:'prior-worker-revoke-001',affectedTabs:[62],startedAt:Date.now()-100,
     operations:[{
-      tabId:62,operationId:'operation_recovered_000062',
-      requestId:'r4request000062',command:'provider_commit',
+      tabId:62,requestId:'r4request000062',command:'provider_commit',
       taskId:'task_000062',providerId:'claude',origin:'https://claude.ai',
-      conversationId:'conversation_001',documentId:'document-62',frameId:0,
-      epoch:1,payloadHash:'c'.repeat(64),preparedId:'prepared_0062',
-      startedAt:Date.now()-200
+      conversationId:'conversation_001',epoch:1,payloadHash:'c'.repeat(64),
+      preparedId:'prepared_0062',startedAt:Date.now()-200
     }]
   };
   c.data.bridgeMutationRevocationPending=pending;
@@ -954,8 +967,16 @@ test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN
     c.session.bridgeMutationQuarantineRecords?.['62'];
   assert.equal(q?.requestId,'r4request000062');
   assert.equal(q?.command,'provider_commit');
+  assert.equal(q?.operationId,operation.operationId);
+  assert.equal(q?.documentId,'document-62');
+  assert.equal(q?.frameId,0);
   assert.equal(q?.reconcilable,true,
     'the durable global fence must preserve enough operation identity for evidence-bound recovery');
+  const recoveredFenceOperation=c.data.bridgeMutationRevocationPending.operations.find(item=>item.tabId===62);
+  assert.equal(recoveredFenceOperation.operationId,operation.operationId);
+  assert.equal(recoveredFenceOperation.documentId,'document-62');
+  assert.equal(recoveredFenceOperation.frameId,0);
+  assert.equal(recoveredFenceOperation.startedAt,q.startedAt);
 });
 
 test('session_revoke fences new provider work and drains an already accepted page action',async()=>{
