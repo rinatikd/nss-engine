@@ -6,6 +6,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 import https from 'node:https';
+import http from 'node:http';
+import net from 'node:net';
 import {createBridge} from '../server/bridge.mjs';
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -35,13 +37,27 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
  const cert=spawnSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',key,'-out',crt,'-days','1','-subj','/CN=claude.ai','-addext','subjectAltName=DNS:claude.ai'],{encoding:'utf8'});assert.equal(cert.status,0,'TLS_FIXTURE_CERT_FAILED');
  const html='<!doctype html><html><body><div class="font-claude-response">Fixture baseline</div><div contenteditable="true" class="ProseMirror" role="textbox" style="min-height:42px;min-width:240px;border:1px solid #777"></div><button type="button" data-testid="chat-input-send">Send</button><script>document.querySelector("button").addEventListener("click",e=>e.currentTarget.dataset.clicked="true")</script></body></html>';
  const tls=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(crt)},(req,res)=>{if(!/^\/chat\/[A-Za-z0-9_-]{8,128}$/.test(new URL(req.url,'https://claude.ai').pathname)){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/html'});res.end(html);});
- let chrome=null,worker=null,control=null,bridge=null,rpcId=0;
+ let chrome=null,worker=null,control=null,bridge=null,proxy=null,rpcId=0;
  const rpc=async(name,args={})=>{const r=await fetch('http://127.0.0.1:17481/mcp',{method:'POST',headers:{authorization:'Bearer '+agentToken,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method:'tools/call',params:{name,arguments:args}})});assert.equal(r.status,200);const d=await r.json();if(d.error)throw Error(d.error.message);const t=d.result?.content?.find(x=>x.type==='text')?.text;return t?JSON.parse(t):d.result;};
  try{
-  await new Promise((r,j)=>{tls.once('error',j);tls.listen(443,'127.0.0.1',r);});
+  await new Promise((r,j)=>{tls.once('error',j);tls.listen(8443,'127.0.0.1',r);});
+  proxy=http.createServer();
+  proxy.on('connect',(req,client,head)=>{
+    if(req.url!=='claude.ai:443'){client.end('HTTP/1.1 403 Forbidden\\r\\n\\r\\n');return;}
+    const upstream=net.connect(8443,'127.0.0.1');
+    upstream.once('connect',()=>{
+      client.write('HTTP/1.1 200 Connection Established\\r\\n\\r\\n');
+      if(head.length)upstream.write(head);
+      client.pipe(upstream);upstream.pipe(client);
+    });
+    upstream.on('error',()=>client.destroy());
+    client.on('error',()=>upstream.destroy());
+  });
+  await new Promise((r,j)=>{proxy.once('error',j);proxy.listen(0,'127.0.0.1',r);});
+  const proxyPort=proxy.address().port;
   bridge=createBridge({browserToken,agentToken,extensionId},{timeout:120000,pollHold:500,settleMs:100,stateDir:state});
   await new Promise((r,j)=>{bridge.once('error',j);bridge.listen(17481,'127.0.0.1',r);});
-  chrome=spawn(xvfb.stdout.trim(),['-a',browser,'--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-first-run','--no-default-browser-check','--disable-background-networking','--ignore-certificate-errors','--host-resolver-rules=MAP claude.ai 127.0.0.1','--remote-allow-origins=*','--user-data-dir='+profile,'--load-extension='+ext,'--disable-extensions-except='+ext,'--remote-debugging-port=0','about:blank'],{stdio:'ignore',detached:true});
+  chrome=spawn(xvfb.stdout.trim(),['-a',browser,'--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-first-run','--no-default-browser-check','--disable-background-networking','--ignore-certificate-errors','--proxy-server=http://127.0.0.1:'+proxyPort,'--remote-allow-origins=*','--user-data-dir='+profile,'--load-extension='+ext,'--disable-extensions-except='+ext,'--remote-debugging-port=0','about:blank'],{stdio:'ignore',detached:true});
   const port=await until(()=>{const p=path.join(profile,'DevToolsActivePort');return fs.existsSync(p)?Number(fs.readFileSync(p,'utf8').split(/\r?\n/)[0]):0;},15000,'DEBUG_PORT');
   const targets=async()=>(await(await fetch('http://127.0.0.1:'+port+'/json/list')).json());
   const w=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),15000,'WORKER');
@@ -92,6 +108,7 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
   if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
   if(bridge?.listening)await new Promise(r=>bridge.close(r));
   if(tls.listening)await new Promise(r=>tls.close(r));
+  if(proxy?.listening)await new Promise(r=>proxy.close(r));
   try{fs.rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}catch(e){console.warn('[R4 A] fixture cleanup deferred',e.code);}
  }
 });
