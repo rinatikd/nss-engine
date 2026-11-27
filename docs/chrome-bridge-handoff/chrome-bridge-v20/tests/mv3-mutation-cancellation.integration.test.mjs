@@ -167,7 +167,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     client.on('close',()=>upstream.destroy());
     upstream.on('close',()=>client.destroy());
   });
-  let chrome=null,harness=null;
+  let chrome=null,harness=null,browserCdp=null;
   try{
     await new Promise((resolve,reject)=>{tls.once('error',reject);tls.listen(8443,'127.0.0.1',resolve);});
     await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve);});
@@ -184,6 +184,15 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       return fs.existsSync(file)?Number(fs.readFileSync(file,'utf8').split(/\r?\n/)[0]):0;
     },15000,'DEBUG_PORT');
     console.log('[R4 MUTATION CANCEL STEP] DevTools endpoint file found on port '+debugPort);
+    const versionResponse=await fetch('http://127.0.0.1:'+debugPort+'/json/version');
+    assert.equal(versionResponse.ok,true,'CDP_VERSION_ENDPOINT_FAILED');
+    const version=await versionResponse.json();
+    assert.ok(version.webSocketDebuggerUrl,'CDP_BROWSER_WEBSOCKET_MISSING');
+    browserCdp=await Cdp.connect(version.webSocketDebuggerUrl,'browser');
+    const harnessUrl='chrome-extension://'+extensionId+'/harness.html';
+    const created=await browserCdp.call('Target.createTarget',{url:harnessUrl});
+    assert.ok(created?.targetId,'EXTENSION_HARNESS_TARGET_CREATE_FAILED');
+    console.log('[R4 MUTATION CANCEL STEP] created disposable extension harness page');
     const targets=async()=>{
       const controller=new AbortController();
       const timer=setTimeout(()=>controller.abort(),2500);
@@ -287,7 +296,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
     console.log('[R4 MUTATION CANCEL REAL] exact-document cancellation before boundary PASS; after-boundary cancellation refused');
   }finally{
-    harness?.close();
+    harness?.close();\n    browserCdp?.close();
     if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
     if(tls.listening)await new Promise(resolve=>tls.close(resolve));
     if(proxy.listening)await new Promise(resolve=>proxy.close(resolve));
