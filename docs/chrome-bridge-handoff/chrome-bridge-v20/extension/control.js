@@ -551,7 +551,7 @@ async function showBackgroundApprovals() {
           });
           if (result.error) setStatus('Подтверждение: '+result.error);
           await showBackgroundApprovals();
-    await refreshBackgroundGrantList();
+          await refreshBackgroundGrantList();
         });
         row.append(b);
       }
