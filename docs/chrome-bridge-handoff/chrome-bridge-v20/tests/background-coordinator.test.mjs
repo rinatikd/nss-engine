@@ -772,7 +772,7 @@ test('session_revoke persists a global mutation fence across MV3 worker restart'
   releaseResolve();
   const completed=await mutation;
   const revoked=await revoke;
-  assert.equal(completed.result.prepared,true);
+  assert.equal(completed.result?.prepared,true,'in-flight result after worker recovery: '+JSON.stringify(completed));
   assert.equal(revoked.result.revoked,true);
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.data.bridgeMutationRevocationPending,null);
@@ -826,7 +826,7 @@ test('session_revoke tracks and clears only the global fence stores that accepte
     assert.equal(denied.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
     releaseResolve();
     const [mutationResult,revokeResult]=await Promise.all([mutation,revoke]);
-    assert.equal(mutationResult.result.prepared,true);
+    assert.equal(mutationResult.result?.prepared,true,'in-flight result after worker recovery ('+failedStore+'): '+JSON.stringify(mutationResult));
     assert.equal(revokeResult.result.revoked,true);
     assert.equal(writtenState.bridgeMutationRevocationPending,null,
       'the store that accepted the fence must have its matching marker cleared');
@@ -1133,8 +1133,12 @@ test('global Revoke snapshots the active mutation context instead of a later que
     if(approvals.some(item=>item.tabId===tabId))break;
     await delay(5);
   }
+  const firstState=await Promise.race([
+    first.then(value=>({settled:true,value}),error=>({settled:true,error:error?.message||String(error)})),
+    delay(1).then(()=>({settled:false}))
+  ]);
   assert.equal(approvals.filter(item=>item.tabId===tabId).length,1,
-    'the first operation must be the active request awaiting Approval');
+    'the first operation must be the active request awaiting Approval; dispatch='+JSON.stringify(firstState));
 
   const second=sendCoordinatorTo(c,listener,'dispatch',{command:secondCommand},'transport-host.html');
   await delay(25);
@@ -1410,7 +1414,7 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
     'the local copy may already have been cleared before the session write failed');
   assert.equal(c.session.bridgeMutationRevocationPending?.token,globalToken);
 
-  failures.failSessionSet=null;
+  failureOptions.failSessionSet=null;
   const retry=await sendCoordinator(c,'reconcile-quarantine',{
     tabId,token,confirmed:true,localGesture:true
   });
