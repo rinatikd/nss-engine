@@ -242,6 +242,101 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('TAB_MUTATION_QUARANTINED');
 }
 
+async function enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,recoveredByTab) {
+  let snapshot;
+  try {
+    snapshot=await readGlobalRevocationFence(chromeApi);
+  } catch {
+    mutationQuarantinePersistenceFailed=true;
+    return false;
+  }
+  const record=snapshot.record;
+  if (!record) return true;
+  const affected=new Set(Array.isArray(record.affectedTabs)?record.affectedTabs:[]);
+  const operations=Array.isArray(record.operations)?record.operations.slice():[];
+  let changed=false;
+
+  for (const [rawTabId,rows] of recoveredByTab.entries()) {
+    const tabId=Number(rawTabId);
+    if (!affected.has(tabId) || rows.length!==1) continue;
+    const item=rows[0];
+    if (typeof item?.operationId!=='string' || !item.operationId ||
+        typeof item.requestId!=='string' || !item.requestId ||
+        typeof item.documentId!=='string' || !item.documentId ||
+        item.frameId!==0) continue;
+
+    const index=operations.findIndex(operation=>operation?.tabId===tabId);
+    const prior=index>=0?operations[index]:null;
+    // Never rewrite a global fence from one operation to another. Fill only
+    // missing identity fields on the same request/command; any conflict stays
+    // blocked for independent review.
+    if (prior && (
+      (prior.operationId && prior.operationId!==item.operationId) ||
+      (prior.requestId && prior.requestId!==item.requestId) ||
+      (prior.command && prior.command!==item.command) ||
+      (prior.origin && prior.origin!==item.origin) ||
+      (prior.conversationId && prior.conversationId!==item.conversationId) ||
+      (prior.documentId && prior.documentId!==item.documentId) ||
+      (Number.isSafeInteger(prior.frameId) && prior.frameId!==item.frameId) ||
+      (Number.isFinite(prior.startedAt) && prior.startedAt!==item.startedAt)
+    )) continue;
+
+    const merged={
+      ...(prior||{}),tabId,operationId:item.operationId,
+      requestId:item.requestId,command:item.command,
+      taskId:item.taskId||null,providerId:item.providerId||null,
+      origin:item.origin||null,conversationId:item.conversationId||null,
+      documentId:item.documentId,frameId:item.frameId,
+      epoch:Number.isSafeInteger(item.epoch)?item.epoch:null,
+      payloadHash:item.payloadHash||null,preparedId:item.preparedId||null,
+      startedAt:Number.isFinite(item.startedAt)?item.startedAt:null
+    };
+    if (prior) operations[index]=merged;
+    else operations.push(merged);
+    if (!prior || JSON.stringify(prior)!==JSON.stringify(merged)) changed=true;
+  }
+
+  if (!changed) return true;
+  operations.sort((a,b)=>a.tabId-b.tabId);
+  const updated={...record,operations};
+  const key='bridgeMutationRevocationPending';
+  const written=[];
+  try {
+    for (const store of snapshot.stores) {
+      const storage=store==='local'?chromeApi.storage.local:
+        store==='session'?chromeApi.storage.session:null;
+      if (!storage?.get || !storage?.set)
+        throw Error('GLOBAL_REVOCATION_FENCE_STORE_UNAVAILABLE');
+      const current=await storage.get(key);
+      if (current[key]?.token!==record.token)
+        throw Error('GLOBAL_REVOCATION_FENCE_TOKEN_CHANGED');
+      await storage.set({[key]:updated});
+      written.push(store);
+    }
+    const verified=await readGlobalRevocationFence(chromeApi);
+    if (!verified.record || verified.record.token!==record.token ||
+        JSON.stringify(verified.record.operations)!==JSON.stringify(updated.operations))
+      throw Error('GLOBAL_REVOCATION_FENCE_ENRICHMENT_UNCONFIRMED');
+    return true;
+  } catch {
+    let restored=true;
+    for (const store of written) {
+      try {
+        const storage=store==='local'?chromeApi.storage.local:chromeApi.storage.session;
+        const current=await storage.get(key);
+        if (current[key]?.token===record.token)
+          await storage.set({[key]:record});
+        else restored=false;
+      } catch { restored=false; }
+    }
+    if (!restored) {
+      mutationQuarantinePersistenceFailed=true;
+      try { await persistGlobalQuarantineLock(chromeApi); } catch { /* fail closed in memory */ }
+    }
+    return false;
+  }
+}
+
 async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=[]) {
   for (const tabId of tabIds) mutationQuarantinedTabs.add(tabId);
   const now=Date.now();
@@ -305,6 +400,9 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
     rows.push(item);
     recoveredByTab.set(item.tabId,rows);
   }
+
+  if (!await enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,recoveredByTab))
+    return {persisted:false,store:null};
 
   const records={};
   for (const tabId of tabIds) {
