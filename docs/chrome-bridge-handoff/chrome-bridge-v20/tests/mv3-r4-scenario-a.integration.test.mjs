@@ -31,6 +31,26 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
  fs.mkdirSync(ext);fs.mkdirSync(profile);fs.mkdirSync(path.join(profile,'Default'),{recursive:true});
  fs.writeFileSync(path.join(profile,'Default','Preferences'),JSON.stringify({extensions:{ui:{developer_mode:true}}}));
  for(const n of fs.readdirSync(new URL('../extension/',import.meta.url))){const src=new URL('../extension/'+n,import.meta.url);if(/\.(js|html|css)$/.test(n)&&fs.statSync(src).isFile())fs.writeFileSync(path.join(ext,n),fs.readFileSync(src,'utf8').replaceAll('http://127.0.0.1:17381','http://127.0.0.1:17481'));}
+ const pageActionPath=path.join(ext,'page.js');
+ let pageActionSource=fs.readFileSync(pageActionPath,'utf8');
+ const operationStartMarker='      await sleep(0);\\n      checkOperationCancelled();';
+ const operationStartHook=`      if (name === 'browser_click' && document.documentElement.dataset.r4HoldBeforeEffect === 'true') {
+        await new Promise(resolve => {
+          const timer=setInterval(() => {
+            if (trackedOperation?.cancelRequested === true ||
+                document.documentElement.dataset.r4ReleaseBeforeEffect === 'true') {
+              clearInterval(timer);
+              resolve();
+            }
+          },10);
+        });
+      } else {
+        await sleep(0);
+      }
+      checkOperationCancelled();`;
+ assert.equal(pageActionSource.split(operationStartMarker).length-1,1,'COOPERATIVE_REVOKE_HOOK_MARKER');
+ pageActionSource=pageActionSource.replace(operationStartMarker,operationStartHook);
+ fs.writeFileSync(pageActionPath,pageActionSource);
  const extensionId=[...crypto.createHash('sha256').update(path.resolve(ext)).digest('hex').slice(0,32)].map(c=>'abcdefghijklmnop'[parseInt(c,16)]).join('');
  const browserToken=crypto.randomBytes(32).toString('hex'),agentToken=crypto.randomBytes(32).toString('hex');
  fs.writeFileSync(path.join(ext,'manifest.json'),JSON.stringify({manifest_version:3,name:'R4 Scenario A',version:'0.2.0',background:{service_worker:'background.js',type:'module'},action:{default_title:'R4 A'},permissions:['storage','scripting','tabs','offscreen','alarms'],host_permissions:['http://127.0.0.1:17481/*','https://claude.ai/*']}));
@@ -40,6 +60,7 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
  const tls=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(crt)},(req,res)=>{if(!/^\/chat\/[A-Za-z0-9_-]{8,128}$/.test(new URL(req.url,'https://claude.ai').pathname)){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/html'});res.end(html);});
  let chrome=null,worker=null,control=null,bridge=null,proxy=null,rpcId=0;
  const rpc=async(name,args={})=>{const r=await fetch('http://127.0.0.1:17481/mcp',{method:'POST',headers:{authorization:'Bearer '+agentToken,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method:'tools/call',params:{name,arguments:args}})});assert.equal(r.status,200);const d=await r.json();if(d.error)throw Error(d.error.message);const t=d.result?.content?.find(x=>x.type==='text')?.text;return t?JSON.parse(t):d.result;};
+ const rpcRaw=async(name,args={})=>{const r=await fetch('http://127.0.0.1:17481/mcp',{method:'POST',headers:{authorization:'Bearer '+agentToken,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method:'tools/call',params:{name,arguments:args}})});assert.equal(r.status,200);return r.json();};
  try{
   await new Promise((r,j)=>{tls.once('error',j);tls.listen(8443,'127.0.0.1',r);});
   proxy=http.createServer();
@@ -133,7 +154,40 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
   assert.equal(ui.grants.length,1);assert.ok(ui.grants[0].includes(String(tabs.b)));assert.equal(ui.pending,0);
   const pageState=await worker.eval('(async()=>{const out=await Promise.all(['+tabs.a+','+tabs.b+'].map(tabId=>chrome.scripting.executeScript({target:{tabId},func:()=>({draft:(document.querySelector("[contenteditable=true]")?.innerText||"").trim(),clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true"})})));return{a:out[0][0].result,b:out[1][0].result};})()');
   assert.equal(pageState.a.draft,'');assert.equal(pageState.a.clicked,false);assert.equal(pageState.b.draft,bArgs.message);assert.equal(pageState.b.clicked,false);
-  console.log('[R4 SCENARIO A PASS] A cancelled/B queued then PREPARED; trusted per-tab Revoke; B Grant retained; no Send clicks');
+
+  // End-to-end in-flight cancellation: the disposable copy pauses a browser_click
+  // after its durable INJECTING event and page registry registration, but before
+  // the first side-effect boundary. The real Control UI Revoke must cancel that
+  // exact operation/document, settle its journal terminal and leave clickCount 0.
+  await worker.eval('(async()=>{const out=await chrome.scripting.executeScript({target:{tabId:'+tabs.b+'},func:()=>{document.documentElement.dataset.r4HoldBeforeEffect="true";document.documentElement.dataset.r4ReleaseBeforeEffect="false";return true}});return out[0].result})()');
+  const heldClickPromise=rpcRaw('browser_click',{
+    tabId:tabs.b,selector:'button[data-testid="chat-input-send"]'
+  });
+  await until(()=>control.eval('(()=>{const rows=[...document.querySelectorAll("#backgroundApprovals .approval")];return rows.length===1&&rows[0].textContent.includes('+JSON.stringify(String(tabs.b))+')})()'),15000,'IN_FLIGHT_CLICK_APPROVAL');
+  const approveHeldClick='[...document.querySelectorAll("#backgroundApprovals .approval")].find(e=>e.textContent.includes('+JSON.stringify(String(tabs.b))+'))?.querySelector("button:not(.danger)")';
+  await clickTrusted(control,approveHeldClick);
+  const pageOperation=await until(()=>worker.eval('(async()=>{const out=await chrome.scripting.executeScript({target:{tabId:'+tabs.b+'},func:()=>({hold:document.documentElement.dataset.r4HoldBeforeEffect==="true",running:Object.values(globalThis.__chromeBridgeOperationRegistry||{}).some(item=>item?.state==="RUNNING"&&item?.cancelRequested===false)})});return out[0].result})()').then(v=>v.hold&&v.running?v:null),12000,'PAGE_OPERATION_BEFORE_EFFECT');
+  assert.ok(pageOperation.hold&&pageOperation.running);
+  const revokeBExpr='[...document.querySelectorAll("#backgroundGrantList .approval")].find(e=>e.textContent.includes('+JSON.stringify(String(tabs.b))+'))?.querySelector("button")';
+  await clickTrusted(control,revokeBExpr);
+  const grantsAfterBRevoke=await until(async()=>control.eval('JSON.stringify([...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>e.textContent))').then(v=>{
+    const rows=JSON.parse(v);return rows.some(row=>row.includes(String(tabs.b)))?null:rows;
+  }),12000,'B_IN_FLIGHT_REVOKED');
+  assert.equal(grantsAfterBRevoke.length,0,'both per-tab grants must now be revoked');
+  const heldClickResponse=await Promise.race([
+    heldClickPromise,
+    sleep(12000).then(()=>{throw Error('IN_FLIGHT_CLICK_DID_NOT_SETTLE_AFTER_REVOKE');})
+  ]);
+  assert.equal(heldClickResponse.result?.isError,true);
+  assert.equal(heldClickResponse.result?.dispatchState,'NOT_PERFORMED');
+  assert.equal(heldClickResponse.result?.content?.[0]?.text,'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT');
+  const postRevokeTab=await worker.eval('(async()=>{const [tab,all]=await Promise.all([chrome.tabs.get('+tabs.b+'),chrome.storage.local.get(null)]);const rows=Object.entries(all).filter(([key,value])=>key.startsWith("bridgeMutationOperation.v1.")&&key!=="bridgeMutationOperation.v1.index"&&value?.command==="browser_click");return{url:tab.url,clicked:(await chrome.scripting.executeScript({target:{tabId:'+tabs.b+'},func:()=>document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true"}))[0].result,quarantine:all.bridgeMutationQuarantinedTabs||[],records:rows.map(([key,value])=>({operationId:value.operationId,phase:value.events?.at(-1)?.phase,sideEffect:value.events?.at(-1)?.sideEffect,code:value.events?.at(-1)?.code}))}})()');
+  assert.equal(postRevokeTab.clicked,false,'Revoke before the side-effect boundary must not click Send');
+  assert.equal(postRevokeTab.quarantine.includes(tabs.b),false,'a proven cancellation must not quarantine the tab');
+  assert.ok(postRevokeTab.records.some(record=>record.phase==='CANCELLED_BEFORE_SIDE_EFFECT'&&record.code==='MUTATION_CANCELLED_BEFORE_SIDE_EFFECT'),
+    'the durable mutation journal must record the proven no-effect cancellation');
+  console.log('[R4 SCENARIO A PASS] pending Approval cancellation, queued MCP completion, and real Control Revoke of an injected mutation before its side-effect boundary');
+
  }finally{
   control?.close();worker?.close();
   if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
