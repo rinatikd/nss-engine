@@ -810,7 +810,14 @@ test('session_revoke tracks and clears only the global fence stores that accepte
     }});
     await prepareLab(c,76);
     const mutation=sendCoordinator(c,'dispatch',{command:providerPrepare(76)},'transport-host.html');
-    await entered;
+    const reachedPrepare=await Promise.race([
+      entered.then(()=>true),
+      delay(1200).then(()=>false)
+    ]);
+    assert.equal(reachedPrepare,true,
+      'provider_prepare preflight did not reach the held page action ('+failedStore+'); calls='+
+      JSON.stringify(c.calls)+'; session='+JSON.stringify(c.session)+'; localKeys='+
+      JSON.stringify(Object.keys(c.data)));
     const revoke=sendCoordinator(c,'dispatch',{command:{
       name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
       expires:Date.now()+90000,args:{}
