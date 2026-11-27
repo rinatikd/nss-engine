@@ -338,3 +338,62 @@ test('multiple unresolved journal operations on one tab stay non-reconcilable',a
   assert.equal(record.reasonCode,'MULTIPLE_UNRESOLVED_OPERATIONS');
   assert.equal(chromeApi.data.bridgeMutationQuarantinedTabs.includes(tabId),true);
 });
+
+test('replacement MV3 worker honors exact durable reconciliation audit and does not re-quarantine UNKNOWN history',async()=>{
+  const chromeApi=fixture();
+  const tabId=79007;
+  const operationId='operation_provider_reconciled_0007';
+  const requestId='r4request79007';
+  const documentId='document-provider-reconciled-79007';
+  const payloadHash='f'.repeat(64);
+  const preparedId='prepared_79007';
+  const store=journal(chromeApi,operationId);
+  const operation=await store.begin({
+    command:'provider_commit',tabId,origin:'https://claude.ai',
+    url:'https://claude.ai/chat/conversation_001',documentId,frameId:0,
+    conversationId:'conversation_001',requestId,taskId:'task_79007',
+    providerId:'claude',preparedId,payloadHash,epoch:1
+  });
+  await store.markInjecting(operation.operationId,{documentId,frameId:0});
+  await store.unknown(operation.operationId,{
+    code:'WORKER_RESTART_DURING_INJECTION',
+    sideEffect:'operation-result-unverified'
+  });
+
+  const audit={
+    schemaVersion:1,eventId:'reconcile-event-79007',
+    type:'OPERATOR_RECONCILE',tabId,quarantineToken:'reconciled-qtoken-79007',
+    operationId,requestId,command:'provider_commit',origin:'https://claude.ai',
+    conversationId:'conversation_001',
+    trustBoundary:'LOCAL_MACHINE_TRUSTED_CONTROL_UI',
+    evidence:{terminalState:'COMMIT_CLICK_ATTEMPTED',documentId,frameId:0},
+    backgroundGrantRevokedAndVerified:true,sessionAuthorizationAbsent:true,
+    confirmed:true,localGesture:true,reconciledAt:Date.now()
+  };
+  chromeApi.data.bridgeMutationQuarantineAudit=[audit];
+  chromeApi.session.bridgeMutationQuarantineAudit=[audit];
+
+  installBackgroundCoordinator(chromeApi);
+  const response=await send(chromeApi,'dispatch',{
+    command:{
+      name:'browser_click',expires:Date.now()+60000,
+      args:{tabId,selector:'button.confirm'}
+    }
+  },'transport-host.html');
+  assert.ok(response && response.error,
+    'the new mutation is denied because no per-tab Control Grant exists');
+  assert.notEqual(response.error,'TAB_MUTATION_QUARANTINED',
+    'a previously reconciled operation must not recreate its old quarantine');
+  assert.deepEqual(chromeApi.data.bridgeMutationQuarantinedTabs||[],[]);
+  assert.equal(chromeApi.data.bridgeMutationQuarantineRecords,undefined);
+  assert.equal(chromeApi.session.bridgeMutationQuarantinedTabs,undefined);
+  assert.equal(chromeApi.session.bridgeMutationQuarantineRecords,undefined);
+  assert.equal(chromeApi.calls.filter(call=>call[0]==='inject').length,0,
+    'the new operation must never reach page injection without a Grant');
+  const status=await send(chromeApi,'quarantine-status');
+  assert.equal(status.records.length,0);
+  const history=await store.list();
+  assert.deepEqual(history[0].events.map(event=>event.phase),
+    ['ACCEPTED','INJECTING','UNKNOWN'],
+    'audit acknowledgement must not rewrite or erase immutable UNKNOWN journal history');
+});
