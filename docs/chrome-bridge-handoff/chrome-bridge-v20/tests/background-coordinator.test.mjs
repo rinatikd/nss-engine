@@ -304,16 +304,33 @@ test('per-tab Revoke cancels a pending approval before draining the mutation lan
     [String(tabId)]:{origin:'https://claude.ai',expires:Date.now()+60000}
   };
   const listener=c.listeners.at(-1);
+  const mutationState={settled:false,value:null,error:null};
   const mutation=sendCoordinatorTo(c,listener,'dispatch',{
     command:providerPrepare(tabId)
-  },'transport-host.html');
+  },'transport-host.html').then(value=>{
+    mutationState.settled=true;mutationState.value=value;return value;
+  },error=>{
+    mutationState.settled=true;mutationState.error=error?.message||String(error);throw error;
+  });
 
   let pending=[];
-  for(let i=0;i<30;i++){
+  for(let i=0;i<250;i++){
     const state=await sendCoordinatorTo(c,listener,'approval-list');
     pending=state?.pending||[];
-    if(pending.some(item=>item.tabId===tabId))break;
-    await delay(5);
+    if(pending.some(item=>item.tabId===tabId)||mutationState.settled)break;
+    await delay(10);
+  }
+  if(!pending.some(item=>item.tabId===tabId)){
+    // Close the lane before failing so a missing Approval cannot leave an
+    // unresolved test Promise that cancels every later node:test case.
+    const earlyRevoke=await sendCoordinatorTo(c,listener,'revoke-background-control',{tabId});
+    const earlyResult=await Promise.race([
+      mutation.then(value=>({value}),error=>({error:error?.message||String(error)})),
+      delay(6000).then(()=>({timeout:true}))
+    ]);
+    assert.fail('provider_prepare did not reach explicit Approval; mutation='+
+      JSON.stringify(mutationState)+'; revoke='+JSON.stringify(earlyRevoke)+
+      '; settledAfterRevoke='+JSON.stringify(earlyResult));
   }
   assert.equal(pending.filter(item=>item.tabId===tabId).length,1,
     'provider_prepare must be waiting for explicit approval');
