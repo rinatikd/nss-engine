@@ -1565,6 +1565,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             const recovered=globalRevocationFence.existing===true;
             const affectedTabs=Array.isArray(globalRevocationFence.record?.affectedTabs)
               ? globalRevocationFence.record.affectedTabs : [];
+            let recoveredQuarantinedTabs=[];
             if (recovered && affectedTabs.length) {
               const quarantine=await persistMutationQuarantine(chromeApi,affectedTabs,
                 globalRevocationFence.record?.operations);
@@ -1573,6 +1574,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                 error.quarantinedTabs=affectedTabs;
                 throw error;
               }
+              recoveredQuarantinedTabs=quarantine.quarantinedTabs||[];
             }
             await cancelActiveMutationOperations(chromeApi);
             const drained=await drainMutationLanes(chromeApi);
@@ -1614,9 +1616,9 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             // A prior worker's operation is still UNKNOWN. Keep the global
             // admission fence until every affected tab has independently
             // supplied terminal page-action evidence to operator reconciliation.
-            if (recovered && affectedTabs.length) {
+            if (recoveredQuarantinedTabs.length) {
               const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
-              error.quarantinedTabs=affectedTabs;
+              error.quarantinedTabs=recoveredQuarantinedTabs;
               throw error;
             }
             const fenceCleared=await enqueueRevocationFence(
@@ -1823,6 +1825,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         }
         const recovered=fence.existing===true;
         const affectedTabs=Array.isArray(fence.record?.affectedTabs)?fence.record.affectedTabs:[];
+        let recoveredQuarantinedTabs=[];
         if (recovered && affectedTabs.length) {
           const quarantine=await persistMutationQuarantine(chromeApi,affectedTabs,fence.record?.operations);
           if (!quarantine.persisted) {
@@ -1830,6 +1833,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             error.quarantinedTabs=affectedTabs;
             throw error;
           }
+          recoveredQuarantinedTabs=quarantine.quarantinedTabs||[];
         }
         let cleanupError=null;
         await cancelActiveMutationOperations(chromeApi);
@@ -1872,9 +1876,9 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         // A prior worker's accepted operation remains UNKNOWN. Keep the
         // global admission fence until operator reconciliation has verified
         // terminal evidence for every affected tab.
-        if (recovered && affectedTabs.length) {
+        if (recoveredQuarantinedTabs.length) {
           const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
-          error.quarantinedTabs=affectedTabs;
+          error.quarantinedTabs=recoveredQuarantinedTabs;
           throw error;
         }
         const cleared=await enqueueRevocationFence(
