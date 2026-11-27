@@ -217,15 +217,14 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // settles in this disposable MV3 harness. Resolve the tab by exact URL
     // using the callback form of tabs.query, then probe its document.
     const providerUrl='https://claude.ai/chat/r4mutationcancel01';
-    const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
-    assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
-    console.log('[R4 MUTATION CANCEL STEP] created provider fixture target');
-    const tab=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.query({},tabs=>'+
-      'resolve((tabs||[]).find(t=>t.url==='+JSON.stringify(providerUrl)+')||null)))())'),
-      15000,'PROVIDER_TAB_ID');
-    assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_ID_MISSING');
+    // Use the callback API for tabs.create. The MV3 fixture deliberately
+    // avoids depending on Promise wrappers for chrome.tabs methods inside
+    // Runtime.evaluate; the callback returns the authoritative tabId.
+    const tab=await harness.eval('(async()=>new Promise(resolve=>chrome.tabs.create({url:'+
+      JSON.stringify(providerUrl)+',active:true},created=>resolve(created||null)))())');
+    assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_CREATE_FAILED');
     const tabId=tab.id;
-    console.log('[R4 MUTATION CANCEL STEP] provider tab id resolved');
+    console.log('[R4 MUTATION CANCEL STEP] provider fixture tab created id='+tabId);
     const pageInfo=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.get('+tabId+',t=>{'+
       'if(chrome.runtime.lastError||t?.status!=="complete"){resolve(null);return;}'+
       'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,'+
