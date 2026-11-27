@@ -247,7 +247,8 @@ async function enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,reco
   try {
     snapshot=await readGlobalRevocationFence(chromeApi);
   } catch {
-    mutationQuarantinePersistenceFailed=true;
+    // The global fence remains untouched. The per-tab quarantine is still
+    // independently persisted with its complete journal identity below.
     return false;
   }
   const record=snapshot.record;
@@ -402,8 +403,11 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
     recoveredByTab.set(item.tabId,rows);
   }
 
-  if (!await enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,recoveredByTab))
-    return {persisted:false,store:null};
+  // Fence metadata enrichment is best-effort; never let it suppress the
+  // mandatory exact-operation quarantine record. If a fence conflict or
+  // partial-write rollback cannot be resolved, the pending global fence and
+  // optional global quarantine lock continue to fail closed.
+  await enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,recoveredByTab);
 
   const records={};
   for (const tabId of tabIds) {
@@ -881,12 +885,15 @@ async function reconcileQuarantinedTab(chromeApi, {
       if (!Array.isArray(operations))
         throw coordinatorError('GLOBAL_FENCE_OPERATIONS_UNAVAILABLE','BLOCKED');
       const operation=operations.find(item=>item?.tabId===tabId);
-      if (!operation || operation.operationId!==record.operationId ||
+      if (!operation ||
+          (operation.operationId!==undefined && operation.operationId!==record.operationId) ||
           operation.requestId!==record.requestId ||
           operation.command!==record.command || operation.origin!==record.origin ||
           operation.conversationId!==record.conversationId ||
-          operation.documentId!==record.documentId || operation.frameId!==record.frameId ||
-          (Number.isFinite(record.startedAt) && operation.startedAt!==record.startedAt) ||
+          (operation.documentId!==undefined && operation.documentId!==record.documentId) ||
+          (operation.frameId!==undefined && operation.frameId!==record.frameId) ||
+          (Number.isFinite(record.startedAt) && Number.isFinite(operation.startedAt) &&
+            operation.startedAt!==record.startedAt) ||
           (record.taskId && operation.taskId!==record.taskId) ||
           (record.providerId && operation.providerId!==record.providerId) ||
           (Number.isSafeInteger(record.epoch) && operation.epoch!==record.epoch) ||
@@ -1515,6 +1522,12 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                 controlClearRequested=false;
             }
             if (!drained.drained) {
+              if (drained.quarantinePersisted!==true) {
+                await persistGlobalQuarantineLock(chromeApi);
+                const error=coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE','UNKNOWN');
+                error.quarantinedTabs=drained.tabIds;
+                throw error;
+              }
               const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
               error.quarantinedTabs=drained.tabIds;
               throw error;
@@ -1760,6 +1773,12 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             controlClearRequested=false;
         }
         if (!drained.drained) {
+          if (drained.quarantinePersisted!==true) {
+            await persistGlobalQuarantineLock(chromeApi);
+            const error=coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE','UNKNOWN');
+            error.quarantinedTabs=drained.tabIds;
+            throw error;
+          }
           const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
           error.quarantinedTabs=drained.tabIds;
           throw error;
