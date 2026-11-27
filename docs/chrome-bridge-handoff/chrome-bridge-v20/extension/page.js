@@ -127,7 +127,8 @@ export async function pageAction(name, args, expectedOrigin) {
       const e = single(args.selector);
       verifyExpect(e, args.expect);
       if (e.closest('input[type=file],input[type=password]')) throw Error('Sensitive input blocked');
-      mutationSideEffectStarted = true;
+      await cancellationCheckpoint();
+      markSideEffectStarted();
       e.click();
       return { clicked: true };
     }
@@ -144,7 +145,8 @@ export async function pageAction(name, args, expectedOrigin) {
       if (!isTA && !isInput && !isEditable) throw Error('Expected text input, textarea or contenteditable');
       if (isInput && !['text', 'search', 'email', 'url', 'tel'].includes(e.type)) throw Error('Sensitive or unsupported input type');
       if (/password|passwd|secret|token|credit|cardnumber|cc-number|one-time-code|cvv|cvc/i.test([e.name, e.id, e.autocomplete].join(' '))) throw Error('Sensitive field blocked');
-      mutationSideEffectStarted = true;
+      await cancellationCheckpoint();
+      markSideEffectStarted();
       e.focus();
       if (isEditable) {
         const selection = window.getSelection();
@@ -286,6 +288,8 @@ export async function pageAction(name, args, expectedOrigin) {
       if (textOf(composer)) throw Error('Existing draft: refusing to overwrite');
       if (qa(A.stop).some(vis)) throw Error('Agent is still generating');
       const baseline = replies().length;
+      await cancellationCheckpoint();
+      currentOperationRollback(composer,args.message);
       composer.focus();
       providerPrepareMutationStarted = true;
       if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
@@ -305,9 +309,11 @@ export async function pageAction(name, args, expectedOrigin) {
           composer.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
         } catch { /* fall back to insertText */ }
         await sleep(150);
+        await cancellationCheckpoint();
         if (!textOf(composer)) document.execCommand('insertText', false, args.message);
       }
       await sleep(300);
+      await cancellationCheckpoint();
       if (textOf(composer) !== args.message.trim()) throw Error('PROVIDER_PREPARE_TEXT_MISMATCH');
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(textOf(composer)));
       const actualHash = [...new Uint8Array(digest)].map(x => x.toString(16).padStart(2, '0')).join('');
@@ -344,6 +350,7 @@ export async function pageAction(name, args, expectedOrigin) {
           sideEffect: cleared ? 'composer-cleared' : 'composer-draft-may-remain'
         };
       }
+      await cancellationCheckpoint();
       control();
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) {
         throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_PREPARE');
@@ -385,9 +392,10 @@ export async function pageAction(name, args, expectedOrigin) {
         throw Error('PROVIDER_CONVERSATION_CHANGED_BEFORE_COMMIT');
       }
       // Consume the page-side prepare receipt before the irreversible click.
+      await cancellationCheckpoint();
       delete window.__chromeBridgePreparedDraft;
       providerCommitClickStarted = true;
-      mutationSideEffectStarted = true;
+      markSideEffectStarted();
       sendButtons[0].click();
       const clickedAt = new Date().toISOString();
       await sleep(1200);
@@ -406,6 +414,8 @@ export async function pageAction(name, args, expectedOrigin) {
       if (qa(A.stop).some(vis)) throw Error('Agent is still generating');
       const baseline = replies().length;
       const text = args.text;
+      await cancellationCheckpoint();
+      currentOperationRollback(composer,text);
       composer.focus();
       agentSendDraftMutationStarted = true;
       if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
@@ -425,9 +435,11 @@ export async function pageAction(name, args, expectedOrigin) {
           composer.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
         } catch { /* перейдём к insertText */ }
         await sleep(150);
+        await cancellationCheckpoint();
         if (!textOf(composer)) document.execCommand('insertText', false, text);
       }
       await sleep(300);
+      await cancellationCheckpoint();
       if (textOf(composer) !== text.trim()) throw Error('Prompt text verification failed');
       let btn = null;
       for (let i = 0; i < 40; i++) {
@@ -438,11 +450,13 @@ export async function pageAction(name, args, expectedOrigin) {
           btn = matches[0]; break;
         }
         await sleep(200);
+        await cancellationCheckpoint();
       }
       if (!btn) throw Error('Unique enabled send button required');
+      await cancellationCheckpoint();
       control();
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) throw Error('Conversation changed before dispatch; do not retry automatically');
-      mutationSideEffectStarted = true;
+      markSideEffectStarted();
       btn.click();
       await sleep(1200);
       const confirmed = qa(A.stop).some(vis) || replies().length > baseline;
