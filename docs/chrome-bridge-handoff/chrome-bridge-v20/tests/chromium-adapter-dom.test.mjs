@@ -54,8 +54,8 @@ const app = `<!doctype html><html><head><meta charset="utf-8"></head><body>
         dynamicSendAfterInput:drafted.send.matched===1 && drafted.send.visible===1,
         exactlyOneButton:drafted.diagnostics.sendCandidates.sendClass.matched===1,
         unverifiedLocalConversation:context.verified===false,
-        sendBlockedWithoutVerifiedConversation:/Conversation changed or has no verified provider identifier/.test(mutation.error||''),
-        noControlOnSyntheticOrigin:/Control denied: local re-grant required/.test(controlProbe.error||''),
+        noAgentSendOnSyntheticOrigin:/Control denied: local re-grant required/.test(mutation.error||''),
+        noBrowserControlOnSyntheticOrigin:/Control denied: local re-grant required/.test(controlProbe.error||''),
         draftUnchanged:composer.textContent==='Synthetic unsent draft'
       };
       result.textContent=JSON.stringify(tests);
