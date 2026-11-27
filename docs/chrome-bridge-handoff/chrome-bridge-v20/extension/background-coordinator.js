@@ -782,9 +782,11 @@ async function reconcileQuarantinedTab(chromeApi, {
       if (!Array.isArray(operations))
         throw coordinatorError('GLOBAL_FENCE_OPERATIONS_UNAVAILABLE','BLOCKED');
       const operation=operations.find(item=>item?.tabId===tabId);
-      if (!operation || operation.requestId!==record.requestId ||
+      if (!operation || operation.operationId!==record.operationId ||
+          operation.requestId!==record.requestId ||
           operation.command!==record.command || operation.origin!==record.origin ||
           operation.conversationId!==record.conversationId ||
+          operation.documentId!==record.documentId || operation.frameId!==record.frameId ||
           (Number.isFinite(record.startedAt) && operation.startedAt!==record.startedAt) ||
           (record.taskId && operation.taskId!==record.taskId) ||
           (record.providerId && operation.providerId!==record.providerId) ||
