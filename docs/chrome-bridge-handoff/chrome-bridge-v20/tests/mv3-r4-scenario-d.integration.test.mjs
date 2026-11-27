@@ -69,7 +69,7 @@ async function clickTrusted(cdp,expr){
  if(!p.insideViewport||!p.hitMatches)throw Error('CDP_CLICK_TARGET_NOT_HIT '+JSON.stringify(p));
  for(const type of ['mouseMoved','mousePressed','mouseReleased'])await cdp.call('Input.dispatchMouseEvent',{type,x:p.x,y:p.y,button:'left',clickCount:1});
 }
-test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined after MV3/Bridge restart',{timeout:300000},async()=>{
+test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined after MV3/Bridge restart',{timeout:360000},async()=>{
  const browser=process.env.CHROME_BIN;assert.ok(browser&&fs.existsSync(browser),'CHROME_FOR_TESTING_REQUIRED');
  const xvfb=spawnSync('which',['xvfb-run'],{encoding:'utf8'});assert.equal(xvfb.status,0,'XVFB_REQUIRED');
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bridge-r4-d-')),ext=path.join(dir,'extension'),profile=path.join(dir,'profile'),state=path.join(dir,'state');
@@ -106,9 +106,20 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  const key=path.join(dir,'key.pem'),crt=path.join(dir,'cert.pem');
  const cert=spawnSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',key,'-out',crt,'-days','1','-subj','/CN=claude.ai','-addext','subjectAltName=DNS:claude.ai'],{encoding:'utf8'});assert.equal(cert.status,0,'TLS_FIXTURE_CERT_FAILED');
  const html='<!doctype html><html><body><div class="font-claude-response">Fixture baseline</div><div contenteditable="true" class="ProseMirror" role="textbox" style="min-height:42px;min-width:240px;border:1px solid #777"></div><button type="button" data-testid="chat-input-send">Send</button><script>document.querySelector("button").addEventListener("click",e=>{e.currentTarget.dataset.clicked="true";e.currentTarget.dataset.clickCount=String(Number(e.currentTarget.dataset.clickCount||"0")+1)})</script></body></html>';
+ const sockets=new Set();
+ const trackSocket=socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));return socket;};
  const tls=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(crt)},(req,res)=>{if(!/^\/chat\/[A-Za-z0-9_-]{8,128}$/.test(new URL(req.url,'https://claude.ai').pathname)){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/html'});res.end(html);});
+ tls.on('connection',socket=>trackSocket(socket));
  let chrome=null,worker=null,control=null,pageA=null,pageB=null,bridge=null,proxy=null,rpcId=0;
- const rpc=async(name,args={})=>{const r=await fetch('http://127.0.0.1:17481/mcp',{method:'POST',headers:{authorization:'Bearer '+agentToken,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method:'tools/call',params:{name,arguments:args}})});assert.equal(r.status,200);const d=await r.json();if(d.error)throw Error(d.error.message);const t=d.result?.content?.find(x=>x.type==='text')?.text;return t?JSON.parse(t):d.result;};
+ const watchdog=setTimeout(()=>{
+  console.error('[R4 D WATCHDOG] force-closing disposable Chrome and fixture sockets');
+  for(const socket of sockets)socket.destroy();
+  try{bridge?.closeAllConnections?.();}catch{}
+  try{tls.closeAllConnections?.();}catch{}
+  try{proxy?.closeAllConnections?.();}catch{}
+  if(chrome&&chrome.exitCode===null){try{process.kill(-chrome.pid,'SIGKILL');}catch{try{chrome.kill('SIGKILL');}catch{}}}
+ },360000);
+ const rpc=async(name,args={})=>{const r=await boundedFetch('http://127.0.0.1:17481/mcp',{method:'POST',headers:{authorization:'Bearer '+agentToken,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method:'tools/call',params:{name,arguments:args}})},12000);assert.equal(r.status,200);const d=await r.json();if(d.error)throw Error(d.error.message);const t=d.result?.content?.find(x=>x.type==='text')?.text;return t?JSON.parse(t):d.result;};
  try{
   await new Promise((r,j)=>{tls.once('error',j);tls.listen(8443,'127.0.0.1',r);});
   proxy=http.createServer();
@@ -131,7 +142,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   await new Promise((r,j)=>{bridge.once('error',j);bridge.listen(17481,'127.0.0.1',r);});
   chrome=spawn(xvfb.stdout.trim(),['-a',browser,'--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-first-run','--no-default-browser-check','--disable-background-networking','--ignore-certificate-errors','--proxy-server=http://127.0.0.1:'+proxyPort,'--remote-allow-origins=*','--user-data-dir='+profile,'--load-extension='+ext,'--disable-extensions-except='+ext,'--remote-debugging-port=0','about:blank'],{stdio:'ignore',detached:true});
   const port=await until(()=>{const p=path.join(profile,'DevToolsActivePort');return fs.existsSync(p)?Number(fs.readFileSync(p,'utf8').split(/\r?\n/)[0]):0;},15000,'DEBUG_PORT');
-  const targets=async()=>(await(await fetch('http://127.0.0.1:'+port+'/json/list')).json());
+  const targets=async()=>(await(await boundedFetch('http://127.0.0.1:'+port+'/json/list',{},6000)).json());
   const w=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),15000,'WORKER');
   worker=await Cdp.connect(w.webSocketDebuggerUrl);await worker.call('Runtime.enable');
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'WORKER_API');
