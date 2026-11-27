@@ -256,13 +256,13 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // completion inside Runtime.evaluate. Poll a plain result object through
     // separate CDP evaluations so a pending Chrome callback cannot strand
     // the Node test runner's top-level await.
-    diagnosticPhase='provider tabs.get dispatch';
-    await harness.eval('globalThis.__r4ProviderPageProbe={phase:"tabs_get_dispatched",tabsGetCalls:1,tabsGetCallback:false,executeCalls:0,executeCallback:false,lastError:null,result:null};'+
+    diagnosticPhase='provider tabs.query dispatch';
+    await harness.eval('globalThis.__r4ProviderPageProbe={phase:"tabs_query_dispatched",tabsQueryCalls:1,tabsQueryCallback:false,executeCalls:0,executeCallback:false,lastError:null,result:null};'+
       'chrome.tabs.query({},tabs=>{'+
       'const tabError=chrome.runtime.lastError;'+
-      'globalThis.__r4ProviderPageProbe.tabsGetCallback=true;'+
+      'globalThis.__r4ProviderPageProbe.tabsQueryCallback=true;'+
       'if(tabError){globalThis.__r4ProviderPageProbe.lastError=tabError.message;globalThis.__r4ProviderPageProbe.phase="tabs_query_error";return;}'+
-      'const t=tabs.find(item=>item.id===${tabId});'+
+      'const t=tabs.find(item=>item.id==='+tabId+');'+
       'if(!t){globalThis.__r4ProviderPageProbe.phase="tab_missing";return;}'+
       'if(t.status!=="complete"){globalThis.__r4ProviderPageProbe.phase="tab_not_complete:"+String(t.status);return;}'+
       'globalThis.__r4ProviderPageProbe.phase="execute_dispatched";globalThis.__r4ProviderPageProbe.executeCalls++;'+
