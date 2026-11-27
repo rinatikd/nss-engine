@@ -206,7 +206,7 @@ This closes the policy decision previously listed as an open release gate. It do
 - replay, stale tokens, changed document identity, partial store writes, and cross-tab reconciliation cannot clear a newer or unrelated quarantine.
 
 
-New reconciliation audit records explicitly include the `trustBoundary` field with the value `LOCAL_MACHINE_TRUSTED_CONTROL_UI`. A tab with more than one unresolved operation is deliberately non-reconcilable through the single-operation UI flow; it remains quarantined pending separate review.
+New reconciliation audit records explicitly include the `trustBoundary` field with the value `LOCAL_MACHINE_TRUSTED_CONTROL_UI`. A tab with more than one unresolved operation is deliberately non-reconcilable through the single-operation UI flow; it remains quarantined pending separate review. A subsequent MV3 worker recovery consults the durable audit and will not recreate quarantine for the same operation only when the audit matches the exact `operationId`, request/command/provider conversation identity, original `documentId` and main-frame identity. The append-only operation journal remains `UNKNOWN`; reconciliation never rewrites its delivery outcome.
 
 ### Accepted limitation
 
