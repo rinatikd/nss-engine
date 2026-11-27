@@ -54,6 +54,7 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
   await until(()=>control.eval('document.readyState==="complete"&&!!document.querySelector("#backgroundGrantAll")'),12000,'CONTROL_READY');
   await control.eval('window.confirm=()=>true');
   await until(async()=>(await rpc('browser_status')).connected===true,20000,'CONNECTED');
+  await until(()=>control.eval('document.querySelector("#status").textContent.includes("Подключено")'),10000,'CONTROL_CONNECTED');
   await until(()=>control.eval('document.querySelector("#mutationLab").checked===true'),8000,'LAB_ON');
   await clickTrusted(control,'document.querySelector("#backgroundGrantAll")');
   await until(()=>control.eval('document.querySelectorAll("#backgroundGrantList .approval").length===2'),12000,'GRANTS');
