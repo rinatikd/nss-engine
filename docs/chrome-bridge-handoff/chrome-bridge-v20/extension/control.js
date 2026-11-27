@@ -516,7 +516,15 @@ $('backgroundRevokeAll').onclick=async event=>{
     await refreshBackgroundGrantList();
     $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
   } catch(e) {
-    $('backgroundGrantStatus').textContent='Ошибка отключения: '+e.message;
+    const errorMessage='Ошибка отключения: '+e.message;
+    // Even an UNKNOWN drain outcome has already fenced mutation admission,
+    // cancelled pending approvals and attempted to clear every Grant.
+    // Refresh both visible lists so stale Approve/Grant rows cannot remain
+    // actionable-looking after an uncertain global Revoke.
+    await showBackgroundApprovals();
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
+    await refreshBackgroundGrantList();
+    $('backgroundGrantStatus').textContent=errorMessage;
   }
 };
 let backgroundTimer = null;
