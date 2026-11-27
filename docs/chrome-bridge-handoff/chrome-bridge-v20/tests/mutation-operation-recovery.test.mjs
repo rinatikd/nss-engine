@@ -300,3 +300,42 @@ test('replacement MV3 worker rehydrates provider quarantine with the original do
   assert.equal(chromeApi.data.bridgeMutationQuarantineAudit.at(-1).trustBoundary,
     'LOCAL_MACHINE_TRUSTED_CONTROL_UI');
 });
+
+test('multiple unresolved journal operations on one tab stay non-reconcilable',async()=>{
+  const tabId=79006;
+  const documentId='document-provider-multiple-79006';
+  const storeA=journal(fixture(),'operation_provider_multiple_0006a');
+  // Both journals share one Chrome storage area in the test fixture.
+  const chromeApi=fixture();
+  const firstStore=journal(chromeApi,'operation_provider_multiple_0006a');
+  const secondStore=journal(chromeApi,'operation_provider_multiple_0006b');
+  const base={
+    command:'provider_commit',tabId,origin:'https://claude.ai',
+    url:'https://claude.ai/chat/conversation_001',documentId,frameId:0,
+    conversationId:'conversation_001',providerId:'claude',epoch:1
+  };
+  const first=await firstStore.begin({
+    ...base,requestId:'r4request79006a',taskId:'task_79006a',
+    preparedId:'prepared_79006a',payloadHash:'b'.repeat(64)
+  });
+  await firstStore.markInjecting(first.operationId,{documentId,frameId:0});
+  const second=await secondStore.begin({
+    ...base,requestId:'r4request79006b',taskId:'task_79006b',
+    preparedId:'prepared_79006b',payloadHash:'c'.repeat(64)
+  });
+  await secondStore.markInjecting(second.operationId,{documentId,frameId:0});
+
+  installBackgroundCoordinator(chromeApi);
+  let status=null;
+  for(let attempt=0;attempt<100;attempt++){
+    status=await send(chromeApi,'quarantine-status');
+    if(status?.records?.some(item=>item.tabId===tabId))break;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  assert.equal(status.available,true);
+  const record=status.records.find(item=>item.tabId===tabId);
+  assert.ok(record);
+  assert.equal(record.reconcilable,false);
+  assert.equal(record.reasonCode,'MULTIPLE_UNRESOLVED_OPERATIONS');
+  assert.equal(chromeApi.data.bridgeMutationQuarantinedTabs.includes(tabId),true);
+});
