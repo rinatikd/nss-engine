@@ -211,12 +211,26 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     await until(()=>harness.eval('typeof globalThis.__r4PageAction==="function"'),10000,'PAGE_ACTION_EXPORT');
     console.log('[R4 MUTATION CANCEL STEP] extension harness ready');
 
-    const tab=await harness.eval('(async()=>chrome.tabs.create({url:"https://claude.ai/chat/r4mutationcancel01",active:true}))()');
+    // Create the provider tab through the browser-level CDP session rather
+    // than awaiting chrome.tabs.create() from an extension page. The latter
+    // can leave Runtime.evaluate awaiting a Chrome API promise that never
+    // settles in this disposable MV3 harness. Resolve the tab by exact URL
+    // using the callback form of tabs.query, then probe its document.
+    const providerUrl='https://claude.ai/chat/r4mutationcancel01';
+    const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
+    assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
+    console.log('[R4 MUTATION CANCEL STEP] created provider fixture target');
+    const tab=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.query({url:'+JSON.stringify(providerUrl)+'},tabs=>resolve(tabs[0]||null)))())'),
+      15000,'PROVIDER_TAB_ID');
+    assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_ID_MISSING');
     const tabId=tab.id;
-    const pageInfo=await until(()=>harness.eval('(async()=>{const t=await chrome.tabs.get('+tabId+');'+
-      'if(t.status!=="complete")return null;const r=await chrome.scripting.executeScript({target:{tabId:'+tabId+'},'+
-      'func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})});'+
-      'return r?.[0]?.documentId?{documentId:r[0].documentId,result:r[0].result}:null})()'),
+    console.log('[R4 MUTATION CANCEL STEP] provider tab id resolved');
+    const pageInfo=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.get('+tabId+',t=>{'+
+      'if(chrome.runtime.lastError||t?.status!=="complete"){resolve(null);return;}'+
+      'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,'+
+      'clicks:document.querySelector("#r4Action")?.dataset.clickCount})},r=>{'+
+      'if(chrome.runtime.lastError||!r?.[0]?.documentId){resolve(null);return;}'+
+      'resolve({documentId:r[0].documentId,result:r[0].result});});}))())'),
       20000,'PROVIDER_PAGE_READY');
     console.log('[R4 MUTATION CANCEL STEP] provider fixture page ready');
     assert.equal(pageInfo.result.origin,'https://claude.ai');
