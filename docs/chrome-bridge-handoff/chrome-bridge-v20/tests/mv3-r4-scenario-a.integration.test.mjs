@@ -52,6 +52,8 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
     });
     upstream.on('error',()=>client.destroy());
     client.on('error',()=>upstream.destroy());
+    client.on('close',()=>upstream.destroy());
+    upstream.on('close',()=>client.destroy());
   });
   await new Promise((r,j)=>{proxy.once('error',j);proxy.listen(0,'127.0.0.1',r);});
   const proxyPort=proxy.address().port;
