@@ -62,6 +62,11 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
         run: node --test tests/mv3-r4-scenario-b.integration.test.mjs
+      - name: Verify R4 Scenario C late-approval race is denied by the per-tab Revoke fence in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-r4-scenario-c.integration.test.mjs
       - name: Verify Gemini adapter DOM in real disposable Chromium
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/chromium-adapter-dom.test.mjs
