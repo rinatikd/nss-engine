@@ -155,6 +155,10 @@ test('R4 Scenario B: trusted global Revoke cancels A, blocks queued B and surviv
   const restarted=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),20000,'WORKER_AFTER_GLOBAL_REVOKE');
   worker=await Cdp.connect(restarted.webSocketDebuggerUrl);await worker.call('Runtime.enable');
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'RESTARTED_WORKER_API');
+  // Chrome may close extension-owned tabs while reloading an unpacked
+  // extension. Reopen a fresh Control page from the replacement worker
+  // instead of assuming the pre-reload page survives the extension reload.
+  await worker.eval('(async()=>chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true}))()');
   const controlTarget=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),15000,'CONTROL_AFTER_GLOBAL_REVOKE_RELOAD');
   control=await Cdp.connect(controlTarget.webSocketDebuggerUrl);await control.call('Runtime.enable');
   await until(()=>control.eval('document.readyState!=="loading"&&!!document.querySelector("#backgroundGrantList")'),12000,'CONTROL_AFTER_RELOAD_READY');
