@@ -1682,22 +1682,26 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({error:'CONTROL_PANEL_REQUIRED'}); return false;
       }
-      void readQuarantineStatus(chromeApi).then(respond,e=>respond({
-        available:false,error:/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message||'')
-          ? e.message : 'QUARANTINE_STATUS_UNAVAILABLE'
-      }));
+      void ensureMutationOperationRecovery(chromeApi)
+        .then(()=>readQuarantineStatus(chromeApi))
+        .then(respond,e=>respond({
+          available:false,error:/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message||'')
+            ? e.message : 'QUARANTINE_STATUS_UNAVAILABLE'
+        }));
       return true;
     }
     if (msg.type === 'reconcile-quarantine') {
       if (sender.url !== chromeApi.runtime.getURL('control.html')) {
         respond({ok:false,error:'CONTROL_PANEL_REQUIRED',outcome:'NOT_PERFORMED'}); return false;
       }
-      void reconcileQuarantinedTab(chromeApi,msg).then(respond,e=>respond({
-        ok:false,error:/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message||'')
-          ? e.message : 'QUARANTINE_RECONCILIATION_FAILED',
-        outcome:e?.dispatchState==='BLOCKED' ? 'NOT_PERFORMED' : 'UNKNOWN',
-        dispatchState:e?.dispatchState==='BLOCKED' ? 'BLOCKED' : 'UNKNOWN'
-      }));
+      void ensureMutationOperationRecovery(chromeApi)
+        .then(()=>reconcileQuarantinedTab(chromeApi,msg))
+        .then(respond,e=>respond({
+          ok:false,error:/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message||'')
+            ? e.message : 'QUARANTINE_RECONCILIATION_FAILED',
+          outcome:e?.dispatchState==='BLOCKED' ? 'NOT_PERFORMED' : 'UNKNOWN',
+          dispatchState:e?.dispatchState==='BLOCKED' ? 'BLOCKED' : 'UNKNOWN'
+        }));
       return true;
     }
     if (msg.type === 'clear-background-controls') {
