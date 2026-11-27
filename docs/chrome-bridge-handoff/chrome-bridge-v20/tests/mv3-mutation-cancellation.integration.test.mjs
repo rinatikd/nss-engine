@@ -168,7 +168,8 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     upstream.on('close',()=>client.destroy());
   });
   let chrome=null,harness=null,browserCdp=null;
-  let diagnosticPhase='setup';\n  const diagnosticKeepAlive=setTimeout(()=>console.error('[R4 MUTATION CANCEL DIAGNOSTIC] stalled phase='+diagnosticPhase),5000);
+  let diagnosticPhase='setup';
+  const diagnosticKeepAlive=setTimeout(()=>console.error('[R4 MUTATION CANCEL DIAGNOSTIC] stalled phase='+diagnosticPhase),5000);
   try{
     await new Promise((resolve,reject)=>{tls.once('error',reject);tls.listen(8443,'127.0.0.1',resolve);});
     await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve);});
@@ -230,14 +231,16 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // settles in this disposable MV3 harness. Resolve the tab by exact URL
     // using the callback form of tabs.query, then probe its document.
     const providerUrl='https://claude.ai/chat/r4mutationcancel01';
-    diagnosticPhase='provider Target.createTarget';\n    console.log('[R4 MUTATION CANCEL STEP] creating provider target');
+    diagnosticPhase='provider Target.createTarget';
+    console.log('[R4 MUTATION CANCEL STEP] creating provider target');
     // Create the provider target through browser CDP, then resolve its
     // Chrome tab ID through the extension API callback. Do not wait for
     // tabs.onCreated in an extension document: Chrome may deliver that event
     // only to the extension service worker in this disposable MV3 setup.
     const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
     assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
-    diagnosticPhase='provider tabs.query dispatch';\n    console.log('[R4 MUTATION CANCEL STEP] provider target created; querying tabs');
+    diagnosticPhase='provider tabs.query dispatch';
+    console.log('[R4 MUTATION CANCEL STEP] provider target created; querying tabs');
     await harness.eval('globalThis.__r4ProviderTab=null;chrome.tabs.query({},tabs=>{'+
       'if(chrome.runtime.lastError)return;'+
       'globalThis.__r4ProviderTab=tabs.find(t=>t.url==='+JSON.stringify(providerUrl)+
@@ -247,7 +250,8 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_CREATE_FAILED');
     const tabId=tab.id;
     console.log('[R4 MUTATION CANCEL STEP] provider fixture tab created id='+tabId);
-    diagnosticPhase='provider page readiness and documentId probe';\n    console.log('[R4 MUTATION CANCEL STEP] probing provider documentId');
+    diagnosticPhase='provider page readiness and documentId probe';
+    console.log('[R4 MUTATION CANCEL STEP] probing provider documentId');
     const pageInfo=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.get('+tabId+',t=>{'+
       'if(chrome.runtime.lastError||t?.status!=="complete"){resolve(null);return;}'+
       'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,'+
