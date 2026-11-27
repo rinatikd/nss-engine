@@ -38,7 +38,12 @@ test('R4 Scenario C: ten real MV3 late-approval races are fenced before Approval
  let pageActionSource=fs.readFileSync(pageActionPath,'utf8');
  const agentContextMarker='    if (name === \'agent_context\') return { verified: !!conversationId(), origin: location.origin, conversationId: conversationId() };';
  const agentContextHook=`    if (name === 'agent_context') {
-      if (document.documentElement.dataset.r4PauseAgentContext === 'true') {
+      const r4ContextCalls = Number(document.documentElement.dataset.r4AgentContextCallCount || '0') + 1;
+      document.documentElement.dataset.r4AgentContextCallCount = String(r4ContextCalls);
+      // MCP's server-side identity preflight is call 1. Pause call 2, which
+      // is the actual provider mutation dispatch preflight immediately before
+      // ApprovalSession registration.
+      if (document.documentElement.dataset.r4PauseAgentContext === 'true' && r4ContextCalls === 2) {
         document.documentElement.dataset.r4AgentContextEntered = 'true';
         await new Promise(resolve => {
           const timer = setInterval(() => {
@@ -115,11 +120,11 @@ test('R4 Scenario C: ten real MV3 late-approval races are fenced before Approval
   const attempts=10;
   for(let attempt=1;attempt<=attempts;attempt++){
     await grantTab(attempt);
-    await worker.eval('(async()=>chrome.scripting.executeScript({target:{tabId:'+tabs.a+'},func:()=>{document.documentElement.dataset.r4PauseAgentContext="true";document.documentElement.dataset.r4AgentContextEntered="false";document.documentElement.dataset.r4ReleaseAgentContext="false";return true}}))()');
+    await worker.eval('(async()=>chrome.scripting.executeScript({target:{tabId:'+tabs.a+'},func:()=>{document.documentElement.dataset.r4PauseAgentContext="true";document.documentElement.dataset.r4AgentContextCallCount="0";document.documentElement.dataset.r4AgentContextEntered="false";document.documentElement.dataset.r4ReleaseAgentContext="false";return true}}))()');
     const message='Late approval race must fail closed; iteration '+attempt;
     const args=make(attempt,message);
     const preparePromise=rpc('provider_prepare',args);
-    await until(async()=>worker.eval('(async()=>{const r=await chrome.scripting.executeScript({target:{tabId:'+tabs.a+'},func:()=>document.documentElement.dataset.r4AgentContextEntered==="true"});return r?.[0]?.result===true})()'),10000,'PREFLIGHT_PAUSED_'+attempt);
+    await until(async()=>worker.eval('(async()=>{const r=await chrome.scripting.executeScript({target:{tabId:'+tabs.a+'},func:()=>document.documentElement.dataset.r4AgentContextEntered==="true"&&document.documentElement.dataset.r4AgentContextCallCount==="2"});return r?.[0]?.result===true})()'),10000,'PREFLIGHT_PAUSED_'+attempt);
 
     await control.eval('window.__r4RevokeClickTrusted=null');
     const revokeExpr='[...document.querySelectorAll("#backgroundGrantList .approval")].find(e=>e.textContent.includes('+JSON.stringify(String(tabs.a))+'))?.querySelector("button")';
