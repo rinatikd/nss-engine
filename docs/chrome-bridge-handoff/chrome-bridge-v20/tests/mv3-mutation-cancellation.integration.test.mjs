@@ -258,9 +258,11 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // separate CDP evaluations so a pending Chrome callback cannot strand
     // the Node test runner's top-level await.
     diagnosticPhase='provider tabs.query dispatch';
-    await harness.eval('globalThis.__r4ProviderPageProbe={phase:"tabs_query_dispatched",tabsQueryCalls:0,tabsQueryCallback:false,executeCalls:0,executeCallback:false,lastError:null,result:null};'+
+    await harness.eval('globalThis.__r4ProviderPageProbe={phase:"tabs_query_dispatched",tabsQueryCalls:0,tabsQueryCallback:false,executeCalls:0,executeCallback:false,lastError:null,lastTab:null,result:null};'+
       'const probeTab=t=>{'+
+      'globalThis.__r4ProviderPageProbe.lastTab=t?{id:t.id,status:t.status,url:t.url,pendingUrl:t.pendingUrl}:null;'+
       'if(!t||t.id!=='+tabId+'||t.status!=="complete"||globalThis.__r4ProviderPageProbe.executeCalls>0)return;'+
+      'if(globalThis.__r4ProviderPoll){clearInterval(globalThis.__r4ProviderPoll);globalThis.__r4ProviderPoll=null;}'+
       'chrome.tabs.onUpdated.removeListener(onProviderUpdated);'+
       'globalThis.__r4ProviderPageProbe.phase="execute_dispatched";globalThis.__r4ProviderPageProbe.executeCalls++;'+
       'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})},r=>{'+
@@ -276,7 +278,9 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       'globalThis.__r4ProviderPageProbe.tabsQueryCallback=true;'+
       'globalThis.__r4ProviderPageProbe.tabsQueryCalls++;'+
       'if(tabError){globalThis.__r4ProviderPageProbe.lastError=tabError.message;globalThis.__r4ProviderPageProbe.phase="tabs_get_error";return;}'+
-      'probeTab(t);});true');;
+      'probeTab(t);'+
+      'if(globalThis.__r4ProviderPageProbe.executeCalls===0){globalThis.__r4ProviderPoll=setInterval(()=>chrome.tabs.get('+tabId+',current=>probeTab(current)),100);}'+
+      '});true');;
     diagnosticPhase='provider page readiness and documentId callback';
     let pageInfo;
     try {
