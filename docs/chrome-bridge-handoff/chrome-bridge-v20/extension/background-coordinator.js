@@ -371,90 +371,96 @@ async function enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,reco
 }
 
 async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=[]) {
-  for (const tabId of tabIds) mutationQuarantinedTabs.add(tabId);
   const now=Date.now();
-  const operationRows=[...(Array.isArray(recoveredOperations)?recoveredOperations:[])];
-
-  // A caller-triggered Revoke can arrive after the operation has written its
-  // document-bound journal entry but before the coordinator's in-memory lane
-  // context has learned that documentId. Rehydrate from the authoritative
-  // journal rather than persisting a weaker tab-only quarantine.
+  let journalRecords;
   try {
-    const journalRecords=await mutationOperationJournalFor(chromeApi).list();
-    for (const record of journalRecords) {
-      const terminal=record.events.at(-1);
-      const unresolved=terminal.phase==='INJECTING' || terminal.phase==='UNKNOWN' ||
-        (terminal.phase==='COMPLETED' &&
-          terminal.sideEffect==='composer-draft-state-unverified') ||
-        (terminal.phase==='COMPLETED' &&
-          ['browser_click','browser_fill'].includes(record.command) &&
-          terminal.sideEffect==='generic-page-action');
-      if (!unresolved || !tabIds.includes(record.tabId)) continue;
-      const injecting=record.events.find(event=>event.phase==='INJECTING') || null;
-      operationRows.push({
-        operationId:record.operationId,command:record.command,tabId:record.tabId,
-        origin:record.origin,documentId:record.documentId,frameId:record.frameId,
-        conversationId:record.conversationId,requestId:record.requestId,
-        taskId:record.taskId,providerId:record.providerId,
-        preparedId:record.preparedId,payloadHash:record.payloadHash,epoch:record.epoch,
-        startedAt:injecting?.at ?? null,
-        reasonCode:terminal.code || (terminal.phase==='INJECTING'
-          ? 'MUTATION_OPERATION_INJECTING'
-          : terminal.phase==='UNKNOWN'?'MUTATION_OPERATION_UNKNOWN'
-            :'MUTATION_SIDE_EFFECT_UNVERIFIED')
-      });
-    }
+    // list() verifies the global journal index and every immutable operation
+    // record. A read/verification failure is not evidence that an operation
+    // was safe; keep the global lock fail-closed instead.
+    journalRecords=await mutationOperationJournalFor(chromeApi).list();
   } catch {
-    // Quarantine must still be persisted when the journal cannot be read.
-    // In that case it remains non-reconcilable and therefore fail-closed.
+    mutationQuarantinePersistenceFailed=true;
+    return {persisted:false,store:null,quarantinedTabs:[]};
   }
 
-  const recoveredByTab=new Map();
-  const uniqueOperations=new Map();
-  for (const item of operationRows) {
+  const isUnresolved=record=>{
+    const terminal=record.events.at(-1);
+    return terminal.phase==='INJECTING' || terminal.phase==='UNKNOWN' ||
+      (terminal.phase==='COMPLETED' &&
+        terminal.sideEffect==='composer-draft-state-unverified') ||
+      (terminal.phase==='COMPLETED' &&
+        ['browser_click','browser_fill'].includes(record.command) &&
+        terminal.sideEffect==='generic-page-action');
+  };
+
+  // A prior-worker Global Revoke snapshot may contain only the volatile
+  // coordinator context. Resolve it against the verified WAL before deciding
+  // whether a tab needs quarantine. ACCEPTED/ABORTED_BEFORE_INJECTION and
+  // other proven terminal records do not represent an outstanding page side
+  // effect; an absent WAL record also proves no page action could have started,
+  // because the WAL begin is mandatory before injection.
+  for (const item of Array.isArray(recoveredOperations)?recoveredOperations:[]) {
     if (!item || !Number.isSafeInteger(item.tabId) || item.tabId<=0) continue;
-    const matchingKey=[...uniqueOperations.entries()].find(([,existing])=>
-      existing.tabId===item.tabId && existing.requestId===item.requestId &&
-      existing.command===item.command)?.[0];
-    if (typeof item.operationId==='string') {
-      // The global Revoke snapshot may carry a partial in-memory identity for
-      // the same request. Prefer the journal record with exact documentId and
-      // operationId, without collapsing two distinct journal operations.
-      if (matchingKey && matchingKey.startsWith('legacy:'))
-        uniqueOperations.delete(matchingKey);
-      uniqueOperations.set('operation:'+item.operationId,item);
-    } else if (!matchingKey) {
-      uniqueOperations.set('legacy:'+item.tabId+':'+String(item.requestId||'')+
-        ':'+String(item.command||''),item);
+    const matching=journalRecords.filter(record=>
+      record.tabId===item.tabId &&
+      ((typeof item.operationId==='string' && record.operationId===item.operationId) ||
+       (!item.operationId && typeof item.requestId==='string' &&
+        record.requestId===item.requestId && record.command===item.command)));
+    if (matching.length>1) {
+      mutationQuarantinePersistenceFailed=true;
+      return {persisted:false,store:null,quarantinedTabs:[]};
+    }
+    const row=matching[0];
+    if (row && (
+      (item.requestId && row.requestId!==item.requestId) ||
+      (item.command && row.command!==item.command) ||
+      (item.origin && row.origin!==item.origin) ||
+      (item.conversationId && row.conversationId!==item.conversationId) ||
+      (item.operationId && row.operationId!==item.operationId)
+    )) {
+      mutationQuarantinePersistenceFailed=true;
+      return {persisted:false,store:null,quarantinedTabs:[]};
     }
   }
-  for (const item of uniqueOperations.values()) {
-    const rows=recoveredByTab.get(item.tabId)||[];
+
+  const unresolvedRecords=journalRecords.filter(record=>
+    tabIds.includes(record.tabId) && isUnresolved(record)
+  );
+  const recoveredByTab=new Map();
+  for (const record of unresolvedRecords) {
+    const injecting=record.events.find(event=>event.phase==='INJECTING') || null;
+    const terminal=record.events.at(-1);
+    const item={
+      operationId:record.operationId,command:record.command,tabId:record.tabId,
+      origin:record.origin,urlSha256:record.urlSha256,
+      documentId:record.documentId,frameId:record.frameId,
+      conversationId:record.conversationId,requestId:record.requestId,
+      taskId:record.taskId,providerId:record.providerId,
+      preparedId:record.preparedId,payloadHash:record.payloadHash,epoch:record.epoch,
+      startedAt:injecting?.at ?? null,
+      reasonCode:terminal.code || (terminal.phase==='INJECTING'
+        ? 'MUTATION_OPERATION_INJECTING'
+        : terminal.phase==='UNKNOWN'?'MUTATION_OPERATION_UNKNOWN'
+          :'MUTATION_SIDE_EFFECT_UNVERIFIED')
+    };
+    const rows=recoveredByTab.get(record.tabId)||[];
     rows.push(item);
-    recoveredByTab.set(item.tabId,rows);
+    recoveredByTab.set(record.tabId,rows);
   }
 
-  // Fence metadata enrichment is best-effort; never let it suppress the
-  // mandatory exact-operation quarantine record. If a fence conflict or
-  // partial-write rollback cannot be resolved, the pending global fence and
-  // optional global quarantine lock continue to fail closed.
+  const quarantinedTabs=[...recoveredByTab.keys()];
+  if (!quarantinedTabs.length)
+    return {persisted:true,store:null,quarantinedTabs:[]};
+
+  // Only unresolved, verified WAL operations are quarantined. A single
+  // tab-level record cannot safely represent multiple unresolved operations.
+  for (const tabId of quarantinedTabs) mutationQuarantinedTabs.add(tabId);
   await enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,recoveredByTab);
 
   const records={};
-  for (const tabId of tabIds) {
+  for (const tabId of quarantinedTabs) {
     const rows=recoveredByTab.get(tabId)||[];
-    const liveContext=mutationContexts.get(tabId)||null;
-    const matching=liveContext?.requestId
-      ? rows.filter(item=>item.requestId===liveContext.requestId &&
-          item.command===liveContext.command)
-      : [];
-    const context=matching.length===1?matching[0]:
-      matching.length>1?null:
-      rows.length===1?rows[0]:
-      rows.length>1?null:liveContext;
-    // A single tab-level record cannot safely represent multiple unresolved
-    // operations. Keep it blocked rather than clearing the tab after proving
-    // only one of the outstanding operation identities.
+    const context=rows.length===1?rows[0]:null;
     const multipleUnresolved=rows.length>1;
     records[String(tabId)]={
       schemaVersion:1,tabId,token:crypto.randomUUID(),
@@ -496,10 +502,10 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
       if (!nextRecords[id]) nextRecords[id]=record;
     }
     await storage.set({
-      bridgeMutationQuarantinedTabs:[...new Set([...prior,...tabIds])],
+      bridgeMutationQuarantinedTabs:[...new Set([...prior,...quarantinedTabs])],
       bridgeMutationQuarantineRecords:nextRecords
     });
-    return {persisted:true,store};
+    return {persisted:true,store,quarantinedTabs};
   };
   try {
     return await writeTo(chromeApi.storage.local,'local');
@@ -510,8 +516,6 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
       return await writeTo(chromeApi.storage.session,'session');
     } catch {
       mutationQuarantinePersistenceFailed = true;
-      // Try to leave a durable global deny marker. If both stores are down,
-      // the current worker remains fail-closed but restart recovery is UNKNOWN.
       try {
         await chromeApi.storage.local.set({bridgeMutationQuarantineLock:true});
       } catch {
@@ -519,7 +523,7 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
           await chromeApi.storage.session.set({bridgeMutationQuarantineLock:true});
         } catch { /* no durable storage path remains */ }
       }
-      return {persisted:false,store:null};
+      return {persisted:false,store:null,quarantinedTabs};
     }
   }
 }
