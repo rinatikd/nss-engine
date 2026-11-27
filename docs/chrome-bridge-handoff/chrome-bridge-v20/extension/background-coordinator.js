@@ -370,7 +370,9 @@ async function enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,reco
   }
 }
 
-async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=[]) {
+async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=[], {
+  forceTabIds=[],forcedReasonCode='BACKGROUND_STOP_UNCONFIRMED'
+}={}) {
   const now=Date.now();
   let journalRecords;
   try {
@@ -448,12 +450,16 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
     recoveredByTab.set(record.tabId,rows);
   }
 
-  const quarantinedTabs=[...recoveredByTab.keys()];
+  const forcedTabs=[...new Set(forceTabIds.filter(id=>
+    Number.isSafeInteger(id)&&id>0&&tabIds.includes(id)))];
+  const quarantinedTabs=[...new Set([...recoveredByTab.keys(),...forcedTabs])];
   if (!quarantinedTabs.length)
     return {persisted:true,store:null,quarantinedTabs:[]};
 
-  // Only unresolved, verified WAL operations are quarantined. A single
-  // tab-level record cannot safely represent multiple unresolved operations.
+  // Page-operation uncertainty is quarantined only when verified WAL evidence
+  // says a side effect may have started. A failed Control Grant revoke is a
+  // separate control-plane uncertainty and may force a non-reconcilable
+  // tab quarantine even when there is no page-operation WAL record.
   for (const tabId of quarantinedTabs) mutationQuarantinedTabs.add(tabId);
   await enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,recoveredByTab);
 
@@ -479,7 +485,8 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
       startedAt:Number.isFinite(context?.startedAt)?context.startedAt:now,
       quarantinedAt:now,
       reasonCode:multipleUnresolved?'MULTIPLE_UNRESOLVED_OPERATIONS':
-        context?.reasonCode || 'BACKGROUND_STOP_UNCONFIRMED',
+        context?.reasonCode || (forcedTabs.includes(tabId)
+          ? forcedReasonCode : 'BACKGROUND_STOP_UNCONFIRMED'),
       reconcilable:Boolean(context?.operationId && context?.requestId &&
         ['provider_prepare','provider_commit'].includes(context?.command) &&
         typeof context?.origin==='string' &&
@@ -1921,7 +1928,9 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           let fenceCleared=false;
           const unknownRevoke=async()=>{
             keepFence=true;
-            const persisted=await persistMutationQuarantine(chromeApi,[tabId]);
+            const persisted=await persistMutationQuarantine(chromeApi,[tabId],[],{
+              forceTabIds:[tabId],forcedReasonCode:'BACKGROUND_REVOKE_UNCONFIRMED'
+            });
             const error=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
             error.quarantinedTabs=[tabId];
             error.quarantinePersisted=persisted.persisted;
