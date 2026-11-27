@@ -24,7 +24,7 @@ async function clickTrusted(cdp,expr){
  if(!p.insideViewport||!p.hitMatches)throw Error('CDP_CLICK_TARGET_NOT_HIT '+JSON.stringify(p));
  for(const type of ['mouseMoved','mousePressed','mouseReleased'])await cdp.call('Input.dispatchMouseEvent',{type,x:p.x,y:p.y,button:'left',clickCount:1});
 }
-test('R4 Scenario B: real MV3 Control Revoke cancels A and preserves queued B over HTTP MCP',{timeout:180000},async()=>{
+test('R4 Scenario B: trusted global Revoke cancels A, blocks queued B and survives worker reload',{timeout:180000},async()=>{
  const browser=process.env.CHROME_BIN;assert.ok(browser&&fs.existsSync(browser),'CHROME_FOR_TESTING_REQUIRED');
  const xvfb=spawnSync('which',['xvfb-run'],{encoding:'utf8'});assert.equal(xvfb.status,0,'XVFB_REQUIRED');
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'bridge-r4-b-')),ext=path.join(dir,'extension'),profile=path.join(dir,'profile'),state=path.join(dir,'state');
@@ -103,12 +103,22 @@ test('R4 Scenario B: real MV3 Control Revoke cancels A and preserves queued B ov
   await control.eval('window.__r4GlobalRevokeTrusted=null;document.querySelector("#backgroundRevokeAll").addEventListener("click",e=>window.__r4GlobalRevokeTrusted=e.isTrusted,{capture:true})');
   await clickTrusted(control,'document.querySelector("#backgroundRevokeAll")');
   await until(()=>control.eval('window.__r4GlobalRevokeTrusted===true'),3000,'GLOBAL_REVOKE_TRUSTED_CLICK');
-  await until(()=>control.eval('document.querySelector("#backgroundGrantStatus").textContent.includes("Управление всеми вкладками отозвано")'),20000,'GLOBAL_REVOKE_ACK');
+  try {
+    await until(()=>control.eval('document.querySelector("#backgroundGrantStatus").textContent.includes("Управление всеми вкладками отозвано")'),20000,'GLOBAL_REVOKE_ACK');
+  } catch(error) {
+    const ui=await control.eval('JSON.stringify({trusted:window.__r4GlobalRevokeTrusted,status:document.querySelector("#status")?.textContent,grantStatus:document.querySelector("#backgroundGrantStatus")?.textContent,grants:[...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>e.textContent),approvals:[...document.querySelectorAll("#backgroundApprovals .approval")].map(e=>e.textContent),lab:document.querySelector("#mutationLab")?.checked})');
+    const coordinator=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');
+    const queue=await rpc('browser_status');
+    const durable=await worker.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationRevocationPending","bridgeMutationLabMode"]),chrome.storage.session.get(["bridgeMutationRevocationPending","bridgeBackgroundControlGrants"])]);return JSON.stringify({localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null,lab:l.bridgeMutationLabMode===true,grants:s.bridgeBackgroundControlGrants||{}})})()');
+    console.error('[R4 GLOBAL REVOKE DIAGNOSTIC]',ui,coordinator,JSON.stringify(queue),durable);
+    throw Error(error.message+' UI='+ui+' COORDINATOR='+coordinator+' DURABLE='+durable);
+  }
 
   const [aResult,bResult]=await Promise.all([
     Promise.race([aPromise,sleep(20000).then(()=>{throw Error('A_NOT_CANCELLED_BY_GLOBAL_REVOKE');})]),
     Promise.race([bPromise,sleep(30000).then(()=>{throw Error('B_NOT_BLOCKED_AFTER_GLOBAL_REVOKE');})])
   ]);
+  console.log('[R4 GLOBAL REVOKE OUTCOMES]',JSON.stringify({a:{state:aResult.state,reasonCode:aResult.reasonCode},b:{state:bResult.state,reasonCode:bResult.reasonCode}}));
   assert.equal(aResult.state,'BLOCKED','global Revoke must cancel the active A approval');
   assert.equal(bResult.state,'BLOCKED','queued B must be rejected after global Control is disabled');
   const ui=JSON.parse(await control.eval('JSON.stringify({grants:[...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>e.textContent),pending:document.querySelectorAll("#backgroundApprovals .approval").length,status:document.querySelector("#backgroundGrantStatus").textContent,lab:document.querySelector("#mutationLab").checked})'));
