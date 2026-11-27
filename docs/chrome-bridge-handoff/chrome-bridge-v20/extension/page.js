@@ -9,6 +9,8 @@ export async function pageAction(name, args, expectedOrigin) {
   let releaseActionLock = () => {};
   let providerPrepareMutationStarted = false;
   let providerCommitClickStarted = false;
+  let mutationSideEffectStarted = false;
+  let agentSendDraftMutationStarted = false;
   const conversationId = () => {
     const routes = {
       'https://claude.ai': /^\/chat\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
@@ -80,6 +82,7 @@ export async function pageAction(name, args, expectedOrigin) {
       const e = single(args.selector);
       verifyExpect(e, args.expect);
       if (e.closest('input[type=file],input[type=password]')) throw Error('Sensitive input blocked');
+      mutationSideEffectStarted = true;
       e.click();
       return { clicked: true };
     }
@@ -96,6 +99,7 @@ export async function pageAction(name, args, expectedOrigin) {
       if (!isTA && !isInput && !isEditable) throw Error('Expected text input, textarea or contenteditable');
       if (isInput && !['text', 'search', 'email', 'url', 'tel'].includes(e.type)) throw Error('Sensitive or unsupported input type');
       if (/password|passwd|secret|token|credit|cardnumber|cc-number|one-time-code|cvv|cvc/i.test([e.name, e.id, e.autocomplete].join(' '))) throw Error('Sensitive field blocked');
+      mutationSideEffectStarted = true;
       e.focus();
       if (isEditable) {
         const selection = window.getSelection();
@@ -324,6 +328,7 @@ export async function pageAction(name, args, expectedOrigin) {
       // Consume the page-side prepare receipt before the irreversible click.
       delete window.__chromeBridgePreparedDraft;
       providerCommitClickStarted = true;
+      mutationSideEffectStarted = true;
       sendButtons[0].click();
       const clickedAt = new Date().toISOString();
       await sleep(1200);
@@ -343,6 +348,7 @@ export async function pageAction(name, args, expectedOrigin) {
       const baseline = replies().length;
       const text = args.text;
       composer.focus();
+      agentSendDraftMutationStarted = true;
       if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
         const proto = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         Object.getOwnPropertyDescriptor(proto, 'value').set.call(composer, text);
@@ -377,6 +383,7 @@ export async function pageAction(name, args, expectedOrigin) {
       if (!btn) throw Error('Unique enabled send button required');
       control();
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) throw Error('Conversation changed before dispatch; do not retry automatically');
+      mutationSideEffectStarted = true;
       btn.click();
       await sleep(1200);
       const confirmed = qa(A.stop).some(vis) || replies().length > baseline;
@@ -395,6 +402,13 @@ export async function pageAction(name, args, expectedOrigin) {
     } else if (name === 'provider_commit') {
       failure.dispatchState = providerCommitClickStarted ? 'UNKNOWN' : 'NOT_PERFORMED';
       if (providerCommitClickStarted) failure.sideEffect = 'send-click-may-have-fired';
+    } else if (name === 'agent_send' && agentSendDraftMutationStarted && !mutationSideEffectStarted) {
+      failure.dispatchState = 'NOT_PERFORMED';
+      failure.sideEffect = 'composer-draft-state-unverified';
+    } else if (['browser_click','browser_fill','agent_send'].includes(name)) {
+      failure.dispatchState = mutationSideEffectStarted ? 'UNKNOWN' : 'NOT_PERFORMED';
+      if (mutationSideEffectStarted) failure.sideEffect = name==='agent_send'
+        ? 'send-click-may-have-fired' : 'generic-page-action-may-have-fired';
     }
     return failure;
   } finally { releaseActionLock(); }

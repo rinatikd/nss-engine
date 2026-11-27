@@ -12,7 +12,8 @@ if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw 'Lab direct
 $manifestPath=Join-Path $root 'manifest.json'
 $adapterPath=Join-Path $root 'adapters.js'
 $pagePath=Join-Path $root 'page.js'
-foreach($file in @($manifestPath,$adapterPath,$pagePath)) {
+$journalPath=Join-Path $root 'mutation-operation-journal.js'
+foreach($file in @($manifestPath,$adapterPath,$pagePath,$journalPath)) {
   if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw ('Lab fixture missing: '+[IO.Path]::GetFileName($file)) }
 }
 $m=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
