@@ -496,6 +496,7 @@ $('backgroundGrantAll').onclick=async event=>{
     $('backgroundGrantStatus').textContent='Общее управление: разрешено вкладок '+success+
       ', отказано '+failed+'; каждое действие подтверждается отдельно.';
     window.dispatchEvent(new Event('bridge-background-grants-changed'));
+    await refreshBackgroundGrantList();
   } catch(e) {
     $('backgroundGrantStatus').textContent='Общее управление не подключено: '+e.message;
   }
@@ -624,6 +625,7 @@ async function updateBackgroundStatus() {
     }
     refreshGrantLabels();
     await showBackgroundApprovals();
+    await refreshBackgroundGrantList();
   } catch (e) {
     setStatus('Фоновый координатор недоступен: ' + safeConnectionErrorCode(e?.message));
   }
