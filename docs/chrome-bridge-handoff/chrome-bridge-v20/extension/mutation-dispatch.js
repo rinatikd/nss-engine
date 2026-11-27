@@ -8,6 +8,7 @@ import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
 import { normalizeFailure } from './failure-contract.js';
+import { MutationOperationJournal } from './mutation-operation-journal.js';
 
 const MUTATIONS = new Set(['browser_click', 'browser_fill', 'agent_send', 'provider_prepare', 'provider_commit']);
 const MAX_APPROVAL_MS = 90_000;
@@ -68,10 +69,42 @@ async function boundTab(chromeApi, tabId, originalUrl, origin) {
   return current;
 }
 
+async function settleOperationError(journal,operation,error,executionStarted) {
+  if(!journal || !operation?.operationId) return;
+  try {
+    if(!executionStarted) {
+      await journal.abortBeforeInjection(operation.operationId,{
+        code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')
+          ? error.message : 'MUTATION_ABORTED_BEFORE_INJECTION'
+      });
+    } else if(['BLOCKED','NOT_PERFORMED'].includes(error?.dispatchState)) {
+      await journal.complete(operation.operationId,{
+        outcome:'NOT_PERFORMED',
+        sideEffect:['composer-draft-state-unverified','generic-page-action-may-have-fired','send-click-may-have-fired'].includes(error?.sideEffect)
+          ? error.sideEffect : 'none',
+        code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')?error.message:null
+      });
+    } else {
+      await journal.unknown(operation.operationId,{
+        code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')
+          ? error.message : 'MUTATION_EXECUTION_UNKNOWN',
+        sideEffect:['send-click-may-have-fired','generic-page-action-may-have-fired'].includes(error?.sideEffect)
+          ? error.sideEffect : 'operation-result-unverified'
+      });
+      error.dispatchState='UNKNOWN';
+    }
+  } catch {
+    // If a terminal journal write fails after injection, keep the operation
+    // ambiguous. The durable INJECTING event will be quarantined on Worker recovery.
+    if(executionStarted) error.dispatchState='UNKNOWN';
+  }
+}
+
 async function dispatchProviderMutation(cmd, chromeApi, {
-  approvals, controlGrant, sessionAuthorization, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
+  approvals, controlGrant, sessionAuthorization, operationJournal, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
   let executionStarted=false;
+  let operation=null;
   let stage='PRECHECK';
   const startedAt=now();
   const args=cmd.args;
@@ -117,6 +150,13 @@ async function dispatchProviderMutation(cmd, chromeApi, {
       throw Error('PROVIDER_COMMIT_INPUT_INVALID');
     }
 
+    operation=await operationJournal.begin({
+      command:cmd.name,tabId,origin,url:tab.url,
+      documentId:preflightInjection.documentId,frameId:preflightInjection.frameId,
+      conversationId,requestId,taskId,providerId,
+      preparedId:args.preparedId||null,payloadHash:args.payloadHash||null,epoch
+    });
+
     const expires=Math.min(cmd.expires,now()+MAX_APPROVAL_MS);
     if(expires<=now())throw Error('COMMAND_EXPIRED');
     if(!sessionMode) {
@@ -151,6 +191,9 @@ async function dispatchProviderMutation(cmd, chromeApi, {
       : {adapter,requestId,epoch,payloadHash:args.payloadHash,preparedId:args.preparedId,fencingToken:args.fencingToken,
           expectedOrigin:origin,expectedConversationId:conversationId,controlExpires:refreshedGrant};
     stage='PAGE_ACTION';
+    await operationJournal.markInjecting(operation.operationId,{
+      documentId:currentInjection.documentId,frameId:currentInjection.frameId
+    });
     executionStarted=true;
     const finalInjection=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs,currentInjection.documentId);
     const result=finalInjection.result;
@@ -162,20 +205,27 @@ async function dispatchProviderMutation(cmd, chromeApi, {
       result.payloadHash!==args.payloadHash||!Number.isFinite(Date.parse(result.clickedAt||''))) {
       throw Error('PROVIDER_COMMIT_RECEIPT_INVALID');
     }
+    await operationJournal.complete(operation.operationId,{
+      outcome:cmd.name==='provider_prepare'?'PREPARED':'CLICKED',
+      sideEffect:cmd.name==='provider_prepare'?'composer-filled-no-send':'provider-send-clicked',
+      documentId:finalInjection.documentId,frameId:finalInjection.frameId
+    });
     return result;
   } catch(error) {
+    if(executionStarted && cmd.name==='provider_prepare' && !['BLOCKED','NOT_PERFORMED'].includes(error?.dispatchState)) {
+      // A prepare action never clicks Send. Its composer may nevertheless
+      // contain a partial/unverified draft, so record a known no-send result
+      // plus the unresolved draft side effect before any journal transition.
+      error.dispatchState='NOT_PERFORMED';
+      error.sideEffect=error.sideEffect||'composer-draft-state-unverified';
+    }
+    await settleOperationError(operationJournal,operation,error,executionStarted);
     if(!executionStarted) {
       if(!/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')) {
         error=Object.assign(new Error('PROVIDER_'+stage+'_FAILED'),{dispatchState:error?.dispatchState});
       }
       error.dispatchState=/^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|BACKGROUND_STOP_IN_PROGRESS|BACKGROUND_CONTROL_CLEAR_IN_PROGRESS|TAB_MUTATION_REVOKING|TAB_MUTATION_QUARANTINED|MUTATION_QUARANTINE_STATE_UNAVAILABLE|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|PROVIDER_TAB_BINDING_MISMATCH)$/.test(error.message)
         ? 'BLOCKED':'NOT_PERFORMED';
-    } else if(cmd.name==='provider_prepare' && !['BLOCKED','NOT_PERFORMED'].includes(error?.dispatchState)) {
-      // provider_prepare never clicks Send. Even if its browser response is
-      // lost after injection, submission is known not to have occurred.
-      // Preserve a bounded note about a possibly remaining unsent draft.
-      error.dispatchState='NOT_PERFORMED';
-      error.sideEffect=error.sideEffect||'composer-draft-state-unverified';
     }
     error.failure=normalizeFailure(error.failure,{
       stage:executionStarted?'PAGE_ACTION':stage,
@@ -186,8 +236,10 @@ async function dispatchProviderMutation(cmd, chromeApi, {
   }
 }
 export async function dispatchMutation(cmd, chromeApi, {
-  approvals, controlGrant, sessionAuthorization, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
+  approvals, controlGrant, sessionAuthorization, operationJournal, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
+  operationJournal=operationJournal || new MutationOperationJournal(chromeApi);
+  let operation=null;
   let executionStarted=false;
   // Stage codes are safe metadata: never expose provider text, prompts, or DOM content.
   let stage='PRECHECK';
@@ -195,7 +247,9 @@ export async function dispatchMutation(cmd, chromeApi, {
   try {
   exactCommand(cmd);
   if (cmd.name === 'provider_prepare' || cmd.name === 'provider_commit') {
-    return dispatchProviderMutation(cmd,chromeApi,{approvals,controlGrant,sessionAuthorization,stillEnabled,now,uuid});
+    return dispatchProviderMutation(cmd,chromeApi,{
+      approvals,controlGrant,sessionAuthorization,operationJournal,stillEnabled,now,uuid
+    });
   }
   if (!approvals?.request || (typeof controlGrant !== 'function' && !sessionAuthorization))
     throw Error('BACKGROUND_CONTROL_NOT_CONFIGURED');
@@ -251,6 +305,15 @@ export async function dispatchMutation(cmd, chromeApi, {
   // must not be presented for a different same-origin navigation.
   await boundTab(chromeApi,tab.id,tab.url,origin);
 
+  operation=await operationJournal.begin({
+    command:cmd.name,tabId:tab.id,origin,url:tab.url,
+    documentId:preflightInjection.documentId,frameId:preflightInjection.frameId,
+    conversationId:cmd.name==='agent_send'?preflight.conversationId:null,
+    requestId:cmd.args.requestId||null,taskId:cmd.args.taskId||null,
+    providerId:cmd.args.providerId||null,preparedId:cmd.args.preparedId||null,
+    payloadHash:cmd.args.payloadHash||null,epoch:cmd.args.epoch||null
+  });
+
   // Only metadata is surfaced in the queue. Do not persist prompt contents.
   const approvalId='m-'+uuid();
   const preview = cmd.name === 'agent_send'
@@ -300,11 +363,20 @@ export async function dispatchMutation(cmd, chromeApi, {
   if (!(await stillEnabled())) throw Error('BACKGROUND_CONTROL_STOPPED');
   // At most one dispatch. Failed confirmations are UNKNOWN, never retried.
   stage='PAGE_ACTION';
+  await operationJournal.markInjecting(operation.operationId,{
+    documentId:currentInjection.documentId,frameId:currentInjection.frameId
+  });
   executionStarted=true;
   const finalInjection=await inject(chromeApi,tab.id,origin,cmd.name,args,currentInjection.documentId);
   const result=finalInjection.result;
+  await operationJournal.complete(operation.operationId,{
+    outcome:cmd.name==='browser_click'?'CLICKED':cmd.name==='browser_fill'?'FILLED':'CLICKED',
+    sideEffect:cmd.name==='agent_send'?'agent-send-clicked':'generic-page-action',
+    documentId:finalInjection.documentId,frameId:finalInjection.frameId
+  });
   return result?.text ? {...result,text:redact(result.text)} : result;
   } catch(error) {
+    await settleOperationError(operationJournal,operation,error,executionStarted);
     // This flag can only be set if the single DOM mutation injection has NOT
     // started. Post-injection errors remain UNKNOWN to prevent duplicate sends.
     if (!executionStarted) {
