@@ -23,7 +23,7 @@ jobs:
         run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs tests/manifest-rc.test.mjs tests/browser-key-store.test.mjs tests/connection-check.test.mjs tests/transport-engine.test.mjs tests/background-worker.test.mjs tests/background-coordinator.test.mjs tests/read-only-dispatch.test.mjs tests/approval-broker.test.mjs tests/approval-session.test.mjs tests/mutation-dispatch.test.mjs tests/background-control-grants.test.mjs
       - name: Verify global Control connect and revoke button state transitions
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
-        run: node --test tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/control-ui-single-entry.test.mjs
+        run: node --test tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/control-ui-single-entry.test.mjs tests/background-control-list.test.mjs
       - name: Verify MCP handshake independently of browser availability
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/mcp-channel-smoke.test.mjs
