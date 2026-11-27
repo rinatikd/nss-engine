@@ -685,16 +685,31 @@ async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
       persisted:true,existing:true,record:current.record,stores:current.stores
     };
     const tabIds=[...new Set(affectedTabs.filter(id=>Number.isSafeInteger(id)&&id>0))];
+    // The page-action write-ahead journal is the authority for operation and
+    // document identity. The coordinator context is created earlier, before
+    // preflight, and cannot safely supply these fields by itself.
+    let journalRows=[];
+    try { journalRows=await mutationOperationJournalFor(chromeApi).list(); }
+    catch { /* keep the durable fence; absent journal identity will not be reconcilable */ }
     const operations=tabIds.map(tabId=>{
       const context=mutationContexts.get(tabId);
       if (!context) return null;
+      const matching=journalRows.filter(item=>
+        item.tabId===tabId && item.requestId===context.requestId &&
+        item.command===context.command);
+      const journalRecord=matching.length===1?matching[0]:null;
+      const injecting=journalRecord?.events?.find(event=>event.phase==='INJECTING') || null;
       return {
-        tabId,requestId:context.requestId || null,command:context.command || null,
+        tabId,operationId:journalRecord?.operationId || null,
+        requestId:context.requestId || null,command:context.command || null,
         taskId:context.taskId || null,providerId:context.providerId || null,
         origin:context.origin || null,conversationId:context.conversationId || null,
+        documentId:injecting?.documentId || journalRecord?.documentId || null,
+        frameId:Number.isSafeInteger(injecting?.frameId)
+          ? injecting.frameId : journalRecord?.frameId ?? null,
         epoch:Number.isSafeInteger(context.epoch)?context.epoch:null,
         payloadHash:context.payloadHash || null,preparedId:context.preparedId || null,
-        startedAt:Number.isFinite(context.startedAt)?context.startedAt:Date.now()
+        startedAt:injecting?.at ?? (Number.isFinite(context.startedAt)?context.startedAt:Date.now())
       };
     }).filter(Boolean);
     const record={
