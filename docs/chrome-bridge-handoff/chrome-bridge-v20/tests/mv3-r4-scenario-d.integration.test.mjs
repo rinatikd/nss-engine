@@ -30,8 +30,8 @@ const until=async(fn,ms,label)=>{
  throw Error('R4_D_'+label+'_TIMEOUT '+(last||''));
 };
 class Cdp{
- constructor(ws){
-  this.ws=ws;this.seq=0;this.pending=new Map();
+ constructor(ws,label='target'){
+  this.ws=ws;this.label=label;this.seq=0;this.pending=new Map();
   ws.addEventListener('message',e=>{
    let m;try{m=JSON.parse(e.data);}catch{return;}
    const pending=this.pending.get(m.id);if(!pending)return;
@@ -41,18 +41,18 @@ class Cdp{
   const failPending=()=>{for(const [id,pending] of this.pending){this.pending.delete(id);pending.reject(Error('CDP_SOCKET_CLOSED'));}};
   ws.addEventListener('close',failPending);ws.addEventListener('error',failPending);
  }
- static async connect(url){
+ static async connect(url,label='target'){
   const ws=new WebSocket(url);
   await bounded(new Promise((resolve,reject)=>{
    ws.addEventListener('open',resolve,{once:true});
    ws.addEventListener('error',()=>reject(Error('CDP_CONNECT_FAILED')),{once:true});
-  }),10000,'CDP_CONNECT');
-  return new Cdp(ws);
+  }),10000,'CDP_CONNECT '+label);
+  return new Cdp(ws,label);
  }
  call(method,params={}){
   const id=++this.seq;
   return new Promise((resolve,reject)=>{
-   const timer=setTimeout(()=>{this.pending.delete(id);reject(Error('CDP_CALL_TIMEOUT '+method));},12000);
+   const timer=setTimeout(()=>{this.pending.delete(id);reject(Error('CDP_CALL_TIMEOUT '+this.label+' '+method));},12000);
    this.pending.set(id,{
     resolve:value=>{clearTimeout(timer);resolve(value);},
     reject:error=>{clearTimeout(timer);reject(error);}
@@ -146,16 +146,21 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   const port=await until(()=>{const p=path.join(profile,'DevToolsActivePort');return fs.existsSync(p)?Number(fs.readFileSync(p,'utf8').split(/\r?\n/)[0]):0;},15000,'DEBUG_PORT');
   const targets=async()=>(await(await boundedFetch('http://127.0.0.1:'+port+'/json/list',{},6000)).json());
   const w=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),15000,'WORKER');
-  worker=await Cdp.connect(w.webSocketDebuggerUrl);await worker.call('Runtime.enable');
+  worker=await Cdp.connect(w.webSocketDebuggerUrl,'worker-initial');await worker.call('Runtime.enable');
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'WORKER_API');
   const seed='(async()=>{await chrome.storage.local.set({browserToken:'+JSON.stringify(browserToken)+',bridgeBackgroundMode:true,bridgeConnectionDesired:true,bridgeMutationLabMode:true,sites:{"https://claude.ai":{mode:"chat",adapter:"claude"}},adapters:"{}"});const a=await chrome.tabs.create({url:"https://claude.ai/chat/r4scenarioDA001",active:false});const b=await chrome.tabs.create({url:"https://claude.ai/chat/r4scenarioDB001",active:false});const c=await chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true});return{a:a.id,b:b.id,c:c.id};})()';
   const tabs=await worker.eval(seed);
+  // Tabs are created inactive. Do not attach a page CDP session while its
+  // renderer is still navigating: Chrome may accept the WebSocket upgrade but
+  // defer Runtime.enable until the background renderer is initialized.
+  const providerTabs=await until(()=>worker.eval('(async()=>{const [a,b]=await Promise.all([chrome.tabs.get('+tabs.a+'),chrome.tabs.get('+tabs.b+')]);return a.status==="complete"&&b.status==="complete"&&a.url==="https://claude.ai/chat/r4scenarioDA001"&&b.url==="https://claude.ai/chat/r4scenarioDB001"?{a:{status:a.status,url:a.url},b:{status:b.status,url:b.url}}:false})()'),30000,'PROVIDER_TABS_COMPLETE');
+  console.log('[R4 D PROVIDER TABS COMPLETE]',JSON.stringify(providerTabs));
   const tabA=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDA001'&&x.webSocketDebuggerUrl),15000,'TAB_A');
-  pageA=await Cdp.connect(tabA.webSocketDebuggerUrl);await pageA.call('Runtime.enable');
+  pageA=await Cdp.connect(tabA.webSocketDebuggerUrl,'provider-tab-a-initial');await pageA.call('Runtime.enable');
   const tabB=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDB001'&&x.webSocketDebuggerUrl),15000,'TAB_B');
-  pageB=await Cdp.connect(tabB.webSocketDebuggerUrl);await pageB.call('Runtime.enable');
+  pageB=await Cdp.connect(tabB.webSocketDebuggerUrl,'provider-tab-b-initial');await pageB.call('Runtime.enable');
   const ct=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),15000,'CONTROL');
-  control=await Cdp.connect(ct.webSocketDebuggerUrl);await control.call('Runtime.enable');
+  control=await Cdp.connect(ct.webSocketDebuggerUrl,'control-initial');await control.call('Runtime.enable');
   await until(()=>control.eval('document.readyState==="complete"&&!!document.querySelector("#backgroundGrantAll")'),12000,'CONTROL_READY');
   await control.eval('window.confirm=()=>true');
   await until(async()=>(await rpc('browser_status')).connected===true,20000,'CONNECTED');
@@ -249,12 +254,12 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   ]);
   worker.close();worker=null;
   const restartedWorker=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
-  worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl);await worker.call('Runtime.enable');
+  worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl,'worker-after-reload');await worker.call('Runtime.enable');
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'RESTARTED_WORKER_API');
   const tabAAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDA001'&&x.webSocketDebuggerUrl),15000,'TAB_A_AFTER_RESTART');
-  pageA=await Cdp.connect(tabAAfter.webSocketDebuggerUrl);await pageA.call('Runtime.enable');
+  pageA=await Cdp.connect(tabAAfter.webSocketDebuggerUrl,'provider-tab-a-after-reload');await pageA.call('Runtime.enable');
   const tabBAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDB001'&&x.webSocketDebuggerUrl),15000,'TAB_B_AFTER_RESTART');
-  pageB=await Cdp.connect(tabBAfter.webSocketDebuggerUrl);await pageB.call('Runtime.enable');
+  pageB=await Cdp.connect(tabBAfter.webSocketDebuggerUrl,'provider-tab-b-after-reload');await pageB.call('Runtime.enable');
   await worker.eval('(async()=>chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true}))()');
 
   // Restart the local test Bridge process as well. The provider journal is
@@ -301,7 +306,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // Replacement worker/control view must keep the grant store empty and
   // retain durable global pending fence + tab quarantine.
   const afterControl=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),15000,'CONTROL_AFTER_RESTART');
-  control=await Cdp.connect(afterControl.webSocketDebuggerUrl);await control.call('Runtime.enable');
+  control=await Cdp.connect(afterControl.webSocketDebuggerUrl,'control-after-reload');await control.call('Runtime.enable');
   await until(()=>control.eval('document.readyState!=="loading"&&!!document.querySelector("#backgroundGrantList")'),12000,'CONTROL_AFTER_RESTART_READY');
   await until(()=>control.eval('document.querySelector("#status").textContent.includes("Подключено")'),12000,'CONTROL_RECONNECTED');
   const coordinatorAfter=JSON.parse(await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()'));
