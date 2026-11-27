@@ -278,7 +278,8 @@ async function enrichGlobalRevocationFenceFromRecoveredOperations(chromeApi,reco
       (prior.conversationId && prior.conversationId!==item.conversationId) ||
       (prior.documentId && prior.documentId!==item.documentId) ||
       (Number.isSafeInteger(prior.frameId) && prior.frameId!==item.frameId) ||
-      (Number.isFinite(prior.startedAt) && prior.startedAt!==item.startedAt)
+      (prior.operationId && Number.isFinite(prior.startedAt) &&
+        prior.startedAt!==item.startedAt)
     )) continue;
 
     const merged={
