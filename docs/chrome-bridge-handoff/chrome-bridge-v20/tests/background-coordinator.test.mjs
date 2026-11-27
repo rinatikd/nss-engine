@@ -772,7 +772,11 @@ test('session_revoke persists a global mutation fence across MV3 worker restart'
   releaseResolve();
   const completed=await mutation;
   const revoked=await revoke;
-  assert.equal(completed.result?.prepared,true,'in-flight result after worker recovery: '+JSON.stringify(completed));
+  assert.equal(completed.error,'MUTATION_OPERATION_TRANSITION_DENIED',
+    'the restarted worker has already terminalized the interrupted operation as UNKNOWN');
+  assert.equal(completed.dispatchState,'UNKNOWN');
+  assert.equal(completed.sideEffect,'composer-draft-state-unverified');
+  assert.deepEqual(completed.quarantinedTabs,[60]);
   assert.equal(revoked.result.revoked,true);
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.data.bridgeMutationRevocationPending,null);
@@ -826,7 +830,11 @@ test('session_revoke tracks and clears only the global fence stores that accepte
     assert.equal(denied.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
     releaseResolve();
     const [mutationResult,revokeResult]=await Promise.all([mutation,revoke]);
-    assert.equal(mutationResult.result?.prepared,true,'in-flight result after worker recovery ('+failedStore+'): '+JSON.stringify(mutationResult));
+    assert.equal(mutationResult.error,'MUTATION_OPERATION_TRANSITION_DENIED',
+      'recovery must preserve UNKNOWN when the old worker later returns ('+failedStore+')');
+    assert.equal(mutationResult.dispatchState,'UNKNOWN');
+    assert.equal(mutationResult.sideEffect,'composer-draft-state-unverified');
+    assert.deepEqual(mutationResult.quarantinedTabs,[76]);
     assert.equal(revokeResult.result.revoked,true);
     assert.equal(writtenState.bridgeMutationRevocationPending,null,
       'the store that accepted the fence must have its matching marker cleared');
@@ -1113,11 +1121,14 @@ test('operator reconciliation refuses an empty affected-tab set even with a vali
 test('global Revoke snapshots the active mutation context instead of a later queued request',async()=>{
   const tabId=87;
   const c=fakeChrome({...LAB_STATE});
-  await prepareLab(c,tabId);
+  const coordinator=await import('../extension/background-coordinator.js?global-revoke-snapshot-isolated');
+  const started=await coordinator.startBackgroundTransport(c);
+  assert.equal(started.ok,true,'isolated coordinator must start cleanly');
   delete c.session.bridgeSessionAuthorization;
   c.session.bridgeBackgroundControlGrants={
     [String(tabId)]:{origin:'https://claude.ai',expires:Date.now()+60000}
   };
+  coordinator.installBackgroundCoordinator(c);
   const listener=c.listeners.at(-1);
   const firstCommand=providerPrepare(tabId);
   firstCommand.args.requestId='r4request000087';
@@ -1214,7 +1225,8 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
       origin:record.origin,expires:Date.now()+60000
     }}
   });
-  installBackgroundCoordinator(c);
+  const coordinator=await import('../extension/background-coordinator.js?operator-reconcile-isolated');
+  coordinator.installBackgroundCoordinator(c);
 
   const status=await sendCoordinator(c,'quarantine-status');
   assert.equal(status.available,true);
@@ -1266,7 +1278,7 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
   const reconciled=await sendCoordinator(c,'reconcile-quarantine',{
     tabId,token:quarantineToken,confirmed:true,localGesture:true
   });
-  assert.equal(reconciled.ok,true);
+  assert.equal(reconciled.ok,true,'reconciliation result: '+JSON.stringify(reconciled));
   assert.equal(reconciled.state,'RECONCILED');
   assert.equal(reconciled.deliveryState,'UNKNOWN');
   assert.equal(reconciled.terminalState,'COMMIT_CLICK_ATTEMPTED');
@@ -1394,7 +1406,8 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
       origin:record.origin,expires:Date.now()+60000
     }}
   });
-  installBackgroundCoordinator(c);
+  const coordinator=await import('../extension/background-coordinator.js?partial-global-fence-isolated');
+  coordinator.installBackgroundCoordinator(c);
 
   // Seed both durable copies first; only then simulate a session-store failure
   // during the reconciliation's partial global-fence cleanup.
@@ -1475,7 +1488,8 @@ test('global quarantine fence remains until every affected tab has its own termi
     bridgeMutationQuarantineRecords:records,
     bridgeMutationRevocationPending:pending
   });
-  installBackgroundCoordinator(c);
+  const coordinator=await import('../extension/background-coordinator.js?global-quarantine-audit-isolated');
+  coordinator.installBackgroundCoordinator(c);
 
   const first=await sendCoordinator(c,'reconcile-quarantine',{
     tabId:79,token:records['79'].token,confirmed:true,localGesture:true
