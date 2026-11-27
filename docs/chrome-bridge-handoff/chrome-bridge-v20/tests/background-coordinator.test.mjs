@@ -915,10 +915,12 @@ test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN
   const pending={
     pending:true,token:'prior-worker-revoke-001',affectedTabs:[62],startedAt:Date.now()-100,
     operations:[{
-      tabId:62,requestId:'r4request000062',command:'provider_commit',
+      tabId:62,operationId:'operation_recovered_000062',
+      requestId:'r4request000062',command:'provider_commit',
       taskId:'task_000062',providerId:'claude',origin:'https://claude.ai',
-      conversationId:'conversation_001',epoch:1,payloadHash:'c'.repeat(64),
-      preparedId:'prepared_0062',startedAt:Date.now()-200
+      conversationId:'conversation_001',documentId:'document-62',frameId:0,
+      epoch:1,payloadHash:'c'.repeat(64),preparedId:'prepared_0062',
+      startedAt:Date.now()-200
     }]
   };
   c.data.bridgeMutationRevocationPending=pending;
@@ -1204,9 +1206,11 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
   const tabId=79,now=Date.now(),quarantineToken='quarantine-token-r4-79',
     globalToken='global-revoke-token-r4-79',requestId='r4request000079';
   const record={
-    schemaVersion:1,tabId,token:quarantineToken,requestId,
+    schemaVersion:1,tabId,token:quarantineToken,
+    operationId:'operation_r4_000079',requestId,
     command:'provider_commit',taskId:'task_000079',providerId:'claude',
-    origin:'https://claude.ai',conversationId:'conversation_001',epoch:1,
+    origin:'https://claude.ai',conversationId:'conversation_001',
+    documentId:'document-r4-79',frameId:0,epoch:1,
     payloadHash:'b'.repeat(64),preparedId:'prepared_0079',
     startedAt:now-2000,quarantinedAt:now-500,
     reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true
@@ -1214,8 +1218,10 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
   const pending={
     pending:true,token:globalToken,affectedTabs:[tabId],startedAt:now-1000,
     operations:[{
-      tabId,requestId,command:record.command,taskId:record.taskId,providerId:record.providerId,
-      origin:record.origin,conversationId:record.conversationId,epoch:record.epoch,
+      tabId,operationId:record.operationId,requestId,command:record.command,
+      taskId:record.taskId,providerId:record.providerId,
+      origin:record.origin,conversationId:record.conversationId,
+      documentId:record.documentId,frameId:record.frameId,epoch:record.epoch,
       payloadHash:record.payloadHash,preparedId:record.preparedId,startedAt:record.startedAt
     }]
   };
@@ -1382,17 +1388,20 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
   const tabId=80,now=Date.now(),token='quarantine-token-r4-80',
     globalToken='global-revoke-token-r4-80',requestId='r4request000080';
   const record={
-    schemaVersion:1,tabId,token,requestId,command:'provider_commit',
-    taskId:'task_000080',providerId:'claude',origin:'https://claude.ai',
-    conversationId:'conversation_001',epoch:1,payloadHash:'d'.repeat(64),
+    schemaVersion:1,tabId,token,operationId:'operation_r4_000080',requestId,
+    command:'provider_commit',taskId:'task_000080',providerId:'claude',
+    origin:'https://claude.ai',conversationId:'conversation_001',
+    documentId:'document-r4-80',frameId:0,epoch:1,payloadHash:'d'.repeat(64),
     preparedId:'prepared_0080',startedAt:now-2000,quarantinedAt:now-500,
     reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true
   };
   const pending={
     pending:true,token:globalToken,affectedTabs:[tabId],startedAt:now-1000,
     operations:[{
-      tabId,requestId,command:record.command,taskId:record.taskId,providerId:record.providerId,
-      origin:record.origin,conversationId:record.conversationId,epoch:record.epoch,
+      tabId,operationId:record.operationId,requestId,command:record.command,
+      taskId:record.taskId,providerId:record.providerId,
+      origin:record.origin,conversationId:record.conversationId,
+      documentId:record.documentId,frameId:record.frameId,epoch:record.epoch,
       payloadHash:record.payloadHash,preparedId:record.preparedId,startedAt:record.startedAt
     }]
   };
@@ -1470,9 +1479,11 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
 test('global quarantine fence remains until every affected tab has its own terminal audit',async()=>{
   const now=Date.now(),globalToken='global-r4-multi-001';
   const specs=[79,81].map(tabId=>({
-    tabId,token:'qtoken-'+tabId,requestId:'r4request'+String(tabId).padStart(6,'0'),
+    tabId,token:'qtoken-'+tabId,operationId:'operation-r4-'+tabId,
+    requestId:'r4request'+String(tabId).padStart(6,'0'),
     command:'provider_commit',taskId:'task_'+String(tabId).padStart(6,'0'),
     providerId:'claude',origin:'https://claude.ai',conversationId:'conversation_001',
+    documentId:'document-'+tabId,frameId:0,
     epoch:1,payloadHash:String(tabId).repeat(64).slice(0,64),
     preparedId:'prepared_'+String(tabId).padStart(4,'0'),
     startedAt:now-3000,quarantinedAt:now-1000,
@@ -1481,8 +1492,8 @@ test('global quarantine fence remains until every affected tab has its own termi
   const records=Object.fromEntries(specs.map(r=>[String(r.tabId),r]));
   const pending={
     pending:true,token:globalToken,affectedTabs:[79,81],startedAt:now-900,
-    operations:specs.map(({tabId,requestId,command,taskId,providerId,origin,conversationId,epoch,payloadHash,preparedId,startedAt})=>
-      ({tabId,requestId,command,taskId,providerId,origin,conversationId,epoch,payloadHash,preparedId,startedAt}))
+    operations:specs.map(({tabId,operationId,requestId,command,taskId,providerId,origin,conversationId,documentId,frameId,epoch,payloadHash,preparedId,startedAt})=>
+      ({tabId,operationId,requestId,command,taskId,providerId,origin,conversationId,documentId,frameId,epoch,payloadHash,preparedId,startedAt}))
   };
   const c=fakeChrome({
     ...LAB_STATE,
