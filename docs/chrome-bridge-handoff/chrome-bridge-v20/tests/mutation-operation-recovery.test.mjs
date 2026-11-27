@@ -304,7 +304,6 @@ test('replacement MV3 worker rehydrates provider quarantine with the original do
 test('multiple unresolved journal operations on one tab stay non-reconcilable',async()=>{
   const tabId=79006;
   const documentId='document-provider-multiple-79006';
-  const storeA=journal(fixture(),'operation_provider_multiple_0006a');
   // Both journals share one Chrome storage area in the test fixture.
   const chromeApi=fixture();
   const firstStore=journal(chromeApi,'operation_provider_multiple_0006a');
