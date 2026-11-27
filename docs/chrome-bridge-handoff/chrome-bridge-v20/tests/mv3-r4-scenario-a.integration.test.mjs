@@ -74,8 +74,17 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
   await until(async()=>(await rpc('browser_status')).connected===true,20000,'CONNECTED');
   await until(()=>control.eval('document.querySelector("#status").textContent.includes("Подключено")'),10000,'CONTROL_CONNECTED');
   await until(()=>control.eval('document.querySelector("#mutationLab").checked===true'),8000,'LAB_ON');
+  await control.eval('document.querySelector("#backgroundGrantAll").addEventListener("click",e=>window.__r4GrantClickTrusted=e.isTrusted,{capture:true})');
   await clickTrusted(control,'document.querySelector("#backgroundGrantAll")');
-  await until(()=>control.eval('document.querySelectorAll("#backgroundGrantList .approval").length===2'),12000,'GRANTS');
+  try {
+    await until(()=>control.eval('document.querySelectorAll("#backgroundGrantList .approval").length===2'),12000,'GRANTS');
+  } catch(error) {
+    const ui=await control.eval('JSON.stringify({trusted:window.__r4GrantClickTrusted,status:document.querySelector("#status")?.textContent,grantStatus:document.querySelector("#backgroundGrantStatus")?.textContent,prerequisite:document.querySelector("#backgroundGrantPrerequisite")?.textContent,mode:document.querySelector("#backgroundMode")?.checked,lab:document.querySelector("#mutationLab")?.checked,rows:document.querySelector("#backgroundGrantList")?.textContent})');
+    const state=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');
+    const tabsState=await worker.eval('(async()=>JSON.stringify({tabs:(await chrome.tabs.query({})).filter(t=>(t.url||"").startsWith("https://claude.ai/")).map(t=>({id:t.id,url:t.url})),permission:await chrome.permissions.contains({origins:["https://claude.ai/*"]})}))()');
+    console.error('[R4 GRANT DIAGNOSTIC]',ui,state,tabsState);
+    throw error;
+  }
   const aBind=await rpc('agent_bind',{name:'r4_a',tabId:tabs.a}),bBind=await rpc('agent_bind',{name:'r4_b',tabId:tabs.b});
   assert.equal(aBind.adapterVerified,true);assert.equal(bBind.adapterVerified,true);
   const make=(s,tabId,conversationId,message)=>({requestId:'r4request'+s,taskId:'r4task'+s,providerId:'claude',tabId,origin:'https://claude.ai',conversationId,epoch:1,message,payloadHash:crypto.createHash('sha256').update(message).digest('hex')});
