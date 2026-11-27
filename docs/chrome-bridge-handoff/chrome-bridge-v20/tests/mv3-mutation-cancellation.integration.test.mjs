@@ -259,18 +259,18 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     diagnosticPhase='provider tabs.query dispatch';
     await harness.eval('globalThis.__r4ProviderPageProbe={phase:"tabs_query_dispatched",tabsQueryCalls:0,tabsQueryCallback:false,executeCalls:0,executeCallback:false,lastError:null,result:null};'+
       'const probeTab=t=>{'+
-      'if(!t||t.id!==${tabId}||t.status!=="complete"||globalThis.__r4ProviderPageProbe.executeCalls>0)return;'+
+      'if(!t||t.id!=='+tabId+'||t.status!=="complete"||globalThis.__r4ProviderPageProbe.executeCalls>0)return;'+
       'chrome.tabs.onUpdated.removeListener(onProviderUpdated);'+
       'globalThis.__r4ProviderPageProbe.phase="execute_dispatched";globalThis.__r4ProviderPageProbe.executeCalls++;'+
-      'chrome.scripting.executeScript({target:{tabId:${tabId}},func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})},r=>{'+
+      'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})},r=>{'+
       'const executeError=chrome.runtime.lastError;'+
       'globalThis.__r4ProviderPageProbe.executeCallback=true;'+
       'if(executeError){globalThis.__r4ProviderPageProbe.lastError=executeError.message;globalThis.__r4ProviderPageProbe.phase="execute_error";return;}'+
       'if(!r?.[0]?.documentId){globalThis.__r4ProviderPageProbe.phase="document_id_missing";return;}'+
       'globalThis.__r4ProviderPageProbe.result={documentId:r[0].documentId,result:r[0].result};globalThis.__r4ProviderPageProbe.phase="complete";});};'+
-      'const onProviderUpdated=(id,info,t)=>{if(id===${tabId}&&info.status==="complete")probeTab(t)};'+
+      'const onProviderUpdated=(id,info,t)=>{if(id==='+tabId+'&&info.status==="complete")probeTab(t)};'+
       'chrome.tabs.onUpdated.addListener(onProviderUpdated);'+
-      'chrome.tabs.get(${tabId},t=>{'+
+      'chrome.tabs.get('+tabId+',t=>{'+
       'const tabError=chrome.runtime.lastError;'+
       'globalThis.__r4ProviderPageProbe.tabsQueryCallback=true;'+
       'globalThis.__r4ProviderPageProbe.tabsQueryCalls++;'+
