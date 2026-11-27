@@ -217,22 +217,18 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // settles in this disposable MV3 harness. Resolve the tab by exact URL
     // using the callback form of tabs.query, then probe its document.
     const providerUrl='https://claude.ai/chat/r4mutationcancel01';
-    // Subscribe before creating the target at browser level. This avoids
-    // awaiting tabs.create/query callbacks inside Runtime.evaluate while
-    // still obtaining the authoritative Chrome tabId from onCreated.
-    // Install a one-shot listener in the extension page, then create the
-    // provider target through the browser CDP session.
-    await harness.eval('globalThis.__r4AwaitProviderTab=()=>new Promise((resolve,reject)=>{'+
-      'const timer=setTimeout(()=>{chrome.tabs.onCreated.removeListener(listener);reject(Error("PROVIDER_TAB_ON_CREATED_TIMEOUT"));},10000);'+
-      'const listener=tab=>{chrome.tabs.onCreated.removeListener(listener);clearTimeout(timer);resolve({id:tab.id,url:tab.url||tab.pendingUrl||null});};'+
-      'chrome.tabs.onCreated.addListener(listener);});true');
-    const providerTabWait=harness.eval('globalThis.__r4AwaitProviderTab()');
+    // Create the provider target through browser CDP, then resolve its
+    // Chrome tab ID through the extension API callback. Do not wait for
+    // tabs.onCreated in an extension document: Chrome may deliver that event
+    // only to the extension service worker in this disposable MV3 setup.
     const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
     assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
-    const tab=await providerTabWait;
+    await harness.eval('globalThis.__r4ProviderTab=null;chrome.tabs.query({},tabs=>{'+
+      'if(chrome.runtime.lastError)return;'+
+      'globalThis.__r4ProviderTab=tabs.find(t=>t.url==='+JSON.stringify(providerUrl)+
+      '||t.pendingUrl==='+JSON.stringify(providerUrl)+')||null;});true');
+    const tab=await until(()=>harness.eval('globalThis.__r4ProviderTab'),10000,'PROVIDER_TAB_QUERY');
     assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_CREATE_FAILED');
-    // onCreated may fire before Chrome populates url/pendingUrl. The tab ID
-    // is authoritative; verify the final URL and document readiness below.
     const tabId=tab.id;
     console.log('[R4 MUTATION CANCEL STEP] provider fixture tab created id='+tabId);
     const pageInfo=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.get('+tabId+',t=>{'+
