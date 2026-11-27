@@ -339,6 +339,51 @@ test('multiple unresolved journal operations on one tab stay non-reconcilable',a
   assert.equal(chromeApi.data.bridgeMutationQuarantinedTabs.includes(tabId),true);
 });
 
+test('replacement MV3 worker rejects reconciliation audit bound to a different tab',async()=>{
+  const chromeApi=fixture();
+  const tabId=79008;
+  const operationId='operation_provider_tab_mismatch_0008';
+  const requestId='r4request79008';
+  const documentId='document-provider-tab-mismatch-79008';
+  const store=journal(chromeApi,operationId);
+  const operation=await store.begin({
+    command:'provider_commit',tabId,origin:'https://claude.ai',
+    url:'https://claude.ai/chat/conversation_001',documentId,frameId:0,
+    conversationId:'conversation_001',requestId,taskId:'task_79008',
+    providerId:'claude',preparedId:'prepared_79008',
+    payloadHash:'8'.repeat(64),epoch:1
+  });
+  await store.markInjecting(operation.operationId,{documentId,frameId:0});
+  await store.unknown(operation.operationId,{
+    code:'WORKER_RESTART_DURING_INJECTION',
+    sideEffect:'operation-result-unverified'
+  });
+
+  const mismatchedAudit={
+    schemaVersion:1,eventId:'reconcile-event-79008',
+    type:'OPERATOR_RECONCILE',tabId:tabId+1,
+    quarantineToken:'reconciled-qtoken-79008',
+    operationId,requestId,command:'provider_commit',origin:'https://claude.ai',
+    conversationId:'conversation_001',
+    trustBoundary:'LOCAL_MACHINE_TRUSTED_CONTROL_UI',
+    evidence:{
+      terminalState:'COMMIT_CLICK_ATTEMPTED',documentId,frameId:0
+    },
+    backgroundGrantRevokedAndVerified:true,sessionAuthorizationAbsent:true,
+    confirmed:true,localGesture:true,reconciledAt:Date.now()
+  };
+  chromeApi.data.bridgeMutationQuarantineAudit=[mismatchedAudit];
+  chromeApi.session.bridgeMutationQuarantineAudit=[mismatchedAudit];
+
+  installBackgroundCoordinator(chromeApi);
+  const status=await send(chromeApi,'quarantine-status');
+  assert.ok(status.records.some(record=>record.tabId===tabId),
+    'audit for another tab must not suppress quarantine for the journal tab');
+  assert.deepEqual(chromeApi.data.bridgeMutationQuarantinedTabs,[tabId]);
+  assert.equal(chromeApi.data.bridgeMutationQuarantineRecords[String(tabId)].operationId,
+    operationId);
+});
+
 test('replacement MV3 worker honors exact durable reconciliation audit and does not re-quarantine UNKNOWN history',async()=>{
   const chromeApi=fixture();
   const tabId=79007;
