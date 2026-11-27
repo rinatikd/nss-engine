@@ -202,8 +202,11 @@ This closes the policy decision previously listed as an open release gate. It do
 - a real local gesture and explicit confirmation are required for the exact displayed quarantine scope;
 - the audit record is appended before any matching deny/quarantine marker is removed;
 - audit/storage failure remains fail-closed and leaves quarantine in force;
-- the event captures scope, operation identity, evidence references, timestamps, terminal status, and the accepted local-machine trust model without recording prompts, message bodies, cookies, keys, tokens, or provider secrets;
+- the event captures scope, operation identity, evidence references, timestamps, terminal status, and `trustBoundary: LOCAL_MACHINE_TRUSTED_CONTROL_UI` without recording prompts, message bodies, cookies, keys, tokens, or provider secrets;
 - replay, stale tokens, changed document identity, partial store writes, and cross-tab reconciliation cannot clear a newer or unrelated quarantine.
+
+
+New reconciliation audit records explicitly include the `trustBoundary` field with the value `LOCAL_MACHINE_TRUSTED_CONTROL_UI`. A tab with more than one unresolved operation is deliberately non-reconcilable through the single-operation UI flow; it remains quarantined pending separate review.
 
 ### Accepted limitation
 
