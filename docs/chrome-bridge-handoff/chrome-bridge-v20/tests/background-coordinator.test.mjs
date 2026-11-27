@@ -927,13 +927,17 @@ test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN
   await operationJournal.markInjecting(operation.operationId,{
     documentId:'document-62',frameId:0
   });
+  const journalRow=(await operationJournal.list())[0];
+  const injectionStartedAt=journalRow.events.find(event=>event.phase==='INJECTING').at;
   const pending={
     pending:true,token:'prior-worker-revoke-001',affectedTabs:[62],startedAt:Date.now()-100,
     operations:[{
-      tabId:62,requestId:'r4request000062',command:'provider_commit',
+      tabId:62,operationId:operation.operationId,
+      requestId:'r4request000062',command:'provider_commit',
       taskId:'task_000062',providerId:'claude',origin:'https://claude.ai',
-      conversationId:'conversation_001',epoch:1,payloadHash:'c'.repeat(64),
-      preparedId:'prepared_0062',startedAt:Date.now()-200
+      conversationId:'conversation_001',documentId:'document-62',frameId:0,
+      epoch:1,payloadHash:'c'.repeat(64),preparedId:'prepared_0062',
+      startedAt:injectionStartedAt
     }]
   };
   c.data.bridgeMutationRevocationPending=pending;
@@ -1238,15 +1242,13 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
   };
   const pending={
     pending:true,token:globalToken,affectedTabs:[tabId],startedAt:now-1000,
-    // A legacy global fence predates operationId/documentId fields and
-    // stores the coordinator-lane start time. The per-tab quarantine record
-    // remains the authoritative exact journal/document identity.
     operations:[{
-      tabId,requestId,command:record.command,
+      tabId,operationId:record.operationId,requestId,command:record.command,
       taskId:record.taskId,providerId:record.providerId,
-      origin:record.origin,conversationId:record.conversationId,epoch:record.epoch,
+      origin:record.origin,conversationId:record.conversationId,
+      documentId:record.documentId,frameId:record.frameId,epoch:record.epoch,
       payloadHash:record.payloadHash,preparedId:record.preparedId,
-      startedAt:now-2300
+      startedAt:record.startedAt
     }]
   };
   let pageState={
