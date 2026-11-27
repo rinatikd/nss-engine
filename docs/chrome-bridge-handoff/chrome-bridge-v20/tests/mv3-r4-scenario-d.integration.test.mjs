@@ -177,7 +177,13 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // the hold: after the Send click, execution state is ambiguous by design.
   control.close();control=null;
   pageA.close();pageA=null;pageB.close();pageB=null;
-  try { await worker.eval('chrome.runtime.reload();true'); } catch {}
+  // runtime.reload may close its own CDP target before Runtime.evaluate
+  // can return when a page-action promise is deliberately still unresolved.
+  // Bound the command wait; then observe the replacement worker independently.
+  await Promise.race([
+    worker.eval('chrome.runtime.reload();true').catch(()=>null),
+    sleep(3000)
+  ]);
   worker.close();worker=null;
   const restartedWorker=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
   worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl);await worker.call('Runtime.enable');
@@ -192,11 +198,18 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // reopened from the same stateDir/key; the unresolved COMMITTING record
   // must recover as UNKNOWN, never as SENT or retryable PREPARED.
   const oldBridge=bridge;
-  await new Promise(resolve=>{
-    oldBridge.close(resolve);
-    oldBridge.closeAllConnections?.();
-  });
   bridge=null;
+  const oldBridgeClosed=await Promise.race([
+    new Promise(resolve=>{
+      oldBridge.close(()=>resolve(true));
+      oldBridge.closeAllConnections?.();
+    }),
+    sleep(10000).then(()=>false)
+  ]);
+  if(!oldBridgeClosed) {
+    oldBridge.closeAllConnections?.();
+    throw Error('BRIDGE_CLOSE_TIMEOUT_DURING_UNKNOWN_COMMIT_RECOVERY');
+  }
   const lostCommit=await Promise.race([
     commitPromise.then(v=>({value:v}),e=>({transportError:e.message})),
     sleep(8000).then(()=>({timedOut:true}))
