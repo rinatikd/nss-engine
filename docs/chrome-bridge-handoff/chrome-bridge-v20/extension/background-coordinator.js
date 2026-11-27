@@ -892,8 +892,8 @@ async function reconcileQuarantinedTab(chromeApi, {
           operation.conversationId!==record.conversationId ||
           (operation.documentId!==undefined && operation.documentId!==record.documentId) ||
           (operation.frameId!==undefined && operation.frameId!==record.frameId) ||
-          (Number.isFinite(record.startedAt) && Number.isFinite(operation.startedAt) &&
-            operation.startedAt!==record.startedAt) ||
+          (operation.operationId && Number.isFinite(record.startedAt) &&
+            Number.isFinite(operation.startedAt) && operation.startedAt!==record.startedAt) ||
           (record.taskId && operation.taskId!==record.taskId) ||
           (record.providerId && operation.providerId!==record.providerId) ||
           (Number.isSafeInteger(record.epoch) && operation.epoch!==record.epoch) ||
