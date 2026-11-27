@@ -1,0 +1,183 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { ProviderJournal } from '../server/provider-journal.mjs';
+
+const key=crypto.randomBytes(32);
+const identity=(requestId,taskId)=>({
+  requestId,taskId,providerId:'claude',tabId:42,
+  origin:'https://claude.ai',conversationId:'conversation_001',epoch:7
+});
+const makeJournal=dir=>new ProviderJournal(dir,{
+  hmacKey:key,bridgeEpoch:'bridge_epoch_0001'
+});
+
+test('two preloaded journal instances append one monotonic hash chain',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-multi-instance-'));
+  try {
+    // Both instances load the same empty journal before either one writes.
+    const first=makeJournal(dir);
+    const second=makeJournal(dir);
+
+    first.outcome(identity('request_0001','task_000001'),'BLOCKED','TEST_FIRST_APPEND');
+    second.outcome(identity('request_0002','task_000002'),'BLOCKED','TEST_SECOND_APPEND');
+
+    const records=fs.readFileSync(path.join(dir,'provider-transactions.jsonl'),'utf8')
+      .trim().split('\n').map(line=>JSON.parse(line));
+
+    assert.deepEqual(records.map(record=>record.seq),[1,2],
+      'sequence numbers must be allocated from the on-disk journal while holding the lock');
+    assert.equal(records[1].prevHash,records[0].hash,
+      'the second record must extend the first record hash');
+    assert.equal(records[1].hash.length,64);
+
+    // A fresh reader must accept the complete chain and see both transactions.
+    const reloaded=makeJournal(dir);
+    assert.equal(reloaded.status(identity('request_0001','task_000001')).state,'BLOCKED');
+    assert.equal(reloaded.status(identity('request_0002','task_000002')).state,'BLOCKED');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+test('preloaded instances must not both begin an unresolved request on the same tab',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-tab-fence-'));
+  try {
+    const seed=makeJournal(dir);
+    const seedIdentity=identity('request_0001','task_000001');
+    seed.beginPrepare(seedIdentity,'a'.repeat(64));
+    seed.outcome(seedIdentity,'BLOCKED','TEST_SEED_TERMINAL');
+
+    // Both instances now preload the same epoch and terminal transaction.
+    const first=makeJournal(dir);
+    const second=makeJournal(dir);
+    const one=identity('request_0002','task_000002');
+    const two=identity('request_0003','task_000003');
+    first.beginPrepare(one,'b'.repeat(64));
+    assert.throws(()=>second.beginPrepare(two,'c'.repeat(64)),/PROVIDER_TAB_QUARANTINED/,
+      'the second instance must revalidate tab quarantine while holding the journal lock');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+test('preloaded readers refresh status and events after another instance commits',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-fresh-read-'));
+  try {
+    const reader=makeJournal(dir);
+    const writer=makeJournal(dir);
+    const request=identity('request_0004','task_000004');
+    writer.beginPrepare(request,'d'.repeat(64));
+    const prepared=writer.completePrepare(request,{
+      preparedId:'prepared_0004',expiresAt:new Date(Date.now()+60000).toISOString()
+    });
+    assert.equal(prepared.state,'PREPARED');
+    assert.equal(reader.status(request).state,'PREPARED',
+      'status must reload committed state while holding the inter-process lock');
+    const events=reader.events({after:0,limit:20});
+    assert.ok(events.some(event=>event.requestId===request.requestId&&event.state==='PREPARED'),
+      'events must include records appended by another preloaded instance');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+test('constructor fails closed on an existing lock and never removes it',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-stale-lock-'));
+  try {
+    const writer=makeJournal(dir);
+    const request=identity('request_0005','task_000005');
+    writer.beginPrepare(request,'e'.repeat(64));
+    const journalPath=path.join(dir,'provider-transactions.jsonl');
+    const lockPath=journalPath+'.lock';
+    const before=fs.readFileSync(journalPath,'utf8');
+    fs.writeFileSync(lockPath,'owner=another-process');
+    assert.throws(()=>makeJournal(dir),error=>error?.code==='PROVIDER_JOURNAL_LOCK_BUSY'&&error?.message==='PROVIDER_JOURNAL_LOCK_BUSY');
+    assert.equal(fs.readFileSync(journalPath,'utf8'),before,
+      'failed recovery must not mutate the journal while another owner holds the lock');
+    assert.equal(fs.readFileSync(lockPath,'utf8'),'owner=another-process',
+      'constructor must not auto-delete a possibly active or stale lock');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+
+test('known no-send cleanup metadata is retained in durable status and event history',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-side-effect-'));
+  try {
+    const writer=makeJournal(dir);
+    const request=identity('request_0006','task_000006');
+    const outcome=writer.outcome(request,'NOT_PERFORMED','PROVIDER_PREPARE_ROLLBACK_UNVERIFIED',{
+      sideEffect:'composer-draft-may-remain'
+    });
+    assert.equal(outcome.sideEffect,'composer-draft-may-remain');
+    const reader=makeJournal(dir);
+    assert.equal(reader.status(request).state,'NOT_PERFORMED');
+    assert.equal(reader.status(request).sideEffect,'composer-draft-may-remain');
+    const event=reader.events({after:0,limit:10}).find(item=>item.requestId===request.requestId);
+    assert.equal(event.sideEffect,'composer-draft-may-remain');
+  } finally {
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});
+
+
+test('journal lock acquisition retries transient EEXIST and releases its acquired lock',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-lock-retry-'));
+  const lockPath=path.join(dir,'provider-transactions.jsonl.lock');let collisions=0;
+  const fsOps=Object.create(fs);
+  fsOps.openSync=(file,flags,mode)=>{
+    if(path.resolve(String(file))===path.resolve(lockPath)&&flags==='wx'&&collisions<2){
+      collisions++;const error=Error('simulated lock contention');error.code='EEXIST';throw error;
+    }
+    return fs.openSync(file,flags,mode);
+  };
+  try{
+    const journal=new ProviderJournal(dir,{hmacKey:key,bridgeEpoch:'bridge_epoch_0001',fsOps});
+    const result=journal.outcome(identity('request_retry_01','task_retry_0001'),'BLOCKED','LOCK_RETRY_TEST');
+    assert.equal(result.state,'BLOCKED');assert.equal(collisions,2);
+    assert.equal(fs.existsSync(lockPath),false);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+
+test('Windows EPERM for an existing exclusive journal lock is retried as contention',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'provider-journal-windows-eperm-'));
+  const lockPath=path.join(dir,'provider-transactions.jsonl.lock');
+  let attempts=0;
+  const fsOps=Object.create(fs);
+  fsOps.openSync=(file,flags,mode)=>{
+    if(path.resolve(String(file))===path.resolve(lockPath)&&flags==='wx'&&attempts===0){
+      const owner=fs.openSync(file,'wx',mode);
+      fs.closeSync(owner);
+      attempts++;
+      const error=Error('simulated Windows EPERM while another process owns lock path');
+      error.code='EPERM';
+      throw error;
+    }
+    if(path.resolve(String(file))===path.resolve(lockPath)&&flags==='wx'&&attempts===1){
+      // Simulate the foreign owner releasing its lock between bounded retries.
+      fs.unlinkSync(file);
+      attempts++;
+    }
+    return fs.openSync(file,flags,mode);
+  };
+  try{
+    const writer=new ProviderJournal(dir,{
+      hmacKey:key,bridgeEpoch:'bridge_epoch_0001',fsOps
+    });
+    const result=writer.outcome(
+      identity('request_windows_01','task_windows_001'),
+      'BLOCKED','WINDOWS_EPERM_LOCK_RETRY'
+    );
+    assert.equal(result.state,'BLOCKED');
+    assert.equal(attempts,2);
+    assert.equal(fs.existsSync(lockPath),false);
+  }finally{
+    fs.rmSync(dir,{recursive:true,force:true});
+  }
+});

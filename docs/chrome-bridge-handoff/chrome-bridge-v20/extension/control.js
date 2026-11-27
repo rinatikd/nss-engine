@@ -1,0 +1,1065 @@
+import { CONTROL_ORIGINS, DISCOVERY_ONLY_ORIGINS, providerForOrigin, CONTROL_ACTIONS, ControlGrants } from './permissions.js';
+import { eligibleBackgroundControlTabs } from './control-targets.js';
+import { requireCoordinatorAck, requestCoordinatorAck } from './coordinator-ack.js';
+import { backgroundStartupDecision } from './background-mode-reconnect.js';
+import { captureLocalTab } from './visual-snapshot.js';
+import { loadBrowserKey, saveBrowserKey, forgetBrowserKey } from './browser-key-store.js';
+import { verifyBridgeCredential } from './connection-check.js';
+import { safeConnectionErrorCode, backgroundConnectionStatusLabel } from './connection-diagnostic.js';
+import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
+import { pageAction } from './page.js';
+import { findSecret, redact } from './secrets.js';
+import { backgroundRevokeErrorMessage } from './background-control-ui-state.js';
+import { renderBackgroundControlGrants } from './background-control-list.js';
+
+const $ = (id) => document.getElementById(id);
+const BRIDGE = 'http://127.0.0.1:17381';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const LOCAL_HOSTS = ['127.0.0.1', 'localhost', '[::1]'];
+
+let running = false;
+let generation = 0;
+let pollAbort = null;
+let audio = null;
+let releaseLock = null;
+const approvals = new Map();
+const grants = new ControlGrants();
+const timestamp = () => new Intl.DateTimeFormat('ru-RU', {timeZone:'Asia/Almaty', day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}).format(new Date());
+function taskStatus(label, value, detail='') { $('taskState').textContent=label; $('taskProgress').value=value; $('taskTimes').textContent=timestamp() + (detail ? ' · '+detail : ''); }
+function refreshGrantLabels() {
+  // Individual Control grants are intentionally not offered in the site list.
+  // Only the global background Control action grants temporary tab permissions.
+  const global = $('controlGlobalState');
+  if (global) global.textContent = !running ? 'Мост отключён; управление недоступно'
+    : backgroundMode ? 'Фоновое управление: используйте общие кнопки выше (каждое действие подтверждается отдельно)'
+    : $('actions').checked ? 'Глобальное разрешение действий: ВКЛ'
+    : 'Глобальное разрешение действий: ВЫКЛ';
+}
+setInterval(refreshGrantLabels,30000);
+const observedOrigins = new Map();
+chrome.tabs.onUpdated.addListener((id, change) => {
+  if (!change.url) return;
+  const origin = new URL(change.url).origin;
+  const previous = observedOrigins.get(id);
+  if (previous && previous !== origin) grants.grants.delete(previous);
+  observedOrigins.set(id, origin);
+});
+
+// ---------- хранилище ----------
+const getSites = async () => (await chrome.storage.local.get('sites')).sites || {};
+const setSites = (sites) => chrome.storage.local.set({ sites });
+async function getAdapters() {
+  const { adapters } = await chrome.storage.local.get('adapters');
+  try { return mergeAdapters(JSON.parse(adapters || '{}')); } catch { return mergeAdapters(); }
+}
+
+// ---------- журнал ----------
+const logLines = [];
+function log(msg) {
+  logLines.push(timestamp() + '  ' + msg);
+  if (logLines.length > 80) logLines.shift();
+  $('log').textContent = logLines.join('\n');
+}
+const setStatus = (s) => { $('status').textContent = s; };
+
+// ---------- сайты ----------
+async function renderSites() {
+  const sites = await getSites();
+  const perms = await chrome.permissions.getAll();
+  const granted = new Set((perms.origins || []).map((o) => o.replace(/\/\*$/, '')));
+  const ul = $('sites');
+  ul.textContent = '';
+  const entries = Object.entries(sites);
+  if (!entries.length) { const li = document.createElement('li'); li.textContent = 'Сайты не добавлены.'; ul.append(li); }
+  for (const [origin, s] of entries) {
+    const li = document.createElement('li');
+    li.dataset.origin = origin;
+    const left = document.createElement('span');
+    left.textContent = origin;
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = s.mode === 'chat' ? 'ИИ-чат · ' + s.adapter : 'чтение';
+    left.append(tag);
+    if (!granted.has(origin)) { const w = document.createElement('span'); w.className = 'tag'; w.textContent = 'нет разрешения Chrome'; left.append(w); }
+    const rm = document.createElement('button');
+    rm.className = 'secondary';
+    rm.textContent = 'Убрать';
+    rm.onclick = async () => {
+      const cur = await getSites();
+      delete cur[origin];
+      grants.grants.delete(origin);
+      await setSites(cur);
+      try { await chrome.permissions.remove({ origins: [origin + '/*'] }); } catch { /* уже снято */ }
+      await renderSites();
+    };
+    li.append(left, rm);
+    ul.append(li);
+  }
+  refreshGrantLabels();
+}
+
+function fillAdapterSelect() {
+  const sel = $('adapter');
+  sel.textContent = '';
+  for (const [k, v] of Object.entries(DEFAULT_ADAPTERS)) { const o = document.createElement('option'); o.value = k; o.textContent = v.label; sel.append(o); }
+}
+$('mode').onchange = () => { $('adapterWrap').hidden = $('mode').value !== 'chat'; syncOrigin(); };
+$('adapter').onchange = () => syncOrigin(true);
+function syncOrigin(force = false) {
+  if ($('mode').value !== 'chat') return;
+  const suggestedOrigin = DEFAULT_ADAPTERS[$('adapter').value]?.origin || '';
+  // Selecting an adapter fills its matching address. The field stays editable:
+  // a manually entered origin is preserved until the adapter is changed again.
+  if (force || !$('origin').value.trim()) $('origin').value = suggestedOrigin;
+}
+
+$('grant').onclick = async () => {
+  try {
+    const u = new URL($('origin').value);
+    if (u.protocol !== 'https:') throw Error('Нужен HTTPS-адрес');
+    if (LOCAL_HOSTS.includes(u.hostname)) throw Error('Локальные адреса запрещены');
+    const ok = await chrome.permissions.request({ origins: [u.origin + '/*'] });
+    if (!ok) throw Error('Chrome не выдал разрешение');
+    const sites = await getSites();
+    const provider = providerForOrigin(u.origin);
+    const mode = provider ? $('mode').value : 'read';
+    sites[u.origin] = mode === 'chat' ? { mode, adapter: provider } : { mode };
+    await setSites(sites);
+    $('origin').value = '';
+    await renderSites();
+    log('Сайт добавлен: ' + u.origin + ' (' + mode + ')');
+  } catch (e) { setStatus(e.message); }
+};
+$('revoke').onclick = async () => {
+  // Revoking site access must not stop the local bridge connection.
+  grants.grants.clear();
+  $('actions').checked = false;
+  refreshGrantLabels();
+  const p = await chrome.permissions.getAll();
+  for (const o of p.origins || []) if (!o.includes('127.0.0.1')) await chrome.permissions.remove({ origins: [o] });
+  await setSites({});
+  await renderSites();
+  log('Все сайты отозваны');
+};
+$('saveAdapters').onclick = async () => {
+  try {
+    const v = JSON.parse($('adapterJson').value || '{}');
+    if (typeof v !== 'object' || Array.isArray(v) || v === null) throw Error('Нужен JSON-объект');
+    await chrome.storage.local.set({ adapters: JSON.stringify(v) });
+    $('adapterMsg').textContent = 'Сохранено.';
+  } catch (e) { $('adapterMsg').textContent = 'Ошибка: ' + e.message; }
+};
+
+// ---------- одобрения ----------
+function notify() {
+  const n = approvals.size;
+  document.title = n ? `(${n}) Подтвердите · Chrome Bridge` : 'Chrome Bridge';
+  if (n && audio) { try { const o = audio.createOscillator(); o.connect(audio.destination); o.frequency.value = 660; o.start(); o.stop(audio.currentTime + 0.15); } catch { /* звук необязателен */ } }
+  if (!n) { const box = $('approvals'); if (!box.children.length) { const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Нет ожидающих запросов.'; box.append(p); } }
+}
+function askApproval(title, details, expires) {
+  return new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const box = $('approvals');
+    if (!approvals.size) box.textContent = '';
+    const el = document.createElement('div');
+    el.className = 'approval';
+    const h = document.createElement('strong'); h.textContent = title;
+    const pre = document.createElement('pre'); pre.textContent = details;
+    const ok = document.createElement('button'); ok.textContent = 'Разрешить';
+    const no = document.createElement('button'); no.textContent = 'Отклонить'; no.className = 'danger'; no.style.marginLeft = '8px';
+    el.append(h, pre, ok, no);
+    box.append(el);
+    const done = (fn) => (arg) => { clearTimeout(timer); approvals.delete(id); el.remove(); notify(); fn(arg); };
+    const timer = setTimeout(() => done(reject)(Error('Approval timed out')), Math.max(1000, expires - Date.now() - 2000));
+    ok.onclick = () => done(resolve)(true);
+    no.onclick = () => done(reject)(Error('User denied action'));
+    approvals.set(id, { deny: () => done(reject)(Error('Stopped')) });
+    notify();
+  });
+}
+
+// ---------- выполнение команд ----------
+const isHttp = (u) => ['https:'].includes(u.protocol) && !LOCAL_HOSTS.includes(u.hostname);
+async function siteOf(url) {
+  try {
+    const u = new URL(url);
+    if (!isHttp(u)) return null;
+    const s = (await getSites())[u.origin];
+    if (!s) return null;
+    if (!(await chrome.permissions.contains({ origins: [u.origin + '/*'] }))) return null;
+    const provider = providerForOrigin(u.origin);
+    return { ...s, origin: u.origin, mode: provider ? s.mode : 'read', adapter: provider,
+      discoveryOnly: !!DISCOVERY_ONLY_ORIGINS[u.origin] };
+  } catch { return null; }
+}
+async function inject(tabId, origin, name, args) {
+  if (CONTROL_ACTIONS.has(name)) args = { ...args, controlExpires: grants.require(origin) };
+  const [r] = await chrome.scripting.executeScript({ target: { tabId }, func: pageAction, args: [name, args, origin] });
+  const res = r?.result;
+  if (res?.error) throw Error(res.error);
+  return res;
+}
+async function waitComplete(tabId, ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if ((await chrome.tabs.get(tabId)).status === 'complete') return true; await sleep(300); }
+  return false;
+}
+async function tabAndSite(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab?.url) throw Error('TAB_NOT_PERMITTED');
+  const site = await siteOf(tab.url);
+  const current = new URL(tab.url).origin;
+  const previous = observedOrigins.get(tabId);
+  if (previous && previous !== current) grants.grants.delete(previous);
+  observedOrigins.set(tabId, current);
+  if (!site) throw Error('Tab origin is not permitted');
+  return { tab, site };
+}
+async function agentTab(tabId) {
+  const { tab, site } = await tabAndSite(tabId);
+  if (site.mode !== 'chat') throw Error('Site is not marked as an AI chat in Chrome Bridge');
+  const adapters = await getAdapters();
+  const adapter = adapters[site.adapter];
+  if (providerForOrigin(site.origin) !== site.adapter || adapter?.origin !== site.origin)
+    throw Error('Origin-specific adapter required');
+  if (!adapter) throw Error('Unknown adapter: ' + site.adapter);
+  return { tab, site, adapter, adapterName: site.adapter };
+}
+
+async function execute(cmd) {
+  if (Date.now() > cmd.expires) throw Error('Command expired');
+  const { name, args } = cmd;
+  // One global gate for every mutating action, including agent_send/new_chat/open.
+  if (CONTROL_ACTIONS.has(name) && !$('actions').checked)
+    throw Error('Control denied: global Grant Control is OFF');
+
+  if (name === 'control_status') {
+    const sites = await getSites();
+    const globalEnabled = running && $('actions').checked;
+    let backgroundControl={
+      available:false,grantsKnown:false,activeCount:null,grants:[],
+      error:'BACKGROUND_STATUS_UNAVAILABLE'
+    };
+    try {
+      const response=await chrome.runtime.sendMessage({
+        target:'bridge-coordinator',type:'background-control-status'
+      });
+      if (response?.available===true) backgroundControl=response;
+      else if (response?.error) backgroundControl={...backgroundControl,error:response.error};
+    } catch { /* preserve explicit unavailable status without exposing details */ }
+    const legacyOrigins=Object.keys(sites).filter(origin=>CONTROL_ORIGINS[origin]).map(origin=>({
+      origin,effective:grants.status(origin,globalEnabled).allowed,
+      expiresAt:grants.status(origin,globalEnabled).expiresAt
+    }));
+    const byOrigin=new Map();
+    for (const grant of (Array.isArray(backgroundControl.grants) ? backgroundControl.grants : [])) {
+      if (!grant || !Object.hasOwn(CONTROL_ORIGINS,grant.origin) ||
+          !Number.isSafeInteger(grant.tabId) || !Number.isFinite(grant.expiresAt)) continue;
+      let item=byOrigin.get(grant.origin);
+      if (!item) {
+        item={origin:grant.origin,effective:true,expiresAt:grant.expiresAt,tabs:[]};
+        byOrigin.set(grant.origin,item);
+      }
+      item.expiresAt=Math.max(item.expiresAt,grant.expiresAt);
+      item.tabs.push({tabId:grant.tabId,expiresAt:grant.expiresAt});
+    }
+    const backgroundActive=backgroundControl.backgroundMode===true;
+    const sessionAuthorization=backgroundActive ? backgroundControl.sessionAuthorization : null;
+    return {
+      connected:backgroundActive ? backgroundControl.connected===true : running,
+      globalEnabled,
+      sessionControlEnabled:sessionAuthorization?.active===true,
+      sessionAuthorization,
+      approvalPending:backgroundActive ? backgroundControl.approvalPending : approvals.size,
+      origins:backgroundActive ? [...byOrigin.values()] : legacyOrigins,
+      controlMode:backgroundActive ? 'background' : 'legacy',
+      legacyControl:{globalEnabled,approvalPending:approvals.size,origins:legacyOrigins},
+      backgroundControl,
+      // No token, prompt text, screenshot bytes or approval details.
+    };
+  }
+  if (name === 'browser_tabs') {
+    const out = [];
+    for (const t of await chrome.tabs.query({})) {
+      const site = t.url && (await siteOf(t.url));
+      if (site) out.push({ tabId: t.id, title: t.title, url: t.url, mode: site.mode, adapter: site.adapter || null, active: t.active, windowId: t.windowId });
+    }
+    return out;
+  }
+  if (name === 'browser_open') {
+    if (!(await siteOf(args.url))) throw Error('Origin not permitted: add this website in Chrome Bridge');
+    const targetOrigin = new URL(args.url).origin;
+    grants.require(targetOrigin);
+    await askApproval('Открыть вкладку', 'Разрешённый адрес: ' + targetOrigin + '\\nОткрытие внешнего сайта', cmd.expires);
+    if (!running || Date.now() >= cmd.expires) throw Error('Command stopped or expired');
+    grants.require(targetOrigin);
+    const t = await chrome.tabs.create({ url: args.url, active: !!args.active });
+    return { tabId: t.id, url: args.url };
+  }
+  if (name === 'browser_wait') {
+    const { tab, site } = await tabAndSite(args.tabId);
+    const end = Date.now() + (args.timeoutMs || 10000);
+    let loaded = await waitComplete(tab.id, Math.max(0, end - Date.now()));
+    if (!args.selector) return { loaded };
+    while (Date.now() < end) {
+      const r = await inject(tab.id, site.origin, 'exists', { selector: args.selector });
+      if (r.found) return { loaded, found: true };
+      await sleep(300);
+    }
+    return { loaded, found: false };
+  }
+  if (name === 'browser_read') {
+    const { tab, site } = await tabAndSite(args.tabId);
+    if ($('confirmReads').checked) await askApproval('Чтение страницы', `${tab.url}\n${args.selector ? 'Элемент: ' + args.selector : 'Вся страница'}`, cmd.expires);
+    const r = await inject(tab.id, site.origin, 'browser_read', args);
+    return { ...r, text: redact(r.text), links: r.links.map((l) => ({ text: redact(l.text), url: redact(l.url) })) };
+  }
+  if (name === 'browser_click' || name === 'browser_fill') {
+    if (!$('actions').checked) throw Error('Actions disabled in control tab');
+    if (!running) throw Error('Stopped');
+    const { tab, site } = await tabAndSite(args.tabId);
+    grants.require(site.origin);
+    const d = await inject(tab.id, site.origin, 'describe', { selector: args.selector });
+    const lines = [`Страница: ${tab.url}`, `Селектор: ${args.selector}`, `Элемент: <${d.tag}${d.type ? ' type=' + d.type : ''}> В«${d.text}В»`];
+    if (d.href) lines.push('Ссылка: ' + d.href);
+    if (d.formAction) lines.push('Отправляет форму на: ' + d.formAction);
+    if (name === 'browser_fill') lines.push('Текст: ' + args.text.slice(0, 300) + (args.text.length > 300 ? 'вЂ¦' : ''));
+    await askApproval(name === 'browser_click' ? 'Нажатие' : 'Ввод текста', lines.join('\n'), cmd.expires);
+    if (!running || Date.now() > cmd.expires) throw Error('Command stopped or expired');
+    return inject(tab.id, site.origin, name, { ...args, expect: { tag: d.tag, text: d.text } });
+  }
+
+  // ---- агентские чаты ----
+  if (name === 'agent_probe') {
+    const { tab, site, adapter, adapterName } = await agentTab(args.tabId);
+    const test = await inject(tab.id, site.origin, 'agent_selftest', { adapter });
+    return { adapter: adapterName, verified: test.composer.visible === 1 && test.send.visible === 1 };
+
+  }
+  if (name === 'agent_context') {
+    const { tab, site, adapter } = await agentTab(args.tabId);
+    return inject(tab.id, site.origin, 'agent_context', { adapter });
+  }
+  if (name === 'agent_new_chat') {
+    const { tab, site, adapter } = await agentTab(args.tabId);
+    if (site.discoveryOnly) throw Error('Candidate chat is discovery-only: Control not enabled');
+    grants.require(site.origin);
+    if (!adapter.newChatUrl || new URL(adapter.newChatUrl).origin !== new URL(tab.url).origin) throw Error('Adapter has no same-origin newChatUrl');
+    await askApproval('Новый AI-чат', 'Сайт: ' + site.origin + '\\nСоздать новый разговор в существующей вкладке?', cmd.expires);
+    if (!running || Date.now() >= cmd.expires) throw Error('Command stopped or expired');
+    grants.require(site.origin);
+    await chrome.tabs.update(tab.id, { url: adapter.newChatUrl });
+    await sleep(500);
+    await waitComplete(tab.id, 15000);
+    await sleep(1500);
+    return { ok: true };
+  }
+  if (['agent_send', 'agent_peek', 'agent_selftest'].includes(name)) {
+    const { tab, site, adapter } = await agentTab(args.tabId);
+    if (name === 'agent_send' && site.discoveryOnly)
+      throw Error('Candidate chat is discovery-only: message sending is disabled until adapter calibration and approval');
+    if (name === 'agent_send') {
+      const secret = findSecret(args.text);
+      if (secret) throw Error('Refusing to send: text looks like it contains a secret (' + secret + ')');
+      grants.require(site.origin);
+      const conversation = await inject(tab.id, site.origin, 'agent_context', { adapter });
+      if (!conversation.verified || conversation.origin !== site.origin ||
+          conversation.conversationId !== args.expectedConversationId ||
+          args.expectedOrigin !== site.origin) throw Error('Conversation changed before approval');
+      // Display only a short redacted preview; full prompt is not copied to logs.
+      await askApproval('Отправить AI-запрос', 'Сайт: ' + site.origin +
+        '\\nРазговор: ' + conversation.conversationId +
+        '\\nСимволов: ' + args.text.length +
+        '\\nНачало: ' + redact(args.text.slice(0, 180)), cmd.expires);
+      if (!running || Date.now() >= cmd.expires) throw Error('Command stopped or expired');
+      grants.require(site.origin);
+      // Confirm identity after approval, not only before it.
+      const current = await tabAndSite(tab.id);
+      if (current.site.origin !== site.origin || current.tab.url !== tab.url)
+        throw Error('AI tab changed after approval');
+    }
+    const result = await inject(tab.id, site.origin, name, { ...args, adapter });
+    return result?.text ? { ...result, text: redact(result.text) } : result;
+  }
+  throw Error('Unknown command: ' + name);
+}
+
+// ---------- long-poll цикл ----------
+async function post(path, body, ms) {
+  const r = await fetch(BRIDGE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + $('token').value },
+    body: JSON.stringify(body),
+    signal: AbortSignal.any([AbortSignal.timeout(ms), pollAbort.signal]),
+  });
+  if (!r.ok) throw Error('Bridge HTTP ' + r.status);
+  return r.json();
+}
+async function handle(command) {
+  let result, error;
+  log('→ ' + command.name);
+  taskStatus('Выполняется: '+command.name, 35, 'Задание принято');
+  try { result = await execute(command); } catch (e) { error = e.message; log('✗ ' + command.name + ': ' + e.message); }
+  taskStatus(error ? 'Ошибка: '+command.name : 'Завершено: '+command.name, 100, error ? 'Смотрите журнал' : 'Результат подготовлен');
+  try { await post('/bridge/result', { id: command.id, result, error }, 10000); }
+  catch { await sleep(500); await post('/bridge/result', { id: command.id, result, error }, 10000).catch(() => {}); }
+}
+async function loop(gen) {
+  while (running && gen === generation) {
+    try {
+      const { command, epoch } = await post('/bridge/poll', {}, 30000);
+      if (!epoch || grants.epoch !== epoch) grants.reset(epoch || null);
+      refreshGrantLabels();
+      if (!running || gen !== generation) break;
+      setStatus('Подключено · ожидание команд');
+      if (!command && $('taskProgress').value !== 100) taskStatus('Ожидание команд',0);
+      if (command) await handle(command);
+    } catch (e) {
+      if (!running || gen !== generation) break;
+      setStatus('Ошибка: ' + e.message);
+      await sleep(2000);
+    }
+  }
+}
+function stop() {
+  running = false;
+  grants.reset();
+  refreshGrantLabels();
+  generation++;
+  pollAbort?.abort();
+  for (const a of [...approvals.values()]) a.deny();
+  if (releaseLock) { releaseLock(); releaseLock = null; }
+  setStatus('Отключено');
+  taskStatus('Отключено', 0);
+}
+$('actions').addEventListener('change', (event) => {
+  if (!event.isTrusted) { $('actions').checked = false; }
+  if (!$('actions').checked) grants.grants.clear();
+  refreshGrantLabels();
+});
+let backgroundMode = false;
+// Background mutation lab is ALWAYS opt-in and starts disabled.
+$('mutationLab').addEventListener('change',async event=>{
+  if (!event.isTrusted) { $('mutationLab').checked=false; return; }
+  const enabled=$('mutationLab').checked;
+  if (enabled && (!backgroundMode || !window.confirm(
+    'Включить экспериментальное управление? Каждая команда потребует отдельного подтверждения, а каждая вкладка — временного разрешения Control. Продолжить?'
+  ))) {
+    $('mutationLab').checked=false;return;
+  }
+  try {
+    await chrome.storage.local.set({bridgeMutationLabMode:enabled});
+    if (!enabled) {
+      // Disabling the lab also revokes all existing per-tab grants.
+      await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'clear-background-controls'});
+    }
+    $('backgroundGrantStatus').textContent=enabled ?
+      'Лабораторный режим включён. Используйте общую кнопку Control для открытых разрешённых вкладок.' :
+      'Управление отключено';
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
+    await refreshBackgroundGrantList();
+  } catch(e) {
+    $('mutationLab').checked=!enabled;
+    setStatus('Ошибка настройки управления: '+e.message);
+  }
+});
+// A single local gesture can grant *only currently open, individually approved*
+// chat tabs. This does not enable wildcard host permissions or skip per-action
+// approval. Each tab is revalidated by the background coordinator.
+$('backgroundGrantAll').onclick=async event=>{
+  if (!event.isTrusted) return;
+  try {
+    if (!backgroundMode || !$('mutationLab').checked || !running)
+      throw Error('Сначала подключите фоновый мост и включите экспериментальное управление');
+    const sites=await getSites();
+    const candidates=await eligibleBackgroundControlTabs(chrome,sites,CONTROL_ORIGINS);
+    if (!candidates.length) throw Error('Нет открытых вкладок разрешённых Claude, Gemini или DeepSeek');
+    const minutes=Number($('backgroundGrantMinutes').value);
+    if (![15,60].includes(minutes)) throw Error('Недопустимый срок разрешения');
+    const summary=candidates.map(t=>t.origin+' (вкладка '+t.id+')').join('\n');
+    if (!window.confirm('Разрешить Control для '+candidates.length+
+      ' открытых вкладок на '+minutes+' минут?\n'+summary+
+      '\nКаждое действие потребует отдельного подтверждения.')) return;
+    let success=0;
+    let failed=0;
+    for (const tab of candidates) {
+      try {
+        const result=await chrome.runtime.sendMessage({
+          target:'bridge-coordinator',type:'grant-background-control',
+          tabId:tab.id,durationMinutes:minutes,localGesture:true
+        });
+        if (!result || result.error || result.origin!==tab.origin) throw Error('GRANT_FAILED');
+        success++;
+      } catch { failed++; }
+    }
+    $('backgroundGrantStatus').textContent='Общее управление: разрешено вкладок '+success+
+      ', отказано '+failed+'; каждое действие подтверждается отдельно.';
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
+    await refreshBackgroundGrantList();
+  } catch(e) {
+    $('backgroundGrantStatus').textContent='Общее управление не подключено: '+e.message;
+  }
+};
+$('backgroundRevokeAll').onclick=async event=>{
+  if (!event.isTrusted || !backgroundMode) return;
+  try {
+    const result=await chrome.runtime.sendMessage({
+      target:'bridge-coordinator',type:'clear-background-controls'
+    });
+    if (!result?.ok) throw Error(backgroundRevokeErrorMessage(result));
+    // Revoke-all cancels every coordinator-owned approval as part of the
+    // same operation. Refresh both panels before reporting completion so a
+    // stale visible Approve button cannot linger after the success message.
+    await showBackgroundApprovals();
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
+    await refreshBackgroundGrantList();
+    $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
+  } catch(e) {
+    const errorMessage='Ошибка отключения: '+e.message;
+    // Even an UNKNOWN drain outcome has already fenced mutation admission,
+    // cancelled pending approvals and attempted to clear every Grant.
+    // Refresh both visible lists so stale Approve/Grant rows cannot remain
+    // actionable-looking after an uncertain global Revoke.
+    await showBackgroundApprovals();
+    window.dispatchEvent(new Event('bridge-background-grants-changed'));
+    await refreshBackgroundGrantList();
+    $('backgroundGrantStatus').textContent=errorMessage;
+  }
+};
+let backgroundTimer = null;
+async function showBackgroundApprovals() {
+  const box = $('backgroundApprovals');
+  if (!backgroundMode) { box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  try {
+    const response = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'approval-list'});
+    if (response.error) throw Error(response.error);
+    // Rebuild DOM safely; no HTML injection from remote command metadata.
+    box.replaceChildren();
+    for (const pending of response.pending || []) {
+      const row=document.createElement('div');
+      row.className='approval';
+      const description=document.createElement('p');
+      description.textContent=pending.command+' · '+pending.origin+
+        ' · вкладка '+pending.tabId+' · до '+new Date(pending.expires).toLocaleTimeString()+
+        ' · символов '+(pending.contentLength || 0);
+      if (pending.preview) {
+        const preview=document.createElement('pre');
+        preview.textContent=pending.preview;
+        row.append(preview);
+      }
+      row.append(description);
+      for (const [title,approved] of [['Разрешить',true],['Отклонить',false]]) {
+        const b=document.createElement('button');
+        b.textContent=title;
+        if (!approved) b.className='danger';
+        b.addEventListener('click',async event=>{
+          if (!event.isTrusted) return;
+          b.disabled=true;
+          const result=await chrome.runtime.sendMessage({
+            target:'bridge-coordinator',type:'approval-decide',
+            id:pending.id,approved,trustedUserGesture:true
+          });
+          if (result.error) setStatus('Подтверждение: '+result.error);
+          await showBackgroundApprovals();
+          await refreshBackgroundGrantList();
+        });
+        row.append(b);
+      }
+      box.append(row);
+    }
+    if (!box.children.length) {
+      const empty=document.createElement('p');
+      empty.className='hint';
+      empty.textContent='Нет ожидающих фоновых подтверждений.';
+      box.append(empty);
+    }
+  } catch (error) {
+    box.textContent='Очередь подтверждений недоступна: '+error.message;
+  }
+}
+async function refreshBackgroundGrantList() {
+  const root=$('backgroundGrantList');
+  if (!root) return;
+  try {
+    const status=await chrome.runtime.sendMessage({
+      target:'bridge-coordinator',type:'background-control-status'
+    });
+    if (status?.available!==true || status.grantsKnown!==true)
+      throw Error(status?.error || 'BACKGROUND_GRANTS_UNAVAILABLE');
+    renderBackgroundControlGrants(root,status.grants,async(tabId,button)=>{
+      if (!backgroundMode) return;
+      button.disabled=true;
+      try {
+        const result=await chrome.runtime.sendMessage({
+          target:'bridge-coordinator',type:'revoke-background-control',tabId
+        });
+        if (!result?.ok || result.tabId!==tabId)
+          throw Error(backgroundRevokeErrorMessage(result));
+        $('backgroundGrantStatus').textContent='Разрешение вкладки '+tabId+' отозвано.';
+        await refreshBackgroundGrantList();
+      } catch(error) {
+        button.disabled=false;
+        $('backgroundGrantStatus').textContent='Не удалось отозвать вкладку '+tabId+': '+
+          safeConnectionErrorCode(error?.message || 'REVOKE_FAILED');
+      }
+    });
+  } catch(error) {
+    root.textContent='Список разрешений недоступен: '+
+      safeConnectionErrorCode(error?.message || 'BACKGROUND_GRANTS_UNAVAILABLE');
+  }
+}
+async function refreshQuarantineStatus() {
+  const root=$('quarantineList'),statusNode=$('quarantineRecoveryStatus');
+  if (!root || !statusNode) return;
+  try {
+    const snapshot=await chrome.runtime.sendMessage({
+      target:'bridge-coordinator',type:'quarantine-status'
+    });
+    if (snapshot?.available!==true)
+      throw Error(snapshot?.error || 'QUARANTINE_STATUS_UNAVAILABLE');
+    root.replaceChildren();
+    if (!Array.isArray(snapshot.records) || snapshot.records.length===0) {
+      const empty=document.createElement('p');
+      empty.className='hint';
+      empty.textContent='Неразрешённых карантинов нет.';
+      root.append(empty);
+    }
+    for (const record of snapshot.records || []) {
+      const row=document.createElement('div');
+      row.className='approval';
+      const title=document.createElement('strong');
+      title.textContent='Вкладка '+record.tabId+' · '+(record.command || 'операция неизвестна');
+      const detail=document.createElement('p');
+      detail.className='hint';
+      detail.textContent='requestId: '+(record.requestId || 'не сохранён')+
+        '\nПричина: '+(record.reasonCode || 'UNKNOWN')+
+        '\nРазговор: '+(record.conversationId || 'не подтверждён');
+      const warning=document.createElement('p');
+      warning.className='hint';
+      warning.textContent=record.command==='provider_prepare'
+        ? 'PREPARE: Send не нажимался. Черновик мог остаться в composer; перед новой подготовкой проверьте и при необходимости очистите поле вручную.'
+        : 'COMMIT: Send мог быть нажат. Доставка остаётся UNKNOWN; не повторяйте запрос и сначала проверьте исходный разговор.';
+      row.append(title,detail,warning);
+      if (record.reconcilable===true && typeof record.token==='string' && snapshot.globalLock!==true) {
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='secondary';
+        button.textContent='Проверить завершение и снять карантин…';
+        button.addEventListener('click',async event=>{
+          if (event.isTrusted!==true || button.disabled) return;
+          const confirmation=[
+            'Подтвердите операторскую сверку карантина.',
+            'Вкладка: '+record.tabId,
+            'Команда: '+record.command,
+            'requestId: '+record.requestId,
+            '',
+            'Система проверит, что исходный скрипт завершился в той же вкладке и разговоре.',
+            record.command==='provider_prepare'
+              ? 'PREPARE: Send не нажимался; черновик мог остаться в composer.'
+              : 'COMMIT: Send мог быть нажат; доставка остаётся UNKNOWN.',
+            record.command==='provider_prepare'
+              ? 'Перед новой подготовкой проверьте и вручную очистите оставшийся черновик.'
+              : 'Не отправляйте тот же запрос повторно; сначала проверьте исходный разговор.',
+            '',
+            'Снять только этот карантин?'
+          ].join('\n');
+          if (!window.confirm(confirmation)) return;
+          button.disabled=true;
+          try {
+            const result=await chrome.runtime.sendMessage({
+              target:'bridge-coordinator',type:'reconcile-quarantine',
+              tabId:record.tabId,token:record.token,
+              confirmed:true,localGesture:event.isTrusted===true
+            });
+            if (!result?.ok || result.state!=='RECONCILED')
+              throw Error(result?.error || 'QUARANTINE_RECONCILIATION_FAILED');
+            await refreshBackgroundGrantList();
+            await refreshQuarantineStatus();
+            const outcomeMessage=result.deliveryState==='UNKNOWN'
+              ? 'Доставка остаётся UNKNOWN; повтор не выполнялся. Проверьте исходный разговор.'
+              : record.command==='provider_prepare' && result.terminalState==='PREPARE_MUTATION_FINISHED'
+                ? 'Send не нажимался; черновик мог остаться в composer. Проверьте и вручную очистите поле перед новой подготовкой.'
+                : 'Send не нажимался; доставка исходного запроса не выполнялась.';
+            statusNode.textContent='Карантин вкладки '+record.tabId+
+              ' снят после подтверждения завершения page-action. '+outcomeMessage;
+          } catch(error) {
+            button.disabled=false;
+            const failureCode=safeConnectionErrorCode(
+              error?.message || 'QUARANTINE_RECONCILIATION_FAILED'
+            );
+            await refreshQuarantineStatus();
+            statusNode.textContent='Карантин сохранён: '+failureCode+
+              '. Global Revoke fence остаётся закрытым до успешной сверки.';
+          }
+        });
+        row.append(button);
+      } else {
+        const blocked=document.createElement('p');
+        blocked.className='hint';
+        blocked.textContent=snapshot.globalLock===true
+          ? 'Снятие недоступно: действует отдельная глобальная quarantine lock. Требуется отдельное расследование.'
+          : 'Недостаточно сохранённых данных для безопасной сверки. Карантин остаётся активным.';
+        row.append(blocked);
+      }
+      root.append(row);
+    }
+    if (snapshot.globalPending?.affectedTabs?.length) {
+      statusNode.textContent='Глобальный Revoke fence ожидает сверки вкладок: '+
+        snapshot.globalPending.affectedTabs.join(', ');
+    } else if (snapshot.globalLock===true) {
+      statusNode.textContent='Действует глобальная quarantine lock; автоматическое снятие запрещено.';
+    } else if (!snapshot.records?.length) {
+      statusNode.textContent='Глобальной блокировки и неразрешённых карантинов нет.';
+    }
+  } catch(error) {
+    root.textContent='Состояние карантина недоступно. Действия восстановления отключены.';
+    statusNode.textContent=safeConnectionErrorCode(error?.message || 'QUARANTINE_STATUS_UNAVAILABLE');
+  }
+}
+
+window.addEventListener('bridge-background-grants-changed',()=>{
+  void refreshBackgroundGrantList();
+});
+window.addEventListener('bridge-background-grants-changed',()=>{
+  void refreshQuarantineStatus();
+});
+
+async function updateBackgroundStatus() {
+  if (!backgroundMode) return;
+  try {
+    const current = await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'status'});
+    if (!current || typeof current !== 'object' || typeof current.state !== 'string') {
+      throw Error('COORDINATOR_STATUS_NO_RESPONSE');
+    }
+    const active = current.connected === true;
+    running = active; // UI indication only; background owns the HTTP poll.
+    $('actions').checked = false; // Never auto-enable Control in background mode.
+    $('actions').disabled = true;
+    $('backgroundModeStatus').textContent = 'Фоновый режим: чтение доступно. Отправка возможна только в экспериментальном Control с временными разрешениями и подтверждением каждого действия.';
+    const {bridgeLastConnectError} = await chrome.storage.local.get('bridgeLastConnectError');
+    setStatus(backgroundConnectionStatusLabel(
+      current.state,
+      current.error,
+      bridgeLastConnectError
+    ));
+    if (active && bridgeLastConnectError) {
+      await chrome.storage.local.set({bridgeLastConnectError:null});
+    }
+    refreshGrantLabels();
+    await showBackgroundApprovals();
+    await refreshBackgroundGrantList();
+    await refreshQuarantineStatus();
+  } catch (e) {
+    setStatus('Фоновый координатор недоступен: ' + safeConnectionErrorCode(e?.message));
+  }
+}
+async function switchToBackgroundMode() {
+  // Stop the previous UI poller BEFORE authorizing a second transport owner.
+  if (running && pollAbort) stop();
+  backgroundMode = true;
+  await chrome.storage.local.set({bridgeBackgroundMode:true});
+  $('backgroundMode').checked = true;
+  $('actions').checked = false;
+  $('actions').disabled = true;
+  const {bridgeConnectionDesired}=await chrome.storage.local.get('bridgeConnectionDesired');
+  const decision=backgroundStartupDecision({
+    connectionDesired:bridgeConnectionDesired,
+    hasSavedKey:!!$('token').value.trim()
+  });
+  if (decision==='start') {
+    try {
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      );
+    } catch (error) {
+      await chrome.storage.local.set({bridgeBackgroundMode:false,bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+      try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
+      backgroundMode = false;
+      $('backgroundMode').checked = false;
+      $('mutationLab').checked = false;
+      $('actions').disabled = false;
+      running = false;
+      throw error;
+    }
+  }
+  if (!backgroundTimer) backgroundTimer = setInterval(updateBackgroundStatus, 2500);
+  await updateBackgroundStatus();
+  if (decision==='await-connect')
+    setStatus('Фоновый режим включён · нажмите «Подключить» для авторизации лабораторного моста');
+}
+async function leaveBackgroundMode() {
+  if (backgroundTimer) clearInterval(backgroundTimer);
+  backgroundTimer = null;
+  await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false});
+  try {
+    await requestCoordinatorAck(
+      ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),
+      'BACKGROUND_STOP'
+    );
+  } catch (error) {
+    // Keep the background owner selected after an uncertain stop. Do not
+    // expose the legacy poller, and restore status polling for diagnosis.
+    if (!backgroundTimer) backgroundTimer = setInterval(updateBackgroundStatus,2500);
+    throw error;
+  }
+  await chrome.storage.local.set({bridgeBackgroundMode:false});
+  backgroundMode = false;
+  await showBackgroundApprovals();
+  running = false;
+  $('actions').disabled = false;
+  $('backgroundMode').checked = false;
+  $('mutationLab').checked = false;
+  await chrome.storage.local.set({bridgeMutationLabMode:false});
+  $('backgroundModeStatus').textContent = 'Обычный режим: панель управляет подключением.';
+  setStatus('Отключено · нажмите «Подключить»');
+}
+$('backgroundMode').addEventListener('change', async event => {
+  if (!event.isTrusted) { $('backgroundMode').checked = backgroundMode; return; }
+  const requested = $('backgroundMode').checked;
+  if (requested && !confirm('Фоновый режим поддерживает диагностику и чтение. Отправка сообщений Claude, Gemini и DeepSeek требует отдельного включения экспериментального Control, временных разрешений и подтверждения каждого действия. Включить фоновый режим?')) {
+    $('backgroundMode').checked = backgroundMode;
+    return;
+  }
+  $('backgroundMode').disabled = true;
+  try {
+    if (requested) await switchToBackgroundMode();
+    else await leaveBackgroundMode();
+  } catch (error) {
+    $('backgroundMode').checked = backgroundMode;
+    setStatus('Не удалось переключить режим: ' + error.message);
+  } finally { $('backgroundMode').disabled = false; }
+});
+// Keep every open control.html window aligned with profile-scoped settings.
+chrome.storage.onChanged.addListener((changes,areaName)=>{
+  if (areaName!=='local' ||
+      (!changes.bridgeBackgroundMode && !changes.bridgeMutationLabMode)) return;
+  if (changes.bridgeMutationLabMode)
+    $('mutationLab').checked=changes.bridgeMutationLabMode.newValue===true;
+  if (changes.bridgeBackgroundMode) {
+    const enabled=changes.bridgeBackgroundMode.newValue===true;
+    $('backgroundMode').checked=enabled;
+    if (enabled!==backgroundMode) {
+      if (running && pollAbort) stop();
+      backgroundMode=enabled;
+      $('actions').disabled=enabled;
+      if (enabled) {
+        $('actions').checked=false;
+        if (!backgroundTimer) backgroundTimer=setInterval(updateBackgroundStatus,2500);
+        void updateBackgroundStatus();
+      } else {
+        if (backgroundTimer) clearInterval(backgroundTimer);
+        backgroundTimer=null;
+        running=false;
+        setStatus('Фоновый режим отключён в другом окне. Для обычного подключения нажмите «Подключить».');
+      }
+    }
+  }
+  refreshGrantLabels();
+  window.dispatchEvent(new Event('bridge-background-grants-changed'));
+});
+
+let reconnectTimer = null;
+let reconnectAllowed = true;
+const cancelReconnect = () => { if (reconnectTimer) clearTimeout(reconnectTimer); reconnectTimer = null; };
+$('stop').onclick = async () => {
+  reconnectAllowed = false;
+  cancelReconnect();
+  await chrome.storage.local.set({ bridgeConnectionDesired: false, bridgeMutationLabMode: false });
+  if (backgroundMode) {
+    try {
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),
+        'BACKGROUND_STOP'
+      );
+      running = false;
+      await updateBackgroundStatus();
+    } catch(error) {
+      running = false;
+      setStatus('Фоновое отключение не подтверждено: ' + error.message);
+    }
+  } else stop();
+};
+async function connectBridge({ automatic = false } = {}) {
+  if (running || $('connect').disabled) return;
+  if (backgroundMode) {
+    const token = $('token').value.trim();
+    if (!token) { setStatus('Введите ключ браузера.'); return; }
+    $('connect').disabled = true;
+    setStatus('Проверяем авторизацию и запускаем фоновый транспорт…');
+    try {
+      await chrome.storage.local.set({bridgeLastConnectError:null});
+      await verifyBridgeCredential(fetch, token);
+      await saveBrowserKey(chrome, token);
+      await chrome.storage.local.set({bridgeConnectionDesired:true,bridgeLastConnectError:null});
+      await requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      );
+      await updateBackgroundStatus();
+    } catch (e) {
+      const diagnosticCode = safeConnectionErrorCode(e?.message);
+      await chrome.storage.local.set({
+        bridgeConnectionDesired:false,
+        bridgeMutationLabMode:false,
+        bridgeLastConnectError:diagnosticCode
+      }).catch(()=>{});
+      try { await requestCoordinatorAck(()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'}),'BACKGROUND_STOP',{timeoutMs:3000}); } catch {}
+      running = false;
+      setStatus('Фоновое подключение: ' + diagnosticCode);
+      void updateBackgroundStatus();
+    }
+    finally { $('connect').disabled = false; }
+    return;
+  }
+  const token = $('token').value.trim();
+  if (!token) { setStatus('Введите ключ браузера.'); return; }
+  $('connect').disabled = true;
+  setStatus('Проверяем авторизацию сервера (до 26 секунд)…');
+  try {
+    // First verify with the running server. Never persist unverified keys.
+    const handshake = await verifyBridgeCredential(fetch, token);
+    await saveBrowserKey(chrome, token);
+    if (!automatic) await chrome.storage.local.set({ bridgeConnectionDesired: true });
+    $('keyStorageStatus').textContent = 'Ключ проверен сервером и сохранён в профиле расширения.';
+    grants.reset(handshake.epoch);
+    pollAbort = new AbortController();
+    try { audio = new AudioContext(); } catch { audio = null; }
+    navigator.locks.request('chrome-bridge-control', () =>
+      new Promise(resolve => { releaseLock = resolve; })).catch(() => {});
+    running = true;
+    refreshGrantLabels();
+    setStatus('Подключено · ожидание команд');
+    loop(generation);
+  } catch (error) {
+    const code = error.message || 'UNKNOWN';
+    const hints = {
+      BROWSER_KEY_REJECTED_401: 'Ключ отклонён сервером (HTTP 401). Проверьте browserToken активной конфигурации; ключ не сохранялся.',
+      BRIDGE_HOST_REJECTED_403: 'Lab-сервер отклонил Host (HTTP 403). Проверьте адрес и порт 17484.',
+      EXTENSION_ORIGIN_REJECTED_403: 'Lab-сервер отклонил Origin расширения. Сверьте ID установленного Lab-расширения с CHROME_BRIDGE_EXTENSION_ID сервера.',
+      EXTENSION_ID_NOT_PINNED_403: 'На Lab-сервере не закреплён ID расширения. Проверьте CHROME_BRIDGE_EXTENSION_ID и активный процесс сервера.',
+      BRIDGE_FORBIDDEN_403: 'Lab-сервер вернул HTTP 403 без известной причины. Нужна проверка заголовков и серверного журнала.',
+      BRIDGE_NETWORK_UNREACHABLE: 'Мост недоступен на 127.0.0.1:17381. Проверьте, что сервер запущен.',
+      BRIDGE_TIMEOUT: 'Нет ответа от моста за 26 секунд. Проверьте сервер и попробуйте после диагностики.',
+      KEY_EMPTY: 'Ключ не введён.'
+    };
+    setStatus(hints[code] || ('Ошибка подключения: ' + code));
+    // Retry only temporary network outages, never rejected credentials or
+    // extension-origin mismatches. Never re-enable page/control permissions.
+    if (automatic && reconnectAllowed &&
+        ['BRIDGE_NETWORK_UNREACHABLE', 'BRIDGE_TIMEOUT'].includes(code)) {
+      cancelReconnect();
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (reconnectAllowed && !running) void connectBridge({ automatic: true });
+      }, 12000);
+    }
+  } finally {
+    $('connect').disabled = false;
+  }
+}
+$('connect').onclick = () => { reconnectAllowed = true; cancelReconnect(); void connectBridge(); };
+$('forgetKey').onclick = async (event) => {
+  if (!event.isTrusted) return;
+  if (!window.confirm('Удалить сохранённый ключ браузера из Chrome Bridge и отключить мост?')) return;
+  try {
+    reconnectAllowed = false;
+    cancelReconnect();
+    if (backgroundMode) {
+      await chrome.runtime.sendMessage({target:'bridge-coordinator',type:'stop-background'});
+      running = false;
+    } else stop();
+    await chrome.storage.local.set({ bridgeConnectionDesired: false });
+    await forgetBrowserKey(chrome);
+    $('token').value = '';
+    $('keyStorageStatus').textContent = 'Сохранённый ключ удалён. Для подключения потребуется ввести его заново.';
+  } catch (error) {
+    setStatus('Не удалось удалить ключ: ' + error.message);
+  }
+};
+// Closing the panel is NOT a user disconnect request. The current UI-owned
+// polling session still ends when this document is destroyed; persisted
+// desired state allows reconnect on reopening until runtime is moved to a
+// background-owned connection service.
+window.addEventListener('beforeunload', () => {
+  reconnectAllowed = false;
+  cancelReconnect();
+  if (!backgroundMode) stop();
+});
+
+// ---------- локальная визуальная диагностика ----------
+$('visualCapture').onclick = async (event) => {
+  const status = $('visualStatus');
+  const preview = $('visualPreview');
+  preview.src = '';
+  preview.hidden = true;
+  if (!event.isTrusted) { status.textContent = 'Требуется локальный клик'; return; }
+  const tabId = Number($('visualTabId').value);
+  if (!Number.isSafeInteger(tabId) || tabId <= 0) { status.textContent = 'Укажите существующий tabId'; return; }
+  try {
+    const snap = await captureLocalTab(chrome, tabId, {
+      approve: async ({ origin, title }) => window.confirm(
+        'Создать локальный снимок вкладки ' + origin + '\\n' + title +
+        '\\nПроверьте, что на экране нет токенов, паролей и личной информации. Снимок НЕ отправляется в сеть.'
+      )
+    });
+    preview.src = snap.pngDataUrl;
+    preview.hidden = false;
+    status.textContent = 'Локальный снимок: ' + snap.provider + ', tabId=' + tabId +
+      '. Передача другим AI отключена. Проверьте изображение и при необходимости очистите.';
+  } catch (error) {
+    status.textContent = 'Снимок не выполнен: ' + error.message +
+      '. Вкладка должна быть активной в своём окне; Chrome также требует отдельное разрешение на захват экрана.';
+  }
+};
+$('visualClear').onclick = () => {
+  $('visualPreview').src = '';
+  $('visualPreview').hidden = true;
+  $('visualStatus').textContent = 'Локальный снимок удалён';
+};
+
+// ---------- старт ----------
+fillAdapterSelect();
+try {
+  const savedKey = await loadBrowserKey(chrome);
+  $('token').value = savedKey.value;
+  $('keyStorageStatus').textContent = savedKey.persistent
+    ? 'Ключ загружен. Проверяем подключение автоматически.'
+    : savedKey.value ? 'Найден временный ключ. Нажмите «Подключить», чтобы сохранить его постоянно.'
+    : 'Введите ключ один раз — он сохранится при подключении.';
+  const { bridgeConnectionDesired, bridgeBackgroundMode } =
+    await chrome.storage.local.get(['bridgeConnectionDesired','bridgeBackgroundMode']);
+  if (bridgeBackgroundMode === true) {
+    backgroundMode = true;
+    $('backgroundMode').checked = true;
+    const {bridgeMutationLabMode}=await chrome.storage.local.get('bridgeMutationLabMode');
+    $('mutationLab').checked=bridgeMutationLabMode === true;
+    $('actions').disabled = true;
+    backgroundTimer = setInterval(updateBackgroundStatus, 2500);
+    await updateBackgroundStatus();
+    if (bridgeConnectionDesired === true && savedKey.value) {
+      // The coordinator owns the connection, not the control window.
+      void requestCoordinatorAck(
+        ()=>chrome.runtime.sendMessage({target:'bridge-coordinator',type:'start-background'}),
+        'BACKGROUND_START'
+      ).catch(async error=>{
+        try { await chrome.storage.local.set({bridgeConnectionDesired:false,bridgeMutationLabMode:false}); } catch {}
+        setStatus('Автоподключение: ' + error.message);
+      });
+    }
+  } else if (bridgeConnectionDesired === true && savedKey.value)
+    void connectBridge({ automatic:true });
+} catch (error) {
+  $('keyStorageStatus').textContent = 'Безопасное хранилище недоступно: ' + error.message;
+  $('token').value = '';
+}
+$('adapterJson').value = (await chrome.storage.local.get('adapters')).adapters || '{}';
+await renderSites();
+const visualCandidate = (await chrome.storage.session.get('visualCandidateTabId')).visualCandidateTabId;
+if (Number.isSafeInteger(visualCandidate) && visualCandidate > 0)
+  $('visualTabId').value = String(visualCandidate);
+taskStatus('Ожидание подключения', 0);
+log('Готово. Укажите ключ и нажмите «Подключить».');
+

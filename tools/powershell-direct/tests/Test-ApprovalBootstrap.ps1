@@ -1,0 +1,130 @@
+# Windows-only DPAPI approval bootstrap test. Never touches the live supervisor.
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Security -ErrorAction Stop
+$save=Join-Path $PSScriptRoot '..\Save-ApprovalToken.ps1'
+$open=Join-Path $PSScriptRoot '..\Open-Approval.ps1'
+# Parse the script without running it, BEFORE any DPAPI test setup.
+$parseTokens=$null
+$parseErrors=$null
+$null=[System.Management.Automation.Language.Parser]::ParseFile(
+ (Resolve-Path -LiteralPath $save).Path,[ref]$parseTokens,[ref]$parseErrors)
+if(@($parseErrors).Count -gt 0){
+ throw ('APPROVAL_TOKEN_WRITER_PARSE_FAILED_'+@($parseErrors).Count)
+}
+
+$testRoot=Join-Path $env:TEMP ('psdirect-approval-test-'+[Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
+$priorLocalAppData=$env:LOCALAPPDATA
+$token=('a'*64)
+try{
+ $env:LOCALAPPDATA=$testRoot
+ $psi=New-Object System.Diagnostics.ProcessStartInfo
+ $psi.FileName='powershell.exe'
+ $psi.Arguments='-NoProfile -NonInteractive -File "'+$save+'"'
+ $psi.UseShellExecute=$false
+ $psi.CreateNoWindow=$true
+ $psi.RedirectStandardInput=$true
+ $psi.RedirectStandardOutput=$true
+ $psi.RedirectStandardError=$true
+ $psi.EnvironmentVariables['LOCALAPPDATA']=$testRoot
+ $p=[Diagnostics.Process]::Start($psi)
+ try{
+  $p.StandardInput.WriteLine($token)
+  $p.StandardInput.Close()
+  if(!$p.WaitForExit(12000)){try{$p.Kill()}catch{};throw 'WRITER_TIMEOUT'}
+  $output=$p.StandardOutput.ReadToEnd()+$p.StandardError.ReadToEnd()
+  # Preserve child PowerShell's actual error, but never show the token.
+  $safeOutput=$output.Replace($token,'[REDACTED]')
+  if($output.Contains($token)){throw 'PLAINTEXT_EMITTED'}
+  if($p.ExitCode -ne 0){
+   $safeOutput=$safeOutput.Substring(0,[Math]::Min(1800,$safeOutput.Length))
+   throw ('WRITER_FAILED_EXIT_'+$p.ExitCode+': '+$safeOutput)
+  }
+ }finally{$p.Dispose()}
+ $file=Join-Path $testRoot 'ChromeBridge-Recovery\Approval\powershell-direct-ui.dpapi'
+ if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw 'DPAPI_FILE_MISSING'}
+ $encrypted=[IO.File]::ReadAllBytes($file)
+ if([Text.Encoding]::UTF8.GetString($encrypted).Contains($token)){throw 'PLAINTEXT_STORED'}
+ $entropy=[Text.Encoding]::UTF8.GetBytes('PowerShellDirectApproval:v1')
+ $plain=[System.Security.Cryptography.ProtectedData]::Unprotect(
+  $encrypted,$entropy,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+ try{
+  if([Text.Encoding]::UTF8.GetString($plain) -cne $token){throw 'DPAPI_DECRYPT_MISMATCH'}
+ }finally{[Array]::Clear($plain,0,$plain.Length)}
+ $acl=Get-Acl -LiteralPath $file
+ if(!$acl.AreAccessRulesProtected){throw 'FILE_ACL_NOT_PROTECTED'}
+ $directoryAcl=Get-Acl -LiteralPath (Split-Path $file -Parent)
+ if(!$directoryAcl.AreAccessRulesProtected){throw 'DIRECTORY_ACL_NOT_PROTECTED'}
+ $rules=@($acl.Access)
+ foreach($rule in $rules){
+  $sid=try{([System.Security.Principal.NTAccount]$rule.IdentityReference).Translate([System.Security.Principal.SecurityIdentifier]).Value}catch{$rule.IdentityReference.Value}
+  if($sid -ne ([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value) -and $sid -ne 'S-1-5-18'){
+   throw 'FILE_ACL_UNEXPECTED_PRINCIPAL'
+  }
+ }
+ # A cutover publishes a token to an ALREADY EXISTING DPAPI file.
+ # Test that real overwrite path in this isolated profile (never the live profile).
+ $newToken=('b'*64)
+ $newPsi=New-Object System.Diagnostics.ProcessStartInfo
+ $newPsi.FileName='powershell.exe'
+ $newPsi.Arguments='-NoProfile -NonInteractive -File "'+$save+'"'
+ $newPsi.UseShellExecute=$false
+ $newPsi.CreateNoWindow=$true
+ $newPsi.RedirectStandardInput=$true
+ $newPsi.RedirectStandardOutput=$true
+ $newPsi.RedirectStandardError=$true
+ $newPsi.EnvironmentVariables['LOCALAPPDATA']=$testRoot
+ $newProcess=[Diagnostics.Process]::Start($newPsi)
+ try{
+  $newProcess.StandardInput.WriteLine($newToken)
+  $newProcess.StandardInput.Close()
+  if(!$newProcess.WaitForExit(12000)){
+   try{$newProcess.Kill()}catch{}
+   throw 'OVERWRITE_WRITER_TIMEOUT'
+  }
+  $newOutput=$newProcess.StandardOutput.ReadToEnd()+$newProcess.StandardError.ReadToEnd()
+  if($newOutput.Contains($token) -or $newOutput.Contains($newToken)){
+   throw 'OVERWRITE_SECRET_EMITTED'
+  }
+  if($newProcess.ExitCode -ne 0){
+   # Never echo child output: report only the fixed, sanitized diagnostic marker.
+   $marker=[regex]::Match($newOutput,
+    'APPROVAL_BOOTSTRAP_FAILURE_STAGE_[A-Z_]+_TYPE_[A-Za-z0-9]+(?:_HR_0x[0-9A-F]{8})?')
+   $safe=if($marker.Success){$marker.Value}else{'CHILD_FAILURE_UNCLASSIFIED'}
+   throw ('OVERWRITE_WRITER_FAILED_EXIT_'+$newProcess.ExitCode+'_'+$safe)
+  }
+ }finally{$newProcess.Dispose()}
+ $replacementCipher=[IO.File]::ReadAllBytes($file)
+ $replacementPlain=[System.Security.Cryptography.ProtectedData]::Unprotect(
+   $replacementCipher,$entropy,[System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+ try{
+  if([Text.Encoding]::UTF8.GetString($replacementPlain) -cne $newToken){
+   throw 'OVERWRITE_TOKEN_NOT_REPLACED'
+  }
+ }finally{[Array]::Clear($replacementPlain,0,$replacementPlain.Length)}
+ $overwrittenAcl=Get-Acl -LiteralPath $file
+ if(!$overwrittenAcl.AreAccessRulesProtected){throw 'OVERWRITE_FILE_ACL_NOT_PROTECTED'}
+ # False/stale URL must not open the browser or reveal token. -CheckOnly errors.
+ $previousErrorAction=$ErrorActionPreference
+ try{
+  $ErrorActionPreference='Continue'
+  $staleOutput=(& powershell.exe -NoProfile -NonInteractive -File $open -CheckOnly 2>&1 | Out-String)
+  $staleExit=$LASTEXITCODE
+ }finally{$ErrorActionPreference=$previousErrorAction}
+ if($staleExit -eq 0){throw 'STALE_APPROVAL_TOKEN_ACCEPTED'}
+ if($staleOutput.Contains($token)){throw 'TOKEN_EXPOSED_ON_FAILURE'}
+ [pscustomobject]@{
+  Result='APPROVAL_BOOTSTRAP_ISOLATED_PASS'
+  CurrentUserDpapiRoundTrip=$true
+  PlaintextNotStored=$true
+  SecretNotPrinted=$true
+  FileAclProtected=$true
+  DirectoryAclProtected=$true
+  StaleApprovalRejected=$true
+  ExistingTokenOverwritePassed=$true
+  ProductionServiceTouched=$false
+ }|ConvertTo-Json
+}finally{
+ $env:LOCALAPPDATA=$priorLocalAppData
+ Remove-Item -LiteralPath $testRoot -Force -Recurse -ErrorAction SilentlyContinue
+}

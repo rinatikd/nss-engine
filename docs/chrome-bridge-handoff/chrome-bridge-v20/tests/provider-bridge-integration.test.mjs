@@ -27,7 +27,7 @@ test('ProviderTransport adapter completes a synthetic Bridge prepare/commit/fenc
       if(command.name==='agent_probe')result={adapter:'claude',verified:true};
       else if(command.name==='agent_context')result={verified:true,origin:'https://claude.ai',conversationId:'conversation_001'};
       else if(command.name==='provider_prepare')result={prepared:true,requestId:command.args.requestId,preparedId:command.args.preparedId,expiresAt:command.args.expiresAt,payloadHash:command.args.payloadHash,sideEffect:'composer-filled-no-send',clickedSend:false};
-      else if(command.name==='provider_commit')result={clickedSend:true,requestId:command.args.requestId,preparedId:command.args.preparedId,payloadHash:command.args.payloadHash,clickedAt:new Date().toISOString(),confirmed:true};
+      else if(command.name==='provider_commit')result={clickedSend:true,requestId:command.args.requestId,preparedId:command.args.preparedId,payloadHash:command.args.payloadHash,clickedAt:new Date().toISOString(),baseline:0,confirmed:true};
       else throw Error('Unexpected synthetic Bridge command: '+command.name);
       const ack=await post('/bridge/result',{id:command.id,result},config.browserToken);
       assert.equal(ack.status,200);

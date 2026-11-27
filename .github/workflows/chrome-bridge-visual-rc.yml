@@ -1,0 +1,330 @@
+name: Chrome Bridge Visual RC
+on:
+  push:
+    branches: [agent/chatgpt/visual-debug-01]
+  pull_request:
+    paths:
+      - 'docs/chrome-bridge-handoff/chrome-bridge-v20/**'
+      - '.github/workflows/chrome-bridge-visual-rc.yml'
+permissions:
+  contents: read
+jobs:
+  node-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run visual snapshot and grant tests
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/visual-snapshot.test.mjs tests/permissions-adapters.test.mjs tests/control-approval.test.mjs tests/manifest-rc.test.mjs tests/browser-key-store.test.mjs tests/connection-check.test.mjs tests/transport-engine.test.mjs tests/background-worker.test.mjs tests/background-coordinator.test.mjs tests/read-only-dispatch.test.mjs tests/approval-broker.test.mjs tests/approval-session.test.mjs tests/mutation-dispatch.test.mjs tests/mutation-operation-journal.test.mjs tests/mutation-operation-recovery.test.mjs tests/background-control-grants.test.mjs
+      - name: Verify global Control connect and revoke button state transitions
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/background-control-ui-state.test.mjs tests/control-ui-guard.test.mjs tests/control-ui-single-entry.test.mjs tests/background-control-list.test.mjs
+      - name: Verify MCP handshake independently of browser availability
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/mcp-channel-smoke.test.mjs
+      - name: Install Chrome for Testing (unpacked MV3 supported)
+        id: setup-mv3-chrome
+        uses: browser-actions/setup-chrome@v2.2.0
+        with:
+          chrome-version: stable
+      - name: Require real loaded MV3 service worker in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-browser-smoke.test.mjs
+      - name: Verify exact-document targeting, cooperative cancellation and BFCache in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-document-execution-lifecycle.test.mjs
+      - name: Exercise actual MV3 offscreen recovery without UI
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-offscreen-recovery.test.mjs
+      - name: Exercise real MV3 offscreen and closed-panel lifecycle
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-background-lifecycle.test.mjs
+      - name: Verify R4 provider-origin host permission and per-tab grant in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-r4-provider-origin-permission.test.mjs
+      - name: Verify R4 Scenario A Revoke, approval cancellation and queued MCP completion in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-r4-scenario-a.integration.test.mjs
+      - name: Verify R4 Scenario B global Revoke, approval cancellation and worker-restart recovery in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-r4-scenario-b.integration.test.mjs
+      - name: Verify R4 Scenario C late-approval race is denied by the per-tab Revoke fence in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-r4-scenario-c.integration.test.mjs
+      - name: Verify R4 Scenario D interrupted commit remains UNKNOWN and quarantined across MV3/Bridge restart
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-r4-scenario-d.integration.test.mjs
+      - name: Verify cooperative mutation cancellation before side effect in disposable real MV3 Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-mutation-cancellation.integration.test.mjs
+      - name: Verify Gemini adapter DOM in real disposable Chromium
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/chromium-adapter-dom.test.mjs
+      - name: Verify concurrent agent sends are serialized over real HTTP MCP
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/agent-send-concurrency.test.mjs
+      - name: Verify read-only MCP route diagnostic safety and native Windows test when available
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/diagnose-mcp-link.test.mjs
+      - name: Verify Claude and Gemini adapter selectors and fail-closed dispatch
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node --test tests/claude-gemini-adapters.test.mjs
+      - name: Syntax check changed extension files
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          node --check extension/control.js
+          node --check extension/visual-snapshot.js
+          node --check extension/permissions.js
+          node --check server/tools.mjs
+          node --check extension/browser-key-store.js
+          node --check extension/background.js
+          node --check extension/connection-check.js
+          node --check extension/transport-engine.js
+          node --check extension/transport-worker.js
+          node --check extension/transport-host.js
+          node --check extension/read-only-dispatch.js
+          node --check extension/background-coordinator.js
+          node --check extension/approval-broker.js
+          node --check extension/approval-session.js
+          node --check extension/mutation-dispatch.js
+          node --check extension/mutation-operation-journal.js
+          node --check extension/background-control-grants.js
+      - name: Read-only Windows preflight with synthetic manifest
+        shell: pwsh
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'chrome-bridge-fixture'
+          $ext = Join-Path $fixture 'extension'
+          New-Item -ItemType Directory -Path $ext -Force | Out-Null
+          Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $ext
+          $manifest = @{ manifest_version = 3; version = '0.2.0'; permissions = @('storage','scripting','activeTab'); host_permissions = @('http://127.0.0.1/*'); background = @{service_worker = 'background.js'} }
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $ext 'manifest.json') -Encoding UTF8
+          & ./deployment/preflight-windows.ps1 -BridgeRoot $fixture -SkipPorts
+          if ($LASTEXITCODE -ne 0) { throw "Read-only preflight returned $LASTEXITCODE" }
+      - name: Test Windows upgrade dry-run apply and rollback on synthetic extension
+        shell: pwsh
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-upgrade-fixture'
+          $installed = Join-Path $root 'extension'
+          New-Item -ItemType Directory -Force -Path $installed | Out-Null
+          Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $installed
+          $m = @{
+            manifest_version = 3
+            version = '0.2.0'
+            permissions = @('storage','scripting')
+            host_permissions = @('http://127.0.0.1/*')
+            optional_host_permissions = @('https://*/*')
+            background = @{ service_worker = 'background.js' }
+            action = @{ default_title = 'Chrome Bridge' }
+          }
+          $m | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $installed 'manifest.json') -Encoding UTF8
+          $originalHash = (Get-FileHash (Join-Path $installed 'manifest.json')).Hash
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -CandidateRoot .
+          if ($LASTEXITCODE -ne 0) { throw 'dry-run failed' }
+          if ((Get-FileHash (Join-Path $installed 'manifest.json')).Hash -ne $originalHash) { throw 'Dry-run changed manifest' }
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -CandidateRoot . -Apply
+          if ($LASTEXITCODE -ne 0) { throw 'apply failed' }
+          $updated = Get-Content -LiteralPath (Join-Path $installed 'manifest.json') -Raw | ConvertFrom-Json
+          if (@($updated.permissions) -notcontains 'activeTab') { throw 'Permission not installed' }
+          if ($updated.background.type -ne 'module') { throw 'Module worker not installed' }
+          if (@($updated.permissions) -notcontains 'offscreen') { throw 'Offscreen missing' }
+          if (@($updated.permissions) -notcontains 'alarms') { throw 'Alarm missing' }
+          if (@($updated.optional_host_permissions) -notcontains 'https://*/*') { throw 'Optional hosts changed' }
+          if (@($updated.host_permissions) -contains '<all_urls>') { throw 'Broad host access introduced' }
+          if (-not (Test-Path (Join-Path $installed 'browser-key-store.js'))) { throw 'Key-store module missing' }
+          if (-not (Test-Path (Join-Path $installed 'connection-check.js'))) { throw 'Credential check module missing' }
+          if (-not (Test-Path (Join-Path $installed 'style.css'))) { throw 'Stylesheet missing' }
+          if ((Get-Content (Join-Path $installed 'style.css') -Raw) -notmatch 'max-width:940px') { throw 'New styles not deployed' }
+          $backups = @(Get-ChildItem (Split-Path $root -Parent) -Directory -Filter 'chrome-bridge-backup-*' | Sort-Object LastWriteTime -Descending)
+          if (-not $backups.Count) { throw 'Backup not found' }
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'rollback failed' }
+          if ((Get-FileHash (Join-Path $installed 'manifest.json')).Hash -ne $originalHash) { throw 'Rollback did not restore manifest' }
+          if (Test-Path (Join-Path $installed 'browser-key-store.js')) { throw 'Rollback kept new source file' }
+          Write-Output '[PASS] staged dry-run, backup, apply, and rollback'
+
+
+  windows-powershell51:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated Chrome for Testing for Windows MV3 verification
+        id: setup-windows-chrome
+        uses: browser-actions/setup-chrome@v2.2.0
+        with:
+          chrome-version: stable
+      - name: Verify real Windows MV3 worker and control UI in disposable Chrome
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-windows-chrome.outputs.chrome-path }}
+        run: |
+          node --test tests/mv3-windows-browser-smoke.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Windows MV3 browser smoke failed' }
+      - name: Test staged upgrade and rollback with native Windows PowerShell 5.1
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-ps51-fixture'
+          $installed = Join-Path $root 'extension'
+          New-Item -ItemType Directory -Force -Path $installed | Out-Null
+          Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $installed
+          $m = @{
+            manifest_version = 3
+            version = '0.2.0'
+            permissions = @('storage','scripting')
+            host_permissions = @('http://127.0.0.1/*')
+            optional_host_permissions = @('https://*/*')
+            background = @{ service_worker = 'background.js' }
+            action = @{ default_title = 'Chrome Bridge' }
+          }
+          $manifestPath = Join-Path $installed 'manifest.json'
+          [IO.File]::WriteAllText($manifestPath, ($m | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+          $originalHash = (Get-FileHash $manifestPath).Hash
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -CandidateRoot .
+          if ($LASTEXITCODE -ne 0) { throw 'Dry run failed' }
+          if ((Get-FileHash $manifestPath).Hash -ne $originalHash) { throw 'Dry run modified manifest' }
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -CandidateRoot . -Apply
+          if ($LASTEXITCODE -ne 0) { throw 'Apply failed' }
+          $bytes = [IO.File]::ReadAllBytes($manifestPath)
+          if (($bytes.Length -gt 2) -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { throw 'UTF-8 BOM added to Chrome manifest' }
+          $updated = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          if (@($updated.permissions) -notcontains 'activeTab') { throw 'activeTab missing' }
+          if ($updated.background.type -ne 'module') { throw 'MV3 module background missing' }
+          if (@($updated.permissions) -notcontains 'offscreen') { throw 'offscreen permission missing' }
+          if (@($updated.permissions) -notcontains 'alarms') { throw 'alarms permission missing' }
+          if (-not (Test-Path (Join-Path $installed 'transport-host.html'))) { throw 'Background host missing' }
+          if (-not (Test-Path (Join-Path $installed 'connection-check.js'))) { throw 'Credential check module missing' }
+          if (-not (Test-Path (Join-Path $installed 'style.css'))) { throw 'Stylesheet missing' }
+          if ((Get-Content (Join-Path $installed 'style.css') -Raw) -notmatch 'max-width:940px') { throw 'New styles not deployed' }
+          $backups = @(Get-ChildItem (Split-Path $root -Parent) -Directory -Filter 'chrome-bridge-backup-*' | Sort-Object LastWriteTime -Descending)
+          if ($backups.Count -ne 1) { throw 'Expected exactly one rollback backup' }
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Rollback failed' }
+          if ((Get-FileHash $manifestPath).Hash -ne $originalHash) { throw 'Manifest not restored exactly' }
+          if (Test-Path (Join-Path $installed 'browser-key-store.js')) { throw 'New file survived rollback' }
+          Write-Output '[PASS] Windows PowerShell 5.1 dry-run/apply/restore with BOM check'
+      - name: Test supervisor probe and scheduled-task dry-run on Windows
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-watchdog-fixture'
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Set-Content -LiteralPath (Join-Path $root 'Start-Bridge.ps1') -Value "Write-Output 'synthetic-launcher'"
+          $taskName = 'ChromeBridge-Server-17381'
+          if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'Unexpected task exists on CI runner' }
+          $plan = & ./deployment/register-watchdog.ps1 -BridgeRoot $root
+          if ($LASTEXITCODE -ne 0 -or (($plan -join ' ') -notmatch '\[DRY-RUN\]')) { throw 'Task setup dry-run failed' }
+          if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'Dry-run unexpectedly registered a task' }
+          $probe = & ./deployment/watch-bridge.ps1 -BridgeRoot $root -ProbeOnly
+          if ($LASTEXITCODE -notin @(0,2)) { throw 'Probe returned an unexpected status' }
+          if ((($probe -join ' ') -notmatch '\[(READY|DOWN)\]')) { throw 'Probe produced invalid status' }
+          $rm = & ./deployment/register-watchdog.ps1 -BridgeRoot $root -Remove
+          if ((($rm -join ' ') -notmatch '\[DRY-RUN\]')) { throw 'Removal dry-run failed' }
+          Write-Output '[PASS] No startup settings changed during watchdog preflight'
+      - name: Verify no-secret MCP link diagnostic on Windows PowerShell 5.1
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          node --test tests/diagnose-mcp-link.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'MCP link diagnostic failed' }
+      - name: Stage separate MV3 background lab manifest safely
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-background-installed'
+          $out = Join-Path $env:RUNNER_TEMP 'chrome-bridge-background-lab'
+          New-Item -Path (Join-Path $root 'extension') -ItemType Directory -Force | Out-Null
+          $installed = Join-Path $root 'extension'
+          Copy-Item extension/background.js -Destination $installed
+          $m = @{
+            manifest_version = 3
+            version = '0.2.1'
+            permissions = @('storage','scripting')
+            host_permissions = @('http://127.0.0.1/*')
+            background = @{service_worker='background.js'}
+          }
+          [IO.File]::WriteAllText((Join-Path $installed 'manifest.json'),($m | ConvertTo-Json -Depth 10),(New-Object System.Text.UTF8Encoding($false)))
+          $dry = & ./deployment/stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out -LabPort 17484
+          if ((($dry -join ' ') -notmatch '\[DRY-RUN\]') -or (Test-Path $out)) { throw 'Lab dry run changed files' }
+          & ./deployment/stage-background-lab.ps1 -BridgeRoot $root -CandidateRoot . -OutputRoot $out -LabPort 17484 -Apply
+          if ($LASTEXITCODE -ne 0) { throw 'Lab stage failed' }
+          $labManifest = Get-Content (Join-Path $out 'manifest.json') -Raw | ConvertFrom-Json
+          if ($labManifest.background.type -ne 'module') { throw 'Module worker not enabled' }
+          if (@($labManifest.permissions) -notcontains 'offscreen') { throw 'Offscreen permission missing' }
+          if (@($labManifest.permissions) -notcontains 'alarms') { throw 'Alarms permission missing' }
+          if ((Get-Content (Join-Path $installed 'manifest.json') -Raw | ConvertFrom-Json).background.type) { throw 'Installed manifest modified' }
+          if (-not (Test-Path (Join-Path $out 'transport-worker.js'))) { throw 'Worker missing' }
+          & ./deployment/verify-adapter-lab.ps1 -LabRoot $out -LabPort 17484
+          if ($LASTEXITCODE -ne 0) { throw 'Adapter lab package validation failed' }
+          Write-Output '[PASS] MV3 background lab prepared without modifying the installed extension'
+          & ./deployment/write-lab-release-manifest.ps1 -LabRoot $out -OutputPath (Join-Path $env:RUNNER_TEMP 'chrome-bridge-rc1-lab-evidence.json') -CommitSha $env:GITHUB_SHA -LabPort 17484
+          if ($LASTEXITCODE -ne 0) { throw 'Release evidence generation failed' }
+      - name: Test identity-preserving PR102 Lab extension upgrade and rollback
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          & ./tests/upgrade-pr102-lab.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PR102 Lab updater integration test failed' }
+      - name: Test first-time PR102 Lab bootstrap and rollback on isolated port 17485
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          & ./tests/bootstrap-pr102-lab-server.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PR102 Lab bootstrap integration test failed' }
+      - name: Test pinned PR102 Lab server cutover and rollback
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          & ./tests/upgrade-pr102-lab-server.test.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'PR102 Lab server cutover integration test failed' }
+      - name: Upload immutable lab file-hash evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-bridge-rc1-lab-hashes
+          path: ${{ runner.temp }}/chrome-bridge-rc1-lab-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Package source-only Windows upgrade candidate
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-bridge-rc-windows-upgrade
+          path: |
+            docs/chrome-bridge-handoff/chrome-bridge-v20/extension/
+            docs/chrome-bridge-handoff/chrome-bridge-v20/deployment/
+          if-no-files-found: error
+          retention-days: 7
