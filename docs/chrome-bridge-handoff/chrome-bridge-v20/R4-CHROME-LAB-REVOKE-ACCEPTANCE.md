@@ -198,6 +198,7 @@ No Production Chrome profile, extension, credentials, ports 17381/17382, tunnel,
 The project owner explicitly accepts the local-machine trust boundary for Production. A trusted local Chrome Bridge Control UI gesture and its durable audit record are sufficient for operator confirmation. The audit is **not required to identify or authenticate a named human**.
 
 This closes the policy decision previously listed as an open release gate. It does not waive implementation checks. The combined implementation must still demonstrate that:
+- the quarantine records and operator audit stores are restricted to Chrome `TRUSTED_CONTEXTS` before status or reconciliation reads;
 - reconciliation requests originate only from the trusted extension Control UI / authenticated coordinator route;
 - a real local gesture and explicit confirmation are required for the exact displayed quarantine scope;
 - the audit record is appended before any matching deny/quarantine marker is removed;
