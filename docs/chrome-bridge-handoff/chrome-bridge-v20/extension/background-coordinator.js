@@ -118,6 +118,10 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
   if (mutationQuarantinePersistenceFailed)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+  if (mutationFencedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_REVOKING');
+  if (mutationQuarantinedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_QUARANTINED');
 
   const local = await chromeApi.storage.local.get([
     'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock',
@@ -130,6 +134,12 @@ async function assertMutationAllowed(chromeApi, tabId) {
       'bridgeMutationRevokingTabs','bridgeMutationRevocationPending'
     ]);
   }
+  // Recheck after Storage awaits: Revoke may have installed its in-memory
+  // admission fence while this mutation was reading durable state.
+  if (mutationFencedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_REVOKING');
+  if (mutationQuarantinedTabs.has(tabId))
+    throw coordinatorError('TAB_MUTATION_QUARANTINED');
   if (local.bridgeMutationQuarantineLock === true ||
       session.bridgeMutationQuarantineLock === true)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
@@ -223,7 +233,7 @@ async function persistTabRevocationFence(chromeApi, tabId) {
       mutationQuarantinePersistenceFailed = true;
       return {persisted:false,stores:[]};
     }
-    return {persisted:true,stores:['local','session']};
+    return {persisted:true,stores:[...(localWritten || localPrior.includes(tabId)?['local']:[]),...(sessionWritten || sessionPrior.includes(tabId)?['session']:[])]};
   } catch {
     mutationQuarantinePersistenceFailed = true;
     return {persisted:false,stores:[]};
@@ -252,11 +262,16 @@ async function readGlobalRevocationFence(chromeApi) {
   ]);
   const localRecord=localState[key];
   const sessionRecord=sessionState[key];
-  const record=[localRecord,sessionRecord].find(x=>x && x.pending===true) || null;
-  return {
-    record,
-    stores:['local','session']
-  };
+  const localPending=localRecord && localRecord.pending===true ? localRecord : null;
+  const sessionPending=sessionRecord && sessionRecord.pending===true ? sessionRecord : null;
+  if (localPending && sessionPending && localPending.token!==sessionPending.token)
+    throw new Error('GLOBAL_REVOCATION_FENCE_STORE_CONFLICT');
+  const record=localPending || sessionPending || null;
+  const stores=[
+    ...(localPending?['local']:[]),
+    ...(sessionPending?['session']:[])
+  ];
+  return {record,stores};
 }
 
 async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
@@ -285,7 +300,7 @@ async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
       mutationQuarantinePersistenceFailed=true;
       return {persisted:false,existing:false,record:null,stores:[]};
     }
-    return {persisted:true,existing:false,record,stores:['local','session']};
+    return {persisted:true,existing:false,record,stores:[...(localWritten?['local']:[]),...(sessionWritten?['session']:[])]};
   } catch {
     mutationQuarantinePersistenceFailed=true;
     return {persisted:false,existing:false,record:null,stores:[]};
@@ -640,6 +655,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         if (sessionControlChange && controlClearRequested)
           throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
         if (sessionControlChange) controlClearRequested = true;
+        if (name==='session_revoke') approvals.stop();
         let globalRevocationFence=null;
 
         try {
@@ -792,8 +808,18 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
               throw coordinatorError('BACKGROUND_MUTATIONS_DISABLED','BLOCKED');
             await assertMutationAllowed(chromeApi,msg.command?.args?.tabId);
             const grants=new BackgroundControlGrants(chromeApi);
+            // Guard approval creation at the point it is requested, not
+            // only when the mutation first enters its lane. Preflight awaits
+            // can overlap a Revoke; this prevents a late approval appearing
+            // after cancelTab() has already run.
+            const guardedApprovals={
+              request:async data=>{
+                await assertMutationAllowed(chromeApi,data.tabId);
+                return approvals.request(data);
+              }
+            };
             return dispatchMutation(msg.command,chromeApi,{
-              approvals,
+              approvals:guardedApprovals,
               sessionAuthorization,
               controlGrant:(origin,tabId)=>grants.require(origin,tabId),
               stillEnabled:async()=>{
@@ -872,6 +898,8 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         return false;
       }
       controlClearRequested = true;
+      // Revoke-all cancels every outstanding approval before draining lanes.
+      approvals.stop();
       void (async()=>{
         const fence=await enqueueRevocationFence(
           ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
@@ -954,6 +982,10 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         // drain await. A replacement MV3 worker must not reopen the tab while
         // the accepted mutation or grant-store revoke is still unresolved.
         mutationFencedTabs.set(tabId,(mutationFencedTabs.get(tabId)||0)+1);
+        // A per-tab Revoke must not wait for a stale approval dialog to expire.
+        // Cancel only this tab's pending approvals before the first async drain;
+        // the mutation lane then settles as BLOCKED without entering pageAction.
+        approvals.cancelTab(tabId);
         const revoke=async()=>{
           let revokeWriteStarted=false;
           let fenceStores=[];

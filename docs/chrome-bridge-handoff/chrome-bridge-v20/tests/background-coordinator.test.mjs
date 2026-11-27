@@ -7,16 +7,36 @@ function fakeChrome(data={},options={}) {
   const calls=[];
   const session={};
   let blockedGrantWrite=false;
+  let localWriteFailuresRemaining=options.failLocalSetOnce?1:0;
+  let sessionWriteFailuresRemaining=options.failSessionSetOnce?1:0;
   return {
     calls,listeners,data,session,
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
       get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
-      set:async next=>{Object.assign(data,next);calls.push(['set',next]);}
+      set:async next=>{
+        const failedKey=Object.keys(next).find(key=>
+          options.failLocalSet===true || options.failLocalSet===key ||
+          (Array.isArray(options.failLocalSet) && options.failLocalSet.includes(key)));
+        if (failedKey || (localWriteFailuresRemaining>0 &&
+            (options.failLocalSetOnce===true || options.failLocalSetOnce===Object.keys(next)[0]))) {
+          if (localWriteFailuresRemaining>0) localWriteFailuresRemaining--;
+          throw Error('SYNTHETIC_LOCAL_STORAGE_WRITE_FAILED:'+(failedKey||Object.keys(next)[0]));
+        }
+        Object.assign(data,next);calls.push(['set',next]);
+      }
     },session:{
       setAccessLevel:async opts=>calls.push(['session-restrict',opts.accessLevel]),
       get:async keys=>Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,session[k]])),
       set:async next=>{
+        const failedKey=Object.keys(next).find(key=>
+          options.failSessionSet===true || options.failSessionSet===key ||
+          (Array.isArray(options.failSessionSet) && options.failSessionSet.includes(key)));
+        if (failedKey || (sessionWriteFailuresRemaining>0 &&
+            (options.failSessionSetOnce===true || options.failSessionSetOnce===Object.keys(next)[0]))) {
+          if (sessionWriteFailuresRemaining>0) sessionWriteFailuresRemaining--;
+          throw Error('SYNTHETIC_SESSION_STORAGE_WRITE_FAILED:'+(failedKey||Object.keys(next)[0]));
+        }
         if (Object.hasOwn(next,'bridgeBackgroundControlGrants') && options.failGrantStoreWrite)
           throw Error('SYNTHETIC_GRANT_STORE_WRITE_FAILED');
         if (Object.hasOwn(next,'bridgeBackgroundControlGrants') &&
@@ -262,6 +282,173 @@ async function prepareLab(c,tabId) {
   installBackgroundCoordinator(c);
   return tabId;
 }
+
+test('per-tab Revoke cancels a pending approval before draining the mutation lane',async()=>{
+  const tabId=74;
+  const c=fakeChrome({...LAB_STATE});
+  await prepareLab(c,tabId);
+  // Exercise the per-tab grant path rather than origin-wide Session Authorization.
+  delete c.session.bridgeSessionAuthorization;
+  c.session.bridgeBackgroundControlGrants={
+    [String(tabId)]:{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  const listener=c.listeners.at(-1);
+  const mutation=sendCoordinatorTo(c,listener,'dispatch',{
+    command:providerPrepare(tabId)
+  },'transport-host.html');
+
+  let pending=[];
+  for(let i=0;i<30;i++){
+    const state=await sendCoordinatorTo(c,listener,'approval-list');
+    pending=state?.pending||[];
+    if(pending.some(item=>item.tabId===tabId))break;
+    await delay(5);
+  }
+  assert.equal(pending.filter(item=>item.tabId===tabId).length,1,
+    'provider_prepare must be waiting for explicit approval');
+
+  const revoked=await sendCoordinatorTo(c,listener,'revoke-background-control',{tabId});
+  const result=await mutation;
+  assert.equal(revoked.ok,true);
+  assert.equal(result.error,'APPROVAL_CANCELLED');
+  assert.equal(result.dispatchState,'BLOCKED');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.[String(tabId)],undefined,
+    'the per-tab grant must be removed');
+  assert.equal(c.calls.some(call=>call[0]==='script'&&call[1]==='provider_prepare'),
+    false,'a cancelled approval must never enter the mutating page action');
+  assert.equal((await sendCoordinatorTo(c,listener,'approval-list')).pending.length,0);
+});
+
+test('per-tab Revoke blocks a late approval created after asynchronous preflight',async()=>{
+  const tabId=76;
+  let markPreflightStarted,releasePreflight;
+  const preflightStarted=new Promise(resolve=>{markPreflightStarted=resolve;});
+  const holdPreflight=new Promise(resolve=>{releasePreflight=resolve;});
+  const c=fakeChrome({...LAB_STATE},{
+    executeScript:async({name,details,origin,tabId:targetTab})=>{
+      if(name==='agent_context'){
+        markPreflightStarted();
+        await holdPreflight;
+        return [{result:{verified:true,origin:'https://claude.ai',conversationId:'conversation_001'}}];
+      }
+      if(name==='provider_prepare') return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+      return [{result:{ok:true}}];
+    }
+  });
+  await prepareLab(c,tabId);
+  delete c.session.bridgeSessionAuthorization;
+  c.session.bridgeBackgroundControlGrants={
+    [String(tabId)]:{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  const listener=c.listeners.at(-1);
+  const mutation=sendCoordinatorTo(c,listener,'dispatch',{
+    command:providerPrepare(tabId)
+  },'transport-host.html');
+
+  await preflightStarted;
+  // Revoke installs the synchronous in-memory fence before its first Storage
+  // await. Release preflight only after that event handler has run.
+  const revoke=sendCoordinatorTo(c,listener,'revoke-background-control',{tabId});
+  releasePreflight();
+  const [revoked,result]=await Promise.all([revoke,mutation]);
+
+  assert.equal(revoked.ok,true);
+  assert.equal(result.error,'TAB_MUTATION_REVOKING');
+  assert.equal(result.dispatchState,'BLOCKED');
+  assert.equal((await sendCoordinatorTo(c,listener,'approval-list')).pending.length,0,
+    'a late approval must not be registered after Revoke cancellation');
+  assert.equal(c.calls.some(call=>call[0]==='script'&&call[1]==='provider_prepare'),false,
+    'the mutating page action must never be entered');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.[String(tabId)],undefined);
+});
+
+test('global Revoke cancels pending approvals across tabs before draining mutation lanes',async()=>{
+  for(const mode of ['session_revoke','clear-background-controls']){
+    const c=fakeChrome({...LAB_STATE});
+    await prepareLab(c,74);
+    delete c.session.bridgeSessionAuthorization;
+    c.session.bridgeBackgroundControlGrants={
+      '74':{origin:'https://claude.ai',expires:Date.now()+60000},
+      '75':{origin:'https://claude.ai',expires:Date.now()+60000}
+    };
+    const listener=c.listeners.at(-1);
+    const mutations=[74,75].map(tabId=>sendCoordinatorTo(c,listener,'dispatch',{
+      command:providerPrepare(tabId)
+    },'transport-host.html'));
+
+    let pending=[];
+    for(let i=0;i<40;i++){
+      const state=await sendCoordinatorTo(c,listener,'approval-list');
+      pending=state?.pending||[];
+      if(pending.filter(item=>[74,75].includes(item.tabId)).length===2)break;
+      await delay(5);
+    }
+    assert.equal(pending.filter(item=>[74,75].includes(item.tabId)).length,2,
+      mode+' must begin with two independent pending approvals');
+
+    const revoke=mode==='session_revoke'
+      ? sendCoordinatorTo(c,listener,'dispatch',{command:{
+          name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+          expires:Date.now()+90000,args:{}
+        }},'transport-host.html')
+      : sendCoordinatorTo(c,listener,'clear-background-controls');
+    const [revoked,...results]=await Promise.all([revoke,...mutations]);
+    assert.equal(mode==='session_revoke'?revoked.result?.revoked:revoked.ok,true);
+    assert.equal(results.length,2);
+    for(const result of results){
+      assert.equal(result.error,'APPROVAL_CANCELLED');
+      assert.equal(result.dispatchState,'BLOCKED');
+    }
+    assert.deepEqual(c.session.bridgeBackgroundControlGrants||{},
+      {},'global Revoke must remove all per-tab grants');
+    assert.equal(c.calls.some(call=>call[0]==='script'&&call[1]==='provider_prepare'),
+      false,'no cancelled approval may enter pageAction');
+    assert.equal((await sendCoordinatorTo(c,listener,'approval-list')).pending.length,0);
+  }
+});
+
+test('per-tab Revoke also clears a stale marker in a store whose new write failed transiently',async()=>{
+  const c=fakeChrome({...LAB_STATE,bridgeMutationRevokingTabs:[73]},{
+    failLocalSetOnce:'bridgeMutationRevokingTabs'
+  });
+  await prepareLab(c,73);
+  // Exercise the per-tab grant path, not the session-wide authorization path.
+  delete c.session.bridgeSessionAuthorization;
+  c.session.bridgeBackgroundControlGrants={'73':{
+    origin:'https://claude.ai',expires:Date.now()+60000
+  }};
+  const result=await sendCoordinator(c,'revoke-background-control',{tabId:73});
+  assert.equal(result.ok,true);
+  assert.deepEqual(c.data.bridgeMutationRevokingTabs,[],
+    'the pre-existing local marker must be included in the cleanup targets even though the new local write failed');
+  assert.deepEqual(c.session.bridgeMutationRevokingTabs,[]);
+});
+
+test('per-tab Revoke clears only the storage copy whose fence write was confirmed',async()=>{
+  for (const [failedStore,options] of [
+    ['local',{failLocalSet:'bridgeMutationRevokingTabs'}],
+    ['session',{failSessionSet:'bridgeMutationRevokingTabs'}]
+  ]) {
+    const c=fakeChrome({...LAB_STATE},options);
+    await prepareLab(c,72);
+    // Per-tab Revoke is intentionally blocked while a session-wide lease is active.
+    delete c.session.bridgeSessionAuthorization;
+    c.session.bridgeBackgroundControlGrants={'72':{
+      origin:'https://claude.ai',expires:Date.now()+60000
+    }};
+    const result=await sendCoordinator(c,'revoke-background-control',{tabId:72});
+    assert.equal(result.ok,true,'a single confirmed durable fence remains sufficient when the other store rejects writes ('+failedStore+')');
+    assert.equal((c.data.bridgeMutationRevokingTabs||[]).includes(72),false,
+      'local storage must not retain a Revoke fence for this tab');
+    assert.equal((c.session.bridgeMutationRevokingTabs||[]).includes(72),false,
+      'session storage must not retain a Revoke fence for this tab');
+    assert.equal(c.session.bridgeBackgroundControlGrants?.['72'],undefined);
+  }
+});
 
 test('Stop fences a running provider_prepare and waits for its page action before confirming',async()=>{
   let enteredResolve,releaseResolve;
@@ -562,6 +749,61 @@ test('session_revoke persists a global mutation fence across MV3 worker restart'
   assert.equal(c.session.bridgeMutationRevocationPending,null);
 });
 
+
+test('session_revoke tracks and clears only the global fence stores that accepted the write',async()=>{
+  for (const [failedStore,options] of [
+    ['local',{failLocalSet:'bridgeMutationRevocationPending'}],
+    ['session',{failSessionSet:'bridgeMutationRevocationPending'}]
+  ]) {
+    let enteredResolve,releaseResolve;
+    const entered=new Promise(resolve=>{enteredResolve=resolve;});
+    const held=new Promise(resolve=>{releaseResolve=resolve;});
+    const c=fakeChrome({...LAB_STATE},{...options,executeScript:async({name,details,origin,tabId,calls})=>{
+      calls.push(['script',name,tabId]);
+      if (name==='agent_context') return [{result:{
+        verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+      }}];
+      if (name==='provider_prepare') {
+        enteredResolve();
+        await held;
+        return [{result:{
+          prepared:true,clickedSend:false,requestId:details.requestId,
+          preparedId:details.preparedId,payloadHash:details.payloadHash,
+          sideEffect:'composer-filled-no-send'
+        }}];
+      }
+      return [{result:{ok:true}}];
+    }});
+    await prepareLab(c,76);
+    const mutation=sendCoordinator(c,'dispatch',{command:providerPrepare(76)},'transport-host.html');
+    await entered;
+    const revoke=sendCoordinator(c,'dispatch',{command:{
+      name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{}
+    }},'transport-host.html');
+    await delay(10);
+    const writtenStore=failedStore==='local'?'session':'local';
+    const missingStore=failedStore;
+    const writtenState=writtenStore==='local'?c.data:c.session;
+    const missingState=missingStore==='local'?c.data:c.session;
+    assert.equal(writtenState.bridgeMutationRevocationPending?.pending,true,
+      'the successful '+writtenStore+' write must retain the global deny fence');
+    assert.equal(missingState.bridgeMutationRevocationPending,undefined,
+      'the failed '+missingStore+' write must not be reported as persisted');
+    const restarted=await import('../extension/background-coordinator.js?partial-global-'+failedStore);
+    restarted.installBackgroundCoordinator(c);
+    const denied=await sendCoordinator(c,'dispatch',{command:providerPrepare(77)},'transport-host.html');
+    assert.equal(denied.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+    releaseResolve();
+    const [mutationResult,revokeResult]=await Promise.all([mutation,revoke]);
+    assert.equal(mutationResult.result.prepared,true);
+    assert.equal(revokeResult.result.revoked,true);
+    assert.equal(writtenState.bridgeMutationRevocationPending,null,
+      'the store that accepted the fence must have its matching marker cleared');
+    assert.equal(missingState.bridgeMutationRevocationPending,undefined,
+      'the store that rejected the fence write must remain untouched');
+  }
+});
 
 test('clear-background-controls persists a global revoke fence across worker restart',async()=>{
   let enteredResolve,releaseResolve;

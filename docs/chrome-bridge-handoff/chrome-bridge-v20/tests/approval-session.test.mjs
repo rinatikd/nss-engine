@@ -30,6 +30,18 @@ test('expired request fails without executing command',async()=>{
   await assert.rejects(p,/APPROVAL_EXPIRED/);
   assert.equal(s.list().length,0);
 });
+test('per-tab cancellation rejects only matching approvals and clears their timers',async()=>{
+  clock=1000;timers.clear();const s=session();
+  const first=s.request({...request('tab-7'),tabId:7});
+  const second=s.request({...request('tab-8'),tabId:8});
+  assert.equal(s.cancelTab(7),1);
+  await assert.rejects(first,/APPROVAL_CANCELLED/);
+  assert.equal(timers.size,1);
+  assert.deepEqual(s.list().map(x=>x.id),['tab-8']);
+  s.decide({id:'tab-8',approved:false,trustedUserGesture:true});
+  await assert.rejects(second,/USER_DENIED/);
+  assert.equal(timers.size,0);
+});
 test('manual stop cancels all approvals and clears their timers',async()=>{
   clock=1000;timers.clear();const s=session();
   const p=s.request(request('stop'));

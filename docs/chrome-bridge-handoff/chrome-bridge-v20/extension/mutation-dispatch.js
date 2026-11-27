@@ -168,7 +168,7 @@ async function dispatchProviderMutation(cmd, chromeApi, {
       if(!/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')) {
         error=Object.assign(new Error('PROVIDER_'+stage+'_FAILED'),{dispatchState:error?.dispatchState});
       }
-      error.dispatchState=/^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|PROVIDER_TAB_BINDING_MISMATCH)$/.test(error.message)
+      error.dispatchState=/^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|BACKGROUND_STOP_IN_PROGRESS|BACKGROUND_CONTROL_CLEAR_IN_PROGRESS|TAB_MUTATION_REVOKING|TAB_MUTATION_QUARANTINED|MUTATION_QUARANTINE_STATE_UNAVAILABLE|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|PROVIDER_TAB_BINDING_MISMATCH)$/.test(error.message)
         ? 'BLOCKED':'NOT_PERFORMED';
     } else if(cmd.name==='provider_prepare' && !['BLOCKED','NOT_PERFORMED'].includes(error?.dispatchState)) {
       // provider_prepare never clicks Send. Even if its browser response is
@@ -315,7 +315,7 @@ export async function dispatchMutation(cmd, chromeApi, {
           dispatchState: error?.dispatchState
         });
       }
-      error.dispatchState = /^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|CONTROL_SITE_DENIED)$/.test(error.message)
+      error.dispatchState = /^(USER_DENIED|APPROVAL_CANCELLED|BACKGROUND_CONTROL_STOPPED|BACKGROUND_STOP_IN_PROGRESS|BACKGROUND_CONTROL_CLEAR_IN_PROGRESS|TAB_MUTATION_REVOKING|TAB_MUTATION_QUARANTINED|MUTATION_QUARANTINE_STATE_UNAVAILABLE|EXPLICIT_CONTROL_GRANT_REQUIRED|CONTROL_GRANT_EXPIRED|CONTROL_ORIGIN_DENIED|CONTROL_SITE_DENIED)$/.test(error.message)
         ? 'BLOCKED' : 'NOT_PERFORMED';
     }
     error.failure=normalizeFailure(error.failure,{
