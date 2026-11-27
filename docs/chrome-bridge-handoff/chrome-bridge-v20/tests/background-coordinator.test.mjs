@@ -387,6 +387,37 @@ test('Revoke is a synchronous per-tab fence and its grant-store write follows an
 });
 
 
+test('replacement worker blocks a new Grant while a durable per-tab Revoke fence exists',async()=>{
+  const c=fakeChrome({...LAB_STATE});
+  await startBackgroundTransport(c);
+  c.data.bridgeMutationRevokingTabs=[65];
+  const restartedWorker=await import('../extension/background-coordinator.js?grant-during-tab-revoke');
+  restartedWorker.installBackgroundCoordinator(c);
+  const result=await sendCoordinatorTo(c,c.listeners.at(-1),'grant-background-control',{
+    tabId:65,durationMinutes:60,localGesture:true
+  });
+  assert.equal(result.error,'TAB_MUTATION_REVOKING');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['65'],undefined,
+    'a durable Revoke fence must prevent a replacement worker from creating a new grant');
+});
+
+test('replacement worker blocks every new Grant while a durable global Revoke fence exists',async()=>{
+  const c=fakeChrome({...LAB_STATE});
+  await startBackgroundTransport(c);
+  c.data.bridgeMutationRevocationPending={
+    pending:true,token:'pending-global-revoke-001',affectedTabs:[66],startedAt:Date.now()
+  };
+  c.session.bridgeMutationRevocationPending=c.data.bridgeMutationRevocationPending;
+  const restartedWorker=await import('../extension/background-coordinator.js?grant-during-global-revoke');
+  restartedWorker.installBackgroundCoordinator(c);
+  const result=await sendCoordinatorTo(c,c.listeners.at(-1),'grant-background-control',{
+    tabId:67,durationMinutes:60,localGesture:true
+  });
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['67'],undefined,
+    'a global Revoke fence must prevent grants for all tabs after worker replacement');
+});
+
 test('per-tab Revoke persists its admission fence across an MV3 worker restart',async()=>{
   let writeEnteredResolve,releaseWriteResolve;
   const writeEntered=new Promise(resolve=>{writeEnteredResolve=resolve;});

@@ -1028,6 +1028,9 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           if (mutationStopRequested || controlClearRequested ||
               bridgeMutationLabMode!==true || bridgeConnectionDesired!==true)
             throw coordinatorError('BACKGROUND_CONTROL_DISABLED','BLOCKED');
+          // Control-plane grants must honor the same durable fences as page
+          // mutations; a replacement MV3 worker has no in-memory revoke flags.
+          await assertMutationAllowed(chromeApi,msg.tabId);
           return new BackgroundControlGrants(chromeApi).grant({
             tabId:msg.tabId,durationMinutes:msg.durationMinutes,localGesture:msg.localGesture===true
           });
