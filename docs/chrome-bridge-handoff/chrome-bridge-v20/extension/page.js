@@ -11,6 +11,11 @@ export async function pageAction(name, args, expectedOrigin) {
   let providerCommitClickStarted = false;
   let mutationSideEffectStarted = false;
   let agentSendDraftMutationStarted = false;
+  const mutationNames = ['browser_click','browser_fill','agent_send','provider_prepare','provider_commit'];
+  const registryKey = '__chromeBridgeMutationOperations';
+  const registry = globalThis[registryKey] || (globalThis[registryKey] = Object.create(null));
+  let activeOperation = null;
+  const operationId = typeof args?.__bridgeOperationId==='string' ? args.__bridgeOperationId : null;
   const conversationId = () => {
     const routes = {
       'https://claude.ai': /^\/chat\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
@@ -40,6 +45,46 @@ export async function pageAction(name, args, expectedOrigin) {
     if (d.tag !== expect.tag || d.text !== expect.text) throw Error('Element changed after approval');
   };
   try {
+    if (name==='cancel_mutation') {
+      if (location.origin!==expectedOrigin || !/^[A-Za-z0-9_-]{16,100}$/.test(args?.operationId||''))
+        return {acknowledged:false,state:'INVALID_CANCELLATION_IDENTITY'};
+      const operation=registry[args.operationId];
+      if (!operation) return {acknowledged:false,state:'NOT_FOUND'};
+      if (operation.sideEffectStarted)
+        return {acknowledged:false,state:'SIDE_EFFECT_ALREADY_STARTED'};
+      operation.cancelRequested=true;
+      return {acknowledged:true,state:'CANCEL_REQUESTED'};
+    }
+    if (mutationNames.includes(name)) {
+      if (!/^[A-Za-z0-9_-]{16,100}$/.test(operationId||'')) throw Error('MUTATION_OPERATION_ID_REQUIRED');
+      if (registry[operationId]) throw Error('MUTATION_OPERATION_ALREADY_ACTIVE');
+      activeOperation={id:operationId,cancelRequested:false,sideEffectStarted:false,rollback:null};
+      registry[operationId]=activeOperation;
+    }
+    const cancellationCheckpoint = async () => {
+      if (!activeOperation?.cancelRequested || activeOperation.sideEffectStarted) return;
+      if (typeof activeOperation.rollback==='function') {
+        const rolledBack=await activeOperation.rollback();
+        if (!rolledBack) {
+          const error=Error('MUTATION_CANCEL_ROLLBACK_UNVERIFIED');
+          error.dispatchState='NOT_PERFORMED';
+          error.sideEffect='composer-draft-state-unverified';
+          throw error;
+        }
+        providerPrepareMutationStarted=false;
+        agentSendDraftMutationStarted=false;
+      }
+      throw Object.assign(Error('MUTATION_CANCELLED_BEFORE_SIDE_EFFECT'),{dispatchState:'NOT_PERFORMED'});
+    };
+    const currentOperationRollback = (composer,expectedText) => {
+      if (activeOperation) activeOperation.rollback=async()=>clearExactDraft(composer,expectedText);
+    };
+    const markSideEffectStarted = () => {
+      if (activeOperation?.cancelRequested)
+        throw Object.assign(Error('MUTATION_CANCELLED_BEFORE_SIDE_EFFECT'),{dispatchState:'NOT_PERFORMED'});
+      mutationSideEffectStarted=true;
+      if (activeOperation) activeOperation.sideEffectStarted=true;
+    };
     const control = () => {
       if (!['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com', 'https://grok.com', 'https://chat.qwen.ai', 'https://www.kimi.ai'].includes(location.origin) ||
           location.origin !== expectedOrigin || !(args.controlExpires > Date.now())) throw Error('Control denied: local re-grant required');
@@ -126,6 +171,20 @@ export async function pageAction(name, args, expectedOrigin) {
     const A = args.adapter;
     const composerEl = () => one(A.composer);
     const textOf = (c) => ((c instanceof HTMLTextAreaElement || c instanceof HTMLInputElement) ? c.value : c.innerText || '').trim();
+    const clearExactDraft = (composer, expected) => {
+      if (!composer || textOf(composer)!==String(expected||'').trim()) return false;
+      if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+        const proto=composer instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto,'value').set.call(composer,'');
+      } else {
+        const selection=window.getSelection(),range=document.createRange();
+        range.selectNodeContents(composer);selection.removeAllRanges();selection.addRange(range);
+        document.execCommand('delete');
+      }
+      composer.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward',data:null}));
+      composer.dispatchEvent(new Event('change',{bubbles:true}));
+      return textOf(composer)==='';
+    };
     const replies = () => qa(A.reply).filter(vis).filter(e => !qa(A.reply).some(other => other !== e && other.contains(e)));
 
     if (name === 'agent_selftest') {
@@ -411,6 +470,9 @@ export async function pageAction(name, args, expectedOrigin) {
         ? 'send-click-may-have-fired' : 'generic-page-action-may-have-fired';
     }
     return failure;
-  } finally { releaseActionLock(); }
+  } finally {
+    releaseActionLock();
+    if (activeOperation && registry[operationId]===activeOperation) delete registry[operationId];
+  }
 }
 
