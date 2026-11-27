@@ -23,6 +23,7 @@ function fakeChrome(data={},options={}) {
           if (localWriteFailuresRemaining>0) localWriteFailuresRemaining--;
           throw Error('SYNTHETIC_LOCAL_STORAGE_WRITE_FAILED:'+(failedKey||Object.keys(next)[0]));
         }
+        if (options.beforeLocalSet) await options.beforeLocalSet(next,data,calls);
         Object.assign(data,next);calls.push(['set',next]);
       }
     },session:{
@@ -817,14 +818,17 @@ test('session_revoke tracks and clears only the global fence stores that accepte
     coordinator.installBackgroundCoordinator(c);
     const listener=c.listeners.at(-1);
     const mutation=sendCoordinatorTo(c,listener,'dispatch',{command:providerPrepare(76)},'transport-host.html');
-    const reachedPrepare=await Promise.race([
-      entered.then(()=>true),
-      delay(1200).then(()=>false)
+    const prepareState=await Promise.race([
+      entered.then(()=>({entered:true})),
+      mutation.then(value=>({entered:false,response:value}),error=>({
+        entered:false,error:error?.message||String(error)
+      })),
+      delay(1200).then(()=>({entered:false,timeout:true}))
     ]);
-    assert.equal(reachedPrepare,true,
-      'provider_prepare preflight did not reach the held page action ('+failedStore+'); calls='+
-      JSON.stringify(c.calls)+'; session='+JSON.stringify(c.session)+'; localKeys='+
-      JSON.stringify(Object.keys(c.data)));
+    assert.equal(prepareState.entered,true,
+      'provider_prepare preflight did not reach the held page action ('+failedStore+'); state='+
+      JSON.stringify(prepareState)+'; calls='+JSON.stringify(c.calls)+
+      '; session='+JSON.stringify(c.session)+'; localKeys='+JSON.stringify(Object.keys(c.data)));
     const revoke=sendCoordinatorTo(c,listener,'dispatch',{command:{
       name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
       expires:Date.now()+90000,args:{}
@@ -1134,7 +1138,15 @@ test('operator reconciliation refuses an empty affected-tab set even with a vali
 
 test('global Revoke snapshots the active mutation context instead of a later queued request',async()=>{
   const tabId=87;
-  const c=fakeChrome({...LAB_STATE});
+  let clearStartedResolve,releaseClearResolve;
+  const clearStarted=new Promise(resolve=>{clearStartedResolve=resolve;});
+  const holdClear=new Promise(resolve=>{releaseClearResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{beforeLocalSet:async next=>{
+    if(next.bridgeMutationLabMode===false){
+      clearStartedResolve();
+      await holdClear;
+    }
+  }});
   const coordinator=await import('../extension/background-coordinator.js?global-revoke-snapshot-isolated');
   const started=await coordinator.startBackgroundTransport(c);
   assert.equal(started.ok,true,'isolated coordinator must start cleanly');
@@ -1168,14 +1180,9 @@ test('global Revoke snapshots the active mutation context instead of a later que
   const second=sendCoordinatorTo(c,listener,'dispatch',{command:secondCommand},'transport-host.html');
   await delay(25);
   const clear=sendCoordinatorTo(c,listener,'clear-background-controls');
-  let fence=null;
-  for(let i=0;i<50;i++){
-    fence=c.data.bridgeMutationRevocationPending;
-    if(fence?.pending===true)break;
-    await delay(5);
-  }
-  assert.equal(fence?.pending,true,'Global Revoke must persist its fence before draining; clear='+
-    JSON.stringify(await Promise.race([clear,delay(1).then(()=>({pending:true}))])));
+  await clearStarted;
+  const fence=c.data.bridgeMutationRevocationPending;
+  assert.equal(fence?.pending,true,'Global Revoke must persist its fence before draining');
   assert.equal(fence.operations.length,1);
   assert.equal(fence.operations[0].tabId,tabId);
   assert.equal(fence.operations[0].requestId,firstCommand.args.requestId,
@@ -1184,6 +1191,7 @@ test('global Revoke snapshots the active mutation context instead of a later que
   assert.notEqual(fence.operations[0].requestId,secondCommand.args.requestId,
     'the later queued request must not overwrite the active operation context');
 
+  releaseClearResolve();
   const [firstResult,secondResult,clearResult]=await Promise.all([first,second,clear]);
   assert.ok(['APPROVAL_CANCELLED','BACKGROUND_CONTROL_CLEAR_IN_PROGRESS'].includes(firstResult.error));
   assert.equal(secondResult.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
