@@ -126,6 +126,33 @@ test('generic click completion is not mistaken for site-side-effect quiescence',
   assert.equal(recovered.unresolved[0].reasonCode,'GENERIC_PAGE_SIDE_EFFECT_UNVERIFIED');
 });
 
+test('cancellation request is a durable phase and a confirmed pre-send cancellation is terminal NOT_PERFORMED',async()=>{
+  const f=fixture(),journal=journalFor(f);
+  const record=await journal.begin(identity({command:'provider_commit'}));
+  await journal.markInjecting(record.operationId,{documentId:'document-0000000001'});
+  await journal.requestCancellation(record.operationId);
+  await journal.complete(record.operationId,{
+    outcome:'NOT_PERFORMED',sideEffect:'none',code:'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT'
+  });
+  const [stored]=await journal.list();
+  assert.deepEqual(stored.events.map(event=>event.phase),
+    ['ACCEPTED','INJECTING','CANCEL_REQUESTED','COMPLETED']);
+  assert.equal(stored.events.at(-1).outcome,'NOT_PERFORMED');
+});
+
+test('worker restart after a cancellation request is still UNKNOWN and quarantined',async()=>{
+  const f=fixture(),journal=journalFor(f);
+  const record=await journal.begin(identity({command:'agent_send'}));
+  await journal.markInjecting(record.operationId,{documentId:'document-0000000001'});
+  await journal.requestCancellation(record.operationId);
+  const recovered=await new MutationOperationJournal(f.api).recover();
+  assert.deepEqual(recovered.quarantinedTabs,[42]);
+  assert.equal(recovered.unresolved[0].reasonCode,'WORKER_RESTART_AFTER_CANCEL_REQUEST');
+  const [stored]=await journal.list();
+  assert.deepEqual(stored.events.map(event=>event.phase),
+    ['ACCEPTED','INJECTING','CANCEL_REQUESTED','UNKNOWN']);
+});
+
 test('illegal phase transition is denied and no second mutation attempt is written',async()=>{
   const f=fixture(),journal=journalFor(f);
   const record=await journal.begin(identity());
