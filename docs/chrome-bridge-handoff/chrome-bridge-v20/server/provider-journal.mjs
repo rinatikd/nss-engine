@@ -40,15 +40,19 @@ function hash(key,value) {
   return crypto.createHmac('sha256',key).update(value,'utf8').digest('hex');
 }
 function tokenHash(token) { return crypto.createHash('sha256').update(token,'utf8').digest('hex'); }
-const LOCK_RETRY_DELAYS_MS = Object.freeze([2,4,8,16,32]);
+// Cross-process journal appends are synchronous but may be delayed by Windows
+// filesystem/AV scheduling. Retry transient CREATE_NEW contention for at most
+// 1.02 seconds; a persistent foreign/stale lock still fails closed and is never
+// removed or stolen by the waiter.
+const LOCK_RETRY_DELAYS_MS = Object.freeze([4,8,16,32,64,128,256,512]);
 const LOCK_WAIT_CELL = new Int32Array(new SharedArrayBuffer(4));
 function isLockContention(fsOps,lockFile,error) {
   if(error?.code==='EEXIST')return true;
   // Windows may report EPERM rather than EEXIST for CREATE_NEW while another
   // process owns this lock path (including a sharing/metadata race). Treat
-  // Windows EPERM as contention only within the same bounded 62ms retry
-  // budget; never remove the lock. Genuine ACL failures therefore still fail
-  // closed with PROVIDER_JOURNAL_LOCK_BUSY instead of becoming a write.
+  // Windows EPERM as contention only within the bounded 1.02s retry budget;
+  // never remove the lock. Genuine ACL failures still fail closed with
+  // PROVIDER_JOURNAL_LOCK_BUSY instead of becoming a write.
   if(error?.code==='EPERM'&&process.platform==='win32')return true;
   if(error?.code!=='EPERM')return false;
   // On non-Windows platforms, normalize EPERM only when the lock path exists.

@@ -5,14 +5,20 @@ import {dispatchMutation} from '../extension/mutation-dispatch.js';
 function fixture({
   changed=false,deny=false,expiredGrant=false,badOrigin=false,conversationChanged=false
 }={}) {
+  const journalData={};
   const state={injections:[],targets:[],approvalCount:0,allowAt:true,
-    documentId:'document-main-0001',grant:Date.now()+120000};
+    documentId:'document-main-0001',grant:Date.now()+120000,journalData};
   const url=badOrigin?'https://not-allowed.example/app':'https://claude.ai/chat/abcdefghi';
   const chromeApi={
     tabs:{get:async()=>({id:9,url:changed && !state.allowAt ?
       'https://claude.ai/chat/other12345':url,title:'Test'})},
-    storage:{local:{get:async key=>key==='sites'?
-      {sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:{adapters:'{}'}}},
+    storage:{local:{
+      setAccessLevel:async()=>{},
+      get:async key=>key===null?{...journalData}:
+        key==='sites'?{sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:
+        key==='adapters'?{adapters:'{}'}:{[key]:journalData[key]},
+      set:async value=>Object.assign(journalData,value)
+    }},
     permissions:{contains:async()=>true},
     scripting:{executeScript:async({args,target,world})=>{
       const [name,details]=args;
@@ -46,11 +52,53 @@ const cmd=(name='browser_click')=>({
 const execute=(c,f)=>dispatchMutation(c,f.chromeApi,{
   approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true,uuid:()=> 'fixedid'
 });
-test('click executes only after fresh site/target revalidation and approval',async()=>{
+test('click executes only after fresh site/target revalidation and approval, with durable write-ahead receipt',async()=>{
  const f=fixture();
  assert.deepEqual(await execute(cmd(),f),{ok:true,sent:false});
  assert.deepEqual(f.state.injections,['describe','describe','browser_click']);
  assert.equal(f.state.approvalCount,1);
+ const records=Object.entries(f.state.journalData).filter(([key,value])=>key.startsWith('bridgeMutationOperation.v1.') && key!=='bridgeMutationOperation.v1.index' && value?.schemaVersion===1 && typeof value.operationId==='string').map(([,value])=>value);
+ assert.equal(records.length,1);
+ assert.equal(records[0].command,'browser_click');
+ assert.equal(records[0].tabId,9);
+ assert.deepEqual(records[0].events.map(event=>event.phase),['ACCEPTED','INJECTING','COMPLETED']);
+ assert.equal(records[0].documentId,f.state.documentId);
+});
+
+test('mutation journal write failure prevents Approval and page mutation injection',async()=>{
+ const f=fixture();
+ const originalSet=f.chromeApi.storage.local.set;
+ f.chromeApi.storage.local.set=async value=>{
+   if(Object.keys(value||{}).some(key=>key.startsWith('bridgeMutationOperation.v1.')))
+     throw Error('SYNTHETIC_MUTATION_JOURNAL_WRITE_FAILURE');
+   return originalSet(value);
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),/MUTATION_OPERATION_JOURNAL_WRITE_FAILED/);
+ assert.deepEqual(f.state.injections,['describe']);
+ assert.equal(f.state.approvalCount,0);
+});
+
+test('lost document-bound page-action receipt is journaled UNKNOWN and never retried',async()=>{
+ const f=fixture();
+ const original=f.chromeApi.scripting.executeScript;
+ let finalCalls=0;
+ f.chromeApi.scripting.executeScript=async payload=>{
+   if(payload.args[0]==='browser_click'){
+     finalCalls++;
+     throw Error('SYNTHETIC_RECEIPT_LOST_AFTER_DISPATCH');
+   }
+   return original(payload);
+ };
+ await assert.rejects(execute(cmd('browser_click'),f),error=>{
+   assert.equal(error.message,'DOCUMENT_BOUND_INJECTION_FAILED');
+   assert.equal(error.dispatchState,'UNKNOWN');
+   return true;
+ });
+ assert.equal(finalCalls,1);
+ const records=Object.entries(f.state.journalData).filter(([key,value])=>key.startsWith('bridgeMutationOperation.v1.') && key!=='bridgeMutationOperation.v1.index' && value?.schemaVersion===1 && typeof value.operationId==='string').map(([,value])=>value);
+ assert.equal(records.length,1);
+ assert.deepEqual(records[0].events.map(event=>event.phase),['ACCEPTED','INJECTING','UNKNOWN']);
+ assert.equal(records[0].events.at(-1).outcome,'UNKNOWN');
 });
 
 test('every mutation injection is explicitly isolated and pinned after the first document capture',async()=>{
@@ -373,11 +421,17 @@ test('unclassified revalidation errors emit safe REVALIDATION code and never sen
 
 
 function providerFixture({deny=false,conversationChanged=false,grant=true}={}) {
-  const state={injections:[],targets:[],approvalCount:0,allowAt:true,documentId:'document-provider-0001'};
+  const journalData={};
+  const state={injections:[],targets:[],approvalCount:0,allowAt:true,documentId:'document-provider-0001',journalData};
   const chromeApi={
     tabs:{get:async()=>({id:9,url:'https://claude.ai/chat/abcdefghi',title:'Test'})},
-    storage:{local:{get:async key=>key==='sites'
-      ?{sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:{adapters:'{}'}}},
+    storage:{local:{
+      setAccessLevel:async()=>{},
+      get:async key=>key===null?{...journalData}:
+        key==='sites'?{sites:{'https://claude.ai':{mode:'chat',adapter:'claude'}}}:
+        key==='adapters'?{adapters:'{}'}:{[key]:journalData[key]},
+      set:async value=>Object.assign(journalData,value)
+    }},
     permissions:{contains:async()=>true},
     scripting:{executeScript:async({args,target,world})=>{
       const [name,details]=args;state.injections.push(name);state.targets.push({target,world,name});
@@ -556,6 +610,13 @@ test('provider_prepare failures after a lost no-send receipt stay NOT_PERFORMED'
     });
     assert.equal(f.state.injections.includes('provider_commit'),false);
     assert.equal(f.state.approvalCount,1);
+    const records=Object.entries(f.state.journalData).filter(([key,value])=>key.startsWith('bridgeMutationOperation.v1.') && key!=='bridgeMutationOperation.v1.index' && value?.schemaVersion===1 && typeof value.operationId==='string').map(([,value])=>value);
+    assert.equal(records.length,1);
+    if(mode==='lost-injection-response') {
+      assert.equal(records[0].events.at(-1).phase,'COMPLETED');
+      assert.equal(records[0].events.at(-1).outcome,'NOT_PERFORMED');
+      assert.equal(records[0].events.at(-1).sideEffect,'composer-draft-state-unverified');
+    }
   }
 });
 

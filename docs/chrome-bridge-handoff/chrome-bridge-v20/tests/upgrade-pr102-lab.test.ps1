@@ -111,6 +111,7 @@ foreach ($hostPattern in @($updated.host_permissions)) {
 foreach ($permission in @('activeTab','offscreen','alarms')) {
   if (@($updated.permissions) -notcontains $permission) { throw ('Required permission missing: ' + $permission) }
 }
+if (-not (Test-Path (Join-Path $installed 'mutation-operation-journal.js'))) { throw 'Mutation operation journal module missing after apply' }
 foreach ($name in @('control.js','connection-check.js','transport-engine.js')) {
   $source = [IO.File]::ReadAllText((Join-Path $installed $name))
   if (-not $source.Contains('127.0.0.1:17485')) { throw ('Lab endpoint missing in ' + $name) }

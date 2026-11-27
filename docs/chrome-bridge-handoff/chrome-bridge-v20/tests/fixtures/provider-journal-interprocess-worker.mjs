@@ -9,7 +9,7 @@ const journal=options=>new ProviderJournal(stateDir,{hmacKey:key,bridgeEpoch,...
 const send=value=>new Promise((resolve,reject)=>{if(!process.send)return reject(Error('IPC_CHANNEL_REQUIRED'));process.send(value,e=>e?reject(e):resolve());});
 async function journalOnlyOutcomeWithBoundedRetry(journal,requestId,taskId){
   // This test-only retry is limited to a journal append. Production lock acquisition
-  // still returns PROVIDER_JOURNAL_LOCK_BUSY after its fixed 62ms budget.
+  // still returns PROVIDER_JOURNAL_LOCK_BUSY after its fixed 1.02s budget.
   for(let attempt=0;;attempt++){
     try{return journal.outcome(identity(requestId,taskId),'BLOCKED','INTERPROCESS_WRITER_TEST');}
     catch(error){
