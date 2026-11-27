@@ -318,7 +318,10 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
       matching.length>1?null:
       rows.length===1?rows[0]:
       rows.length>1?null:liveContext;
-    const multipleUnresolved=rows.length>1 && matching.length!==1;
+    // A single tab-level record cannot safely represent multiple unresolved
+    // operations. Keep it blocked rather than clearing the tab after proving
+    // only one of the outstanding operation identities.
+    const multipleUnresolved=rows.length>1;
     records[String(tabId)]={
       schemaVersion:1,tabId,token:crypto.randomUUID(),
       operationId:context?.operationId || null,
@@ -655,6 +658,8 @@ async function readQuarantineSnapshot(chromeApi) {
       event.type!=='OPERATOR_RECONCILE' || typeof event.eventId!=='string' ||
       !Number.isSafeInteger(event.tabId) || event.tabId<=0 ||
       typeof event.quarantineToken!=='string' || typeof event.requestId!=='string' ||
+      (event.trustBoundary!==undefined &&
+        event.trustBoundary!=='LOCAL_MACHINE_TRUSTED_CONTROL_UI') ||
       !Number.isFinite(event.reconciledAt)))
       throw coordinatorError('QUARANTINE_AUDIT_INVALID','BLOCKED');
     return value;
@@ -855,6 +860,7 @@ async function reconcileQuarantinedTab(chromeApi, {
       schemaVersion:1,eventId:crypto.randomUUID(),type:'OPERATOR_RECONCILE',
       tabId,quarantineToken:record.token,operationId:record.operationId,
       requestId:record.requestId,command:record.command,origin:record.origin,
+      trustBoundary:'LOCAL_MACHINE_TRUSTED_CONTROL_UI',
       conversationId:record.conversationId,reasonCode:record.reasonCode,
       globalFenceToken:state.global.record?.token || null,
       evidence:{
