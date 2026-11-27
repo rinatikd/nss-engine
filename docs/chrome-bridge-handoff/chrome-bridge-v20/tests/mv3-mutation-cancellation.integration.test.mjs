@@ -245,7 +245,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       'if(chrome.runtime.lastError)return;'+
       'globalThis.__r4ProviderTab=tabs.find(t=>t.url==='+JSON.stringify(providerUrl)+
       '||t.pendingUrl==='+JSON.stringify(providerUrl)+')||null;});true');
-    diagnosticPhase='provider tabs.query receipt';\n    diagnosticPhase='provider tabs.query receipt';
+    diagnosticPhase='provider tabs.query receipt';
     const tab=await until(()=>harness.eval('globalThis.__r4ProviderTab'),10000,'PROVIDER_TAB_QUERY');
     assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_CREATE_FAILED');
     const tabId=tab.id;
@@ -338,7 +338,8 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
     console.log('[R4 MUTATION CANCEL REAL] exact-document cancellation before boundary PASS; after-boundary cancellation refused');
   }finally{
-    clearTimeout(diagnosticKeepAlive);\n    harness?.close();
+    clearTimeout(diagnosticKeepAlive);
+    harness?.close();
     browserCdp?.close();
     if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
     if(tls.listening)await new Promise(resolve=>tls.close(resolve));
