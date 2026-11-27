@@ -33,7 +33,7 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
  for(const n of fs.readdirSync(new URL('../extension/',import.meta.url))){const src=new URL('../extension/'+n,import.meta.url);if(/\.(js|html|css)$/.test(n)&&fs.statSync(src).isFile())fs.writeFileSync(path.join(ext,n),fs.readFileSync(src,'utf8').replaceAll('http://127.0.0.1:17381','http://127.0.0.1:17481'));}
  const pageActionPath=path.join(ext,'page.js');
  let pageActionSource=fs.readFileSync(pageActionPath,'utf8');
- const operationStartMarker='      await sleep(0);\\n      checkOperationCancelled();';
+ const operationStartMarker='      await sleep(0);\n      checkOperationCancelled();';
  const operationStartHook=`      if (name === 'browser_click' && document.documentElement.dataset.r4HoldBeforeEffect === 'true') {
         await new Promise(resolve => {
           const timer=setInterval(() => {
