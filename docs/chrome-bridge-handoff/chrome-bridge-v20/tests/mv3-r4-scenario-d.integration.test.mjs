@@ -281,52 +281,28 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   assert.equal(grantStatus.activeCount,0);assert.deepEqual(grantStatus.grants,[]);
   assert.equal(grantStatus.mutationEnabled,false);assert.equal(grantStatus.approvalPending,0);
 
-  // Restart MV3 while the page action receipt is still held. Do not release
-  // the hold: after the Send click, execution state is ambiguous by design.
-  control.close();control=null;
-  pageA.close();pageA=null;pageB.close();pageB=null;
-  // runtime.reload may close its own CDP target before Runtime.evaluate
-  // can return when a page-action promise is deliberately still unresolved.
-  // Bound the command wait; then observe the replacement worker independently.
-  await Promise.race([
-    worker.eval('chrome.runtime.reload();true').catch(()=>null),
-    sleep(3000)
-  ]);
+  // Restart only the MV3 service worker while the page action receipt is
+  // still held. Do not reload the extension: extension reload destroys the
+  // isolated-world context and its document-bound terminal marker, which is
+  // precisely the evidence this scenario must preserve.
+  const oldWorkerTarget=originalWorkerTargetId;
   worker.close();worker=null;
-  // Match the known-good MV3 reload ordering from Scenario B: wait until
-  // Chromium exposes a replacement service-worker target first, reconnect to
-  // that worker, then let the new worker create its own Control page. Opening
-  // chrome-extension:// pages before extension reload has completed can make
-  // Chromium reject the navigation as ERR_BLOCKED_BY_CLIENT.
-  await sleep(500);
+  const closeWorker=await boundedFetch(
+    'http://127.0.0.1:'+port+'/json/close/'+encodeURIComponent(oldWorkerTarget),{},5000
+  );
+  assert.equal(closeWorker.status,200,'MV3_SERVICE_WORKER_TARGET_CLOSE_FAILED');
+  const wake=await control.eval('(async()=>await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"}))()');
+  assert.equal(wake.activeCount,0,'replacement worker must preserve the revoked control state');
   const restartedWorker=await until(async()=>(await targets()).find(x=>
     x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&
-    x.webSocketDebuggerUrl&&x.id!==originalWorkerTargetId),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
-  assert.notEqual(restartedWorker.id,originalWorkerTargetId,'MV3_RELOAD_MUST_CREATE_A_NEW_WORKER_TARGET');
-  worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl,'worker-after-reload');
+    x.webSocketDebuggerUrl&&x.id!==oldWorkerTarget),20000,'WORKER_AFTER_TERMINATION');
+  assert.notEqual(restartedWorker.id,oldWorkerTarget,'MV3_WORKER_MUST_RESTART_WITH_NEW_TARGET');
+  worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl,'worker-after-termination');
   await worker.call('Runtime.enable');
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'RESTARTED_WORKER_API');
-  await worker.eval('(async()=>chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true}))()');
-  const afterControl=await until(async()=>(await targets()).find(x=>
-    x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),
-    15000,'CONTROL_AFTER_RESTART');
-  control=await Cdp.connect(afterControl.webSocketDebuggerUrl,'control-after-reload');
-  await control.call('Runtime.enable');
-  try {
-    await until(()=>control.eval('document.readyState!=="loading"&&!!document.querySelector("#backgroundGrantList")'),
-      12000,'CONTROL_AFTER_RESTART_READY');
-  } catch(error) {
-    const snapshot=await control.eval('JSON.stringify({href:location.href,title:document.title,readyState:document.readyState,'+
-      'body:document.body?.innerText?.slice(0,800),grantList:!!document.querySelector("#backgroundGrantList"),'+
-      'status:document.querySelector("#status")?.textContent})').catch(e=>String(e.message));
-    const pageTargets=(await targets()).filter(x=>x.url==='chrome-extension://'+extensionId+'/control.html')
-      .map(x=>({id:x.id,type:x.type,url:x.url,title:x.title,ws:!!x.webSocketDebuggerUrl}));
-    throw Error(error.message+' CONTROL_PAGE='+snapshot+' CONTROL_TARGETS='+JSON.stringify(pageTargets));
-  }
-  const tabAAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDA001'&&x.webSocketDebuggerUrl),15000,'TAB_A_AFTER_RESTART');
-  pageA=await Cdp.connect(tabAAfter.webSocketDebuggerUrl,'provider-tab-a-after-reload');await pageA.call('Runtime.enable');
-  const tabBAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDB001'&&x.webSocketDebuggerUrl),15000,'TAB_B_AFTER_RESTART');
-  pageB=await Cdp.connect(tabBAfter.webSocketDebuggerUrl,'provider-tab-b-after-reload');await pageB.call('Runtime.enable');
+
+  // Provider page targets remain the same documents across a worker-only
+  // restart; keep their CDP sessions and the extension Control page alive.
 
   // Restart the local test Bridge process as well. The provider journal is
   // reopened from the same stateDir/key; the unresolved COMMITTING record
