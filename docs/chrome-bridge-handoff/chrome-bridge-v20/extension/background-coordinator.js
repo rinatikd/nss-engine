@@ -25,6 +25,7 @@ let mutationStopRequested = false;
 let mutationStopCount = 0;
 let mutationQuarantinePersistenceFailed = false;
 let controlStorageLane = Promise.resolve();
+let revocationFenceLane = Promise.resolve();
 let controlClearRequested = false;
 let controlClearFailed = false;
 
@@ -34,6 +35,13 @@ function coordinatorError(code, dispatchState='NOT_PERFORMED') {
 
 // Grants, Revoke and global clear all mutate the same session-storage object.
 // One FIFO prevents stale read/modify/write snapshots from overwriting each other.
+function enqueueRevocationFence(task) {
+  const next = revocationFenceLane.catch(() => {}).then(task);
+  revocationFenceLane = next;
+  void next.catch(() => {});
+  return next;
+}
+
 function enqueueControlOperation(task, {
   tabId=null, allowDuringClear=false, allowFencedTab=false
 }={}) {
@@ -112,17 +120,24 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
 
   const local = await chromeApi.storage.local.get([
-    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock'
+    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock','bridgeMutationRevokingTabs'
   ]);
   let session = {};
   if (chromeApi.storage.session?.get) {
     session = await chromeApi.storage.session.get([
-      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock'
+      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock','bridgeMutationRevokingTabs'
     ]);
   }
   if (local.bridgeMutationQuarantineLock === true ||
       session.bridgeMutationQuarantineLock === true)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+
+  const localRevoking = Array.isArray(local.bridgeMutationRevokingTabs)
+    ? local.bridgeMutationRevokingTabs : [];
+  const sessionRevoking = Array.isArray(session.bridgeMutationRevokingTabs)
+    ? session.bridgeMutationRevokingTabs : [];
+  if (localRevoking.includes(tabId) || sessionRevoking.includes(tabId))
+    throw coordinatorError('TAB_MUTATION_REVOKING');
 
   const localTabs = Array.isArray(local.bridgeMutationQuarantinedTabs)
     ? local.bridgeMutationQuarantinedTabs : [];
@@ -171,6 +186,57 @@ async function persistMutationQuarantine(chromeApi, tabIds) {
       return {persisted:false,store:null};
     }
   }
+}
+
+// A Revoke fence must survive MV3 worker suspension while the accepted tab
+// lane drains. The marker is removed only after the grant-store revoke is
+// confirmed; a restarted worker therefore rejects new page actions.
+async function persistTabRevocationFence(chromeApi, tabId) {
+  const key = 'bridgeMutationRevokingTabs';
+  try {
+    // Read both stores so a stale marker from an earlier fallback cannot be
+    // overlooked and left behind after a later successful Revoke.
+    const [localState,sessionState] = await Promise.all([
+      chromeApi.storage.local.get(key),
+      chromeApi.storage.session.get(key)
+    ]);
+    const localPrior = Array.isArray(localState[key]) ? localState[key] : [];
+    const sessionPrior = Array.isArray(sessionState[key]) ? sessionState[key] : [];
+    const next = [...new Set([...localPrior,...sessionPrior,tabId])];
+    // Keep both copies: local survives browser restart; session survives an
+    // MV3 worker restart even if local storage is temporarily unavailable later.
+    let localWritten=false,sessionWritten=false;
+    try {
+      await chromeApi.storage.local.set({[key]:next});
+      localWritten=true;
+    } catch { /* session storage may still provide a durable worker fence */ }
+    try {
+      await chromeApi.storage.session.set({[key]:next});
+      sessionWritten=true;
+    } catch { /* local storage may still provide a durable browser fence */ }
+    if (!localWritten && !sessionWritten) {
+      mutationQuarantinePersistenceFailed = true;
+      return {persisted:false,stores:[]};
+    }
+    return {persisted:true,stores:['local','session']};
+  } catch {
+    mutationQuarantinePersistenceFailed = true;
+    return {persisted:false,stores:[]};
+  }
+}
+
+async function clearTabRevocationFence(chromeApi, tabId, stores) {
+  if (!Array.isArray(stores) || !stores.length) return false;
+  const key = 'bridgeMutationRevokingTabs';
+  for (const store of stores) {
+    const storage = store === 'local' ? chromeApi.storage.local :
+      store === 'session' ? chromeApi.storage.session : null;
+    if (!storage?.get || !storage?.set) return false;
+    const state = await storage.get(key);
+    const prior = Array.isArray(state[key]) ? state[key] : [];
+    await storage.set({[key]:prior.filter(id=>id!==tabId)});
+  }
+  return true;
 }
 
 async function persistGlobalQuarantineLock(chromeApi) {
@@ -731,46 +797,61 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
 
       if (msg.type==='revoke-background-control') {
         const tabId=msg.tabId;
-        // Fence this tab synchronously, then drain accepted work before the
-        // grant-store write. A session-wide lease cannot be represented as a
-        // per-tab grant and must be revoked through session_revoke instead.
+        // Fence this tab synchronously, then persist the fence before the first
+        // drain await. A replacement MV3 worker must not reopen the tab while
+        // the accepted mutation or grant-store revoke is still unresolved.
         mutationFencedTabs.set(tabId,(mutationFencedTabs.get(tabId)||0)+1);
         const revoke=async()=>{
           let revokeWriteStarted=false;
+          let fenceStores=[];
+          let keepFence=false;
+          let fenceCleared=false;
+          const unknownRevoke=async()=>{
+            keepFence=true;
+            const persisted=await persistMutationQuarantine(chromeApi,[tabId]);
+            const error=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
+            error.quarantinedTabs=[tabId];
+            error.quarantinePersisted=persisted.persisted;
+            return error;
+          };
           try {
+            const fence=await enqueueRevocationFence(()=>persistTabRevocationFence(chromeApi,tabId));
+            if (!fence.persisted) throw await unknownRevoke();
+            fenceStores=fence.stores;
+
             const pending=mutationLanes.get(tabId);
             const settled=await awaitBounded(pending,STOP_DRAIN_TIMEOUT_MS);
-            if (!settled) {
-              const persisted=await persistMutationQuarantine(chromeApi,[tabId]);
-              const error=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
-              error.quarantinedTabs=[tabId];
-              error.quarantinePersisted=persisted.persisted;
-              throw error;
-            }
+            if (!settled) throw await unknownRevoke();
+
             const {origin}=await permittedTab(chromeApi,tabId);
             const sessionStatus=await new SessionAuthorization(chromeApi).status();
             if (sessionStatus.active && sessionStatus.origins.includes(origin))
               throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
+
             revokeWriteStarted=true;
             const revokeWrite=await enqueueControlOperationBounded(
               () => new BackgroundControlGrants(chromeApi).revoke(tabId),
               {tabId,allowFencedTab:true}
             );
-            if (!revokeWrite.settled) {
-              const error=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
-              error.quarantinedTabs=[tabId];
-              throw error;
-            }
+            if (!revokeWrite.settled) throw await unknownRevoke();
+
+            if (!await enqueueRevocationFence(()=>clearTabRevocationFence(chromeApi,tabId,fenceStores)))
+              throw await unknownRevoke();
+            fenceCleared=true;
             return {ok:true,tabId};
           } catch (error) {
-            // Preserve known precondition denials. Only a failed attempted
-            // grant-store mutation is ambiguous and requires quarantine.
-            if (!revokeWriteStarted) throw error;
-            const persisted=await persistMutationQuarantine(chromeApi,[tabId]);
-            const uncertain=coordinatorError('BACKGROUND_REVOKE_UNCONFIRMED','UNKNOWN');
-            uncertain.quarantinedTabs=[tabId];
-            uncertain.quarantinePersisted=persisted.persisted;
-            throw uncertain;
+            // A precondition denial is safe to return only after removing the
+            // durable admission fence. Failed/ambiguous revoke writes retain a
+            // permanent quarantine rather than reopening the tab.
+            if (!keepFence && fenceStores.length && !fenceCleared) {
+              try {
+                fenceCleared=await enqueueRevocationFence(()=>clearTabRevocationFence(chromeApi,tabId,fenceStores));
+              } catch { fenceCleared=false; }
+              if (!fenceCleared) throw await unknownRevoke();
+            }
+            if (!revokeWriteStarted && !keepFence) throw error;
+            if (keepFence) throw error;
+            throw await unknownRevoke();
           } finally {
             const remaining=(mutationFencedTabs.get(tabId)||1)-1;
             if (remaining>0) mutationFencedTabs.set(tabId,remaining);
