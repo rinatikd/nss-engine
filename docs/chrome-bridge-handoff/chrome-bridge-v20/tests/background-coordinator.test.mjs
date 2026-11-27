@@ -736,6 +736,8 @@ test('session_revoke persists a global mutation fence across MV3 worker restart'
     command:providerPrepare(61)
   },'transport-host.html');
   assert.equal(late.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(late.dispatchState,'BLOCKED',
+    'a replacement worker must classify the durable global admission fence as a definitive policy block');
   assert.equal(c.calls.some(x=>x[0]==='script'&&x[2]===61),false,
     'replacement worker must reject all new page mutations while global Revoke is pending');
 
