@@ -189,3 +189,32 @@ Automated source/CI acceptance is complete, but **Production remains NO-GO**:
 4. The local Control gesture audit does not authenticate a named human operator; the production trust boundary needs explicit acceptance or a verified operator identity source.
 
 No Production Chrome profile, extension, credentials, ports 17381/17382, tunnel, provider session, or local Windows service was changed during this integration.
+
+## 17. Production audit trust-boundary decision — accepted 2026-11-27
+
+**Decision owner:** repository owner / project operator  
+**Accepted policy:** `LOCAL_MACHINE_TRUSTED_CONTROL_UI`
+
+The project owner explicitly accepts the local-machine trust boundary for Production. A trusted local Chrome Bridge Control UI gesture and its durable audit record are sufficient for operator confirmation. The audit is **not required to identify or authenticate a named human**.
+
+This closes the policy decision previously listed as an open release gate. It does not waive implementation checks. The combined implementation must still demonstrate that:
+- reconciliation requests originate only from the trusted extension Control UI / authenticated coordinator route;
+- a real local gesture and explicit confirmation are required for the exact displayed quarantine scope;
+- the audit record is appended before any matching deny/quarantine marker is removed;
+- audit/storage failure remains fail-closed and leaves quarantine in force;
+- the event captures scope, operation identity, evidence references, timestamps, terminal status, and the accepted local-machine trust model without recording prompts, message bodies, cookies, keys, tokens, or provider secrets;
+- replay, stale tokens, changed document identity, partial store writes, and cross-tab reconciliation cannot clear a newer or unrelated quarantine.
+
+### Accepted limitation
+
+The audit proves a trusted local Control UI action in the configured machine/profile boundary. It does not prove which physical person performed it. The project owner accepts that limitation for this release. A compromised local OS, Chrome profile, extension installation, or trusted Control UI remains outside the assurance provided by this operator audit and must be addressed by endpoint security and local account controls.
+
+### Updated remaining Production gates
+
+1. **Independent security/lifecycle review:** PENDING. An attributable reviewer who did not author the implementation must assess coordinator admission and fencing, mutation operation journal ordering, reconciliation proof, UI sender/gesture trust, audit-before-unlock ordering, and all partial-write/restart paths.
+2. **Disposable Windows operator rehearsal:** PENDING. Install the exact source candidate into a separate disposable Windows/Chrome profile, verify the extension identity and expected files, run a bounded smoke test against an isolated Lab endpoint, and exercise rollback to the exact prior file inventory. Capture before/after hashes and logs. Do not use the production profile, ports 17381/17382, live provider sessions, production credentials, or tunnel.
+3. **Live provider acceptance:** NOT RUN. Claude/Gemini/DeepSeek/Grok/Qwen/Kimi send→reply→revoke acceptance remains a separately authorized operation. Do not send real provider messages merely to close a checklist; obtain explicit approval for the exact provider, test content, and isolated account/session before any live submission.
+
+The local-machine trust-boundary policy is **ACCEPTED** and is no longer a reason by itself to block Production. Production remains **NO-GO** until the independent review and disposable Windows install/rollback are completed, and until the project owner separately authorizes any live-provider acceptance judged necessary for the release.
+
+No production profile, extension, credentials, endpoint, port, tunnel, or local service is changed by this policy update.
