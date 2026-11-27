@@ -296,7 +296,8 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
     console.log('[R4 MUTATION CANCEL REAL] exact-document cancellation before boundary PASS; after-boundary cancellation refused');
   }finally{
-    harness?.close();\n    browserCdp?.close();
+    harness?.close();
+    browserCdp?.close();
     if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
     if(tls.listening)await new Promise(resolve=>tls.close(resolve));
     if(proxy.listening)await new Promise(resolve=>proxy.close(resolve));
