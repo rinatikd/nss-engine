@@ -1,6 +1,6 @@
 # R4 Chrome Lab — Revoke, Worker Recovery and Quarantine Acceptance
 
-**Status: NOT EXECUTED — release gate.** This document defines the isolated Chrome MV3 acceptance run for the R4 Revoke-fence stack (#165–#167). It is a test plan, not evidence of a PASS. Keep all PRs Draft and do not merge or deploy until the gates below are closed.
+**Status: AUTOMATED DISPOSABLE-LAB ACCEPTANCE PASS (2026-11-27). Production remains NO-GO pending independent review and operator acceptance.** This document defines the isolated Chrome MV3 acceptance run for the R4 Revoke-fence stack (#165–#167). It is a test plan, not evidence of a PASS. Keep all PRs Draft and do not merge or deploy until the gates below are closed.
 
 ## Safety boundary
 
@@ -136,3 +136,56 @@ The remaining dependent history (#184–#187) is carried by the aggregate PR #18
 The sibling draft PRs #169 and #170 were not in the selected dependency path (#171 is the direct child of #168); they remain separate and are not silently included in this integration.
 
 **This checkpoint records source integration only.** It does not claim that disposable-Windows install/rollback, live provider send/reply, independent security review, or operator production acceptance has been performed. Production remains NO-GO until those separate gates have evidence.
+
+## 16. Final platform integration and post-merge acceptance — 2026-11-27
+
+**Integrated platform branch:** `platform/ai-windows-control-release-20261114`  
+**Final branch head:** `73b676e6f53b177a5396010ea029791ffac4a36f`
+
+### Source integration
+
+The R4 implementation chain was merged bottom-up into the platform branch:
+
+`#165 → #166 → #167 → #168 → #171 → #174 → #175 → #176 → #177 → #178 → #179 → #180 → #181 → #182 → #183 → #187`
+
+PR #187 carried the remaining #184–#187 changes as one aggregate after historical intermediate revisions exposed cancellation/quarantine test-fixture failures. It was merged only after exact-head RC1, Source checks and Visual RC passed. The earlier test PR #170 was then separately reviewed and merged because its exact-document / stale-document / BFCache test materially strengthens lifecycle acceptance. PR #169 was closed as superseded by the implemented recovery and acceptance documentation; PRs #184–#186 were closed as superseded by the final aggregate. PR #172/#173 are unrelated PowerShell Direct work and are outside this R4 integration.
+
+### Exact post-merge CI on final platform head
+
+| Workflow | Run | Result |
+|---|---|---|
+| Chrome Bridge RC1 Control Gates | [#1139](https://github.com/rinatikd/nss-engine/actions/runs/46032393020) | PASS — 12/12 |
+| Source checks | [#5092](https://github.com/rinatikd/nss-engine/actions/runs/46032392997) | PASS — all 6 jobs |
+| Chrome Bridge Visual RC | [#1198](https://github.com/rinatikd/nss-engine/actions/runs/46032392973) | PASS — Linux 27/27, Windows 17/17 |
+| AI collaboration protocol checks | [#772](https://github.com/rinatikd/nss-engine/actions/runs/46032393189) | PASS — task-envelope 7/7, recovery-contract 8/8 |
+
+The exact final Visual RC includes:
+- real disposable MV3 service worker, offscreen recovery and closed-panel lifecycle;
+- exact-document targeting, stale-document rejection, cooperative cancellation and BFCache restoration;
+- provider-origin permission and per-tab grants;
+- R4 Scenarios A–D, including global/per-tab Revoke, late-approval race, UNKNOWN commit and quarantine after MV3/Bridge restart, and evidence-bound operator reconciliation;
+- cancellation before side effects, Gemini fail-closed DOM, concurrent HTTP MCP sends, read-only diagnostics;
+- Windows PowerShell 5.1 disposable preflight, Lab bootstrap/cutover, upgrade and rollback fixtures.
+
+No CI failure or skipped mandatory step was reported in these four final-head workflows.
+
+### Immutable artifacts from the final-head Visual RC
+
+| Artifact | GitHub artifact ID | SHA-256 |
+|---|---:|---|
+| `chrome-bridge-rc-windows-upgrade` | `15214987089` | `e86205cb9d3487774ea58c62a14aa178fd3804898cb04be417871cb20393cc21` |
+| `chrome-bridge-rc1-lab-hashes` | `15214792926` | `854b627c963e5673149d0727e0c7d6b26913fcc6891d17e3a9a161e1093283b2` |
+| `chrome-bridge-pr132-server-lab-package` | `15214074149` | `86b89aac356c3b4fe96acdbd64a760684d18776e33e3a2af4d84ef3ca7370232` |
+| `consilium-control-room-lab-package` | `15215206186` | `d6a449f332d3bf766cbf319d211043380f237cd0623d06d0b3df2df4a936bda0` |
+
+The Windows candidate is source-only, not a production installer. The hash manifest labels its target `DISPOSABLE_LAB_ONLY` and binds the staged extension file hashes. Its embedded commit field is GitHub's synthetic merge-test commit `08551cdec256ab0efb47f211a9be0c71f7bb618c`; GitHub compare confirms this is one merge wrapper ahead of the final branch merge commit `73b676e6f53b177a5396010ea029791ffac4a36f` with no file changes. No credentials or user profile data are included.
+
+### Remaining production gates
+
+Automated source/CI acceptance is complete, but **Production remains NO-GO**:
+1. No independent submitted security/lifecycle review is recorded.
+2. No operator-run installation and rollback of the exact source-only candidate was performed in a disposable Windows user environment.
+3. No live Claude/Gemini/DeepSeek/Grok/Qwen/Kimi send→reply acceptance was performed; real provider sends were intentionally excluded from CI.
+4. The local Control gesture audit does not authenticate a named human operator; the production trust boundary needs explicit acceptance or a verified operator identity source.
+
+No Production Chrome profile, extension, credentials, ports 17381/17382, tunnel, provider session, or local Windows service was changed during this integration.
