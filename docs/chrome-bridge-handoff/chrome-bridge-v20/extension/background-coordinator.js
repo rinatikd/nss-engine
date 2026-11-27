@@ -51,16 +51,47 @@ function ensureMutationOperationRecovery(chromeApi) {
         await persistGlobalQuarantineLock(chromeApi);
         throw Error('MUTATION_OPERATION_JOURNAL_CORRUPT');
       }
-      if (result.quarantinedTabs.length) {
+      // UNKNOWN journal rows remain immutable evidence after operator
+      // reconciliation. Do not recreate their quarantine on every later MV3
+      // restart once the same operation has a durable, exact-document audit.
+      // A missing/malformed audit never counts as reconciliation: it leaves
+      // the row unresolved and therefore quarantined.
+      const quarantineState=await readQuarantineSnapshot(chromeApi);
+      const audited=quarantineState.audits.filter(event=>
+        event?.type==='OPERATOR_RECONCILE' &&
+        event.trustBoundary==='LOCAL_MACHINE_TRUSTED_CONTROL_UI' &&
+        typeof event.operationId==='string' &&
+        typeof event.requestId==='string' &&
+        event.confirmed===true && event.localGesture===true &&
+        event.backgroundGrantRevokedAndVerified===true &&
+        event.sessionAuthorizationAbsent===true &&
+        event.evidence && typeof event.evidence==='object' &&
+        typeof event.evidence.documentId==='string' &&
+        event.evidence.frameId===0 &&
+        Number.isFinite(event.reconciledAt)
+      );
+      const isAudited=operation=>audited.some(event=>
+        event.operationId===operation.operationId &&
+        event.requestId===operation.requestId &&
+        event.command===operation.command &&
+        event.origin===operation.origin &&
+        event.conversationId===operation.conversationId &&
+        event.evidence.documentId===operation.documentId &&
+        event.evidence.frameId===operation.frameId
+      );
+      const unresolved=(result.unresolved||[]).filter(operation=>!isAudited(operation));
+      const quarantinedTabs=[...new Set(unresolved.map(operation=>operation.tabId))];
+      const recovered={...result,unresolved,quarantinedTabs};
+      if (quarantinedTabs.length) {
         const persisted=await persistMutationQuarantine(
-          chromeApi,result.quarantinedTabs,result.unresolved
+          chromeApi,quarantinedTabs,unresolved
         );
         if (!persisted.persisted) {
           await persistGlobalQuarantineLock(chromeApi);
           throw Error('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
         }
       }
-      return result;
+      return recovered;
     }).catch(async error=>{
       mutationQuarantinePersistenceFailed=true;
       await persistGlobalQuarantineLock(chromeApi);
@@ -845,7 +876,9 @@ async function probeQuarantinedMutation(chromeApi, tabId, timeoutMs=2500) {
   const main=Array.isArray(frames) ? frames.find(frame=>frame.frameId===0) : null;
   if (!main?.documentId || !main.result || typeof main.result!=='object')
     throw coordinatorError('QUARANTINE_PROOF_UNAVAILABLE','BLOCKED');
-  return {...main.result,documentId:main.documentId};
+  return {
+    ...main.result,documentId:main.documentId,frameId:main.frameId
+  };
 }
 
 async function reconcileQuarantinedTab(chromeApi, {
@@ -976,7 +1009,7 @@ async function reconcileQuarantinedTab(chromeApi, {
         startedAt:terminal.startedAt,completedAt:terminal.completedAt,
         clickAttempted:terminal.clickAttempted===true,
         clickReturned:terminal.clickReturned===true,
-        documentId:probe.documentId
+        documentId:probe.documentId,frameId:probe.frameId
       },
       backgroundGrantRevokedAndVerified:true,
       sessionAuthorizationAbsent:true,
