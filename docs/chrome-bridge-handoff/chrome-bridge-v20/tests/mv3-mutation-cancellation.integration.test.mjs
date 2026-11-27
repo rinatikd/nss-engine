@@ -209,6 +209,13 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     harness=await Cdp.connect(harnessTarget.webSocketDebuggerUrl,'extension-harness');
     await harness.call('Runtime.enable');
     await until(()=>harness.eval('typeof globalThis.__r4PageAction==="function"'),10000,'PAGE_ACTION_EXPORT');
+    // Use the callback form for scripting.executeScript in this MV3 fixture.
+    // Chrome 158 can leave the Promise form pending from an extension page;
+    // callback completion gives the test a deterministic API receipt.
+    await harness.eval('globalThis.__r4Execute=details=>new Promise((resolve,reject)=>{'+
+      'chrome.scripting.executeScript(details,results=>{'+
+      'const error=chrome.runtime.lastError;'+
+      'if(error)reject(Error(error.message));else resolve(results);});});true');
     console.log('[R4 MUTATION CANCEL STEP] extension harness ready');
 
     // Create the provider tab through the browser-level CDP session rather
@@ -243,10 +250,10 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     const documentId=pageInfo.documentId;
     const target={tabId,documentIds:[documentId]};
     const origin='https://claude.ai';
-    const invoke=(name,args)=>harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const invoke=(name,args)=>harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',world:"ISOLATED",func:globalThis.__r4PageAction,'+
       'args:'+JSON.stringify([name,args,origin])+'});return out[0]})()');
-    const inspect=()=>harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const inspect=()=>harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',world:"ISOLATED",func:id=>({state:globalThis.__chromeBridgeOperationRegistry?.[id]?.state,'+
       'sideEffectStarted:globalThis.__chromeBridgeOperationRegistry?.[id]?.sideEffectStarted===true}),'+
       'args:["operation_cancel_safe_0001"]});return out[0]?.result})()');
@@ -265,7 +272,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     assert.equal(preemptedMutation.result.error,'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT');
     assert.equal(preemptedMutation.result.dispatchState,'NOT_PERFORMED');
     assert.equal(preemptedMutation.result.sideEffect,'none');
-    const preemptedClickCount=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const preemptedClickCount=await harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(preemptedClickCount,'0','a pre-injection Revoke tombstone must block a late page action');
     console.log('[R4 MUTATION CANCEL STEP] pre-injection tombstone passed');
@@ -291,7 +298,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     assert.equal(repeatedCancel.result.operationId,safeId);
     assert.equal(repeatedCancel.result.safeToRelease,true,'a repeat Revoke must receive the same safe terminal proof');
     assert.equal(repeatedCancel.result.state,'CANCELLED_BEFORE_SIDE_EFFECT');
-    const afterCancel=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const afterCancel=await harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(afterCancel,'0','a cancelled pre-boundary operation must not click');
 
@@ -310,7 +317,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       operationId:committedId,selector:'#r4Action',controlExpires:Date.now()+120000
     });
     assert.equal(replayedMutation.result.error,'MUTATION_OPERATION_ALREADY_SEEN');
-    const clickCount=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const clickCount=await harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(clickCount,'1','a late cancellation must not misclassify a fired click as NOT_PERFORMED');
     console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
