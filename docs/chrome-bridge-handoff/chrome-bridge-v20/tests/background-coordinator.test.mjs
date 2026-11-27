@@ -114,7 +114,9 @@ test('background start restricts storage before reading and creates offscreen ho
   const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
   const result=await startBackgroundTransport(c);
   assert.equal(result.ok,true);
-  assert.deepEqual(c.calls.map(x=>x[0]),['restrict','restrict','create','message']);
+  assert.deepEqual(c.calls.map(x=>x[0]),[
+    'restrict','restrict','session-restrict','restrict','create','message'
+  ]);
 });
 test('manual Stop supersedes a start that is waiting for offscreen host creation',async()=>{
   const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
@@ -1592,7 +1594,7 @@ test('quarantine status restricts local and session audit stores before reading 
   installBackgroundCoordinator(c);
   const status=await sendCoordinator(c,'quarantine-status');
   assert.equal(status.available,true);
-  assert.deepEqual(c.calls.slice(0,2),[
+  assert.deepEqual(c.calls.slice(-2),[
     ['restrict','TRUSTED_CONTEXTS'],
     ['session-restrict','TRUSTED_CONTEXTS']
   ]);
