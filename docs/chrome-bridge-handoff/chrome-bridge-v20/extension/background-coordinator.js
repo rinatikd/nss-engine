@@ -677,7 +677,7 @@ async function readGlobalRevocationFence(chromeApi) {
   return {record,stores};
 }
 
-async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
+async function persistGlobalRevocationFence(chromeApi, affectedTabs, contextSnapshot=null) {
   const key='bridgeMutationRevocationPending';
   try {
     const current=await readGlobalRevocationFence(chromeApi);
@@ -691,8 +691,9 @@ async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
     let journalRows=[];
     try { journalRows=await mutationOperationJournalFor(chromeApi).list(); }
     catch { /* keep the durable fence; absent journal identity will not be reconcilable */ }
+    const contexts=contextSnapshot instanceof Map ? contextSnapshot : mutationContexts;
     const operations=tabIds.map(tabId=>{
-      const context=mutationContexts.get(tabId);
+      const context=contexts.get(tabId);
       if (!context) return null;
       const matching=journalRows.filter(item=>
         item.tabId===tabId && item.requestId===context.requestId &&
@@ -1439,24 +1440,29 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       const run = async (activateMutationContext=null) => {
         const failureStartedAt=Date.now();
         const name=msg.command?.name;
-        if (MUTATION_COMMANDS.has(name) || name==='session_authorize' || name==='session_revoke')
-          await ensureMutationOperationRecovery(chromeApi);
-        // Session authorization changes are global control operations: fence
-        // mutations synchronously before any storage/browser await.
         const sessionControlChange = name==='session_authorize' || name==='session_revoke';
         if (sessionControlChange && controlClearRequested)
           throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
-        if (sessionControlChange) controlClearRequested = true;
+        // Capture the active operation before cancelling approvals or awaiting
+        // recovery/storage. Queued operations have not activated their context
+        // and therefore cannot overwrite this snapshot.
+        const revocationContextSnapshot=name==='session_revoke'
+          ? new Map([...mutationContexts.entries()].map(([id,context])=>[id,{...context}]))
+          : null;
+        if (sessionControlChange) controlClearRequested=true;
         if (name==='session_revoke') approvals.stop();
         let globalRevocationFence=null;
 
         try {
+          if (MUTATION_COMMANDS.has(name) || sessionControlChange)
+            await ensureMutationOperationRecovery(chromeApi);
           // Persist the global deny fence before the first asynchronous step.
           // A replacement worker will reject every mutation until Revoke is
           // reconciled; affected tabs are quarantined if this is a recovery.
           if (name==='session_revoke') {
             globalRevocationFence=await enqueueRevocationFence(
-              ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
+              ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()],
+                revocationContextSnapshot)
             );
             if (!globalRevocationFence.persisted) {
               await persistGlobalQuarantineLock(chromeApi);
@@ -1775,13 +1781,20 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         respond({error:'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',outcome:'NOT_PERFORMED'});
         return false;
       }
+      // Snapshot only the currently active operation before cancelling
+      // approvals. Later queued requests are not part of this Revoke scope.
+      const revocationContextSnapshot=new Map(
+        [...mutationContexts.entries()].map(([id,context])=>[id,{...context}])
+      );
+      const revocationTabIds=[...mutationLanes.keys()];
       controlClearRequested = true;
       // Revoke-all cancels every outstanding approval before draining lanes.
       approvals.stop();
       void (async()=>{
         await ensureMutationOperationRecovery(chromeApi);
         const fence=await enqueueRevocationFence(
-          ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
+          ()=>persistGlobalRevocationFence(chromeApi,revocationTabIds,
+            revocationContextSnapshot)
         );
         if (!fence.persisted) {
           await persistGlobalQuarantineLock(chromeApi);
