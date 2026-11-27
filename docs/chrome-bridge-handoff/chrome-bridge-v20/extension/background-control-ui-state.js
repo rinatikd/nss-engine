@@ -9,3 +9,13 @@ export function backgroundControlUiState({backgroundMode=false,connected=false,m
   if (!mutationEnabled) return {grantAllDisabled:true,revokeAllDisabled,reason:'Сначала включите экспериментальное управление'};
   return {grantAllDisabled:false,revokeAllDisabled,reason:'Управление отключено. Можно подключить разрешённые вкладки; каждое действие подтверждается отдельно.'};
 }
+
+export function backgroundRevokeErrorMessage(result) {
+  const code=typeof result?.error==='string' && /^[A-Z][A-Z0-9_]{2,80}$/.test(result.error)
+    ? result.error : 'REVOKE_FAILED';
+  const outcome=result?.outcome==='UNKNOWN' ? 'UNKNOWN: ' : '';
+  const tabs=Array.isArray(result?.quarantinedTabs)
+    ? [...new Set(result.quarantinedTabs.filter(id=>Number.isSafeInteger(id)&&id>0))]
+    : [];
+  return outcome+code+(tabs.length ? '; карантин вкладок: '+tabs.join(', ') : '');
+}

@@ -470,6 +470,145 @@ test('per-tab Revoke refuses to partially revoke an origin-wide Session Authoriz
   assert.deepEqual(c.session.bridgeMutationRevokingTabs,[]);
 });
 
+
+test('session_revoke persists a global mutation fence across MV3 worker restart',async()=>{
+  let enteredResolve,releaseResolve;
+  const entered=new Promise(resolve=>{enteredResolve=resolve;});
+  const held=new Promise(resolve=>{releaseResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{executeScript:async({name,details,origin,tabId,calls})=>{
+    calls.push(['script',name,tabId]);
+    if (name==='agent_context') return [{result:{
+      verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+    }}];
+    if (name==='provider_prepare') {
+      enteredResolve();
+      await held;
+      return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+    }
+    return [{result:{ok:true}}];
+  }});
+  await prepareLab(c,60);
+  const firstWorker=await import('../extension/background-coordinator.js?session-revoke-worker-before');
+  firstWorker.installBackgroundCoordinator(c);
+  const mutation=sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:providerPrepare(60)
+  },'transport-host.html');
+  await entered;
+  const revoke=sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:{name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{}}
+  },'transport-host.html');
+  await delay(10);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+  assert.deepEqual(c.data.bridgeMutationRevocationPending.affectedTabs,[60]);
+  assert.equal(c.session.bridgeMutationRevocationPending?.pending,true);
+
+  const restartedWorker=await import('../extension/background-coordinator.js?session-revoke-worker-after');
+  restartedWorker.installBackgroundCoordinator(c);
+  const late=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:providerPrepare(61)
+  },'transport-host.html');
+  assert.equal(late.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(c.calls.some(x=>x[0]==='script'&&x[2]===61),false,
+    'replacement worker must reject all new page mutations while global Revoke is pending');
+
+  releaseResolve();
+  const completed=await mutation;
+  const revoked=await revoke;
+  assert.equal(completed.result.prepared,true);
+  assert.equal(revoked.result.revoked,true);
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationRevocationPending,null);
+  assert.equal(c.session.bridgeMutationRevocationPending,null);
+});
+
+
+test('clear-background-controls persists a global revoke fence across worker restart',async()=>{
+  let enteredResolve,releaseResolve;
+  const entered=new Promise(resolve=>{enteredResolve=resolve;});
+  const held=new Promise(resolve=>{releaseResolve=resolve;});
+  const c=fakeChrome({...LAB_STATE},{executeScript:async({name,details,origin,tabId,calls})=>{
+    calls.push(['script',name,tabId]);
+    if (name==='agent_context') return [{result:{
+      verified:true,origin:'https://claude.ai',conversationId:'conversation_001'
+    }}];
+    if (name==='provider_prepare') {
+      enteredResolve();
+      await held;
+      return [{result:{
+        prepared:true,clickedSend:false,requestId:details.requestId,
+        preparedId:details.preparedId,payloadHash:details.payloadHash,
+        sideEffect:'composer-filled-no-send'
+      }}];
+    }
+    return [{result:{ok:true}}];
+  }});
+  await prepareLab(c,63);
+  const firstWorker=await import('../extension/background-coordinator.js?clear-controls-worker-before');
+  firstWorker.installBackgroundCoordinator(c);
+  const mutation=sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:providerPrepare(63)
+  },'transport-host.html');
+  await entered;
+  const clear=sendCoordinatorTo(c,c.listeners.at(-1),'clear-background-controls');
+  await delay(10);
+  assert.equal(c.data.bridgeMutationRevocationPending?.pending,true);
+  assert.deepEqual(c.data.bridgeMutationRevocationPending.affectedTabs,[63]);
+
+  const restartedWorker=await import('../extension/background-coordinator.js?clear-controls-worker-after');
+  restartedWorker.installBackgroundCoordinator(c);
+  const late=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:providerPrepare(64)
+  },'transport-host.html');
+  assert.equal(late.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+
+  releaseResolve();
+  await mutation;
+  const cleared=await clear;
+  assert.equal(cleared.ok,true);
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationRevocationPending,null);
+  assert.equal(c.session.bridgeMutationRevocationPending,null);
+});
+
+test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN',async()=>{
+  const c=fakeChrome({...LAB_STATE});
+  await prepareLab(c,62);
+  const pending={
+    pending:true,token:'prior-worker-revoke-001',affectedTabs:[62],startedAt:Date.now()-100
+  };
+  c.data.bridgeMutationRevocationPending=pending;
+  c.session.bridgeMutationRevocationPending=pending;
+  const restartedWorker=await import('../extension/background-coordinator.js?session-revoke-recovery');
+  restartedWorker.installBackgroundCoordinator(c);
+  const authorize=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:{name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{sessionId:'session_0002',durationMinutes:60,
+        origins:['https://claude.ai']}}
+  },'transport-host.html');
+  assert.equal(authorize.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
+    'a pending global Revoke must block a new Session Authorization');
+  const result=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{
+    command:{name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{}}
+  },'transport-host.html');
+  assert.equal(result.error,'BACKGROUND_STOP_UNCONFIRMED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.deepEqual(result.quarantinedTabs,[62]);
+  assert.ok(
+    c.data.bridgeMutationQuarantinedTabs?.includes(62) ||
+    c.session.bridgeMutationQuarantinedTabs?.includes(62),
+    'prior-worker tabs must remain durably quarantined in local or session storage'
+  );
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationRevocationPending,null);
+  assert.equal(c.session.bridgeMutationRevocationPending,null);
+});
+
 test('session_revoke fences new provider work and drains an already accepted page action',async()=>{
   let enteredResolve,releaseResolve;
   const entered=new Promise(resolve=>{enteredResolve=resolve;});

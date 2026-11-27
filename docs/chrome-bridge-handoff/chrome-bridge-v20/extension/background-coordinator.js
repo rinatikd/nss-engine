@@ -120,17 +120,22 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
 
   const local = await chromeApi.storage.local.get([
-    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock','bridgeMutationRevokingTabs'
+    'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock',
+    'bridgeMutationRevokingTabs','bridgeMutationRevocationPending'
   ]);
   let session = {};
   if (chromeApi.storage.session?.get) {
     session = await chromeApi.storage.session.get([
-      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock','bridgeMutationRevokingTabs'
+      'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineLock',
+      'bridgeMutationRevokingTabs','bridgeMutationRevocationPending'
     ]);
   }
   if (local.bridgeMutationQuarantineLock === true ||
       session.bridgeMutationQuarantineLock === true)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+  if (local.bridgeMutationRevocationPending?.pending === true ||
+      session.bridgeMutationRevocationPending?.pending === true)
+    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
 
   const localRevoking = Array.isArray(local.bridgeMutationRevokingTabs)
     ? local.bridgeMutationRevokingTabs : [];
@@ -237,6 +242,74 @@ async function clearTabRevocationFence(chromeApi, tabId, stores) {
     await storage.set({[key]:prior.filter(id=>id!==tabId)});
   }
   return true;
+}
+
+async function readGlobalRevocationFence(chromeApi) {
+  const key='bridgeMutationRevocationPending';
+  const [localState,sessionState]=await Promise.all([
+    chromeApi.storage.local.get(key),
+    chromeApi.storage.session.get(key)
+  ]);
+  const localRecord=localState[key];
+  const sessionRecord=sessionState[key];
+  const record=[localRecord,sessionRecord].find(x=>x && x.pending===true) || null;
+  return {
+    record,
+    stores:['local','session']
+  };
+}
+
+async function persistGlobalRevocationFence(chromeApi, affectedTabs) {
+  const key='bridgeMutationRevocationPending';
+  try {
+    const current=await readGlobalRevocationFence(chromeApi);
+    if (current.record) return {
+      persisted:true,existing:true,record:current.record,stores:current.stores
+    };
+    const record={
+      pending:true,
+      token:`${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      affectedTabs:[...new Set(affectedTabs.filter(id=>Number.isSafeInteger(id)&&id>0))],
+      startedAt:Date.now()
+    };
+    let localWritten=false,sessionWritten=false;
+    try {
+      await chromeApi.storage.local.set({[key]:record});
+      localWritten=true;
+    } catch { /* session storage may still provide a worker-lifetime fence */ }
+    try {
+      await chromeApi.storage.session.set({[key]:record});
+      sessionWritten=true;
+    } catch { /* local storage may still provide a browser-lifetime fence */ }
+    if (!localWritten && !sessionWritten) {
+      mutationQuarantinePersistenceFailed=true;
+      return {persisted:false,existing:false,record:null,stores:[]};
+    }
+    return {persisted:true,existing:false,record,stores:['local','session']};
+  } catch {
+    mutationQuarantinePersistenceFailed=true;
+    return {persisted:false,existing:false,record:null,stores:[]};
+  }
+}
+
+async function clearGlobalRevocationFence(chromeApi, record, stores) {
+  if (!record?.token || !Array.isArray(stores) || !stores.length) return false;
+  const key='bridgeMutationRevocationPending';
+  try {
+    for (const store of stores) {
+      const storage=store==='local' ? chromeApi.storage.local :
+        store==='session' ? chromeApi.storage.session : null;
+      if (!storage?.get || !storage?.set) return false;
+      const state=await storage.get(key);
+      const current=state[key];
+      if (current?.pending===true && current.token!==record.token) return false;
+      if (current?.token===record.token)
+        await storage.set({[key]:null});
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function persistGlobalQuarantineLock(chromeApi) {
@@ -564,9 +637,24 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         // Session authorization changes are global control operations: fence
         // mutations synchronously before any storage/browser await.
         const sessionControlChange = name==='session_authorize' || name==='session_revoke';
+        if (sessionControlChange && controlClearRequested)
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
         if (sessionControlChange) controlClearRequested = true;
+        let globalRevocationFence=null;
 
         try {
+          // Persist the global deny fence before the first asynchronous step.
+          // A replacement worker will reject every mutation until Revoke is
+          // reconciled; affected tabs are quarantined if this is a recovery.
+          if (name==='session_revoke') {
+            globalRevocationFence=await enqueueRevocationFence(
+              ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
+            );
+            if (!globalRevocationFence.persisted) {
+              await persistGlobalQuarantineLock(chromeApi);
+              throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+            }
+          }
           const {bridgeBackgroundMode,bridgeMutationLabMode,bridgeConnectionDesired} =
             await chromeApi.storage.local.get([
               'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
@@ -577,6 +665,9 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           const sessionAuthorization=new SessionAuthorization(chromeApi);
           if (name==='session_authorize') {
             try {
+              const pendingRevocation=await readGlobalRevocationFence(chromeApi);
+              if (pendingRevocation.record)
+                throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
               const drained = await drainMutationLanes(chromeApi);
               if (!drained.drained) {
                 const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
@@ -636,6 +727,17 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           }
           if (name==='session_revoke') {
             let cleanupError=null;
+            const recovered=globalRevocationFence.existing===true;
+            const affectedTabs=Array.isArray(globalRevocationFence.record?.affectedTabs)
+              ? globalRevocationFence.record.affectedTabs : [];
+            if (recovered && affectedTabs.length) {
+              const quarantine=await persistMutationQuarantine(chromeApi,affectedTabs);
+              if (!quarantine.persisted) {
+                const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+                error.quarantinedTabs=affectedTabs;
+                throw error;
+              }
+            }
             const drained=await drainMutationLanes(chromeApi);
             try {
               const cleanup=await enqueueControlOperationBounded(
@@ -664,6 +766,23 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             if (cleanupError) {
               await persistGlobalQuarantineLock(chromeApi);
               throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+            }
+            const fenceCleared=await enqueueRevocationFence(
+              ()=>clearGlobalRevocationFence(chromeApi,globalRevocationFence.record,
+                globalRevocationFence.stores)
+            );
+            if (!fenceCleared) {
+              await persistGlobalQuarantineLock(chromeApi);
+              throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+            }
+            // If this is a resumed operation from a prior worker, the previous
+            // worker's accepted page action cannot be proven drained. Keep its
+            // tabs quarantined and report UNKNOWN even though the lease is now
+            // revoked and the global admission fence is safely cleared.
+            if (recovered && affectedTabs.length) {
+              const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+              error.quarantinedTabs=affectedTabs;
+              throw error;
             }
             return {revoked:true};
           }
@@ -703,6 +822,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         dispatchState:['BLOCKED','NOT_PERFORMED'].includes(error?.dispatchState)
           ? error.dispatchState : 'UNKNOWN',
         sideEffect:typeof error?.sideEffect==='string' ? error.sideEffect : undefined,
+        quarantinedTabs:Array.isArray(error?.quarantinedTabs) ? error.quarantinedTabs : [],
         failure:normalizeFailure(error?.failure,{
           stage:'PRECHECK',
           code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')
@@ -747,8 +867,29 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       }
       // Revoke-all is a global mutation fence. No accepted page action may
       // continue after the UI receives a successful clear response.
+      if (controlClearRequested || mutationStopCount>0) {
+        respond({error:'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',outcome:'NOT_PERFORMED'});
+        return false;
+      }
       controlClearRequested = true;
       void (async()=>{
+        const fence=await enqueueRevocationFence(
+          ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()])
+        );
+        if (!fence.persisted) {
+          await persistGlobalQuarantineLock(chromeApi);
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+        }
+        const recovered=fence.existing===true;
+        const affectedTabs=Array.isArray(fence.record?.affectedTabs)?fence.record.affectedTabs:[];
+        if (recovered && affectedTabs.length) {
+          const quarantine=await persistMutationQuarantine(chromeApi,affectedTabs);
+          if (!quarantine.persisted) {
+            const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+            error.quarantinedTabs=affectedTabs;
+            throw error;
+          }
+        }
         let cleanupError=null;
         const drained=await drainMutationLanes(chromeApi);
         try {
@@ -778,6 +919,18 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         if (cleanupError) {
           await persistGlobalQuarantineLock(chromeApi);
           throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+        }
+        const cleared=await enqueueRevocationFence(
+          ()=>clearGlobalRevocationFence(chromeApi,fence.record,fence.stores)
+        );
+        if (!cleared) {
+          await persistGlobalQuarantineLock(chromeApi);
+          throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+        }
+        if (recovered && affectedTabs.length) {
+          const error=coordinatorError('BACKGROUND_STOP_UNCONFIRMED','UNKNOWN');
+          error.quarantinedTabs=affectedTabs;
+          throw error;
         }
         return {ok:true};
       })().then(respond,error=>respond({
