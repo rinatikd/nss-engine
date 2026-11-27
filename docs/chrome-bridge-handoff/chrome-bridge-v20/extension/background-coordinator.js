@@ -1,6 +1,6 @@
 import { dispatchReadOnly, permittedTab } from './read-only-dispatch.js';
 import { ApprovalSession } from './approval-session.js';
-import { dispatchMutation } from './mutation-dispatch.js';
+import { dispatchMutation, requestPageMutationCancellation } from './mutation-dispatch.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
 import { SessionAuthorization } from './session-authorization.js';
 import { normalizeFailure } from './failure-contract.js';
@@ -247,6 +247,42 @@ async function persistMutationQuarantine(chromeApi, tabIds) {
 // A Revoke fence must survive MV3 worker suspension while the accepted tab
 // lane drains. The marker is removed only after the grant-store revoke is
 // confirmed; a restarted worker therefore rejects new page actions.
+async function requestOutstandingMutationCancellations(chromeApi,scopeTabIds=null) {
+  let records;
+  try {
+    records=await mutationOperationJournalFor(chromeApi).list();
+  } catch {
+    await persistGlobalQuarantineLock(chromeApi);
+    throw coordinatorError('MUTATION_OPERATION_JOURNAL_UNAVAILABLE','UNKNOWN');
+  }
+  const scope=Array.isArray(scopeTabIds)?new Set(scopeTabIds):null;
+  const pending=records.filter(record=>{
+    if (scope && !scope.has(record.tabId)) return false;
+    return record.events.at(-1)?.phase==='INJECTING';
+  });
+  const results=[];
+  for (const record of pending) {
+    try {
+      await mutationOperationJournalFor(chromeApi).requestCancellation(record.operationId);
+      const result=await requestPageMutationCancellation(chromeApi,{
+        tabId:record.tabId,origin:record.origin,
+        documentId:record.documentId,operationId:record.operationId
+      });
+      results.push({operationId:record.operationId,tabId:record.tabId,...result});
+    } catch(error) {
+      // Cancellation delivery itself is not proof of quiescence. The lane
+      // must still drain and the journal must reach a terminal state.
+      results.push({
+        operationId:record.operationId,tabId:record.tabId,
+        acknowledged:false,state:'CANCELLATION_UNCONFIRMED',
+        code:/^[A-Z][A-Z0-9_]{2,80}$/.test(error?.message||'')
+          ? error.message : 'CANCELLATION_UNCONFIRMED'
+      });
+    }
+  }
+  return results;
+}
+
 async function quarantineUnreconciledGenericActions(chromeApi,scopeTabIds=null) {
   let records;
   try {
@@ -673,6 +709,7 @@ export async function stopBackgroundTransport(chromeApi, {
     // A Start accepted before Stop may still be creating the offscreen document
     // or sending its START message. Drain it first, then send the final STOP.
     const startDrained = await awaitBounded(pendingStart,startDrainTimeoutMs);
+    await requestOutstandingMutationCancellations(chromeApi);
     const mutationDrain = await drainMutationLanes(chromeApi,stopDrainTimeoutMs);
     await quarantineUnreconciledGenericActions(chromeApi);
     const stopConfirmed = await stopOffscreenTransport(chromeApi);
@@ -829,6 +866,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                 throw error;
               }
             }
+            await requestOutstandingMutationCancellations(chromeApi);
             const drained=await drainMutationLanes(chromeApi);
             await quarantineUnreconciledGenericActions(chromeApi);
             try {
@@ -1036,6 +1074,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           }
         }
         let cleanupError=null;
+        await requestOutstandingMutationCancellations(chromeApi);
         const drained=await drainMutationLanes(chromeApi);
         await quarantineUnreconciledGenericActions(chromeApi);
         try {
@@ -1122,6 +1161,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             if (!fence.persisted) throw await unknownRevoke();
             fenceStores=fence.stores;
 
+            await requestOutstandingMutationCancellations(chromeApi,[tabId]);
             const pending=mutationLanes.get(tabId);
             const settled=await awaitBounded(pending,STOP_DRAIN_TIMEOUT_MS);
             if (!settled) throw await unknownRevoke();
