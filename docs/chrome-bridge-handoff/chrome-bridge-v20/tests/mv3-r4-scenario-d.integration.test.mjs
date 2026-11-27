@@ -132,8 +132,8 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
         });
       }
       const clickedAt = new Date().toISOString();`;
- const finallyMarker='  } finally {\n    releaseActionLock();';
-  const finallyHook='  } finally {\n    releaseActionLock();\n    document.documentElement.dataset.r4TestFinallyReached = "true";\n    try {\n      const evidence = globalThis.__chromeBridgeMutationTerminal || null;\n      const response = await chrome.runtime.sendMessage({target:"r4-test-terminal-probe",evidence});\n      document.documentElement.dataset.r4TestRuntimeMessage = response?.ok ? "ok" : "failed:" + String(response?.error || "NO_ACK");\n    } catch (error) {\n      document.documentElement.dataset.r4TestRuntimeMessage = "failed:" + String(error?.message || error).slice(0,120);\n    }';
+ const finallyMarker='  } finally {\\n    releaseActionLock();';
+  const finallyHook='  } finally {\\n    releaseActionLock();\\n    const evidence = globalThis.__chromeBridgeMutationTerminal || null;\\n    if (evidence?.command === "provider_commit") {\\n      document.documentElement.dataset.r4TestFinallyReached = "true";\\n      try {\\n        const response = await chrome.runtime.sendMessage({target:"r4-test-terminal-probe",evidence});\\n        document.documentElement.dataset.r4TestRuntimeMessage = response?.ok ? "ok" : "failed:" + String(response?.error || "NO_ACK");\\n      } catch (error) {\\n        document.documentElement.dataset.r4TestRuntimeMessage = "failed:" + String(error?.message || error).slice(0,120);\\n      }\\n    }'
  assert.ok(pageActionSource.includes(finallyMarker),'PROVIDER_COMMIT_FINALLY_HOOK_MARKER_MISSING');
  pageActionSource=pageActionSource.replace(finallyMarker,finallyHook);
  assert.ok(pageActionSource.includes(commitClickMarker),'PROVIDER_COMMIT_HOOK_MARKER_MISSING');
