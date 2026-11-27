@@ -808,8 +808,15 @@ test('session_revoke tracks and clears only the global fence stores that accepte
       }
       return [{result:{ok:true}}];
     }});
-    await prepareLab(c,76);
-    const mutation=sendCoordinator(c,'dispatch',{command:providerPrepare(76)},'transport-host.html');
+    const coordinator=await import('../extension/background-coordinator.js?session-revoke-store-'+failedStore);
+    const started=await coordinator.startBackgroundTransport(c);
+    assert.equal(started.ok,true,'isolated coordinator must start ('+failedStore+')');
+    c.session.bridgeSessionAuthorization=sessionLease();
+    c.data.bridgeConnectionDesired=true;
+    c.data.bridgeMutationLabMode=true;
+    coordinator.installBackgroundCoordinator(c);
+    const listener=c.listeners.at(-1);
+    const mutation=sendCoordinatorTo(c,listener,'dispatch',{command:providerPrepare(76)},'transport-host.html');
     const reachedPrepare=await Promise.race([
       entered.then(()=>true),
       delay(1200).then(()=>false)
@@ -818,7 +825,7 @@ test('session_revoke tracks and clears only the global fence stores that accepte
       'provider_prepare preflight did not reach the held page action ('+failedStore+'); calls='+
       JSON.stringify(c.calls)+'; session='+JSON.stringify(c.session)+'; localKeys='+
       JSON.stringify(Object.keys(c.data)));
-    const revoke=sendCoordinator(c,'dispatch',{command:{
+    const revoke=sendCoordinatorTo(c,listener,'dispatch',{command:{
       name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
       expires:Date.now()+90000,args:{}
     }},'transport-host.html');
@@ -833,7 +840,7 @@ test('session_revoke tracks and clears only the global fence stores that accepte
       'the failed '+missingStore+' write must not be reported as persisted');
     const restarted=await import('../extension/background-coordinator.js?partial-global-'+failedStore);
     restarted.installBackgroundCoordinator(c);
-    const denied=await sendCoordinator(c,'dispatch',{command:providerPrepare(77)},'transport-host.html');
+    const denied=await sendCoordinatorTo(c,c.listeners.at(-1),'dispatch',{command:providerPrepare(77)},'transport-host.html');
     assert.equal(denied.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
     releaseResolve();
     const [mutationResult,revokeResult]=await Promise.all([mutation,revoke]);
@@ -1167,7 +1174,8 @@ test('global Revoke snapshots the active mutation context instead of a later que
     if(fence?.pending===true)break;
     await delay(5);
   }
-  assert.equal(fence?.pending,true,'Global Revoke must persist its fence before draining');
+  assert.equal(fence?.pending,true,'Global Revoke must persist its fence before draining; clear='+
+    JSON.stringify(await Promise.race([clear,delay(1).then(()=>({pending:true}))])));
   assert.equal(fence.operations.length,1);
   assert.equal(fence.operations[0].tabId,tabId);
   assert.equal(fence.operations[0].requestId,firstCommand.args.requestId,
@@ -1308,7 +1316,8 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
   const postStatus=await sendCoordinator(c,'quarantine-status');
   assert.equal(postStatus.records.length,0);
   assert.equal(postStatus.globalPending,null);
-  assert.equal(c.calls.filter(x=>x[0]==='quarantine-probe').length,3);
+  assert.equal(c.calls.filter(x=>x[0]==='quarantine-probe').length,2,
+    'active Session Authorization must be rejected before a third page probe');
   assert.equal(c.calls.filter(x=>x[0]==='script'&&x[1]==='provider_commit').length,0);
 });
 
