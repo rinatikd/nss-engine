@@ -81,7 +81,25 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  // reproducing an uncertain in-flight side effect during worker/Bridge restart.
  const pageActionPath=path.join(ext,'page.js');
  let pageActionSource=fs.readFileSync(pageActionPath,'utf8');
- const commitClickMarker='      sendButtons[0].click();\n      const clickedAt = new Date().toISOString();';
+ const commitClickMarker='      sendButtons[0].click();
+      document.documentElement.dataset.r4CommitClickCount =
+        String(Number(document.documentElement.dataset.r4CommitClickCount || '0') + 1);
+      // The real click has returned; hold only the receipt to model an
+      // interrupted provider_commit acknowledgement across worker restart.
+      providerCommitClickReturned = true;
+      if (document.documentElement.dataset.r4HoldCommitReceipt === 'true') {
+        document.documentElement.dataset.r4CommitReceiptHeld = 'true';
+        await new Promise(resolve => {
+          const timer = setInterval(() => {
+            if (document.documentElement.dataset.r4ReleaseCommitReceipt === 'true') {
+              clearInterval(timer);
+              document.documentElement.dataset.r4CommitReceiptHeld = 'false';
+              resolve();
+            }
+          }, 10);
+        });
+      }
+      const clickedAt = new Date().toISOString();';
  const commitClickHook=`      sendButtons[0].click();
       document.documentElement.dataset.r4CommitClickCount =
         String(Number(document.documentElement.dataset.r4CommitClickCount || '0') + 1);
