@@ -225,3 +225,65 @@ The audit proves a trusted local Control UI action in the configured machine/pro
 The local-machine trust-boundary policy is **ACCEPTED** and is no longer a reason by itself to block Production. Production remains **NO-GO** until the independent review and disposable Windows install/rollback are completed, and until the project owner separately authorizes any live-provider acceptance judged necessary for the release.
 
 No production profile, extension, credentials, endpoint, port, tunnel, or local service is changed by this policy update.
+
+
+## 18. Exact PR #188 recovery integration and post-merge CI — 2026-11-27
+
+**Integrated PR:** [#188 — rehydrate quarantine with exact operation document identity](https://github.com/rinatikd/nss-engine/pull/188)  
+**Branch:** `fix/r4-rehydrate-quarantine-identity`  
+**PR head:** `9066d5738d52172736b2f9735bd065910fba6e62`  
+**Merge commit / current platform release-branch head at this checkpoint:** `3299cfd21bdd3c20e7821b5218c7556cae21699a`  
+**Target branch:** `platform/ai-windows-control-release-20261114`
+
+### Integrated recovery changes
+
+PR #188 adds exact operation/document recovery and Global Revoke lifecycle fixes across the coordinator, operation journal, acceptance document and two regression suites:
+
+- Rehydrate interrupted provider mutations from the durable journal with exact `operationId`, `requestId`, provider/task identity, original `documentId`/main-frame identity, payload/prepared binding and write-ahead timestamp.
+- Reject reconciliation when the live document differs, even when URL/conversation identity appears unchanged.
+- Keep delivery `UNKNOWN` and `DO NOT REPLAY`; reconciliation does not rewrite immutable journal history.
+- Keep a tab with multiple unresolved operations quarantined and non-reconcilable through the single-operation UI.
+- Suppress repeat quarantine after MV3 restart only when a durable audit exactly matches operation/request/command/origin/conversation/document/frame identity and the accepted `LOCAL_MACHINE_TRUSTED_CONTROL_UI` boundary.
+- Bind Global Revoke recovery to operation identity; clear only journal-verified pre-injection actions. `INJECTING`/`UNKNOWN`, corrupt or unavailable WAL, and identity conflicts remain blocked/fail-closed.
+- Keep an unconfirmed Control Grant revoke as a separate forced quarantine condition.
+- Restrict local and session quarantine/audit storage to Chrome `TRUSTED_CONTEXTS` before status/reconciliation reads.
+
+### Exact-head and post-merge CI
+
+All listed workflows completed with conclusion `success` on the PR head and again on the merge commit.
+
+| Revision | Workflow | Run | Result |
+|---|---|---:|---|
+| PR head `9066d573` | Chrome Bridge RC1 Control Gates | [46045844988](https://github.com/rinatikd/nss-engine/actions/runs/46045844988) | PASS |
+| PR head `9066d573` | Source checks | [46045845004](https://github.com/rinatikd/nss-engine/actions/runs/46045845004) | PASS |
+| PR head `9066d573` | Chrome Bridge Visual RC | [46045845046](https://github.com/rinatikd/nss-engine/actions/runs/46045845046) | PASS |
+| Merge `3299cfd2` | AI collaboration protocol checks | [46046523315](https://github.com/rinatikd/nss-engine/actions/runs/46046523315) | PASS — 2/2 jobs |
+| Merge `3299cfd2` | Chrome Bridge RC1 Control Gates | [46046524199](https://github.com/rinatikd/nss-engine/actions/runs/46046524199) | PASS — 1/1 job |
+| Merge `3299cfd2` | Source checks | [46046523326](https://github.com/rinatikd/nss-engine/actions/runs/46046523326) | PASS — 6/6 jobs |
+| Merge `3299cfd2` | Chrome Bridge Visual RC | [46046523397](https://github.com/rinatikd/nss-engine/actions/runs/46046523397) | PASS — 2/2 jobs |
+
+The merge-commit Visual RC reports both `node-unit` and `windows-powershell51` successful. Its completed steps include real disposable MV3 lifecycle, exact-document/BFCache and cooperative-cancellation checks, R4 Scenarios A–D, interrupted-commit UNKNOWN/quarantine recovery, Gemini DOM, concurrent HTTP MCP, read-only diagnostics, and Windows disposable preflight/upgrade/rollback tests. The merge-commit Source checks include portable adapter/origin checks, Windows PowerShell 5.1 syntax and recovery, PowerShell Direct Node tests, Consilium Lab package, and ProviderJournal OS-process tests on Ubuntu and Windows. This resolves the previously reported Node unit and portable adapter/origin CI failures for the integrated merge head.
+
+### Immutable artifacts on merge-commit workflows
+
+| Artifact | Run | Artifact ID | SHA-256 | Expiry |
+|---|---:|---:|---|---|
+| `chrome-bridge-pr132-server-lab-package` | 46046524199 | 15222127072 | `bee46fe32f72e997f63db159f3ae93ad2e105f2c80d807eb4df26c544183f569` | 2026-12-04 |
+| `consilium-control-room-lab-package` | 46046523326 | 15223435836 | `5807b46ed21bcbc8fbb89f12f6f1bdda1b8e765cd9f7ee330064a097861eb6a8` | 2026-12-04 |
+| `chrome-bridge-rc1-lab-hashes` | 46046523397 | 15222291917 | `b17286600c9a7c784e3ed8b15c7d1dd1fc44a968a949bdd418355fd41b6e5930` | 2026-12-27 |
+| `chrome-bridge-rc-windows-upgrade` | 46046523397 | 15221943762 | `ef080a9ea44844da9c3aad5adec1e7701d22ce1f92be5e83211464d5e164b727` | 2026-12-04 |
+
+These are CI artifacts and source-only/Lab candidates, not a Production installer or evidence of a local operator rehearsal. Preserve the artifact IDs and hashes; retrieve and verify artifacts before use, and do not treat an expired artifact as available.
+
+### Updated release classification
+
+- **R4 source integration:** MERGED into `platform/ai-windows-control-release-20261114`.
+- **PR #188 exact-head and merge-head CI:** PASS.
+- **Node unit / portable adapter-origin failures previously reported:** RESOLVED for the integrated merge head by successful exact workflow runs; no longer classify those runs as failing.
+- **Production trust policy:** ACCEPTED — `LOCAL_MACHINE_TRUSTED_CONTROL_UI`; no named-human identity proof required.
+- **Independent attributable security/lifecycle review:** PENDING.
+- **Operator-run install and rollback of the exact candidate in a separate disposable Windows/Chrome profile:** PENDING. Hosted Windows CI is not a substitute.
+- **Live provider send/reply/revoke:** NOT RUN. Any such test requires separate explicit approval for the exact provider, content and isolated account/session; no provider message is authorized by this CI result.
+- **Production deployment / release tag / publication:** NOT PERFORMED.
+
+**Decision: R4 remains Production NO-GO.** The local-machine trust policy is closed, and the automated source/CI recovery gate is now green. Do not claim final Production readiness until the independent review and disposable Windows operator install/rollback have attributable evidence. Keep live-provider acceptance separately gated by explicit approval. No production profile, credentials, ports 17381/17382, tunnel, provider session or local Windows service is changed by this integration.
