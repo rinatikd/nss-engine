@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {startBackgroundTransport, stopBackgroundTransport, installBackgroundCoordinator} from '../extension/background-coordinator.js';
+import {MutationOperationJournal} from '../extension/mutation-operation-journal.js';
 
 function fakeChrome(data={},options={}) {
   const listeners=[];
@@ -113,7 +114,9 @@ test('background start restricts storage before reading and creates offscreen ho
   const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
   const result=await startBackgroundTransport(c);
   assert.equal(result.ok,true);
-  assert.deepEqual(c.calls.map(x=>x[0]),['restrict','restrict','create','message']);
+  assert.deepEqual(c.calls.map(x=>x[0]),[
+    'restrict','restrict','session-restrict','restrict','create','message'
+  ]);
 });
 test('manual Stop supersedes a start that is waiting for offscreen host creation',async()=>{
   const c=fakeChrome({bridgeBackgroundMode:true,bridgeConnectionDesired:true,browserToken:'S'});
@@ -912,13 +915,31 @@ test('clear-background-controls persists a global revoke fence across worker res
 test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN',async()=>{
   const c=fakeChrome({...LAB_STATE});
   await prepareLab(c,62);
+  const operationJournal=new MutationOperationJournal(c,{
+    uuid:()=> 'operation_recovered_000062'
+  });
+  const operation=await operationJournal.begin({
+    command:'provider_commit',tabId:62,origin:'https://claude.ai',
+    url:'https://claude.ai/chat/conversation_001',
+    documentId:'document-62',frameId:0,
+    conversationId:'conversation_001',requestId:'r4request000062',
+    taskId:'task_000062',providerId:'claude',preparedId:'prepared_0062',
+    payloadHash:'c'.repeat(64),epoch:1
+  });
+  await operationJournal.markInjecting(operation.operationId,{
+    documentId:'document-62',frameId:0
+  });
+  const journalRow=(await operationJournal.list())[0];
+  const injectionStartedAt=journalRow.events.find(event=>event.phase==='INJECTING').at;
   const pending={
     pending:true,token:'prior-worker-revoke-001',affectedTabs:[62],startedAt:Date.now()-100,
     operations:[{
-      tabId:62,requestId:'r4request000062',command:'provider_commit',
+      tabId:62,operationId:operation.operationId,
+      requestId:'r4request000062',command:'provider_commit',
       taskId:'task_000062',providerId:'claude',origin:'https://claude.ai',
-      conversationId:'conversation_001',epoch:1,payloadHash:'c'.repeat(64),
-      preparedId:'prepared_0062',startedAt:Date.now()-200
+      conversationId:'conversation_001',documentId:'document-62',frameId:0,
+      epoch:1,payloadHash:'c'.repeat(64),preparedId:'prepared_0062',
+      startedAt:injectionStartedAt
     }]
   };
   c.data.bridgeMutationRevocationPending=pending;
@@ -952,8 +973,16 @@ test('recovered session_revoke quarantines prior worker tabs and reports UNKNOWN
     c.session.bridgeMutationQuarantineRecords?.['62'];
   assert.equal(q?.requestId,'r4request000062');
   assert.equal(q?.command,'provider_commit');
+  assert.equal(q?.operationId,operation.operationId);
+  assert.equal(q?.documentId,'document-62');
+  assert.equal(q?.frameId,0);
   assert.equal(q?.reconcilable,true,
     'the durable global fence must preserve enough operation identity for evidence-bound recovery');
+  const recoveredFenceOperation=c.data.bridgeMutationRevocationPending.operations.find(item=>item.tabId===62);
+  assert.equal(recoveredFenceOperation.operationId,operation.operationId);
+  assert.equal(recoveredFenceOperation.documentId,'document-62');
+  assert.equal(recoveredFenceOperation.frameId,0);
+  assert.equal(recoveredFenceOperation.startedAt,q.startedAt);
 });
 
 test('session_revoke fences new provider work and drains an already accepted page action',async()=>{
@@ -989,6 +1018,15 @@ test('session_revoke fences new provider work and drains an already accepted pag
   const late=await sendCoordinator(c,'dispatch',{command:providerPrepare(47)},'transport-host.html');
   assert.equal(late.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
   assert.equal(revokeDone,false);
+  const persistedFence=c.data.bridgeMutationRevocationPending;
+  assert.equal(persistedFence?.pending,true);
+  assert.equal(persistedFence.operations.length,1);
+  assert.equal(persistedFence.operations[0].requestId,providerPrepare(46).args.requestId);
+  assert.equal(persistedFence.operations[0].operationId?.length>0,true,
+    'the global Revoke fence must include the active write-ahead operation ID');
+  assert.equal(persistedFence.operations[0].documentId,'fake-document-46',
+    'the global Revoke fence must bind the exact Chrome document');
+  assert.equal(persistedFence.operations[0].frameId,0);
 
   releaseResolve();
   const completed=await mutation;
@@ -1204,9 +1242,11 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
   const tabId=79,now=Date.now(),quarantineToken='quarantine-token-r4-79',
     globalToken='global-revoke-token-r4-79',requestId='r4request000079';
   const record={
-    schemaVersion:1,tabId,token:quarantineToken,requestId,
+    schemaVersion:1,tabId,token:quarantineToken,
+    operationId:'operation_r4_000079',requestId,
     command:'provider_commit',taskId:'task_000079',providerId:'claude',
-    origin:'https://claude.ai',conversationId:'conversation_001',epoch:1,
+    origin:'https://claude.ai',conversationId:'conversation_001',
+    documentId:'document-r4-79',frameId:0,epoch:1,
     payloadHash:'b'.repeat(64),preparedId:'prepared_0079',
     startedAt:now-2000,quarantinedAt:now-500,
     reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true
@@ -1214,9 +1254,12 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
   const pending={
     pending:true,token:globalToken,affectedTabs:[tabId],startedAt:now-1000,
     operations:[{
-      tabId,requestId,command:record.command,taskId:record.taskId,providerId:record.providerId,
-      origin:record.origin,conversationId:record.conversationId,epoch:record.epoch,
-      payloadHash:record.payloadHash,preparedId:record.preparedId,startedAt:record.startedAt
+      tabId,operationId:record.operationId,requestId,command:record.command,
+      taskId:record.taskId,providerId:record.providerId,
+      origin:record.origin,conversationId:record.conversationId,
+      documentId:record.documentId,frameId:record.frameId,epoch:record.epoch,
+      payloadHash:record.payloadHash,preparedId:record.preparedId,
+      startedAt:record.startedAt
     }]
   };
   let pageState={
@@ -1382,17 +1425,20 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
   const tabId=80,now=Date.now(),token='quarantine-token-r4-80',
     globalToken='global-revoke-token-r4-80',requestId='r4request000080';
   const record={
-    schemaVersion:1,tabId,token,requestId,command:'provider_commit',
-    taskId:'task_000080',providerId:'claude',origin:'https://claude.ai',
-    conversationId:'conversation_001',epoch:1,payloadHash:'d'.repeat(64),
+    schemaVersion:1,tabId,token,operationId:'operation_r4_000080',requestId,
+    command:'provider_commit',taskId:'task_000080',providerId:'claude',
+    origin:'https://claude.ai',conversationId:'conversation_001',
+    documentId:'document-r4-80',frameId:0,epoch:1,payloadHash:'d'.repeat(64),
     preparedId:'prepared_0080',startedAt:now-2000,quarantinedAt:now-500,
     reasonCode:'BACKGROUND_STOP_UNCONFIRMED',reconcilable:true
   };
   const pending={
     pending:true,token:globalToken,affectedTabs:[tabId],startedAt:now-1000,
     operations:[{
-      tabId,requestId,command:record.command,taskId:record.taskId,providerId:record.providerId,
-      origin:record.origin,conversationId:record.conversationId,epoch:record.epoch,
+      tabId,operationId:record.operationId,requestId,command:record.command,
+      taskId:record.taskId,providerId:record.providerId,
+      origin:record.origin,conversationId:record.conversationId,
+      documentId:record.documentId,frameId:record.frameId,epoch:record.epoch,
       payloadHash:record.payloadHash,preparedId:record.preparedId,startedAt:record.startedAt
     }]
   };
@@ -1470,9 +1516,11 @@ test('partial global fence cleanup keeps quarantine retryable until the final st
 test('global quarantine fence remains until every affected tab has its own terminal audit',async()=>{
   const now=Date.now(),globalToken='global-r4-multi-001';
   const specs=[79,81].map(tabId=>({
-    tabId,token:'qtoken-'+tabId,requestId:'r4request'+String(tabId).padStart(6,'0'),
+    tabId,token:'qtoken-'+tabId,operationId:'operation-r4-'+tabId,
+    requestId:'r4request'+String(tabId).padStart(6,'0'),
     command:'provider_commit',taskId:'task_'+String(tabId).padStart(6,'0'),
     providerId:'claude',origin:'https://claude.ai',conversationId:'conversation_001',
+    documentId:'document-'+tabId,frameId:0,
     epoch:1,payloadHash:String(tabId).repeat(64).slice(0,64),
     preparedId:'prepared_'+String(tabId).padStart(4,'0'),
     startedAt:now-3000,quarantinedAt:now-1000,
@@ -1481,8 +1529,8 @@ test('global quarantine fence remains until every affected tab has its own termi
   const records=Object.fromEntries(specs.map(r=>[String(r.tabId),r]));
   const pending={
     pending:true,token:globalToken,affectedTabs:[79,81],startedAt:now-900,
-    operations:specs.map(({tabId,requestId,command,taskId,providerId,origin,conversationId,epoch,payloadHash,preparedId,startedAt})=>
-      ({tabId,requestId,command,taskId,providerId,origin,conversationId,epoch,payloadHash,preparedId,startedAt}))
+    operations:specs.map(({tabId,operationId,requestId,command,taskId,providerId,origin,conversationId,documentId,frameId,epoch,payloadHash,preparedId,startedAt})=>
+      ({tabId,operationId,requestId,command,taskId,providerId,origin,conversationId,documentId,frameId,epoch,payloadHash,preparedId,startedAt}))
   };
   const c=fakeChrome({
     ...LAB_STATE,
@@ -1539,4 +1587,15 @@ test('global quarantine fence remains until every affected tab has its own termi
   assert.equal(audit.length,2);
   assert.deepEqual(audit.map(e=>e.tabId),[79,81]);
   assert.ok(audit.every(e=>e.globalFenceToken===globalToken));
+});
+
+test('quarantine status restricts local and session audit stores before reading them',async()=>{
+  const c=fakeChrome();
+  installBackgroundCoordinator(c);
+  const status=await sendCoordinator(c,'quarantine-status');
+  assert.equal(status.available,true);
+  assert.deepEqual(c.calls.slice(-2),[
+    ['restrict','TRUSTED_CONTEXTS'],
+    ['session-restrict','TRUSTED_CONTEXTS']
+  ]);
 });

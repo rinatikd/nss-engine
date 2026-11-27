@@ -180,15 +180,16 @@ No CI failure or skipped mandatory step was reported in these four final-head wo
 
 The Windows candidate is source-only, not a production installer. The hash manifest labels its target `DISPOSABLE_LAB_ONLY` and binds the staged extension file hashes. Its embedded commit field is GitHub's synthetic merge-test commit `08551cdec256ab0efb47f211a9be0c71f7bb618c`; GitHub compare confirms this is one merge wrapper ahead of the final branch merge commit `73b676e6f53b177a5396010ea029791ffac4a36f` with no file changes. No credentials or user profile data are included.
 
-### Remaining production gates
+### Remaining Production gates at the initial integration snapshot
 
-Automated source/CI acceptance is complete, but **Production remains NO-GO**:
-1. No independent submitted security/lifecycle review is recorded.
-2. No operator-run installation and rollback of the exact source-only candidate was performed in a disposable Windows user environment.
-3. No live Claude/Gemini/DeepSeek/Grok/Qwen/Kimi send→reply acceptance was performed; real provider sends were intentionally excluded from CI.
-4. The local Control gesture audit does not authenticate a named human operator; the production trust boundary needs explicit acceptance or a verified operator identity source.
+The initial automated source/CI acceptance completed, but **Production remains NO-GO** pending:
+1. An independent, attributable security/lifecycle review that is not authored by the implementation author.
+2. An operator-run installation and rollback of the exact source-only candidate in a separate disposable Windows/Chrome profile.
+3. Live provider send→reply acceptance has not been performed. It must not be attempted without explicit approval for the exact provider, test content, and isolated account/session; synthetic CI does not claim to prove provider-side delivery.
 
-No Production Chrome profile, extension, credentials, ports 17381/17382, tunnel, provider session, or local Windows service was changed during this integration.
+The initial snapshot also raised the fact that local Control gesture audit does not identify a named human. That specific policy question was subsequently resolved by the project owner's accepted `LOCAL_MACHINE_TRUSTED_CONTROL_UI` decision in section 17 below. It is not a remaining policy gate.
+
+No Production Chrome profile, extension, credentials, ports 17381/17382, tunnel, provider session, or local Windows service was changed during the initial integration.
 
 ## 17. Production audit trust-boundary decision — accepted 2026-11-27
 
@@ -198,12 +199,18 @@ No Production Chrome profile, extension, credentials, ports 17381/17382, tunnel,
 The project owner explicitly accepts the local-machine trust boundary for Production. A trusted local Chrome Bridge Control UI gesture and its durable audit record are sufficient for operator confirmation. The audit is **not required to identify or authenticate a named human**.
 
 This closes the policy decision previously listed as an open release gate. It does not waive implementation checks. The combined implementation must still demonstrate that:
+- the quarantine records and operator audit stores are restricted to Chrome `TRUSTED_CONTEXTS` before status or reconciliation reads;
 - reconciliation requests originate only from the trusted extension Control UI / authenticated coordinator route;
 - a real local gesture and explicit confirmation are required for the exact displayed quarantine scope;
 - the audit record is appended before any matching deny/quarantine marker is removed;
 - audit/storage failure remains fail-closed and leaves quarantine in force;
-- the event captures scope, operation identity, evidence references, timestamps, terminal status, and the accepted local-machine trust model without recording prompts, message bodies, cookies, keys, tokens, or provider secrets;
+- the event captures scope, operation identity, evidence references, timestamps, terminal status, and `trustBoundary: LOCAL_MACHINE_TRUSTED_CONTROL_UI` without recording prompts, message bodies, cookies, keys, tokens, or provider secrets;
 - replay, stale tokens, changed document identity, partial store writes, and cross-tab reconciliation cannot clear a newer or unrelated quarantine.
+
+
+New reconciliation audit records explicitly include the `trustBoundary` field with the value `LOCAL_MACHINE_TRUSTED_CONTROL_UI`. A tab with more than one unresolved operation is deliberately non-reconcilable through the single-operation UI flow; it remains quarantined pending separate review. A subsequent MV3 worker recovery consults the durable audit and will not recreate quarantine for the same operation only when the audit matches the exact `operationId`, request/command/provider conversation identity, original `documentId` and main-frame identity. The append-only operation journal remains `UNKNOWN`; reconciliation never rewrites its delivery outcome.
+
+New Global Revoke recovery also distinguishes a page operation that never crossed the write-ahead boundary from an unresolved side effect. The operation journal is integrity-checked before recovery: `ACCEPTED` becomes `ABORTED_BEFORE_INJECTION`, and a validated journal with no matching write-ahead record means page injection could not have started. Those proven-safe cases do not create a stale tab quarantine or hold the global fence forever. `INJECTING`, `UNKNOWN`, unresolved draft/generic side effects, corrupt/unavailable journal state, and identity conflicts remain blocked or quarantined. An unconfirmed Control Grant revoke is a separate control-plane failure and still forces a tab quarantine even without a page-operation WAL row.
 
 ### Accepted limitation
 
