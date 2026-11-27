@@ -43,10 +43,10 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
   await new Promise((r,j)=>{tls.once('error',j);tls.listen(8443,'127.0.0.1',r);});
   proxy=http.createServer();
   proxy.on('connect',(req,client,head)=>{
-    if(req.url!=='claude.ai:443'){client.end('HTTP/1.1 403 Forbidden\\r\\n\\r\\n');return;}
+    if(req.url!=='claude.ai:443'){client.end('HTTP/1.1 403 Forbidden\r\n\r\n');return;}
     const upstream=net.connect(8443,'127.0.0.1');
     upstream.once('connect',()=>{
-      client.write('HTTP/1.1 200 Connection Established\\r\\n\\r\\n');
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if(head.length)upstream.write(head);
       client.pipe(upstream);upstream.pipe(client);
     });
