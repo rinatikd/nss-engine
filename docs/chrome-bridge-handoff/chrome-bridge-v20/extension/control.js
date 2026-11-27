@@ -10,6 +10,7 @@ import { DEFAULT_ADAPTERS, mergeAdapters } from './adapters.js';
 import { pageAction } from './page.js';
 import { findSecret, redact } from './secrets.js';
 import { backgroundRevokeErrorMessage } from './background-control-ui-state.js';
+import { renderBackgroundControlGrants } from './background-control-list.js';
 
 const $ = (id) => document.getElementById(id);
 const BRIDGE = 'http://127.0.0.1:17381';
@@ -457,6 +458,7 @@ $('mutationLab').addEventListener('change',async event=>{
       'Лабораторный режим включён. Используйте общую кнопку Control для открытых разрешённых вкладок.' :
       'Управление отключено';
     window.dispatchEvent(new Event('bridge-background-grants-changed'));
+    await refreshBackgroundGrantList();
   } catch(e) {
     $('mutationLab').checked=!enabled;
     setStatus('Ошибка настройки управления: '+e.message);
@@ -507,6 +509,7 @@ $('backgroundRevokeAll').onclick=async event=>{
     if (!result?.ok) throw Error(backgroundRevokeErrorMessage(result));
     $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
     window.dispatchEvent(new Event('bridge-background-grants-changed'));
+    await refreshBackgroundGrantList();
   } catch(e) {
     $('backgroundGrantStatus').textContent='Ошибка отключения: '+e.message;
   }
@@ -547,6 +550,7 @@ async function showBackgroundApprovals() {
           });
           if (result.error) setStatus('Подтверждение: '+result.error);
           await showBackgroundApprovals();
+    await refreshBackgroundGrantList();
         });
         row.append(b);
       }
@@ -562,6 +566,41 @@ async function showBackgroundApprovals() {
     box.textContent='Очередь подтверждений недоступна: '+error.message;
   }
 }
+async function refreshBackgroundGrantList() {
+  const root=$('backgroundGrantList');
+  if (!root) return;
+  try {
+    const status=await chrome.runtime.sendMessage({
+      target:'bridge-coordinator',type:'background-control-status'
+    });
+    if (status?.available!==true || status.grantsKnown!==true)
+      throw Error(status?.error || 'BACKGROUND_GRANTS_UNAVAILABLE');
+    renderBackgroundControlGrants(root,status.grants,async(tabId,button)=>{
+      if (!backgroundMode) return;
+      button.disabled=true;
+      try {
+        const result=await chrome.runtime.sendMessage({
+          target:'bridge-coordinator',type:'revoke-background-control',tabId
+        });
+        if (!result?.ok || result.tabId!==tabId)
+          throw Error(backgroundRevokeErrorMessage(result));
+        $('backgroundGrantStatus').textContent='Разрешение вкладки '+tabId+' отозвано.';
+        await refreshBackgroundGrantList();
+      } catch(error) {
+        button.disabled=false;
+        $('backgroundGrantStatus').textContent='Не удалось отозвать вкладку '+tabId+': '+
+          safeConnectionErrorCode(error?.message || 'REVOKE_FAILED');
+      }
+    });
+  } catch(error) {
+    root.textContent='Список разрешений недоступен: '+
+      safeConnectionErrorCode(error?.message || 'BACKGROUND_GRANTS_UNAVAILABLE');
+  }
+}
+window.addEventListener('bridge-background-grants-changed',()=>{
+  void refreshBackgroundGrantList();
+});
+
 async function updateBackgroundStatus() {
   if (!backgroundMode) return;
   try {
