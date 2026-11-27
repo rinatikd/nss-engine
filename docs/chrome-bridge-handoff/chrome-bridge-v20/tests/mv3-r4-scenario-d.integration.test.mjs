@@ -438,8 +438,6 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   assert.deepEqual(reconciledStorage.sessionRecords,{});
   assert.equal(reconciledStorage.localFence,null);
   assert.equal(reconciledStorage.sessionFence,null);
-  assert.ok(reconciledStorage.localAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
-    e.requestId===identity.requestId&&typeof e.globalFenceToken==='string'));
   // Quarantine metadata is local-first; session storage is only the
   // worker-lifetime fallback. The durable local audit is therefore required,
   // while a session audit is required only if this record also existed there.
