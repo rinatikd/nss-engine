@@ -224,7 +224,11 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   await new Promise((r,j)=>{bridge.once('error',j);bridge.listen(17481,'127.0.0.1',r);});
   await until(async()=>(await rpc('browser_status')).connected===true,25000,'BRIDGE_RECONNECTED_AFTER_RESTART');
 
-  const recovered=await rpc('provider_status',identity);
+  const statusIdentity={
+    requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
+    tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch
+  };
+  const recovered=await rpc('provider_status',statusIdentity);
   assert.equal(recovered.state,'UNKNOWN','the durable provider journal must recover the in-flight commit as UNKNOWN');
   assert.equal(recovered.clickedSend,undefined,'the journal must not claim a complete Send receipt');
   assert.ok(recovered.quarantineId,'unknown commit must carry a quarantine reference');
