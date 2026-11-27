@@ -71,6 +71,7 @@ function ensureMutationOperationRecovery(chromeApi) {
         Number.isFinite(event.reconciledAt)
       );
       const isAudited=operation=>audited.some(event=>
+        event.tabId===operation.tabId &&
         event.operationId===operation.operationId &&
         event.requestId===operation.requestId &&
         event.command===operation.command &&
