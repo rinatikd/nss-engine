@@ -258,11 +258,13 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // the Node test runner's top-level await.
     diagnosticPhase='provider tabs.get dispatch';
     await harness.eval('globalThis.__r4ProviderPageProbe={phase:"tabs_get_dispatched",tabsGetCalls:1,tabsGetCallback:false,executeCalls:0,executeCallback:false,lastError:null,result:null};'+
-      'chrome.tabs.get('+tabId+',t=>{'+
+      'chrome.tabs.query({},tabs=>{'+
       'const tabError=chrome.runtime.lastError;'+
       'globalThis.__r4ProviderPageProbe.tabsGetCallback=true;'+
-      'if(tabError){globalThis.__r4ProviderPageProbe.lastError=tabError.message;globalThis.__r4ProviderPageProbe.phase="tabs_get_error";return;}'+
-      'if(t?.status!=="complete"){globalThis.__r4ProviderPageProbe.phase="tab_not_complete";return;}'+
+      'if(tabError){globalThis.__r4ProviderPageProbe.lastError=tabError.message;globalThis.__r4ProviderPageProbe.phase="tabs_query_error";return;}'+
+      'const t=tabs.find(item=>item.id===${tabId});'+
+      'if(!t){globalThis.__r4ProviderPageProbe.phase="tab_missing";return;}'+
+      'if(t.status!=="complete"){globalThis.__r4ProviderPageProbe.phase="tab_not_complete:"+String(t.status);return;}'+
       'globalThis.__r4ProviderPageProbe.phase="execute_dispatched";globalThis.__r4ProviderPageProbe.executeCalls++;'+
       'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})},r=>{'+
       'const executeError=chrome.runtime.lastError;'+
