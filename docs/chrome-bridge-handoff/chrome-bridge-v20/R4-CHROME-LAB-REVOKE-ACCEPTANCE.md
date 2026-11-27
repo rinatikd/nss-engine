@@ -180,15 +180,16 @@ No CI failure or skipped mandatory step was reported in these four final-head wo
 
 The Windows candidate is source-only, not a production installer. The hash manifest labels its target `DISPOSABLE_LAB_ONLY` and binds the staged extension file hashes. Its embedded commit field is GitHub's synthetic merge-test commit `08551cdec256ab0efb47f211a9be0c71f7bb618c`; GitHub compare confirms this is one merge wrapper ahead of the final branch merge commit `73b676e6f53b177a5396010ea029791ffac4a36f` with no file changes. No credentials or user profile data are included.
 
-### Remaining production gates
+### Remaining Production gates at the initial integration snapshot
 
-Automated source/CI acceptance is complete, but **Production remains NO-GO**:
-1. No independent submitted security/lifecycle review is recorded.
-2. No operator-run installation and rollback of the exact source-only candidate was performed in a disposable Windows user environment.
-3. No live Claude/Gemini/DeepSeek/Grok/Qwen/Kimi send→reply acceptance was performed; real provider sends were intentionally excluded from CI.
-4. The local Control gesture audit does not authenticate a named human operator; the production trust boundary needs explicit acceptance or a verified operator identity source.
+The initial automated source/CI acceptance completed, but **Production remains NO-GO** pending:
+1. An independent, attributable security/lifecycle review that is not authored by the implementation author.
+2. An operator-run installation and rollback of the exact source-only candidate in a separate disposable Windows/Chrome profile.
+3. Live provider send→reply acceptance has not been performed. It must not be attempted without explicit approval for the exact provider, test content, and isolated account/session; synthetic CI does not claim to prove provider-side delivery.
 
-No Production Chrome profile, extension, credentials, ports 17381/17382, tunnel, provider session, or local Windows service was changed during this integration.
+The initial snapshot also raised the fact that local Control gesture audit does not identify a named human. That specific policy question was subsequently resolved by the project owner's accepted `LOCAL_MACHINE_TRUSTED_CONTROL_UI` decision in section 17 below. It is not a remaining policy gate.
+
+No Production Chrome profile, extension, credentials, ports 17381/17382, tunnel, provider session, or local Windows service was changed during the initial integration.
 
 ## 17. Production audit trust-boundary decision — accepted 2026-11-27
 
