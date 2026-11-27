@@ -4,6 +4,7 @@ import { dispatchMutation } from './mutation-dispatch.js';
 import { BackgroundControlGrants } from './background-control-grants.js';
 import { SessionAuthorization } from './session-authorization.js';
 import { normalizeFailure } from './failure-contract.js';
+import { MutationOperationJournal } from './mutation-operation-journal.js';
 
 const PATH = 'transport-host.html';
 let creating = null;
@@ -28,6 +29,46 @@ let controlStorageLane = Promise.resolve();
 let revocationFenceLane = Promise.resolve();
 let controlClearRequested = false;
 let controlClearFailed = false;
+const mutationOperationJournals = new WeakMap();
+const mutationOperationRecovery = new WeakMap();
+
+function mutationOperationJournalFor(chromeApi) {
+  let journal=mutationOperationJournals.get(chromeApi);
+  if (!journal) {
+    journal=new MutationOperationJournal(chromeApi);
+    mutationOperationJournals.set(chromeApi,journal);
+  }
+  return journal;
+}
+function ensureMutationOperationRecovery(chromeApi) {
+  let recovery=mutationOperationRecovery.get(chromeApi);
+  if (!recovery) {
+    const journal=mutationOperationJournalFor(chromeApi);
+    recovery=journal.recover().then(async result=>{
+      if (result.corrupt) {
+        mutationQuarantinePersistenceFailed=true;
+        await persistGlobalQuarantineLock(chromeApi);
+        throw Error('MUTATION_OPERATION_JOURNAL_CORRUPT');
+      }
+      if (result.quarantinedTabs.length) {
+        const persisted=await persistMutationQuarantine(chromeApi,result.quarantinedTabs);
+        if (!persisted.persisted) {
+          await persistGlobalQuarantineLock(chromeApi);
+          throw Error('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
+        }
+      }
+      return result;
+    }).catch(async error=>{
+      mutationQuarantinePersistenceFailed=true;
+      await persistGlobalQuarantineLock(chromeApi);
+      throw Error(error?.message==='MUTATION_OPERATION_JOURNAL_CORRUPT'
+        ? 'MUTATION_OPERATION_JOURNAL_CORRUPT'
+        : 'MUTATION_OPERATION_JOURNAL_UNAVAILABLE');
+    });
+    mutationOperationRecovery.set(chromeApi,recovery);
+  }
+  return recovery;
+}
 
 function coordinatorError(code, dispatchState='NOT_PERFORMED') {
   return Object.assign(Error(code), {dispatchState});
@@ -206,6 +247,33 @@ async function persistMutationQuarantine(chromeApi, tabIds) {
 // A Revoke fence must survive MV3 worker suspension while the accepted tab
 // lane drains. The marker is removed only after the grant-store revoke is
 // confirmed; a restarted worker therefore rejects new page actions.
+async function quarantineUnreconciledGenericActions(chromeApi,scopeTabIds=null) {
+  let records;
+  try {
+    records=await mutationOperationJournalFor(chromeApi).list();
+  } catch {
+    await persistGlobalQuarantineLock(chromeApi);
+    throw coordinatorError('MUTATION_OPERATION_JOURNAL_UNAVAILABLE','UNKNOWN');
+  }
+  const scope=Array.isArray(scopeTabIds)?new Set(scopeTabIds):null;
+  const affected=[...new Set(records.filter(record=>{
+    if (!['browser_click','browser_fill'].includes(record.command)) return false;
+    if (scope && !scope.has(record.tabId)) return false;
+    const terminal=record.events.at(-1);
+    return terminal.phase==='INJECTING' || terminal.phase==='UNKNOWN' ||
+      (terminal.phase==='COMPLETED' && terminal.sideEffect==='generic-page-action');
+  }).map(record=>record.tabId))];
+  if (!affected.length) return [];
+  const persisted=await persistMutationQuarantine(chromeApi,affected);
+  if (!persisted.persisted) {
+    await persistGlobalQuarantineLock(chromeApi);
+    const error=coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE','UNKNOWN');
+    error.quarantinedTabs=affected;
+    throw error;
+  }
+  return affected;
+}
+
 async function persistTabRevocationFence(chromeApi, tabId) {
   const key = 'bridgeMutationRevokingTabs';
   try {
@@ -482,6 +550,8 @@ async function ensureHost(chromeApi) {
   await creating;
 }
 export async function startBackgroundTransport(chromeApi) {
+  try { await ensureMutationOperationRecovery(chromeApi); }
+  catch { return {ok:false,reason:'MUTATION_OPERATION_JOURNAL_UNAVAILABLE'}; }
   if (mutationStopCount > 0 || controlClearRequested)
     return {ok:false,reason:'BACKGROUND_STOP_IN_PROGRESS'};
   if (controlClearFailed)
@@ -562,6 +632,7 @@ export async function stopBackgroundTransport(chromeApi, {
   updateStatus({state:'stopping',connected:false,error:null});
 
   try {
+    await ensureMutationOperationRecovery(chromeApi);
     let intentPersisted = true;
     try {
       // Persist the stop intent before cleanup so an MV3 worker restart cannot
@@ -603,6 +674,7 @@ export async function stopBackgroundTransport(chromeApi, {
     // or sending its START message. Drain it first, then send the final STOP.
     const startDrained = await awaitBounded(pendingStart,startDrainTimeoutMs);
     const mutationDrain = await drainMutationLanes(chromeApi,stopDrainTimeoutMs);
+    await quarantineUnreconciledGenericActions(chromeApi);
     const stopConfirmed = await stopOffscreenTransport(chromeApi);
 
     const unknown = !intentPersisted || !startDrained ||
@@ -628,6 +700,7 @@ export async function stopBackgroundTransport(chromeApi, {
   }
 }
 export function installBackgroundCoordinator(chromeApi, options={}) {
+  void ensureMutationOperationRecovery(chromeApi).catch(()=>{});
   chromeApi.runtime.onMessage.addListener((msg,sender,respond) => {
     if (!msg || msg.target !== 'bridge-coordinator' || !trustedCoordinatorSender(sender,chromeApi))
       return false;
@@ -649,6 +722,8 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       const run = async () => {
         const failureStartedAt=Date.now();
         const name=msg.command?.name;
+        if (MUTATION_COMMANDS.has(name) || name==='session_authorize' || name==='session_revoke')
+          await ensureMutationOperationRecovery(chromeApi);
         // Session authorization changes are global control operations: fence
         // mutations synchronously before any storage/browser await.
         const sessionControlChange = name==='session_authorize' || name==='session_revoke';
@@ -755,6 +830,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
               }
             }
             const drained=await drainMutationLanes(chromeApi);
+            await quarantineUnreconciledGenericActions(chromeApi);
             try {
               const cleanup=await enqueueControlOperationBounded(
                 () => clearAllBackgroundControls(chromeApi),
@@ -818,22 +894,63 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                 return approvals.request(data);
               }
             };
-            return dispatchMutation(msg.command,chromeApi,{
-              approvals:guardedApprovals,
-              sessionAuthorization,
-              controlGrant:(origin,tabId)=>grants.require(origin,tabId),
-              stillEnabled:async()=>{
-                if (mutationStopRequested || mutationStopCount>0 ||
-                    controlClearRequested || controlClearFailed ||
-                    mutationQuarantinePersistenceFailed) return false;
-                const settings=await chromeApi.storage.local.get([
-                  'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
-                ]);
-                return settings.bridgeBackgroundMode===true &&
-                  settings.bridgeMutationLabMode===true &&
-                  settings.bridgeConnectionDesired===true;
+            try {
+              const result=await dispatchMutation(msg.command,chromeApi,{
+                approvals:guardedApprovals,
+                sessionAuthorization,
+                operationJournal:mutationOperationJournalFor(chromeApi),
+                controlGrant:(origin,tabId)=>grants.require(origin,tabId),
+                stillEnabled:async()=>{
+                  if (mutationStopRequested || mutationStopCount>0 ||
+                      controlClearRequested || controlClearFailed ||
+                      mutationQuarantinePersistenceFailed) return false;
+                  const settings=await chromeApi.storage.local.get([
+                    'bridgeBackgroundMode','bridgeMutationLabMode','bridgeConnectionDesired'
+                  ]);
+                  return settings.bridgeBackgroundMode===true &&
+                    settings.bridgeMutationLabMode===true &&
+                    settings.bridgeConnectionDesired===true;
+                }
+              });
+              // A generic page click/fill has no provider-specific receipt that
+              // proves the site's asynchronous side effects have settled. Keep
+              // the exact tab quarantined before acknowledging completion; a
+              // later action must not race the unresolved site-side effect.
+              if (['browser_click','browser_fill'].includes(name)) {
+                const tabId=msg.command?.args?.tabId;
+                const persisted=await persistMutationQuarantine(chromeApi,[tabId]);
+                if (!persisted.persisted) {
+                  await persistGlobalQuarantineLock(chromeApi);
+                  const error=coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE','UNKNOWN');
+                  error.quarantinedTabs=[tabId];
+                  throw error;
+                }
+                // The quarantine supersedes the tab's prior explicit grant.
+                // Clear that session grant before acknowledging the click/fill;
+                // the durable quarantine remains even if this write fails.
+                try {
+                  await new BackgroundControlGrants(chromeApi).revoke(tabId);
+                } catch {
+                  await persistGlobalQuarantineLock(chromeApi);
+                  const error=coordinatorError('MUTATION_QUARANTINE_GRANT_REVOKE_FAILED','UNKNOWN');
+                  error.quarantinedTabs=[tabId];
+                  throw error;
+                }
+                if (result && typeof result==='object') result.mutationQuarantined=true;
+                else return {result,mutationQuarantined:true};
               }
-            });
+              return result;
+            } catch(error) {
+              if (error?.dispatchState==='UNKNOWN') {
+                const tabId=msg.command?.args?.tabId;
+                if (Number.isSafeInteger(tabId) && tabId>0) {
+                  const quarantine=await persistMutationQuarantine(chromeApi,[tabId]);
+                  error.quarantinedTabs=[tabId];
+                  if (!quarantine.persisted) await persistGlobalQuarantineLock(chromeApi);
+                }
+              }
+              throw error;
+            }
           }
           return dispatchReadOnly(msg.command,chromeApi,{
             getBackgroundControlStatus:()=>readBackgroundControlStatus(chromeApi,msg.command?.bridgeEpoch)
@@ -920,6 +1037,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         }
         let cleanupError=null;
         const drained=await drainMutationLanes(chromeApi);
+        await quarantineUnreconciledGenericActions(chromeApi);
         try {
           const cleanup=await enqueueControlOperationBounded(
             () => clearAllBackgroundControls(chromeApi),
@@ -1007,6 +1125,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             const pending=mutationLanes.get(tabId);
             const settled=await awaitBounded(pending,STOP_DRAIN_TIMEOUT_MS);
             if (!settled) throw await unknownRevoke();
+            await quarantineUnreconciledGenericActions(chromeApi,[tabId]);
 
             const {origin}=await permittedTab(chromeApi,tabId);
             const sessionStatus=await new SessionAuthorization(chromeApi).status();
@@ -1054,6 +1173,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
       let accepted;
       try {
         accepted=enqueueControlOperation(async()=>{
+          await ensureMutationOperationRecovery(chromeApi);
           const {bridgeMutationLabMode,bridgeConnectionDesired}=await chromeApi.storage.local.get(
             ['bridgeMutationLabMode','bridgeConnectionDesired']
           );
