@@ -169,7 +169,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
   });
   let chrome=null,harness=null,browserCdp=null;
   let diagnosticPhase='setup';
-  const diagnosticKeepAlive=setTimeout(()=>console.error('[R4 MUTATION CANCEL DIAGNOSTIC] stalled phase='+diagnosticPhase),5000);
+  const diagnosticKeepAlive=setInterval(()=>console.error('[R4 MUTATION CANCEL DIAGNOSTIC] waiting phase='+diagnosticPhase),1000);
   try{
     await new Promise((resolve,reject)=>{tls.once('error',reject);tls.listen(8443,'127.0.0.1',resolve);});
     await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve);});
@@ -338,7 +338,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
     console.log('[R4 MUTATION CANCEL REAL] exact-document cancellation before boundary PASS; after-boundary cancellation refused');
   }finally{
-    clearTimeout(diagnosticKeepAlive);
+    clearInterval(diagnosticKeepAlive);
     harness?.close();
     browserCdp?.close();
     if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
