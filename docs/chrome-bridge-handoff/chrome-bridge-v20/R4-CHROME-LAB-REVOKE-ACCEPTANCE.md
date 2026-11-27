@@ -108,3 +108,31 @@ Candidate implementation is present on `fix/r4-operator-quarantine-reconciliatio
 ## Release rule
 
 R4 is **NO-GO** while any real Chrome Lab scenario is unrun, operator recovery is absent, any independent review is missing, or any result is UNKNOWN. Green CI alone does not close these gates. Do not remove Draft status, merge, tag, or deploy based solely on this checklist.
+
+## Source integration checkpoint — 2026-11-27
+
+The R4 source stack is being integrated into `platform/ai-windows-control-release-20261114` in dependency order. The following PRs have been merged into that branch with GitHub merge commits and exact expected-head checks:
+
+| PR | Merge commit |
+| --- | --- |
+| #165 | `16d2079672d579c18ce067aa1f5cbe748a0380b6` |
+| #166 | `ce12d4012a8b7c111d7b936602bf112ba4e70855` |
+| #167 | `8d629297c7ca7dd244309c0b35a0ce7ffa434d27` |
+| #168 | `513366a65f7c12c3109d8d1c7d3dc8e33d07f47e` |
+| #171 | `f364e7101d97201697f75e0818c6e0f797e47b28` |
+| #174 | `71da0a3d22a0754765bef885a5948e046639c35a` |
+| #175 | `c82b186c35d71e03d8c3697bc11e8049f612dc08` |
+| #176 | `a595f5bafd4a3312b4057c1a8c12cf780b92c01d` |
+| #177 | `8e355eda75720009ed8e272a8448e7adfb22fe37` |
+| #178 | `ff89cdf5dc2accb0b5dd9683bdc2f19e42972648` |
+| #179 | `055018c39b034198ad4208ce5c438db37462909e` |
+| #180 | `2f879e46a1521359801ed2e179d3bbbaeefaf9c2` |
+| #181 | `accbd546616dcc8625386a4bcfa31d2e04ac3641` |
+| #182 | `f9f938b3513c88cc4ef91fbfd719dae13cd77173` |
+| #183 | `0a4d7a31370688b848ba8aee2ae2509152676e91` |
+
+The remaining dependent history (#184–#187) is carried by the aggregate PR #187, now retargeted directly to this release branch. This avoids merging intermediate revisions whose historical CI runs exposed a cooperative-cancellation harness failure and six quarantine test-fixture/expectation failures. The final aggregate head must pass the full exact-head Control Gates, Source checks, and Linux/Windows Visual RC workflows before it is merged.
+
+The sibling draft PRs #169 and #170 were not in the selected dependency path (#171 is the direct child of #168); they remain separate and are not silently included in this integration.
+
+**This checkpoint records source integration only.** It does not claim that disposable-Windows install/rollback, live provider send/reply, independent security review, or operator production acceptance has been performed. Production remains NO-GO until those separate gates have evidence.
