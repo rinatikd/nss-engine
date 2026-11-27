@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import https from 'node:https';
+import http from 'node:http';
 import net from 'node:net';
 import {spawn,spawnSync} from 'node:child_process';
 class Cdp {
@@ -87,8 +88,19 @@ async function until(fn,timeout,label){
   const end=Date.now()+timeout;
   let last='';
   while(Date.now()<end){
-    try{const value=await fn();if(value)return value;}catch(error){last=error?.message||String(error);}
-    await sleep(50);
+    const remaining=end-Date.now();
+    let timer;
+    try{
+      const value=await Promise.race([
+        Promise.resolve().then(fn),
+        new Promise((_,reject)=>{
+          timer=setTimeout(()=>reject(Error('STEP_ATTEMPT_TIMEOUT')),Math.min(2000,remaining));
+        })
+      ]);
+      if(value)return value;
+    }catch(error){last=error?.message||String(error);}
+    finally{clearTimeout(timer);}
+    if(Date.now()<end)await sleep(50);
   }
   throw Error('R4_MUTATION_CANCEL_'+label+'_TIMEOUT '+last);
 }
@@ -142,7 +154,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       res.writeHead(200,{'content-type':'text/html; charset=utf-8'});
       res.end(html);
     });
-  const proxy=net.createServer();
+  const proxy=http.createServer();
   proxy.on('connect',(req,client,head)=>{
     if(req.url!=='claude.ai:443'){client.end('HTTP/1.1 403 Forbidden\r\n\r\n');return;}
     const upstream=net.connect(8443,'127.0.0.1');
@@ -156,7 +168,9 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     client.on('close',()=>upstream.destroy());
     upstream.on('close',()=>client.destroy());
   });
-  let chrome=null,harness=null;
+  let chrome=null,harness=null,browserCdp=null;
+  let diagnosticPhase='setup';
+  const diagnosticKeepAlive=setInterval(()=>console.error('[R4 MUTATION CANCEL DIAGNOSTIC] waiting phase='+diagnosticPhase),1000);
   try{
     await new Promise((resolve,reject)=>{tls.once('error',reject);tls.listen(8443,'127.0.0.1',resolve);});
     await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve);});
@@ -172,7 +186,25 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       const file=path.join(profile,'DevToolsActivePort');
       return fs.existsSync(file)?Number(fs.readFileSync(file,'utf8').split(/\r?\n/)[0]):0;
     },15000,'DEBUG_PORT');
-    const targets=async()=>(await(await fetch('http://127.0.0.1:'+debugPort+'/json/list')).json());
+    console.log('[R4 MUTATION CANCEL STEP] DevTools endpoint file found on port '+debugPort);
+    const versionResponse=await fetch('http://127.0.0.1:'+debugPort+'/json/version');
+    assert.equal(versionResponse.ok,true,'CDP_VERSION_ENDPOINT_FAILED');
+    const version=await versionResponse.json();
+    assert.ok(version.webSocketDebuggerUrl,'CDP_BROWSER_WEBSOCKET_MISSING');
+    browserCdp=await Cdp.connect(version.webSocketDebuggerUrl,'browser');
+    const harnessUrl='chrome-extension://'+extensionId+'/harness.html';
+    const created=await browserCdp.call('Target.createTarget',{url:harnessUrl});
+    assert.ok(created?.targetId,'EXTENSION_HARNESS_TARGET_CREATE_FAILED');
+    console.log('[R4 MUTATION CANCEL STEP] created disposable extension harness page');
+    const targets=async()=>{
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),2500);
+      try{
+        const response=await fetch('http://127.0.0.1:'+debugPort+'/json/list',{signal:controller.signal});
+        if(!response.ok)throw Error('CDP_TARGETS_HTTP_'+response.status);
+        return await response.json();
+      }finally{clearTimeout(timer);}
+    };
     const harnessTarget=await until(async()=>(await targets()).find(t=>
       t.type==='page'&&t.url==='chrome-extension://'+extensionId+'/harness.html'&&t.webSocketDebuggerUrl),
       15000,'EXTENSION_HARNESS_PAGE');
@@ -180,24 +212,96 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     harness=await Cdp.connect(harnessTarget.webSocketDebuggerUrl,'extension-harness');
     await harness.call('Runtime.enable');
     await until(()=>harness.eval('typeof globalThis.__r4PageAction==="function"'),10000,'PAGE_ACTION_EXPORT');
+    // Use the callback form for scripting.executeScript in this MV3 fixture.
+    // Chrome 158 can leave the Promise form pending from an extension page;
+    // callback completion gives the test a deterministic API receipt.
+    await harness.eval('globalThis.__r4ExecuteDiagnostics={calls:0,callbacks:0,lastError:null,lastTarget:null};'+
+      'globalThis.__r4Execute=details=>new Promise((resolve,reject)=>{'+
+      'globalThis.__r4ExecuteDiagnostics.calls++;'+
+      'globalThis.__r4ExecuteDiagnostics.lastTarget=details.target;'+
+      'chrome.scripting.executeScript(details,results=>{'+
+      'globalThis.__r4ExecuteDiagnostics.callbacks++;'+
+      'const error=chrome.runtime.lastError;'+
+      'globalThis.__r4ExecuteDiagnostics.lastError=error?.message||null;'+
+      'if(error)reject(Error(error.message));else resolve(results);});});true');
     console.log('[R4 MUTATION CANCEL STEP] extension harness ready');
 
-    const tab=await harness.eval('(async()=>chrome.tabs.create({url:"https://claude.ai/chat/r4mutationcancel01",active:true}))()');
+    // Create the provider tab through the browser-level CDP session rather
+    // than awaiting chrome.tabs.create() from an extension page. The latter
+    // can leave Runtime.evaluate awaiting a Chrome API promise that never
+    // settles in this disposable MV3 harness. Resolve the tab by exact URL
+    // using the callback form of tabs.query, then probe its document.
+    const providerUrl='https://claude.ai/chat/r4mutationcancel01';
+    diagnosticPhase='provider Target.createTarget';
+    console.log('[R4 MUTATION CANCEL STEP] creating provider target');
+    // Create the provider target through browser CDP, then resolve its
+    // Chrome tab ID through the extension API callback. Do not wait for
+    // tabs.onCreated in an extension document: Chrome may deliver that event
+    // only to the extension service worker in this disposable MV3 setup.
+    const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
+    assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
+    diagnosticPhase='provider tabs.query dispatch';
+    console.log('[R4 MUTATION CANCEL STEP] provider target created; querying tabs');
+    await harness.eval('globalThis.__r4ProviderTab=null;chrome.tabs.query({},tabs=>{'+
+      'if(chrome.runtime.lastError)return;'+
+      'globalThis.__r4ProviderTab=tabs.find(t=>t.url==='+JSON.stringify(providerUrl)+
+      '||t.pendingUrl==='+JSON.stringify(providerUrl)+')||null;});true');
+    diagnosticPhase='provider tabs.query receipt';
+    const tab=await until(()=>harness.eval('globalThis.__r4ProviderTab'),10000,'PROVIDER_TAB_QUERY');
+    assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_CREATE_FAILED');
     const tabId=tab.id;
-    const pageInfo=await until(()=>harness.eval('(async()=>{const t=await chrome.tabs.get('+tabId+');'+
-      'if(t.status!=="complete")return null;const r=await chrome.scripting.executeScript({target:{tabId:'+tabId+'},'+
-      'func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})});'+
-      'return r?.[0]?.documentId?{documentId:r[0].documentId,result:r[0].result}:null})()'),
-      20000,'PROVIDER_PAGE_READY');
+    console.log('[R4 MUTATION CANCEL STEP] provider fixture tab created id='+tabId);
+    diagnosticPhase='provider page readiness and documentId probe';
+    console.log('[R4 MUTATION CANCEL STEP] probing provider documentId');
+    // Dispatch both Chrome API calls without awaiting their callback-backed
+    // completion inside Runtime.evaluate. Poll a plain result object through
+    // separate CDP evaluations so a pending Chrome callback cannot strand
+    // the Node test runner's top-level await.
+    diagnosticPhase='provider tabs.query dispatch';
+    await harness.eval('globalThis.__r4ProviderPageProbe={phase:"tabs_query_dispatched",tabsQueryCalls:0,tabsQueryCallback:false,executeCalls:0,executeCallback:false,lastError:null,lastTab:null,result:null};'+
+      'const probeTab=t=>{'+
+      'globalThis.__r4ProviderPageProbe.lastTab=t?{id:t.id,status:t.status,url:t.url,pendingUrl:t.pendingUrl}:null;'+
+      'if(!t||t.id!=='+tabId+'||t.status!=="complete"||globalThis.__r4ProviderPageProbe.executeCalls>0)return;'+
+      'if(globalThis.__r4ProviderPoll){clearInterval(globalThis.__r4ProviderPoll);globalThis.__r4ProviderPoll=null;}'+
+      'chrome.tabs.onUpdated.removeListener(onProviderUpdated);'+
+      'globalThis.__r4ProviderPageProbe.phase="execute_dispatched";globalThis.__r4ProviderPageProbe.executeCalls++;'+
+      'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,clicks:document.querySelector("#r4Action")?.dataset.clickCount})},r=>{'+
+      'const executeError=chrome.runtime.lastError;'+
+      'globalThis.__r4ProviderPageProbe.executeCallback=true;'+
+      'if(executeError){globalThis.__r4ProviderPageProbe.lastError=executeError.message;globalThis.__r4ProviderPageProbe.phase="execute_error";return;}'+
+      'if(!r?.[0]?.documentId){globalThis.__r4ProviderPageProbe.phase="document_id_missing";return;}'+
+      'globalThis.__r4ProviderPageProbe.result={documentId:r[0].documentId,result:r[0].result};globalThis.__r4ProviderPageProbe.phase="complete";});};'+
+      'const onProviderUpdated=(id,info,t)=>{if(id==='+tabId+'&&info.status==="complete")probeTab(t)};'+
+      'chrome.tabs.onUpdated.addListener(onProviderUpdated);'+
+      'chrome.tabs.get('+tabId+',t=>{'+
+      'const tabError=chrome.runtime.lastError;'+
+      'globalThis.__r4ProviderPageProbe.tabsQueryCallback=true;'+
+      'globalThis.__r4ProviderPageProbe.tabsQueryCalls++;'+
+      'if(tabError){globalThis.__r4ProviderPageProbe.lastError=tabError.message;globalThis.__r4ProviderPageProbe.phase="tabs_get_error";return;}'+
+      'probeTab(t);'+
+      'if(globalThis.__r4ProviderPageProbe.executeCalls===0){globalThis.__r4ProviderPoll=setInterval(()=>chrome.tabs.get('+tabId+',current=>probeTab(current)),100);}'+
+      '});true');;
+    diagnosticPhase='provider page readiness and documentId callback';
+    let pageInfo;
+    try {
+      pageInfo=await until(()=>harness.eval('globalThis.__r4ProviderPageProbe?.result||null'),
+        20000,'PROVIDER_PAGE_READY');
+    } catch(error) {
+      const probe=await harness.eval('JSON.stringify(globalThis.__r4ProviderPageProbe||null)').catch(e=>'PROBE_READ_FAILED:'+e.message);
+      const tabs=await harness.eval('(async()=>new Promise(resolve=>chrome.tabs.query({},t=>resolve(t.map(x=>({id:x.id,url:x.url,status:x.status,pendingUrl:x.pendingUrl}))))))()').catch(e=>'TABS_READ_FAILED:'+e.message);
+      console.error('[R4 MUTATION CANCEL PROVIDER PROBE FAILURE]',JSON.stringify({error:error.message,probe,tabs}));
+      throw error;
+    }
     console.log('[R4 MUTATION CANCEL STEP] provider fixture page ready');
+    diagnosticPhase='mutation operation assertions';
     assert.equal(pageInfo.result.origin,'https://claude.ai');
     const documentId=pageInfo.documentId;
     const target={tabId,documentIds:[documentId]};
     const origin='https://claude.ai';
-    const invoke=(name,args)=>harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const invoke=(name,args)=>Promise.race([harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',world:"ISOLATED",func:globalThis.__r4PageAction,'+
-      'args:'+JSON.stringify([name,args,origin])+'});return out[0]})()');
-    const inspect=()=>harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+      'args:'+JSON.stringify([name,args,origin])+'});return out[0]})()'),sleep(6000).then(async()=>{const diagnostics=await harness.eval('JSON.stringify(globalThis.__r4ExecuteDiagnostics||null)').catch(e=>String(e.message));throw Error('R4_EXECUTE_SCRIPT_CALLBACK_DIAGNOSTIC '+diagnostics);})]);
+    const inspect=()=>harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',world:"ISOLATED",func:id=>({state:globalThis.__chromeBridgeOperationRegistry?.[id]?.state,'+
       'sideEffectStarted:globalThis.__chromeBridgeOperationRegistry?.[id]?.sideEffectStarted===true}),'+
       'args:["operation_cancel_safe_0001"]});return out[0]?.result})()');
@@ -216,7 +320,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     assert.equal(preemptedMutation.result.error,'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT');
     assert.equal(preemptedMutation.result.dispatchState,'NOT_PERFORMED');
     assert.equal(preemptedMutation.result.sideEffect,'none');
-    const preemptedClickCount=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const preemptedClickCount=await harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(preemptedClickCount,'0','a pre-injection Revoke tombstone must block a late page action');
     console.log('[R4 MUTATION CANCEL STEP] pre-injection tombstone passed');
@@ -242,7 +346,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     assert.equal(repeatedCancel.result.operationId,safeId);
     assert.equal(repeatedCancel.result.safeToRelease,true,'a repeat Revoke must receive the same safe terminal proof');
     assert.equal(repeatedCancel.result.state,'CANCELLED_BEFORE_SIDE_EFFECT');
-    const afterCancel=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const afterCancel=await harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(afterCancel,'0','a cancelled pre-boundary operation must not click');
 
@@ -261,13 +365,15 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       operationId:committedId,selector:'#r4Action',controlExpires:Date.now()+120000
     });
     assert.equal(replayedMutation.result.error,'MUTATION_OPERATION_ALREADY_SEEN');
-    const clickCount=await harness.eval('(async()=>{const out=await chrome.scripting.executeScript({'+
+    const clickCount=await harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',func:()=>document.querySelector("#r4Action").dataset.clickCount});return out[0].result})()');
     assert.equal(clickCount,'1','a late cancellation must not misclassify a fired click as NOT_PERFORMED');
     console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
     console.log('[R4 MUTATION CANCEL REAL] exact-document cancellation before boundary PASS; after-boundary cancellation refused');
   }finally{
+    clearInterval(diagnosticKeepAlive);
     harness?.close();
+    browserCdp?.close();
     if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
     if(tls.listening)await new Promise(resolve=>tls.close(resolve));
     if(proxy.listening)await new Promise(resolve=>proxy.close(resolve));
