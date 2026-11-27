@@ -40,7 +40,13 @@ const app = `<!doctype html><html><head><meta charset="utf-8"></head><body>
       const drafted=await pageAction('agent_selftest',{adapter:a},location.origin);
       const context=await pageAction('agent_context',{},location.origin);
       const mutation=await pageAction('agent_send',{
-        adapter:a,text:'Should not send',controlExpires:Date.now()+10000
+        adapter:a,operationId:'geminiSyntheticSend0001',text:'Should not send',
+        expectedOrigin:location.origin,expectedConversationId:'syntheticConversation0001',
+        controlExpires:Date.now()+10000
+      },location.origin);
+      const controlProbe=await pageAction('browser_click',{
+        operationId:'geminiSyntheticControl0001',selector:'.send-button',
+        controlExpires:Date.now()+10000
       },location.origin);
       const tests={
         emptyComposer:empty.composer.matched===1,
@@ -48,7 +54,8 @@ const app = `<!doctype html><html><head><meta charset="utf-8"></head><body>
         dynamicSendAfterInput:drafted.send.matched===1 && drafted.send.visible===1,
         exactlyOneButton:drafted.diagnostics.sendCandidates.sendClass.matched===1,
         unverifiedLocalConversation:context.verified===false,
-        noControlOnSyntheticOrigin:/Control denied/.test(mutation.error||''),
+        noAgentSendOnSyntheticOrigin:/Control denied: local re-grant required/.test(mutation.error||''),
+        noBrowserControlOnSyntheticOrigin:/Control denied: local re-grant required/.test(controlProbe.error||''),
         draftUnchanged:composer.textContent==='Synthetic unsent draft'
       };
       result.textContent=JSON.stringify(tests);

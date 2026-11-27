@@ -1,12 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {dispatchMutation} from '../extension/mutation-dispatch.js';
+import {dispatchMutation,cancelMutationOperation} from '../extension/mutation-dispatch.js';
 
 function fixture({
   changed=false,deny=false,expiredGrant=false,badOrigin=false,conversationChanged=false
 }={}) {
   const journalData={};
-  const state={injections:[],targets:[],approvalCount:0,allowAt:true,
+  const state={injections:[],targets:[],actionArgs:[],approvalCount:0,allowAt:true,
     documentId:'document-main-0001',grant:Date.now()+120000,journalData};
   const url=badOrigin?'https://not-allowed.example/app':'https://claude.ai/chat/abcdefghi';
   const chromeApi={
@@ -23,6 +23,7 @@ function fixture({
     scripting:{executeScript:async({args,target,world})=>{
       const [name,details]=args;
       state.injections.push(name);
+      state.actionArgs.push({name,details});
       state.targets.push({target,world,name});
       const response=result=>[{
         documentId:target.documentIds?.[0]||state.documentId,frameId:0,result
@@ -44,6 +45,98 @@ function fixture({
   const controlGrant=async()=>expiredGrant&& !state.allowAt ? Date.now()-1 :state.grant;
   return {chromeApi,approvals,controlGrant,state};
 }
+test('dispatcher binds a unique write-ahead operation ID to the final document-bound page action',async()=>{
+  const f=fixture();
+  await dispatchMutation(cmd('browser_click'),f.chromeApi,{
+    approvals:f.approvals,controlGrant:f.controlGrant,stillEnabled:async()=>true
+  });
+  const call=f.state.actionArgs.find(item=>item.name==='browser_click');
+  assert.match(call.details.operationId,/^[A-Za-z0-9_-]{16,100}$/);
+  const target=f.state.targets.find(item=>item.name==='browser_click');
+  assert.deepEqual(target.target.documentIds,['document-main-0001']);
+  const records=Object.values(f.state.journalData).filter(value=>
+    value?.schemaVersion===1&&value.command==='browser_click');
+  assert.equal(records.length,1);
+  assert.equal(records[0].operationId,call.details.operationId);
+});
+
+test('cooperative cancellation is dispatched only to the captured exact document and safe receipt',async()=>{
+  const record={
+    operationId:'operation_cancel_0001',tabId:77,origin:'https://claude.ai',
+    documentId:'document-cancel-0001',events:[{phase:'INJECTING'}]
+  };
+  let captured;
+  const chromeApi={
+    tabs:{get:async tabId=>({id:tabId,url:'https://claude.ai/chat/conversation_123'})},
+    scripting:{executeScript:async args=>{
+      captured=args;
+      return [{documentId:record.documentId,frameId:0,result:{
+        operationId:record.operationId,found:true,cancelRequested:true,safeToRelease:true,
+        sideEffectStarted:false,state:'CANCELLED_BEFORE_SIDE_EFFECT'
+      }}];
+    }}
+  };
+  const result=await cancelMutationOperation(chromeApi,record,{timeoutMs:450});
+  assert.equal(result.safeToRelease,true);
+  assert.deepEqual(captured.target,{tabId:77,documentIds:['document-cancel-0001']});
+  assert.equal(captured.world,'ISOLATED');
+  assert.equal(captured.args[0],'cancel_operation');
+  assert.equal(captured.args[1].operationId,record.operationId);
+  assert.equal(captured.args[1].timeoutMs,450);
+  assert.equal(captured.args[2],record.origin);
+});
+
+test('cooperative cancellation rejects a receipt bound to a different operation ID',async()=>{
+  const record={
+    operationId:'operation_cancel_expected_0001',tabId:79,origin:'https://claude.ai',
+    documentId:'document-cancel-0003',events:[{phase:'INJECTING'}]
+  };
+  const result=await cancelMutationOperation({
+    tabs:{get:async()=>({id:79,url:'https://claude.ai/chat/conversation_123'})},
+    scripting:{executeScript:async()=>[{
+      documentId:record.documentId,frameId:0,result:{
+        operationId:'operation_cancel_other_0001',found:true,safeToRelease:true,
+        sideEffectStarted:false,state:'CANCELLED_BEFORE_SIDE_EFFECT'
+      }
+    }]}
+  },record);
+  assert.equal(result.safeToRelease,false);
+  assert.equal(result.reason,'CANCEL_OPERATION_ID_MISMATCH');
+});
+
+test('cooperative cancellation rejects a safe flag with an untrusted terminal state',async()=>{
+  const record={
+    operationId:'operation_cancel_badstate_0001',tabId:80,origin:'https://claude.ai',
+    documentId:'document-cancel-0004',events:[{phase:'INJECTING'}]
+  };
+  const result=await cancelMutationOperation({
+    tabs:{get:async()=>({id:80,url:'https://claude.ai/chat/conversation_123'})},
+    scripting:{executeScript:async()=>[{
+      documentId:record.documentId,frameId:0,result:{
+        operationId:record.operationId,found:true,safeToRelease:true,
+        sideEffectStarted:false,state:'UNKNOWN'
+      }
+    }]}
+  },record);
+  assert.equal(result.safeToRelease,false);
+  assert.equal(result.reason,'CANCEL_RECEIPT_STATE_INVALID');
+});
+
+test('cooperative cancellation refuses a changed tab instead of retargeting its active document',async()=>{
+  const record={
+    operationId:'operation_cancel_0002',tabId:78,origin:'https://claude.ai',
+    documentId:'document-cancel-0002',events:[{phase:'INJECTING'}]
+  };
+  let injected=false;
+  const result=await cancelMutationOperation({
+    tabs:{get:async()=>({id:78,url:'https://gemini.google.com/app/newconversation'})},
+    scripting:{executeScript:async()=>{injected=true;return [];}}
+  },record);
+  assert.equal(result.safeToRelease,false);
+  assert.equal(result.reason,'TAB_DOCUMENT_CHANGED');
+  assert.equal(injected,false);
+});
+
 const cmd=(name='browser_click')=>({
   id:'cmd_1',name,expires:Date.now()+90000,
   args:{tabId:9,selector:'button.send',text:'Hello!',expectedOrigin:'https://claude.ai',

@@ -9,8 +9,25 @@ export async function pageAction(name, args, expectedOrigin) {
   let releaseActionLock = () => {};
   let providerPrepareMutationStarted = false;
   let providerCommitClickStarted = false;
+  let providerCommitClickReturned = false;
   let mutationSideEffectStarted = false;
   let agentSendDraftMutationStarted = false;
+  let trackedOperation = null;
+  const operationRegistryKey = '__chromeBridgeOperationRegistry';
+  const trackedMutationNames = new Set([
+    'browser_click','browser_fill','agent_send','provider_prepare','provider_commit'
+  ]);
+  const markOperationSideEffectStarted = () => {
+    if (trackedOperation) trackedOperation.sideEffectStarted = true;
+  };
+  const checkOperationCancelled = () => {
+    if (trackedOperation?.cancelRequested && !trackedOperation.sideEffectStarted) {
+      const error = Error('MUTATION_CANCELLED_BEFORE_SIDE_EFFECT');
+      error.dispatchState = 'NOT_PERFORMED';
+      error.sideEffect = 'none';
+      throw error;
+    }
+  };
   const conversationId = () => {
     const routes = {
       'https://claude.ai': /^\/chat\/([a-zA-Z0-9_-]{8,128})(?:\/|$)/,
@@ -40,6 +57,106 @@ export async function pageAction(name, args, expectedOrigin) {
     if (d.tag !== expect.tag || d.text !== expect.text) throw Error('Element changed after approval');
   };
   try {
+    const operationIdPattern = /^[A-Za-z0-9_-]{16,100}$/;
+    const reserveOperationRegistrySlot = registry => {
+      const terminal = Object.values(registry)
+        .filter(item=>item && item.state!=='RUNNING' && item.state!=='CANCELLED_BEFORE_START')
+        .sort((a,b)=>(a.finishedAt||0)-(b.finishedAt||0));
+      while (Object.keys(registry).length>=256 && terminal.length) {
+        const oldest=terminal.shift();
+        if (oldest) delete registry[oldest.operationId];
+      }
+      return Object.keys(registry).length<256;
+    };
+    if (name === 'cancel_operation') {
+      if (expectedOrigin !== location.origin) throw Error('TAB_NAVIGATED_DURING_CANCELLATION');
+      if (!operationIdPattern.test(args?.operationId || '')) throw Error('MUTATION_OPERATION_ID_INVALID');
+      const registry = globalThis[operationRegistryKey] ||
+        (globalThis[operationRegistryKey] = Object.create(null));
+      let target = registry[args.operationId];
+      if (!target) {
+        if (!reserveOperationRegistrySlot(registry)) throw Error('MUTATION_OPERATION_REGISTRY_CAPACITY_EXCEEDED');
+        // Revoke may win the race after the write-ahead INJECTING event but
+        // before Chrome starts the original executeScript. Persist an exact
+        // operation tombstone in this document so a late injection cannot run.
+        let resolveDone;
+        const done = new Promise(resolve=>{resolveDone=resolve;});
+        target = {
+          operationId:args.operationId,cancelRequested:true,sideEffectStarted:false,
+          state:'CANCELLED_BEFORE_START',startedAt:Date.now(),finishedAt:Date.now(),
+          done,resolveDone
+        };
+        registry[args.operationId]=target;
+        return {
+          operationId:args.operationId,found:true,cancelRequested:true,
+          preemptedBeforeStart:true,safeToRelease:true,
+          state:'CANCELLED_BEFORE_SIDE_EFFECT',sideEffectStarted:false
+        };
+      }
+      if (target.state==='CANCELLED_BEFORE_START' &&
+          target.cancelRequested===true && target.sideEffectStarted!==true) {
+        return {
+          operationId:args.operationId,found:true,cancelRequested:true,
+          preemptedBeforeStart:true,safeToRelease:true,
+          state:'CANCELLED_BEFORE_SIDE_EFFECT',sideEffectStarted:false
+        };
+      }
+      if (!target.sideEffectStarted &&
+          ['CANCELLED_BEFORE_SIDE_EFFECT','NO_SIDE_EFFECT'].includes(target.state)) {
+        return {
+          operationId:args.operationId,found:true,cancelRequested:target.cancelRequested===true,
+          safeToRelease:true,sideEffectStarted:false,state:target.state
+        };
+      }
+      if (target.sideEffectStarted || target.state !== 'RUNNING') {
+        return {
+          operationId:args.operationId,found:true,safeToRelease:false,sideEffectStarted:target.sideEffectStarted===true,
+          state:target.state||'UNKNOWN'
+        };
+      }
+      target.cancelRequested = true;
+      const timeoutMs = Math.max(100,Math.min(5000,Number(args.timeoutMs)||2000));
+      const completion = await Promise.race([
+        target.done.then(value=>({completed:true,value})),
+        sleep(timeoutMs).then(()=>({completed:false}))
+      ]);
+      return {
+        operationId:args.operationId,found:true,cancelRequested:true,
+        safeToRelease:completion.completed &&
+          completion.value?.state==='CANCELLED_BEFORE_SIDE_EFFECT' &&
+          completion.value?.sideEffectStarted===false,
+        state:completion.completed?completion.value?.state:'CANCEL_ACK_TIMEOUT',
+        sideEffectStarted:completion.completed
+          ? completion.value?.sideEffectStarted===true : target.sideEffectStarted===true
+      };
+    }
+    if (trackedMutationNames.has(name)) {
+      if (!operationIdPattern.test(args?.operationId || '')) throw Error('MUTATION_OPERATION_ID_REQUIRED');
+      const registry = globalThis[operationRegistryKey] ||
+        (globalThis[operationRegistryKey] = Object.create(null));
+      const existing = registry[args.operationId];
+      if (existing?.state === 'CANCELLED_BEFORE_START' &&
+          existing.cancelRequested===true && existing.sideEffectStarted!==true) {
+        trackedOperation=existing;
+        throw Error('MUTATION_CANCELLED_BEFORE_SIDE_EFFECT');
+      }
+      if (existing) throw Error(
+        existing.state==='RUNNING'?'MUTATION_OPERATION_ALREADY_RUNNING':'MUTATION_OPERATION_ALREADY_SEEN'
+      );
+      if (!reserveOperationRegistrySlot(registry))
+        throw Error('MUTATION_OPERATION_REGISTRY_CAPACITY_EXCEEDED');
+      let resolveDone;
+      const done = new Promise(resolve=>{resolveDone=resolve;});
+      trackedOperation = {
+        operationId:args.operationId,cancelRequested:false,sideEffectStarted:false,
+        state:'RUNNING',startedAt:Date.now(),done,resolveDone
+      };
+      registry[args.operationId] = trackedOperation;
+      // Yield once before any page mutation so a concurrent Revoke can set the
+      // cancellation bit in this exact document's isolated-world registry.
+      await sleep(0);
+      checkOperationCancelled();
+    }
     const control = () => {
       if (!['https://claude.ai', 'https://gemini.google.com', 'https://chat.deepseek.com', 'https://grok.com', 'https://chat.qwen.ai', 'https://www.kimi.ai'].includes(location.origin) ||
           location.origin !== expectedOrigin || !(args.controlExpires > Date.now())) throw Error('Control denied: local re-grant required');
@@ -49,9 +166,31 @@ export async function pageAction(name, args, expectedOrigin) {
     if (['browser_click','browser_fill','agent_send','provider_prepare','provider_commit'].includes(name)) {
       const key='__chromeBridgeMutationLock';
       if (window[key]) throw Error('TAB_MUTATION_BUSY');
-      const lock={requestId:typeof args.requestId==='string'?args.requestId:'local-'+Date.now(),name};
+      const lock={
+        requestId:typeof args.requestId==='string'?args.requestId:'local-'+Date.now(),
+        name,startedAt:Date.now(),origin:location.origin,conversationId:conversationId()
+      };
       window[key]=lock;
-      releaseActionLock=()=>{if(window[key]===lock)delete window[key];};
+      releaseActionLock=()=>{
+        if (name==='provider_prepare' || name==='provider_commit') {
+          // A terminal record exists only after this exact isolated-world
+          // execution reaches finally. A worker restart or missing lock alone
+          // is never treated as proof that the page action ended.
+          window.__chromeBridgeMutationTerminal={
+            schemaVersion:1,requestId:lock.requestId,command:name,
+            origin:lock.origin,conversationId:lock.conversationId,
+            startedAt:lock.startedAt,completedAt:Date.now(),
+            state:name==='provider_commit'
+              ? (providerCommitClickStarted?'COMMIT_CLICK_ATTEMPTED':'COMMIT_NOT_CLICKED')
+              : (providerPrepareMutationStarted?'PREPARE_MUTATION_FINISHED':'PREPARE_NO_MUTATION'),
+            clickAttempted:providerCommitClickStarted,
+            clickReturned:providerCommitClickReturned,
+            payloadHash:typeof args.payloadHash==='string'?args.payloadHash:null,
+            preparedId:typeof args.preparedId==='string'?args.preparedId:null
+          };
+        }
+        if(window[key]===lock)delete window[key];
+      };
     }
 
     if (name === 'exists') return { found: !!one(args.selector), loaded: document.readyState === 'complete' };
@@ -82,6 +221,8 @@ export async function pageAction(name, args, expectedOrigin) {
       const e = single(args.selector);
       verifyExpect(e, args.expect);
       if (e.closest('input[type=file],input[type=password]')) throw Error('Sensitive input blocked');
+      checkOperationCancelled();
+      markOperationSideEffectStarted();
       mutationSideEffectStarted = true;
       e.click();
       return { clicked: true };
@@ -99,6 +240,8 @@ export async function pageAction(name, args, expectedOrigin) {
       if (!isTA && !isInput && !isEditable) throw Error('Expected text input, textarea or contenteditable');
       if (isInput && !['text', 'search', 'email', 'url', 'tel'].includes(e.type)) throw Error('Sensitive or unsupported input type');
       if (/password|passwd|secret|token|credit|cardnumber|cc-number|one-time-code|cvv|cvc/i.test([e.name, e.id, e.autocomplete].join(' '))) throw Error('Sensitive field blocked');
+      checkOperationCancelled();
+      markOperationSideEffectStarted();
       mutationSideEffectStarted = true;
       e.focus();
       if (isEditable) {
@@ -227,6 +370,8 @@ export async function pageAction(name, args, expectedOrigin) {
       if (textOf(composer)) throw Error('Existing draft: refusing to overwrite');
       if (qa(A.stop).some(vis)) throw Error('Agent is still generating');
       const baseline = replies().length;
+      checkOperationCancelled();
+      markOperationSideEffectStarted();
       composer.focus();
       providerPrepareMutationStarted = true;
       if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
@@ -327,9 +472,12 @@ export async function pageAction(name, args, expectedOrigin) {
       }
       // Consume the page-side prepare receipt before the irreversible click.
       delete window.__chromeBridgePreparedDraft;
+      checkOperationCancelled();
+      markOperationSideEffectStarted();
       providerCommitClickStarted = true;
       mutationSideEffectStarted = true;
       sendButtons[0].click();
+      providerCommitClickReturned = true;
       const clickedAt = new Date().toISOString();
       await sleep(1200);
       const confirmed = qa(A.stop).some(vis) || replies().length > baseline;
@@ -347,6 +495,8 @@ export async function pageAction(name, args, expectedOrigin) {
       if (qa(A.stop).some(vis)) throw Error('Agent is still generating');
       const baseline = replies().length;
       const text = args.text;
+      checkOperationCancelled();
+      markOperationSideEffectStarted();
       composer.focus();
       agentSendDraftMutationStarted = true;
       if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
@@ -383,6 +533,8 @@ export async function pageAction(name, args, expectedOrigin) {
       if (!btn) throw Error('Unique enabled send button required');
       control();
       if (args.expectedOrigin !== location.origin || args.expectedConversationId !== conversationId()) throw Error('Conversation changed before dispatch; do not retry automatically');
+      checkOperationCancelled();
+      markOperationSideEffectStarted();
       mutationSideEffectStarted = true;
       btn.click();
       await sleep(1200);
@@ -396,7 +548,11 @@ export async function pageAction(name, args, expectedOrigin) {
     const safeCode=/^[A-Z][A-Z0-9_]{2,80}$/.test(e?.message||'')?e.message:'PAGE_ACTION_FAILED';
     const failure = { error: e.message, failure:{schemaVersion:1,stage:'PAGE_ACTION',code:safeCode,
       durationMs:Math.max(0,Math.min(300000,Date.now()-failureStartedAt))} };
-    if (name === 'provider_prepare') {
+    if (e?.message === 'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT' &&
+        trackedOperation && !trackedOperation.sideEffectStarted) {
+      failure.dispatchState = 'NOT_PERFORMED';
+      failure.sideEffect = 'none';
+    } else if (name === 'provider_prepare') {
       failure.dispatchState = 'NOT_PERFORMED';
       failure.sideEffect = providerPrepareMutationStarted ? 'composer-draft-state-unverified' : 'none';
     } else if (name === 'provider_commit') {
@@ -411,6 +567,19 @@ export async function pageAction(name, args, expectedOrigin) {
         ? 'send-click-may-have-fired' : 'generic-page-action-may-have-fired';
     }
     return failure;
-  } finally { releaseActionLock(); }
+  } finally {
+    releaseActionLock();
+    if (trackedOperation) {
+      const sideEffectStarted = trackedOperation.sideEffectStarted === true;
+      const state = sideEffectStarted ? 'SIDE_EFFECT_STARTED'
+        : trackedOperation.cancelRequested ? 'CANCELLED_BEFORE_SIDE_EFFECT'
+        : 'NO_SIDE_EFFECT';
+      trackedOperation.state = state;
+      trackedOperation.finishedAt = Date.now();
+      trackedOperation.resolveDone?.({state,sideEffectStarted});
+      delete trackedOperation.done;
+      delete trackedOperation.resolveDone;
+    }
+  }
 }
 

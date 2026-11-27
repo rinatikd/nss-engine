@@ -2,7 +2,7 @@ const PREFIX = 'bridgeMutationOperation.v1.';
 const INDEX_KEY = PREFIX + 'index';
 const MAX_RECORDS = 5000;
 const COMMANDS = new Set(['browser_click','browser_fill','agent_send','provider_prepare','provider_commit']);
-const PHASES = new Set(['ACCEPTED','INJECTING','COMPLETED','ABORTED_BEFORE_INJECTION','UNKNOWN']);
+const PHASES = new Set(['ACCEPTED','INJECTING','COMPLETED','ABORTED_BEFORE_INJECTION','CANCELLED_BEFORE_SIDE_EFFECT','UNKNOWN']);
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{2,80}$/;
 const OUTCOMES = new Set(['COMPLETED','NOT_PERFORMED','UNKNOWN','PREPARED','CLICKED','FILLED']);
 const SAFE_SIDE_EFFECTS = new Set([
@@ -177,7 +177,7 @@ async function verifyRecord(record, operationId) {
     (phases.length===2 && phases[0]==='ACCEPTED' &&
       ['INJECTING','ABORTED_BEFORE_INJECTION'].includes(phases[1])) ||
     (phases.length===3 && phases[0]==='ACCEPTED' && phases[1]==='INJECTING' &&
-      ['COMPLETED','UNKNOWN'].includes(phases[2]));
+      ['COMPLETED','CANCELLED_BEFORE_SIDE_EFFECT','UNKNOWN'].includes(phases[2]));
   if (!valid) throw Error('MUTATION_OPERATION_JOURNAL_CORRUPT');
   return record;
 }
@@ -206,7 +206,7 @@ export class MutationOperationJournal {
     const previous=current.events[current.events.length-1];
     const allowed=previous.phase==='ACCEPTED'
       ? ['INJECTING','ABORTED_BEFORE_INJECTION']
-      : previous.phase==='INJECTING' ? ['COMPLETED','UNKNOWN'] : [];
+      : previous.phase==='INJECTING' ? ['COMPLETED','CANCELLED_BEFORE_SIDE_EFFECT','UNKNOWN'] : [];
     if (!allowed.includes(phase)) throw Error('MUTATION_OPERATION_TRANSITION_DENIED');
     if (phase==='INJECTING' && (metadata.documentId!==current.documentId ||
         metadata.frameId!==current.frameId))
@@ -284,6 +284,11 @@ export class MutationOperationJournal {
   }
   async abortBeforeInjection(operationId,{code='MUTATION_ABORTED_BEFORE_INJECTION',sideEffect='none'}={}) {
     return this.#append(operationId,'ABORTED_BEFORE_INJECTION',{outcome:'NOT_PERFORMED',code,sideEffect});
+  }
+  async cancelledBeforeSideEffect(operationId,{code='MUTATION_CANCELLED_BEFORE_SIDE_EFFECT',documentId=null}={}) {
+    return this.#append(operationId,'CANCELLED_BEFORE_SIDE_EFFECT',{
+      outcome:'NOT_PERFORMED',sideEffect:'none',code,documentId
+    });
   }
   async unknown(operationId,{code='MUTATION_EXECUTION_UNKNOWN',sideEffect='operation-result-unverified'}={}) {
     return this.#append(operationId,'UNKNOWN',{outcome:'UNKNOWN',code,sideEffect});

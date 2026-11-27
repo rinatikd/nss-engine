@@ -73,6 +73,11 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
         run: node --test tests/mv3-r4-scenario-d.integration.test.mjs
+      - name: Verify cooperative mutation cancellation before side effect in disposable real MV3 Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-mutation-cancellation.integration.test.mjs
       - name: Verify Gemini adapter DOM in real disposable Chromium
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/chromium-adapter-dom.test.mjs

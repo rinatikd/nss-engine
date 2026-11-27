@@ -69,6 +69,23 @@ test('pre-injection failure is a terminal NOT_PERFORMED record',async()=>{
   assert.equal(stored.events.at(-1).outcome,'NOT_PERFORMED');
 });
 
+test('a proven pre-side-effect cancellation is terminal and does not quarantine on recovery',async()=>{
+  const f=fixture(),journal=journalFor(f);
+  const record=await journal.begin(identity());
+  await journal.markInjecting(record.operationId,{documentId:'document-0000000001',frameId:0});
+  await journal.cancelledBeforeSideEffect(record.operationId,{
+    code:'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT',documentId:'document-0000000001'
+  });
+  const [stored]=await journal.list();
+  assert.deepEqual(stored.events.map(event=>event.phase),
+    ['ACCEPTED','INJECTING','CANCELLED_BEFORE_SIDE_EFFECT']);
+  assert.equal(stored.events.at(-1).outcome,'NOT_PERFORMED');
+  assert.equal(stored.events.at(-1).sideEffect,'none');
+  const recovered=await new MutationOperationJournal(f.api).recover();
+  assert.deepEqual(recovered.quarantinedTabs,[]);
+  assert.deepEqual(recovered.unresolved,[]);
+});
+
 test('recovery aborts ACCEPTED but quarantines every interrupted INJECTING operation',async()=>{
   const f=fixture();
   let next=0;

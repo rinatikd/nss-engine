@@ -76,27 +76,66 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  fs.mkdirSync(ext);fs.mkdirSync(profile);fs.mkdirSync(path.join(profile,'Default'),{recursive:true});
  fs.writeFileSync(path.join(profile,'Default','Preferences'),JSON.stringify({extensions:{ui:{developer_mode:true}}}));
  for(const n of fs.readdirSync(new URL('../extension/',import.meta.url))){const src=new URL('../extension/'+n,import.meta.url);if(/\.(js|html|css)$/.test(n)&&fs.statSync(src).isFile())fs.writeFileSync(path.join(ext,n),fs.readFileSync(src,'utf8').replaceAll('http://127.0.0.1:17381','http://127.0.0.1:17481'));}
+  // Test-only receiver in the disposable MV3 worker. Production sources
+  // and the production coordinator trust policy remain untouched.
+  const backgroundPath=path.join(ext,'background.js');
+  let backgroundSource=fs.readFileSync(backgroundPath,'utf8');
+  backgroundSource+=`
+chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
+  if(message?.target!=='r4-test-terminal-probe') return false;
+  const evidence=message.evidence;
+  let senderOrigin=null;
+  try { senderOrigin=new URL(sender.url).origin; } catch {}
+  const valid=sender?.id===chrome.runtime.id &&
+    Number.isSafeInteger(sender?.tab?.id) && sender.tab.id>0 &&
+    sender.frameId===0 && typeof sender.documentId==='string' &&
+    sender.documentId.length>0 && typeof sender.url==='string' &&
+    evidence?.schemaVersion===1 &&
+    typeof evidence.requestId==='string' &&
+    evidence.origin===senderOrigin &&
+    typeof evidence.conversationId==='string' &&
+    Number.isFinite(evidence.startedAt) &&
+    Number.isFinite(evidence.completedAt) &&
+    evidence.completedAt>=evidence.startedAt;
+  if(!valid){sendResponse({ok:false,error:'SENDER_OR_EVIDENCE_INVALID'});return false;}
+  const envelope={schemaVersion:1,tabId:sender.tab.id,documentId:sender.documentId,
+    frameId:sender.frameId,url:sender.url,evidence};
+  void chrome.storage.local.set({r4TestTerminalEvidence:envelope})
+    .then(()=>sendResponse({ok:true,tabId:sender.tab.id,documentId:sender.documentId}))
+    .catch(()=>sendResponse({ok:false,error:'TEST_EVIDENCE_WRITE_FAILED'}));
+  return true;
+});
+`;
+  fs.writeFileSync(backgroundPath,backgroundSource);
  // Test-only receipt hold in the disposable extension copy. The real
  // provider_commit click happens first; only its post-click receipt is held,
  // reproducing an uncertain in-flight side effect during worker/Bridge restart.
  const pageActionPath=path.join(ext,'page.js');
  let pageActionSource=fs.readFileSync(pageActionPath,'utf8');
- const commitClickMarker='      sendButtons[0].click();\n      const clickedAt = new Date().toISOString();';
+ const commitClickMarker='      sendButtons[0].click();\n      providerCommitClickReturned = true;\n      const clickedAt = new Date().toISOString();';
  const commitClickHook=`      sendButtons[0].click();
       document.documentElement.dataset.r4CommitClickCount =
         String(Number(document.documentElement.dataset.r4CommitClickCount || '0') + 1);
+      // The real click has returned; hold only the receipt to model an
+      // interrupted provider_commit acknowledgement across worker restart.
+      providerCommitClickReturned = true;
       if (document.documentElement.dataset.r4HoldCommitReceipt === 'true') {
         document.documentElement.dataset.r4CommitReceiptHeld = 'true';
         await new Promise(resolve => {
           const timer = setInterval(() => {
             if (document.documentElement.dataset.r4ReleaseCommitReceipt === 'true') {
               clearInterval(timer);
+              document.documentElement.dataset.r4CommitReceiptHeld = 'false';
               resolve();
             }
           }, 10);
         });
       }
       const clickedAt = new Date().toISOString();`;
+ const finallyMarker='  } finally {\n    releaseActionLock();';
+  const finallyHook='  } finally {\n    releaseActionLock();\n    const evidence = globalThis.__chromeBridgeMutationTerminal || null;\n    if (evidence?.command === "provider_commit") {\n      document.documentElement.dataset.r4TestFinallyReached = "true";\n      try {\n        const response = await chrome.runtime.sendMessage({target:"r4-test-terminal-probe",evidence});\n        document.documentElement.dataset.r4TestRuntimeMessage = response?.ok ? "ok" : "failed:" + String(response?.error || "NO_ACK");\n      } catch (error) {\n        document.documentElement.dataset.r4TestRuntimeMessage = "failed:" + String(error?.message || error).slice(0,120);\n      }\n    }'
+ assert.ok(pageActionSource.includes(finallyMarker),'PROVIDER_COMMIT_FINALLY_HOOK_MARKER_MISSING');
+ pageActionSource=pageActionSource.replace(finallyMarker,finallyHook);
  assert.ok(pageActionSource.includes(commitClickMarker),'PROVIDER_COMMIT_HOOK_MARKER_MISSING');
  pageActionSource=pageActionSource.replace(commitClickMarker,commitClickHook);
  fs.writeFileSync(pageActionPath,pageActionSource);
@@ -107,7 +146,18 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  const cert=spawnSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',key,'-out',crt,'-days','1','-subj','/CN=claude.ai','-addext','subjectAltName=DNS:claude.ai'],{encoding:'utf8'});assert.equal(cert.status,0,'TLS_FIXTURE_CERT_FAILED');
  const html='<!doctype html><html><body><div class="font-claude-response">Fixture baseline</div><div contenteditable="true" class="ProseMirror" role="textbox" style="min-height:42px;min-width:240px;border:1px solid #777"></div><button type="button" data-testid="chat-input-send">Send</button><script>document.querySelector("button").addEventListener("click",e=>{e.currentTarget.dataset.clicked="true";e.currentTarget.dataset.clickCount=String(Number(e.currentTarget.dataset.clickCount||"0")+1)})</script></body></html>';
  const sockets=new Set();
- const trackSocket=socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));return socket;};
+ const trackSocket=socket=>{
+  sockets.add(socket);
+  // Bridge restart intentionally tears down an in-flight disposable TLS
+  // tunnel. Node may report that peer close as ECONNRESET on the accepted
+  // TLS socket; consume only that expected fixture-lifecycle condition.
+  socket.on('error',error=>{
+    if(error?.code==='ECONNRESET')return;
+    console.error('[R4 D FIXTURE SOCKET ERROR]',error?.code||'UNKNOWN',error?.message||String(error));
+  });
+  socket.once('close',()=>sockets.delete(socket));
+  return socket;
+ };
  const tls=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(crt)},(req,res)=>{if(!/^\/chat\/[A-Za-z0-9_-]{8,128}$/.test(new URL(req.url,'https://claude.ai').pathname)){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/html'});res.end(html);});
  tls.on('connection',socket=>trackSocket(socket));
  let chrome=null,worker=null,control=null,pageA=null,pageB=null,bridge=null,proxy=null,rpcId=0;
@@ -242,52 +292,28 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.equal(grantStatus.activeCount,0);assert.deepEqual(grantStatus.grants,[]);
   assert.equal(grantStatus.mutationEnabled,false);assert.equal(grantStatus.approvalPending,0);
 
-  // Restart MV3 while the page action receipt is still held. Do not release
-  // the hold: after the Send click, execution state is ambiguous by design.
-  control.close();control=null;
-  pageA.close();pageA=null;pageB.close();pageB=null;
-  // runtime.reload may close its own CDP target before Runtime.evaluate
-  // can return when a page-action promise is deliberately still unresolved.
-  // Bound the command wait; then observe the replacement worker independently.
-  await Promise.race([
-    worker.eval('chrome.runtime.reload();true').catch(()=>null),
-    sleep(3000)
-  ]);
+  // Restart only the MV3 service worker while the page action receipt is
+  // still held. Do not reload the extension: extension reload destroys the
+  // isolated-world context and its document-bound terminal marker, which is
+  // precisely the evidence this scenario must preserve.
+  const oldWorkerTarget=originalWorkerTargetId;
   worker.close();worker=null;
-  // Match the known-good MV3 reload ordering from Scenario B: wait until
-  // Chromium exposes a replacement service-worker target first, reconnect to
-  // that worker, then let the new worker create its own Control page. Opening
-  // chrome-extension:// pages before extension reload has completed can make
-  // Chromium reject the navigation as ERR_BLOCKED_BY_CLIENT.
-  await sleep(500);
+  const closeWorker=await boundedFetch(
+    'http://127.0.0.1:'+port+'/json/close/'+encodeURIComponent(oldWorkerTarget),{},5000
+  );
+  assert.equal(closeWorker.status,200,'MV3_SERVICE_WORKER_TARGET_CLOSE_FAILED');
+  const wake=await control.eval('(async()=>await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"}))()');
+  assert.equal(wake.activeCount,0,'replacement worker must preserve the revoked control state');
   const restartedWorker=await until(async()=>(await targets()).find(x=>
     x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&
-    x.webSocketDebuggerUrl&&x.id!==originalWorkerTargetId),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
-  assert.notEqual(restartedWorker.id,originalWorkerTargetId,'MV3_RELOAD_MUST_CREATE_A_NEW_WORKER_TARGET');
-  worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl,'worker-after-reload');
+    x.webSocketDebuggerUrl&&x.id!==oldWorkerTarget),20000,'WORKER_AFTER_TERMINATION');
+  assert.notEqual(restartedWorker.id,oldWorkerTarget,'MV3_WORKER_MUST_RESTART_WITH_NEW_TARGET');
+  worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl,'worker-after-termination');
   await worker.call('Runtime.enable');
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'RESTARTED_WORKER_API');
-  await worker.eval('(async()=>chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true}))()');
-  const afterControl=await until(async()=>(await targets()).find(x=>
-    x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),
-    15000,'CONTROL_AFTER_RESTART');
-  control=await Cdp.connect(afterControl.webSocketDebuggerUrl,'control-after-reload');
-  await control.call('Runtime.enable');
-  try {
-    await until(()=>control.eval('document.readyState!=="loading"&&!!document.querySelector("#backgroundGrantList")'),
-      12000,'CONTROL_AFTER_RESTART_READY');
-  } catch(error) {
-    const snapshot=await control.eval('JSON.stringify({href:location.href,title:document.title,readyState:document.readyState,'+
-      'body:document.body?.innerText?.slice(0,800),grantList:!!document.querySelector("#backgroundGrantList"),'+
-      'status:document.querySelector("#status")?.textContent})').catch(e=>String(e.message));
-    const pageTargets=(await targets()).filter(x=>x.url==='chrome-extension://'+extensionId+'/control.html')
-      .map(x=>({id:x.id,type:x.type,url:x.url,title:x.title,ws:!!x.webSocketDebuggerUrl}));
-    throw Error(error.message+' CONTROL_PAGE='+snapshot+' CONTROL_TARGETS='+JSON.stringify(pageTargets));
-  }
-  const tabAAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDA001'&&x.webSocketDebuggerUrl),15000,'TAB_A_AFTER_RESTART');
-  pageA=await Cdp.connect(tabAAfter.webSocketDebuggerUrl,'provider-tab-a-after-reload');await pageA.call('Runtime.enable');
-  const tabBAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDB001'&&x.webSocketDebuggerUrl),15000,'TAB_B_AFTER_RESTART');
-  pageB=await Cdp.connect(tabBAfter.webSocketDebuggerUrl,'provider-tab-b-after-reload');await pageB.call('Runtime.enable');
+
+  // Provider page targets remain the same documents across a worker-only
+  // restart; keep their CDP sessions and the extension Control page alive.
 
   // Restart the local test Bridge process as well. The provider journal is
   // reopened from the same stateDir/key; the unresolved COMMITTING record
@@ -351,18 +377,105 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // Re-enable only the disposable profile's lab flag to prove the durable
   // global fence, not merely the UI mode switch, rejects a stale post-restart
   // provider mutation. B has no Grant and remains a clean unrelated tab.
-  await control.eval('chrome.storage.local.set({bridgeMutationLabMode:true})');
+  await control.eval('window.confirm=()=>true;chrome.storage.local.set({bridgeMutationLabMode:true})');
   await until(()=>control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get("bridgeMutationRevocationPending"),chrome.storage.session.get("bridgeMutationRevocationPending")]);return l.bridgeMutationRevocationPending?.pending===true||s.bridgeMutationRevocationPending?.pending===true})()'),5000,'GLOBAL_FENCE_STILL_PRESENT');
-  await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});
+  const staleBind=await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});
+  await until(()=>pageB.eval('document.readyState==="complete"&&location.href==="https://claude.ai/chat/r4scenarioDB001"'),
+    10000,'TAB_B_READY_FOR_STALE_FENCE_PROBE');
+  const stalePeek=await rpc('agent_peek',{name:'r4_d_stale_after_restart',maxChars:100});
   const stale=make('r4Drequest0002','r4Dtask0002',tabs.b,'r4scenarioDB001',
     'This post-restart stale mutation must be blocked by durable global fence');
   const staleResult=await rpc('provider_prepare',stale);
+  const coordinatorProbe=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');
+  console.log('[R4 D STALE REQUEST DIAGNOSTIC]',JSON.stringify({
+    bind:staleBind,
+    page:await pageB.eval('JSON.stringify({href:location.href,readyState:document.readyState,title:document.title})'),
+    peek:{url:stalePeek.url,origin:stalePeek.origin,conversationId:stalePeek.conversationId,chars:stalePeek.chars},
+    coordinator:JSON.parse(coordinatorProbe),
+    result:staleResult
+  }));
   assert.equal(staleResult.state,'BLOCKED');
   assert.equal(staleResult.reasonCode,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
     'the durable pending global Revoke fence must reject new mutations after restart');
   const finalPage=await pageB.eval('(()=>({draft:(document.querySelector("[contenteditable=true]")?.innerText||"").trim(),clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true"}))()');
   assert.equal(finalPage.draft,'');assert.equal(finalPage.clicked,false);
-  console.log('[R4 SCENARIO D PASS] Send clicked once; receipt lost; Revoke returned UNKNOWN and quarantined A; MV3 + Bridge restarted; journal UNKNOWN; grants never reappeared; stale post-restart mutation BLOCKED by durable global fence');
+
+  // The operator recovery panel must not clear quarantine while the original
+  // pageAction is still held after its one real fixture Send click.
+  await until(()=>control.eval('document.querySelector("#quarantineList")?.textContent.includes("r4Drequest0001")'),15000,'QUARANTINE_UI_READY');
+  assert.ok(await control.eval('!!document.querySelector("#quarantineList button")'),
+    'the exact quarantined provider action must be exposed for operator review');
+  await clickTrusted(control,'document.querySelector("#quarantineList button")');
+  await until(()=>control.eval('document.querySelector("#quarantineRecoveryStatus")?.textContent.includes("QUARANTINE_")'),8000,'ACTIVE_ACTION_RECONCILIATION_DENIED');
+  const stillQuarantined=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationQuarantinedTabs","bridgeMutationRevocationPending"]),chrome.storage.session.get(["bridgeMutationQuarantinedTabs","bridgeMutationRevocationPending"])]);return{localTabs:l.bridgeMutationQuarantinedTabs||[],sessionTabs:s.bridgeMutationQuarantinedTabs||[],localFence:l.bridgeMutationRevocationPending?.pending===true,sessionFence:s.bridgeMutationRevocationPending?.pending===true}})()');
+  assert.ok(stillQuarantined.localTabs.includes(tabs.a)||stillQuarantined.sessionTabs.includes(tabs.a));
+  assert.equal(stillQuarantined.localFence||stillQuarantined.sessionFence,true,
+    'the global fence must remain while the original pageAction has not reached its terminal marker');
+
+  // Release only the held receipt in the disposable fixture. The original
+  // pageAction finally block writes its isolated-world terminal marker.
+  await pageA.eval('document.documentElement.dataset.r4ReleaseCommitReceipt="true";true');
+  await until(()=>pageA.eval('document.documentElement.dataset.r4CommitReceiptHeld!=="true"'),8000,'PAGE_ACTION_RECEIPT_RELEASED');
+  const finallyReached=await until(()=>pageA.eval('document.documentElement.dataset.r4TestFinallyReached==="true"'),8000,'PAGE_ACTION_FINALLY_REACHED');
+  assert.equal(finallyReached,true,'the original pageAction must reach its finally path after the held receipt is released');
+  await until(()=>pageA.eval('document.documentElement.dataset.r4TestRuntimeMessage!==undefined'),8000,'PAGE_ACTION_RUNTIME_MESSAGE_SETTLED');
+  await until(()=>control.eval('!!document.querySelector("#quarantineList button")'),10000,'QUARANTINE_RECONCILE_BUTTON_READY');
+   const terminalEvidence=await control.eval('(async(tabId)=>{const q=await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"quarantine-status"});const stored=await chrome.storage.local.get("r4TestTerminalEvidence");const p=await chrome.scripting.executeScript({target:{tabId},world:"ISOLATED",func:()=>({terminal:globalThis.__chromeBridgeMutationTerminal||null,lock:globalThis.__chromeBridgeMutationLock||null,href:location.href,origin:location.origin})});return{record:q.records?.find(r=>r.tabId===tabId)||null,globalPending:q.globalPending||null,page:p?.[0]?.result||null,documentId:p?.[0]?.documentId||null,durableTestEvidence:stored.r4TestTerminalEvidence||null}})('+tabs.a+')');
+  terminalEvidence.fixturePage=await pageA.eval('(()=>({held:document.documentElement.dataset.r4CommitReceiptHeld||null,release:document.documentElement.dataset.r4ReleaseCommitReceipt||null,finallyReached:document.documentElement.dataset.r4TestFinallyReached||null,runtimeMessage:document.documentElement.dataset.r4TestRuntimeMessage||null}))()');
+  terminalEvidence.durableTestEvidence=await control.eval('(async()=>{const r=await chrome.storage.local.get("r4TestTerminalEvidence");return r.r4TestTerminalEvidence||null})()');
+  assert.equal(terminalEvidence.fixturePage.runtimeMessage,'ok',
+    'the original isolated-world action must receive a successful background acknowledgement');
+  assert.ok(terminalEvidence.durableTestEvidence,'background must persist terminal evidence');
+  assert.equal(terminalEvidence.durableTestEvidence.tabId,tabs.a);
+  assert.equal(terminalEvidence.durableTestEvidence.frameId,0);
+  assert.equal(terminalEvidence.durableTestEvidence.documentId,terminalEvidence.documentId);
+  assert.equal(terminalEvidence.durableTestEvidence.evidence.requestId,terminalEvidence.record.requestId);
+  assert.equal(terminalEvidence.durableTestEvidence.evidence.state,'COMMIT_CLICK_ATTEMPTED');
+  assert.equal(terminalEvidence.durableTestEvidence.evidence.clickAttempted,true);
+  console.log('[R4 D TERMINAL EVIDENCE DIAGNOSTIC]',JSON.stringify(terminalEvidence));
+  await clickTrusted(control,'document.querySelector("#quarantineList button")');
+  const reconciliationOutcome=await until(async()=>{
+    const snapshot=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"]),chrome.storage.session.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"])]);return{status:document.querySelector("#quarantineRecoveryStatus")?.textContent||"",localTabs:l.bridgeMutationQuarantinedTabs||[],sessionTabs:s.bridgeMutationQuarantinedTabs||[],localRecords:l.bridgeMutationQuarantineRecords||{},sessionRecords:s.bridgeMutationQuarantineRecords||{},localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null,localAudit:l.bridgeMutationQuarantineAudit||[],sessionAudit:s.bridgeMutationQuarantineAudit||[]}})()');
+    const audited=snapshot.localAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&e.requestId===identity.requestId);
+    const storesClean=snapshot.localTabs.length===0&&snapshot.sessionTabs.length===0&&
+      Object.keys(snapshot.localRecords).length===0&&Object.keys(snapshot.sessionRecords).length===0&&
+      snapshot.localFence==null&&snapshot.sessionFence==null;
+    if(storesClean&&audited)return snapshot;
+    if(snapshot.status.startsWith('Карантин сохранён:'))
+      throw Error('OPERATOR_RECONCILIATION_REJECTED:'+JSON.stringify(snapshot));
+    return false;
+  },10000,'OPERATOR_RECONCILIATION_COMPLETE');
+  console.log('[R4 D OPERATOR RECONCILIATION OUTCOME]',JSON.stringify({
+    status:reconciliationOutcome.status,
+    localAudit:reconciliationOutcome.localAudit.filter(e=>e.type==='OPERATOR_RECONCILE'&&e.requestId===identity.requestId),
+    sessionAudit:reconciliationOutcome.sessionAudit.filter(e=>e.type==='OPERATOR_RECONCILE'&&e.requestId===identity.requestId)
+  }));
+
+  const reconciledStorage=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"]),chrome.storage.session.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"])]);return{localTabs:l.bridgeMutationQuarantinedTabs||[],sessionTabs:s.bridgeMutationQuarantinedTabs||[],localRecords:l.bridgeMutationQuarantineRecords||{},sessionRecords:s.bridgeMutationQuarantineRecords||{},localAudit:l.bridgeMutationQuarantineAudit||[],sessionAudit:s.bridgeMutationQuarantineAudit||[],localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null}})()');
+  assert.deepEqual(reconciledStorage.localTabs,[]);
+  assert.deepEqual(reconciledStorage.sessionTabs,[]);
+  assert.deepEqual(reconciledStorage.localRecords,{});
+  assert.deepEqual(reconciledStorage.sessionRecords,{});
+  assert.equal(reconciledStorage.localFence,null);
+  assert.equal(reconciledStorage.sessionFence,null);
+  // Quarantine metadata is local-first; session storage is only the
+  // worker-lifetime fallback. The durable local audit is therefore required,
+  // while a session audit is required only if this record also existed there.
+  assert.ok(reconciledStorage.localAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
+    e.requestId===identity.requestId&&typeof e.globalFenceToken==='string'));
+  if (terminalEvidence.record.store.includes('session'))
+    assert.ok(reconciledStorage.sessionAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&
+      e.requestId===identity.requestId&&typeof e.globalFenceToken==='string'));
+
+  // Reconciliation changes only tab admission/quarantine. It must never rewrite
+  // the provider journal's UNKNOWN delivery outcome or send a second click.
+  const stillUnknown=await rpc('provider_status',statusIdentity);
+  assert.equal(stillUnknown.state,'UNKNOWN');
+  assert.equal(stillUnknown.clickedSend,undefined);
+  const noDuplicateClick=await pageA.eval('(()=>({buttonCount:document.querySelector("[data-testid=chat-input-send]")?.dataset.clickCount||"0",clickCount:document.documentElement.dataset.r4CommitClickCount||"0"}))()');
+  assert.equal(noDuplicateClick.buttonCount,'1');
+  assert.equal(noDuplicateClick.clickCount,'1');
+  console.log('[R4 SCENARIO D PASS] Send clicked once; receipt lost; Revoke UNKNOWN/quarantined; MV3 + Bridge restart; operator reconciliation required terminal evidence; UNKNOWN retained; no replay or duplicate click');
  }finally{
   clearTimeout(watchdog);
   control?.close();pageA?.close();pageB?.close();worker?.close();

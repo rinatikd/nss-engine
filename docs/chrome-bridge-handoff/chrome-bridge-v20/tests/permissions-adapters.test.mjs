@@ -57,9 +57,9 @@ test('Grok, Qwen and Kimi use the same explicit Control grant semantics as the p
 
 test('injected mutation denies other origins and expired grants before DOM access', async () => {
  globalThis.location = { origin:'https://example.com' };
- assert.match((await pageAction('agent_send',{controlExpires:Date.now()+1000},location.origin)).error,/Control denied/);
+ assert.match((await pageAction('agent_send',{operationId:'test_operation_agent_send_01',controlExpires:Date.now()+1000},location.origin)).error,/Control denied/);
  location.origin = 'https://claude.ai';
- assert.match((await pageAction('browser_click',{controlExpires:0},location.origin)).error,/Control denied/);
+ assert.match((await pageAction('browser_click',{operationId:'test_operation_browser_click_01',controlExpires:0},location.origin)).error,/Control denied/);
  delete globalThis.location;
 });
 
@@ -158,6 +158,7 @@ test('browser_fill actually inserts and verifies text in a contenteditable edito
  };
  try {
   const result = await pageAction('browser_fill', {
+   operationId:'test_operation_browser_fill_01',
    selector: '.chat-input-editor',
    text: 'Bridge diagnostic draft — do not send',
    controlExpires: Date.now() + 60000
