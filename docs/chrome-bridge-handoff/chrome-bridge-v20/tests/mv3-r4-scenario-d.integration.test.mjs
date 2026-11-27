@@ -82,7 +82,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  const pageActionPath=path.join(ext,'page.js');
  let pageActionSource=fs.readFileSync(pageActionPath,'utf8');
  const commitClickMarker='      sendButtons[0].click();\n      providerCommitClickReturned = true;\n      const clickedAt = new Date().toISOString();';
- const commitClickHook=\`      sendButtons[0].click();
+ const commitClickHook=`      sendButtons[0].click();
       document.documentElement.dataset.r4CommitClickCount =
         String(Number(document.documentElement.dataset.r4CommitClickCount || '0') + 1);
       // The real click has returned; hold only the receipt to model an
@@ -100,7 +100,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
           }, 10);
         });
       }
-      const clickedAt = new Date().toISOString();\`;
+      const clickedAt = new Date().toISOString();`;
  assert.ok(pageActionSource.includes(commitClickMarker),'PROVIDER_COMMIT_HOOK_MARKER_MISSING');
  pageActionSource=pageActionSource.replace(commitClickMarker,commitClickHook);
  fs.writeFileSync(pageActionPath,pageActionSource);
