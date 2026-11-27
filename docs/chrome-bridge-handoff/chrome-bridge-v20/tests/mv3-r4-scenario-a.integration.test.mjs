@@ -20,7 +20,8 @@ class Cdp{
  close(){this.ws.close();}
 }
 async function clickTrusted(cdp,expr){
- const p=await cdp.eval('(()=>{const e='+expr+';if(!e)throw Error("TARGET_MISSING");const r=e.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2}})()');
+ const p=await cdp.eval('(()=>{const e='+expr+';if(!e)throw Error("TARGET_MISSING");e.scrollIntoView({block:"center",inline:"center"});const r=e.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);return{x,y,insideViewport:x>=0&&y>=0&&x<innerWidth&&y<innerHeight,hitMatches:!!hit&&(hit===e||e.contains(hit)),hitTag:hit?.tagName||null,targetTag:e.tagName,rect:{left:r.left,top:r.top,width:r.width,height:r.height}}})()');
+ if(!p.insideViewport||!p.hitMatches)throw Error('CDP_CLICK_TARGET_NOT_HIT '+JSON.stringify(p));
  for(const type of ['mouseMoved','mousePressed','mouseReleased'])await cdp.call('Input.dispatchMouseEvent',{type,x:p.x,y:p.y,button:'left',clickCount:1});
 }
 test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B over HTTP MCP',{timeout:180000},async()=>{
@@ -100,6 +101,7 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
   const revokeExpr='[...document.querySelectorAll("#backgroundGrantList .approval")].find(e=>e.textContent.includes('+JSON.stringify(String(tabs.a))+'))?.querySelector("button")';
   await control.eval('window.__r4RevokeClickTrusted=null;document.querySelector("#backgroundGrantList").addEventListener("click",e=>{if(e.target?.tagName==="BUTTON")window.__r4RevokeClickTrusted=e.isTrusted},{capture:true})');
   await clickTrusted(control,revokeExpr);
+  await until(()=>control.eval('window.__r4RevokeClickTrusted===true'),3000,'REVOKE_TRUSTED_CLICK');
   let grantText;
   try {
     grantText=await until(async()=>{const s=await control.eval('JSON.stringify([...document.querySelectorAll("#backgroundGrantList .approval")].map(e=>e.textContent))');return s.includes(String(tabs.a))?null:s;},12000,'A_REVOKED');
