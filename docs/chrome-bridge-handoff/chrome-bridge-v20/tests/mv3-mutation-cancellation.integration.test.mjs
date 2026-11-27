@@ -217,11 +217,15 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // settles in this disposable MV3 harness. Resolve the tab by exact URL
     // using the callback form of tabs.query, then probe its document.
     const providerUrl='https://claude.ai/chat/r4mutationcancel01';
-    // Use the callback API for tabs.create. The MV3 fixture deliberately
-    // avoids depending on Promise wrappers for chrome.tabs methods inside
-    // Runtime.evaluate; the callback returns the authoritative tabId.
-    const tab=await harness.eval('(async()=>new Promise(resolve=>chrome.tabs.create({url:'+
-      JSON.stringify(providerUrl)+',active:true},created=>resolve(created||null)))())');
+    // Subscribe before creating the target at browser level. This avoids
+    // awaiting tabs.create/query callbacks inside Runtime.evaluate while
+    // still obtaining the authoritative Chrome tabId from onCreated.
+    // Install a one-shot listener in the extension page, then create the
+    // provider target through the browser CDP session.
+    const providerTabWait=harness.eval('globalThis.__r4AwaitProviderTab()');
+    const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
+    assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
+    const tab=await providerTabWait;
     assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_CREATE_FAILED');
     const tabId=tab.id;
     console.log('[R4 MUTATION CANCEL STEP] provider fixture tab created id='+tabId);
