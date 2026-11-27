@@ -212,9 +212,14 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // Use the callback form for scripting.executeScript in this MV3 fixture.
     // Chrome 158 can leave the Promise form pending from an extension page;
     // callback completion gives the test a deterministic API receipt.
-    await harness.eval('globalThis.__r4Execute=details=>new Promise((resolve,reject)=>{'+
+    await harness.eval('globalThis.__r4ExecuteDiagnostics={calls:0,callbacks:0,lastError:null,lastTarget:null};'+
+      'globalThis.__r4Execute=details=>new Promise((resolve,reject)=>{'+
+      'globalThis.__r4ExecuteDiagnostics.calls++;'+
+      'globalThis.__r4ExecuteDiagnostics.lastTarget=details.target;'+
       'chrome.scripting.executeScript(details,results=>{'+
+      'globalThis.__r4ExecuteDiagnostics.callbacks++;'+
       'const error=chrome.runtime.lastError;'+
+      'globalThis.__r4ExecuteDiagnostics.lastError=error?.message||null;'+
       'if(error)reject(Error(error.message));else resolve(results);});});true');
     console.log('[R4 MUTATION CANCEL STEP] extension harness ready');
 
@@ -250,9 +255,9 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     const documentId=pageInfo.documentId;
     const target={tabId,documentIds:[documentId]};
     const origin='https://claude.ai';
-    const invoke=(name,args)=>harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
+    const invoke=(name,args)=>Promise.race([harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',world:"ISOLATED",func:globalThis.__r4PageAction,'+
-      'args:'+JSON.stringify([name,args,origin])+'});return out[0]})()');
+      'args:'+JSON.stringify([name,args,origin])+'});return out[0]})()'),sleep(6000).then(async()=>{const diagnostics=await harness.eval('JSON.stringify(globalThis.__r4ExecuteDiagnostics||null)').catch(e=>String(e.message));throw Error('R4_EXECUTE_SCRIPT_CALLBACK_DIAGNOSTIC '+diagnostics);})]);
     const inspect=()=>harness.eval('(async()=>{const out=await globalThis.__r4Execute({'+
       'target:'+JSON.stringify(target)+',world:"ISOLATED",func:id=>({state:globalThis.__chromeBridgeOperationRegistry?.[id]?.state,'+
       'sideEffectStarted:globalThis.__chromeBridgeOperationRegistry?.[id]?.sideEffectStarted===true}),'+
