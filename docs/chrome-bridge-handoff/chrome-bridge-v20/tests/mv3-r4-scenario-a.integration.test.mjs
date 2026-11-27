@@ -114,7 +114,16 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
   assert.ok(!grantText.includes(String(tabs.a))&&grantText.includes(String(tabs.b)));
   const aResult=await Promise.race([aTracked,sleep(12000).then(()=>{throw Error('A_NOT_CANCELLED');})]);
   assert.equal(aResult.state,'BLOCKED');assert.equal(aSettled,true);
-  await until(()=>control.eval('document.querySelectorAll("#backgroundApprovals .approval").length===1'),15000,'B_APPROVAL');
+  try {
+    await until(()=>control.eval('(()=>{const rows=[...document.querySelectorAll("#backgroundApprovals .approval")];return rows.length===1&&rows[0].textContent.includes('+JSON.stringify(String(tabs.b))+')})()'),15000,'B_APPROVAL');
+  } catch(error) {
+    const ui=await control.eval('JSON.stringify([...document.querySelectorAll("#backgroundApprovals .approval")].map(e=>e.textContent))');
+    const pending=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"approval-list"})))()');
+    const coordinator=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');
+    const queue=await rpc('browser_status');
+    console.error('[R4 B APPROVAL DIAGNOSTIC]',ui,pending,coordinator,JSON.stringify(queue));
+    throw Error(error.message+' UI='+ui+' PENDING='+pending+' COORDINATOR='+coordinator);
+  }
   assert.ok((await control.eval('document.querySelector("#backgroundApprovals .approval").textContent')).includes(String(tabs.b)));
   const approveExpr='[...document.querySelectorAll("#backgroundApprovals .approval")].find(e=>e.textContent.includes('+JSON.stringify(String(tabs.b))+'))?.querySelector("button:not(.danger)")';
   await clickTrusted(control,approveExpr);
