@@ -434,13 +434,22 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   assert.equal(terminalEvidence.durableTestEvidence.evidence.clickAttempted,true);
   console.log('[R4 D TERMINAL EVIDENCE DIAGNOSTIC]',JSON.stringify(terminalEvidence));
   await clickTrusted(control,'document.querySelector("#quarantineList button")');
-  await until(async()=>{
-    const status=await control.eval('document.querySelector("#quarantineRecoveryStatus")?.textContent||""');
-    if(status.includes('UNKNOWN; повтор не выполнялся'))return true;
-    if(status.startsWith('Карантин сохранён:'))
-      throw Error('OPERATOR_RECONCILIATION_REJECTED:'+status);
+  const reconciliationOutcome=await until(async()=>{
+    const snapshot=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"]),chrome.storage.session.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"])]);return{status:document.querySelector("#quarantineRecoveryStatus")?.textContent||"",localTabs:l.bridgeMutationQuarantinedTabs||[],sessionTabs:s.bridgeMutationQuarantinedTabs||[],localRecords:l.bridgeMutationQuarantineRecords||{},sessionRecords:s.bridgeMutationQuarantineRecords||{},localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null,localAudit:l.bridgeMutationQuarantineAudit||[],sessionAudit:s.bridgeMutationQuarantineAudit||[]}})()');
+    const audited=snapshot.localAudit.some(e=>e.type==='OPERATOR_RECONCILE'&&e.requestId===identity.requestId);
+    const storesClean=snapshot.localTabs.length===0&&snapshot.sessionTabs.length===0&&
+      Object.keys(snapshot.localRecords).length===0&&Object.keys(snapshot.sessionRecords).length===0&&
+      snapshot.localFence==null&&snapshot.sessionFence==null;
+    if(storesClean&&audited)return snapshot;
+    if(snapshot.status.startsWith('Карантин сохранён:'))
+      throw Error('OPERATOR_RECONCILIATION_REJECTED:'+JSON.stringify(snapshot));
     return false;
   },10000,'OPERATOR_RECONCILIATION_COMPLETE');
+  console.log('[R4 D OPERATOR RECONCILIATION OUTCOME]',JSON.stringify({
+    status:reconciliationOutcome.status,
+    localAudit:reconciliationOutcome.localAudit.filter(e=>e.type==='OPERATOR_RECONCILE'&&e.requestId===identity.requestId),
+    sessionAudit:reconciliationOutcome.sessionAudit.filter(e=>e.type==='OPERATOR_RECONCILE'&&e.requestId===identity.requestId)
+  }));
 
   const reconciledStorage=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"]),chrome.storage.session.get(["bridgeMutationQuarantinedTabs","bridgeMutationQuarantineRecords","bridgeMutationQuarantineAudit","bridgeMutationRevocationPending"])]);return{localTabs:l.bridgeMutationQuarantinedTabs||[],sessionTabs:s.bridgeMutationQuarantinedTabs||[],localRecords:l.bridgeMutationQuarantineRecords||{},sessionRecords:s.bridgeMutationQuarantineRecords||{},localAudit:l.bridgeMutationQuarantineAudit||[],sessionAudit:s.bridgeMutationQuarantineAudit||[],localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null}})()');
   assert.deepEqual(reconciledStorage.localTabs,[]);
