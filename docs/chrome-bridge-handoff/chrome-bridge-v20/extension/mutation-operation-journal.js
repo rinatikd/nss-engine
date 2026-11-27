@@ -329,10 +329,15 @@ export class MutationOperationJournal {
           });
         }
         quarantined.add(record.tabId);
+        const injectionEvent=record.events.find(event=>event.phase==='INJECTING') || null;
         unresolved.push({
           operationId:record.operationId,command:record.command,
-          tabId:record.tabId,origin:record.origin,
-          documentId:record.documentId,
+          tabId:record.tabId,origin:record.origin,urlSha256:record.urlSha256,
+          documentId:record.documentId,frameId:record.frameId,
+          conversationId:record.conversationId,requestId:record.requestId,
+          taskId:record.taskId,providerId:record.providerId,
+          preparedId:record.preparedId,payloadHash:record.payloadHash,epoch:record.epoch,
+          startedAt:injectionEvent?.at ?? null,
           phase:phase==='COMPLETED' && terminal.sideEffect==='composer-draft-state-unverified'
             ? 'DRAFT_UNVERIFIED'
             : phase==='COMPLETED'?'SIDE_EFFECT_UNVERIFIED':'UNKNOWN',
