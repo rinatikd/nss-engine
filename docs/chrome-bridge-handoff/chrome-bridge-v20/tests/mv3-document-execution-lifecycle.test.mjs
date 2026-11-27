@@ -34,28 +34,60 @@ function html(pathname){
 class Cdp{
  constructor(ws){
   this.ws=ws;this.sequence=0;this.pending=new Map();
+  const failPending=reason=>{
+   for(const [id,pending] of this.pending){
+    this.pending.delete(id);
+    clearTimeout(pending.timer);
+    pending.reject(Error('CDP_SOCKET_CLOSED '+reason));
+   }
+  };
   ws.addEventListener('message',event=>{
-   const message=JSON.parse(event.data);
+   let message;
+   try{message=JSON.parse(event.data);}catch{return;}
    if(!message.id)return;
    const pending=this.pending.get(message.id);
    if(!pending)return;
    this.pending.delete(message.id);
+   clearTimeout(pending.timer);
    message.error?pending.reject(Error(JSON.stringify(message.error))):pending.resolve(message.result);
   });
+  ws.addEventListener('close',()=>failPending('close'));
+  ws.addEventListener('error',()=>failPending('error'));
  }
  static async connect(url){
   const ws=new WebSocket(url);
   await new Promise((resolve,reject)=>{
-   ws.addEventListener('open',resolve,{once:true});
-   ws.addEventListener('error',reject,{once:true});
+   let settled=false;
+   const finish=error=>{
+    if(settled)return;
+    settled=true;
+    clearTimeout(timer);
+    error?reject(error):resolve();
+   };
+   const timer=setTimeout(()=>{
+    try{ws.close();}catch{}
+    finish(Error('CDP_CONNECT_TIMEOUT'));
+   },10000);
+   ws.addEventListener('open',()=>finish(),{once:true});
+   ws.addEventListener('error',()=>finish(Error('CDP_CONNECT_FAILED')),{once:true});
+   ws.addEventListener('close',()=>finish(Error('CDP_CONNECT_CLOSED')),{once:true});
   });
   return new Cdp(ws);
  }
  call(method,params={}){
   const id=++this.sequence;
   return new Promise((resolve,reject)=>{
-   this.pending.set(id,{resolve,reject});
-   this.ws.send(JSON.stringify({id,method,params}));
+   const timer=setTimeout(()=>{
+    this.pending.delete(id);
+    reject(Error('CDP_CALL_TIMEOUT '+method+' id='+id));
+   },15000);
+   this.pending.set(id,{
+    timer,
+    resolve:value=>{clearTimeout(timer);resolve(value);},
+    reject:error=>{clearTimeout(timer);reject(error);}
+   });
+   try{this.ws.send(JSON.stringify({id,method,params}));}
+   catch(error){this.pending.delete(id);clearTimeout(timer);reject(error);}
   });
  }
  async eval(expression){
@@ -63,7 +95,13 @@ class Cdp{
   if(response.exceptionDetails)throw Error(response.exceptionDetails.text||'CDP_EVALUATION_FAILED');
   return response.result?.value;
  }
- close(){this.ws.close();}
+ close(){
+  for(const [id,pending] of this.pending){
+   this.pending.delete(id);clearTimeout(pending.timer);
+   pending.reject(Error('CDP_CLIENT_CLOSED'));
+  }
+  this.ws.close();
+ }
 }
 test('disposable Chrome verifies exact-document execution, cooperative cancellation and BFCache identity',
  {timeout:90000},async()=>{
