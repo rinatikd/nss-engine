@@ -2,7 +2,7 @@ const PREFIX = 'bridgeMutationOperation.v1.';
 const INDEX_KEY = PREFIX + 'index';
 const MAX_RECORDS = 5000;
 const COMMANDS = new Set(['browser_click','browser_fill','agent_send','provider_prepare','provider_commit']);
-const PHASES = new Set(['ACCEPTED','INJECTING','COMPLETED','ABORTED_BEFORE_INJECTION','UNKNOWN']);
+const PHASES = new Set(['ACCEPTED','INJECTING','CANCEL_REQUESTED','COMPLETED','ABORTED_BEFORE_INJECTION','UNKNOWN']);
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{2,80}$/;
 const OUTCOMES = new Set(['COMPLETED','NOT_PERFORMED','UNKNOWN','PREPARED','CLICKED','FILLED']);
 const SAFE_SIDE_EFFECTS = new Set([
@@ -146,7 +146,7 @@ async function verifyRecord(record, operationId) {
           (key!=='payloadHash' || /^[a-f0-9]{64}$/.test(record[key])))) ||
       !Number.isFinite(record.createdAt) || !Number.isFinite(record.updatedAt) ||
       record.updatedAt<record.createdAt || !Array.isArray(record.events) ||
-      record.events.length < 1 || record.events.length > 3)
+      record.events.length < 1 || record.events.length > 4)
     throw Error('MUTATION_OPERATION_JOURNAL_CORRUPT');
   let previous=null;
   for (const event of record.events) {
@@ -177,7 +177,9 @@ async function verifyRecord(record, operationId) {
     (phases.length===2 && phases[0]==='ACCEPTED' &&
       ['INJECTING','ABORTED_BEFORE_INJECTION'].includes(phases[1])) ||
     (phases.length===3 && phases[0]==='ACCEPTED' && phases[1]==='INJECTING' &&
-      ['COMPLETED','UNKNOWN'].includes(phases[2]));
+      ['CANCEL_REQUESTED','COMPLETED','UNKNOWN'].includes(phases[2])) ||
+    (phases.length===4 && phases[0]==='ACCEPTED' && phases[1]==='INJECTING' &&
+      phases[2]==='CANCEL_REQUESTED' && ['COMPLETED','UNKNOWN'].includes(phases[3]));
   if (!valid) throw Error('MUTATION_OPERATION_JOURNAL_CORRUPT');
   return record;
 }
@@ -206,7 +208,8 @@ export class MutationOperationJournal {
     const previous=current.events[current.events.length-1];
     const allowed=previous.phase==='ACCEPTED'
       ? ['INJECTING','ABORTED_BEFORE_INJECTION']
-      : previous.phase==='INJECTING' ? ['COMPLETED','UNKNOWN'] : [];
+      : previous.phase==='INJECTING' ? ['CANCEL_REQUESTED','COMPLETED','UNKNOWN']
+      : previous.phase==='CANCEL_REQUESTED' ? ['COMPLETED','UNKNOWN'] : [];
     if (!allowed.includes(phase)) throw Error('MUTATION_OPERATION_TRANSITION_DENIED');
     if (phase==='INJECTING' && (metadata.documentId!==current.documentId ||
         metadata.frameId!==current.frameId))
@@ -279,6 +282,9 @@ export class MutationOperationJournal {
       throw Error('MUTATION_OPERATION_DOCUMENT_IDENTITY_INVALID');
     return this.#append(operationId,'INJECTING',{documentId,frameId});
   }
+  async requestCancellation(operationId,{code='REVOKE_CANCELLATION_REQUESTED'}={}) {
+    return this.#append(operationId,'CANCEL_REQUESTED',{outcome:'UNKNOWN',code,sideEffect:'operation-result-unverified'});
+  }
   async complete(operationId,{outcome='COMPLETED',sideEffect='none',code=null,documentId=null,frameId=0}={}) {
     return this.#append(operationId,'COMPLETED',{outcome,sideEffect,code,documentId,frameId});
   }
@@ -314,13 +320,14 @@ export class MutationOperationJournal {
         await this.abortBeforeInjection(record.operationId,{
           code:'WORKER_RESTART_BEFORE_INJECTION',sideEffect:'none'
         });
-      } else if (phase==='INJECTING' || phase==='UNKNOWN' ||
+      } else if (phase==='INJECTING' || phase==='CANCEL_REQUESTED' || phase==='UNKNOWN' ||
           (phase==='COMPLETED' && terminal.sideEffect==='composer-draft-state-unverified') ||
           (phase==='COMPLETED' && ['browser_click','browser_fill'].includes(record.command) &&
             terminal.sideEffect==='generic-page-action')) {
-        if (phase==='INJECTING') {
+        if (phase==='INJECTING' || phase==='CANCEL_REQUESTED') {
           await this.unknown(record.operationId,{
-            code:'WORKER_RESTART_DURING_INJECTION',sideEffect:'operation-result-unverified'
+            code:phase==='CANCEL_REQUESTED'?'WORKER_RESTART_AFTER_CANCEL_REQUEST':'WORKER_RESTART_DURING_INJECTION',
+            sideEffect:'operation-result-unverified'
           });
         }
         quarantined.add(record.tabId);
@@ -332,6 +339,7 @@ export class MutationOperationJournal {
             ? 'DRAFT_UNVERIFIED'
             : phase==='COMPLETED'?'SIDE_EFFECT_UNVERIFIED':'UNKNOWN',
           reasonCode:phase==='INJECTING'?'WORKER_RESTART_DURING_INJECTION':
+            phase==='CANCEL_REQUESTED'?'WORKER_RESTART_AFTER_CANCEL_REQUEST':
             terminal.code || (phase==='COMPLETED' && terminal.sideEffect==='composer-draft-state-unverified'
               ? 'COMPOSER_DRAFT_STATE_UNVERIFIED' : 'GENERIC_PAGE_SIDE_EFFECT_UNVERIFIED')
         });
