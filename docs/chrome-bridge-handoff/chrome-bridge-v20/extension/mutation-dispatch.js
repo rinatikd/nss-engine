@@ -14,14 +14,15 @@ const MUTATIONS = new Set(['browser_click', 'browser_fill', 'agent_send', 'provi
 const MAX_APPROVAL_MS = 90_000;
 const nowExpired = (cmd, now) => !Number.isFinite(cmd?.expires) || now() >= cmd.expires;
 
-async function inject(chromeApi, tabId, origin, name, args, documentId=null) {
+async function inject(chromeApi, tabId, origin, name, args, documentId=null, operationId=null) {
   const target = Number.isSafeInteger(tabId) && typeof documentId==='string' && documentId
     ? {tabId,documentIds:[documentId]}
     : {tabId};
+  const pageArgs=operationId?{...args,__bridgeOperationId:operationId}:args;
   let out;
   try {
     out = await chromeApi.scripting.executeScript({
-      target,world:'ISOLATED',func:pageAction,args:[name,args,origin]
+      target,world:'ISOLATED',func:pageAction,args:[name,pageArgs,origin]
     });
   } catch (cause) {
     if (documentId) {
@@ -195,7 +196,7 @@ async function dispatchProviderMutation(cmd, chromeApi, {
       documentId:currentInjection.documentId,frameId:currentInjection.frameId
     });
     executionStarted=true;
-    const finalInjection=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs,currentInjection.documentId);
+    const finalInjection=await inject(chromeApi,tab.id,origin,cmd.name,pageArgs,currentInjection.documentId,operation.operationId);
     const result=finalInjection.result;
     if(cmd.name==='provider_prepare') {
       if(result?.prepared!==true||result.clickedSend!==false||result.requestId!==requestId||
@@ -235,6 +236,18 @@ async function dispatchProviderMutation(cmd, chromeApi, {
     throw error;
   }
 }
+export async function requestPageMutationCancellation(chromeApi,{
+  tabId,origin,documentId,operationId
+}={}) {
+  if (!Number.isSafeInteger(tabId) || tabId<=0 ||
+      typeof origin!=='string' || !origin.startsWith('https://') ||
+      typeof documentId!=='string' || !documentId ||
+      !/^[A-Za-z0-9_-]{16,100}$/.test(operationId||''))
+    throw Error('MUTATION_CANCELLATION_IDENTITY_INVALID');
+  const injected=await inject(chromeApi,tabId,origin,'cancel_mutation',{operationId},documentId);
+  return injected.result;
+}
+
 export async function dispatchMutation(cmd, chromeApi, {
   approvals, controlGrant, sessionAuthorization, operationJournal, stillEnabled=async()=>false, now=Date.now, uuid=()=>crypto.randomUUID()
 }={}) {
@@ -367,7 +380,7 @@ export async function dispatchMutation(cmd, chromeApi, {
     documentId:currentInjection.documentId,frameId:currentInjection.frameId
   });
   executionStarted=true;
-  const finalInjection=await inject(chromeApi,tab.id,origin,cmd.name,args,currentInjection.documentId);
+  const finalInjection=await inject(chromeApi,tab.id,origin,cmd.name,args,currentInjection.documentId,operation.operationId);
   const result=finalInjection.result;
   await operationJournal.complete(operation.operationId,{
     outcome:cmd.name==='browser_click'?'CLICKED':cmd.name==='browser_fill'?'FILLED':'CLICKED',
