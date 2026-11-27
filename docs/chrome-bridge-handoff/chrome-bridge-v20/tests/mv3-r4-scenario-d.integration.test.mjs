@@ -431,11 +431,20 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   await until(()=>pageA.eval('document.documentElement.dataset.r4CommitReceiptHeld!=="true"'),8000,'PAGE_ACTION_RECEIPT_RELEASED');
   const finallyReached=await until(()=>pageA.eval('document.documentElement.dataset.r4TestFinallyReached==="true"'),8000,'PAGE_ACTION_FINALLY_REACHED');
   assert.equal(finallyReached,true,'the original pageAction must reach its finally path after the held receipt is released');
-  await until(()=>pageA.eval('document.documentElement.dataset.r4TestStorageWrite!==undefined'),8000,'PAGE_ACTION_TERMINAL_STORAGE_PROBE_SETTLED');
+  await until(()=>pageA.eval('document.documentElement.dataset.r4TestRuntimeMessage!==undefined'),8000,'PAGE_ACTION_RUNTIME_MESSAGE_SETTLED');
   await until(()=>control.eval('!!document.querySelector("#quarantineList button")'),10000,'QUARANTINE_RECONCILE_BUTTON_READY');
    const terminalEvidence=await control.eval('(async(tabId)=>{const q=await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"quarantine-status"});const stored=await chrome.storage.local.get("r4TestTerminalEvidence");const p=await chrome.scripting.executeScript({target:{tabId},world:"ISOLATED",func:()=>({terminal:globalThis.__chromeBridgeMutationTerminal||null,lock:globalThis.__chromeBridgeMutationLock||null,href:location.href,origin:location.origin})});return{record:q.records?.find(r=>r.tabId===tabId)||null,globalPending:q.globalPending||null,page:p?.[0]?.result||null,documentId:p?.[0]?.documentId||null,durableTestEvidence:stored.r4TestTerminalEvidence||null}})('+tabs.a+')');
   terminalEvidence.fixturePage=await pageA.eval('(()=>({held:document.documentElement.dataset.r4CommitReceiptHeld||null,release:document.documentElement.dataset.r4ReleaseCommitReceipt||null,finallyReached:document.documentElement.dataset.r4TestFinallyReached||null,runtimeMessage:document.documentElement.dataset.r4TestRuntimeMessage||null}))()');
   terminalEvidence.durableTestEvidence=await control.eval('(async()=>{const r=await chrome.storage.local.get("r4TestTerminalEvidence");return r.r4TestTerminalEvidence||null})()');
+  assert.equal(terminalEvidence.fixturePage.runtimeMessage,'ok',
+    'the original isolated-world action must receive a successful background acknowledgement');
+  assert.ok(terminalEvidence.durableTestEvidence,'background must persist terminal evidence');
+  assert.equal(terminalEvidence.durableTestEvidence.tabId,tabs.a);
+  assert.equal(terminalEvidence.durableTestEvidence.frameId,0);
+  assert.equal(terminalEvidence.durableTestEvidence.documentId,terminalEvidence.record.documentId);
+  assert.equal(terminalEvidence.durableTestEvidence.evidence.requestId,terminalEvidence.record.requestId);
+  assert.equal(terminalEvidence.durableTestEvidence.evidence.state,'COMMIT_CLICK_ATTEMPTED');
+  assert.equal(terminalEvidence.durableTestEvidence.evidence.clickAttempted,true);
   console.log('[R4 D TERMINAL EVIDENCE DIAGNOSTIC]',JSON.stringify(terminalEvidence));
   await clickTrusted(control,'document.querySelector("#quarantineList button")');
   await until(async()=>{
