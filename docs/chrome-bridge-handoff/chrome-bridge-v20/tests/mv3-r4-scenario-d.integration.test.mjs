@@ -102,7 +102,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
       }
       const clickedAt = new Date().toISOString();`;
  const finallyMarker='  } finally {\n    releaseActionLock();';
- const finallyHook='  } finally {\n    releaseActionLock();\n    document.documentElement.dataset.r4TestFinallyReached = "true";';
+ const finallyHook='  } finally {\n    releaseActionLock();\n    document.documentElement.dataset.r4TestFinallyReached = "true";\n    try {\n      const evidence = globalThis.__chromeBridgeMutationTerminal || null;\n      await chrome.storage.local.set({r4TestTerminalEvidence: evidence});\n      document.documentElement.dataset.r4TestStorageWrite = "ok";\n    } catch (error) {\n      document.documentElement.dataset.r4TestStorageWrite = "failed:" + String(error?.message || error).slice(0,120);\n    }';
  assert.ok(pageActionSource.includes(finallyMarker),'PROVIDER_COMMIT_FINALLY_HOOK_MARKER_MISSING');
  pageActionSource=pageActionSource.replace(finallyMarker,finallyHook);
  assert.ok(pageActionSource.includes(commitClickMarker),'PROVIDER_COMMIT_HOOK_MARKER_MISSING');
@@ -402,7 +402,8 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.equal(finallyReached,true,'the original pageAction must reach its finally path after the held receipt is released');
   await until(()=>control.eval('!!document.querySelector("#quarantineList button")'),10000,'QUARANTINE_RECONCILE_BUTTON_READY');
   const terminalEvidence=await control.eval('(async(tabId)=>{const q=await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"quarantine-status"});const p=await chrome.scripting.executeScript({target:{tabId},world:"ISOLATED",func:()=>({terminal:globalThis.__chromeBridgeMutationTerminal||null,lock:globalThis.__chromeBridgeMutationLock||null,href:location.href,origin:location.origin})});return{record:q.records?.find(r=>r.tabId===tabId)||null,globalPending:q.globalPending||null,page:p?.[0]?.result||null,documentId:p?.[0]?.documentId||null}})('+tabs.a+')');
-  terminalEvidence.fixturePage=await pageA.eval('(()=>({held:document.documentElement.dataset.r4CommitReceiptHeld||null,release:document.documentElement.dataset.r4ReleaseCommitReceipt||null,finallyReached:document.documentElement.dataset.r4TestFinallyReached||null}))()');
+  terminalEvidence.fixturePage=await pageA.eval('(()=>({held:document.documentElement.dataset.r4CommitReceiptHeld||null,release:document.documentElement.dataset.r4ReleaseCommitReceipt||null,finallyReached:document.documentElement.dataset.r4TestFinallyReached||null,storageWrite:document.documentElement.dataset.r4TestStorageWrite||null}))()');
+  terminalEvidence.durableTestEvidence=await control.eval('(async()=>{const r=await chrome.storage.local.get("r4TestTerminalEvidence");return r.r4TestTerminalEvidence||null})()');
   console.log('[R4 D TERMINAL EVIDENCE DIAGNOSTIC]',JSON.stringify(terminalEvidence));
   await clickTrusted(control,'document.querySelector("#quarantineList button")');
   await until(async()=>{
