@@ -80,7 +80,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // and the production coordinator trust policy remain untouched.
   const backgroundPath=path.join(ext,'background.js');
   let backgroundSource=fs.readFileSync(backgroundPath,'utf8');
-  backgroundSource+=\`
+  backgroundSource+=`
 chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   if(message?.target!=='r4-test-terminal-probe') return false;
   const evidence=message.evidence;
@@ -105,7 +105,7 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
     .catch(()=>sendResponse({ok:false,error:'TEST_EVIDENCE_WRITE_FAILED'}));
   return true;
 });
-\`;
+`;
   fs.writeFileSync(backgroundPath,backgroundSource);
  // Test-only receipt hold in the disposable extension copy. The real
  // provider_commit click happens first; only its post-click receipt is held,
