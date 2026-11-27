@@ -62,7 +62,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  const cert=spawnSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',key,'-out',crt,'-days','1','-subj','/CN=claude.ai','-addext','subjectAltName=DNS:claude.ai'],{encoding:'utf8'});assert.equal(cert.status,0,'TLS_FIXTURE_CERT_FAILED');
  const html='<!doctype html><html><body><div class="font-claude-response">Fixture baseline</div><div contenteditable="true" class="ProseMirror" role="textbox" style="min-height:42px;min-width:240px;border:1px solid #777"></div><button type="button" data-testid="chat-input-send">Send</button><script>document.querySelector("button").addEventListener("click",e=>{e.currentTarget.dataset.clicked="true";e.currentTarget.dataset.clickCount=String(Number(e.currentTarget.dataset.clickCount||"0")+1)})</script></body></html>';
  const tls=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(crt)},(req,res)=>{if(!/^\/chat\/[A-Za-z0-9_-]{8,128}$/.test(new URL(req.url,'https://claude.ai').pathname)){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/html'});res.end(html);});
- let chrome=null,worker=null,control=null,bridge=null,proxy=null,rpcId=0;
+ let chrome=null,worker=null,control=null,pageA=null,pageB=null,bridge=null,proxy=null,rpcId=0;
  const rpc=async(name,args={})=>{const r=await fetch('http://127.0.0.1:17481/mcp',{method:'POST',headers:{authorization:'Bearer '+agentToken,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:++rpcId,method:'tools/call',params:{name,arguments:args}})});assert.equal(r.status,200);const d=await r.json();if(d.error)throw Error(d.error.message);const t=d.result?.content?.find(x=>x.type==='text')?.text;return t?JSON.parse(t):d.result;};
  try{
   await new Promise((r,j)=>{tls.once('error',j);tls.listen(8443,'127.0.0.1',r);});
@@ -92,6 +92,10 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'WORKER_API');
   const seed='(async()=>{await chrome.storage.local.set({browserToken:'+JSON.stringify(browserToken)+',bridgeBackgroundMode:true,bridgeConnectionDesired:true,bridgeMutationLabMode:true,sites:{"https://claude.ai":{mode:"chat",adapter:"claude"}},adapters:"{}"});const a=await chrome.tabs.create({url:"https://claude.ai/chat/r4scenarioDA001",active:false});const b=await chrome.tabs.create({url:"https://claude.ai/chat/r4scenarioDB001",active:false});const c=await chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true});return{a:a.id,b:b.id,c:c.id};})()';
   const tabs=await worker.eval(seed);
+  const tabA=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDA001'&&x.webSocketDebuggerUrl),15000,'TAB_A');
+  pageA=await Cdp.connect(tabA.webSocketDebuggerUrl);await pageA.call('Runtime.enable');
+  const tabB=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDB001'&&x.webSocketDebuggerUrl),15000,'TAB_B');
+  pageB=await Cdp.connect(tabB.webSocketDebuggerUrl);await pageB.call('Runtime.enable');
   const ct=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),15000,'CONTROL');
   control=await Cdp.connect(ct.webSocketDebuggerUrl);await control.call('Runtime.enable');
   await until(()=>control.eval('document.readyState==="complete"&&!!document.querySelector("#backgroundGrantAll")'),12000,'CONTROL_READY');
@@ -135,7 +139,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.ok(preparedResult.preparedId&&preparedResult.fencingToken);
 
   // Arm the hold inside the real Claude page fixture before provider_commit.
-  await worker.eval('(async()=>chrome.scripting.executeScript({target:{tabId:'+tabs.a+'},func:()=>{document.documentElement.dataset.r4HoldCommitReceipt="true";document.documentElement.dataset.r4CommitReceiptHeld="false";document.documentElement.dataset.r4CommitClickCount="0";return true}}))()');
+  await pageA.eval('(()=>{document.documentElement.dataset.r4HoldCommitReceipt="true";document.documentElement.dataset.r4CommitReceiptHeld="false";document.documentElement.dataset.r4CommitClickCount="0";return true})()');
   const commitArgs={requestId:identity.requestId,taskId:identity.taskId,providerId:identity.providerId,
     tabId:identity.tabId,origin:identity.origin,conversationId:identity.conversationId,epoch:identity.epoch,
     preparedId:preparedResult.preparedId,fencingToken:preparedResult.fencingToken,payloadHash:identity.payloadHash};
@@ -144,9 +148,9 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.ok((await control.eval('document.querySelector("#backgroundApprovals .approval").textContent')).includes(String(tabs.a)));
   const approveCommit='[...document.querySelectorAll("#backgroundApprovals .approval")].find(e=>e.textContent.includes('+JSON.stringify(String(tabs.a))+'))?.querySelector("button:not(.danger)")';
   await clickTrusted(control,approveCommit);
-  await until(async()=>worker.eval('(async()=>{const r=await chrome.scripting.executeScript({target:{tabId:'+tabs.a+'},func:()=>({clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true",count:document.documentElement.dataset.r4CommitClickCount,held:document.documentElement.dataset.r4CommitReceiptHeld==="true"})});return r?.[0]?.result?.clicked===true&&r?.[0]?.result?.held===true&&r?.[0]?.result?.count==="1"})()'),20000,'SEND_CLICK_RECEIPT_HELD');
+  await until(async()=>{const s=await pageA.eval('(()=>({clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true",count:document.documentElement.dataset.r4CommitClickCount,held:document.documentElement.dataset.r4CommitReceiptHeld==="true"}))()');return s.clicked&&s.held&&s.count==="1";},20000,'SEND_CLICK_RECEIPT_HELD');
 
-  const sendState=await worker.eval('(async()=>{const r=await chrome.scripting.executeScript({target:{tabId:'+tabs.a+'},func:()=>({clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true",buttonCount:document.querySelector("[data-testid=chat-input-send]")?.dataset.clickCount||"0",hold:document.documentElement.dataset.r4CommitReceiptHeld==="true"})});return r?.[0]?.result})()');
+  const sendState=await pageA.eval('(()=>({clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true",buttonCount:document.querySelector("[data-testid=chat-input-send]")?.dataset.clickCount||"0",hold:document.documentElement.dataset.r4CommitReceiptHeld==="true"}))()');
   assert.equal(sendState.clicked,true);assert.equal(sendState.buttonCount,'1');assert.equal(sendState.hold,true);
 
   // Global Revoke must time out draining the deliberately held accepted
@@ -172,11 +176,16 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // Restart MV3 while the page action receipt is still held. Do not release
   // the hold: after the Send click, execution state is ambiguous by design.
   control.close();control=null;
+  pageA.close();pageA=null;pageB.close();pageB=null;
   try { await worker.eval('chrome.runtime.reload();true'); } catch {}
   worker.close();worker=null;
   const restartedWorker=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
   worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl);await worker.call('Runtime.enable');
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'RESTARTED_WORKER_API');
+  const tabAAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDA001'&&x.webSocketDebuggerUrl),15000,'TAB_A_AFTER_RESTART');
+  pageA=await Cdp.connect(tabAAfter.webSocketDebuggerUrl);await pageA.call('Runtime.enable');
+  const tabBAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDB001'&&x.webSocketDebuggerUrl),15000,'TAB_B_AFTER_RESTART');
+  pageB=await Cdp.connect(tabBAfter.webSocketDebuggerUrl);await pageB.call('Runtime.enable');
   await worker.eval('(async()=>chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true}))()');
 
   // Restart the local test Bridge process as well. The provider journal is
@@ -223,7 +232,10 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.ok(durableAfter.localQuarantined.includes(tabs.a)||durableAfter.sessionQuarantined.includes(tabs.a));
   assert.equal(durableAfter.localLab,false);assert.deepEqual(durableAfter.sessionGrants,{});
 
-  const pageAfterRestart=await worker.eval('(async()=>{const out=await Promise.all(['+tabs.a+','+tabs.b+'].map(tabId=>chrome.scripting.executeScript({target:{tabId},func:()=>({draft:(document.querySelector("[contenteditable=true]")?.innerText||"").trim(),clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true",clickCount:document.querySelector("[data-testid=chat-input-send]")?.dataset.clickCount||"0"})})));return{a:out[0][0].result,b:out[1][0].result}})()');
+  const pageAfterRestart={
+    a:await pageA.eval('(()=>({draft:(document.querySelector("[contenteditable=true]")?.innerText||"").trim(),clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true",clickCount:document.querySelector("[data-testid=chat-input-send]")?.dataset.clickCount||"0"}))()'),
+    b:await pageB.eval('(()=>({draft:(document.querySelector("[contenteditable=true]")?.innerText||"").trim(),clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true",clickCount:document.querySelector("[data-testid=chat-input-send]")?.dataset.clickCount||"0"}))()')
+  };
   assert.equal(pageAfterRestart.a.clicked,true);assert.equal(pageAfterRestart.a.clickCount,'1');
   assert.equal(pageAfterRestart.b.draft,'');assert.equal(pageAfterRestart.b.clicked,false);
 
@@ -239,11 +251,11 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.equal(staleResult.state,'BLOCKED');
   assert.equal(staleResult.reasonCode,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
     'the durable pending global Revoke fence must reject new mutations after restart');
-  const finalPage=await worker.eval('(async()=>{const out=await chrome.scripting.executeScript({target:{tabId:'+tabs.b+'},func:()=>({draft:(document.querySelector("[contenteditable=true]")?.innerText||"").trim(),clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true"})});return out?.[0]?.result})()');
+  const finalPage=await pageB.eval('(()=>({draft:(document.querySelector("[contenteditable=true]")?.innerText||"").trim(),clicked:document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true"}))()');
   assert.equal(finalPage.draft,'');assert.equal(finalPage.clicked,false);
   console.log('[R4 SCENARIO D PASS] Send clicked once; receipt lost; Revoke returned UNKNOWN and quarantined A; MV3 + Bridge restarted; journal UNKNOWN; grants never reappeared; stale post-restart mutation BLOCKED by durable global fence');
  }finally{
-  control?.close();worker?.close();
+  control?.close();pageA?.close();pageB?.close();worker?.close();
   if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
   if(bridge?.listening)await new Promise(r=>{bridge.close(r);bridge.closeAllConnections?.();});
   if(tls.listening)await new Promise(r=>tls.close(r));
