@@ -47,6 +47,11 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
         run: node --test tests/mv3-background-lifecycle.test.mjs
+      - name: Verify R4 provider-origin host permission and per-tab grant in disposable Chrome
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        env:
+          CHROME_BIN: ${{ steps.setup-mv3-chrome.outputs.chrome-path }}
+        run: node --test tests/mv3-r4-provider-origin-permission.test.mjs
       - name: Verify Gemini adapter DOM in real disposable Chromium
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/chromium-adapter-dom.test.mjs
