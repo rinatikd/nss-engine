@@ -123,9 +123,11 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  try{
   await new Promise((r,j)=>{tls.once('error',j);tls.listen(8443,'127.0.0.1',r);});
   proxy=http.createServer();
+  proxy.on('connection',socket=>trackSocket(socket));
   proxy.on('connect',(req,client,head)=>{
     if(req.url!=='claude.ai:443'){client.end('HTTP/1.1 403 Forbidden\r\n\r\n');return;}
-    const upstream=net.connect(8443,'127.0.0.1');
+    trackSocket(client);
+    const upstream=trackSocket(net.connect(8443,'127.0.0.1'));
     upstream.once('connect',()=>{
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if(head.length)upstream.write(head);
@@ -333,11 +335,20 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   assert.equal(finalPage.draft,'');assert.equal(finalPage.clicked,false);
   console.log('[R4 SCENARIO D PASS] Send clicked once; receipt lost; Revoke returned UNKNOWN and quarantined A; MV3 + Bridge restarted; journal UNKNOWN; grants never reappeared; stale post-restart mutation BLOCKED by durable global fence');
  }finally{
+  clearTimeout(watchdog);
   control?.close();pageA?.close();pageB?.close();worker?.close();
-  if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
-  if(bridge?.listening)await new Promise(r=>{bridge.close(r);bridge.closeAllConnections?.();});
-  if(tls.listening)await new Promise(r=>tls.close(r));
-  if(proxy?.listening)await new Promise(r=>proxy.close(r));
+  for(const socket of sockets)socket.destroy();
+  if(chrome&&chrome.exitCode===null){
+    try{process.kill(-chrome.pid,'SIGKILL');}catch{try{chrome.kill('SIGKILL');}catch{}}
+    await Promise.race([new Promise(resolve=>chrome.once('exit',resolve)),sleep(2500)]);
+  }
+  const closeServer=async server=>{
+    if(!server?.listening)return;
+    const closed=new Promise(resolve=>{try{server.close(()=>resolve());}catch{resolve();}});
+    try{server.closeAllConnections?.();}catch{}
+    await Promise.race([closed,sleep(2500)]);
+  };
+  await closeServer(bridge);await closeServer(tls);await closeServer(proxy);
   try{fs.rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:200});}catch(e){console.warn('[R4 D] fixture cleanup deferred',e.code);}
  }
 });
