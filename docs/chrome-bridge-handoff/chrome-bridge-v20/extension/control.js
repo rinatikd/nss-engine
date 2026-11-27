@@ -508,13 +508,13 @@ $('backgroundRevokeAll').onclick=async event=>{
       target:'bridge-coordinator',type:'clear-background-controls'
     });
     if (!result?.ok) throw Error(backgroundRevokeErrorMessage(result));
-    $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
     // Revoke-all cancels every coordinator-owned approval as part of the
-    // same operation. Refresh the approval panel immediately so a stale
-    // visible Approve button cannot linger until the next status poll.
+    // same operation. Refresh both panels before reporting completion so a
+    // stale visible Approve button cannot linger after the success message.
     await showBackgroundApprovals();
     window.dispatchEvent(new Event('bridge-background-grants-changed'));
     await refreshBackgroundGrantList();
+    $('backgroundGrantStatus').textContent='Управление всеми вкладками отозвано.';
   } catch(e) {
     $('backgroundGrantStatus').textContent='Ошибка отключения: '+e.message;
   }
