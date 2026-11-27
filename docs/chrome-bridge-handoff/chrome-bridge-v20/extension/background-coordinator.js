@@ -285,9 +285,20 @@ async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=
   const uniqueOperations=new Map();
   for (const item of operationRows) {
     if (!item || !Number.isSafeInteger(item.tabId) || item.tabId<=0) continue;
-    const key=typeof item.operationId==='string'
-      ? item.operationId : 'legacy:'+item.tabId+':'+String(item.requestId||'');
-    uniqueOperations.set(key,item);
+    const matchingKey=[...uniqueOperations.entries()].find(([,existing])=>
+      existing.tabId===item.tabId && existing.requestId===item.requestId &&
+      existing.command===item.command)?.[0];
+    if (typeof item.operationId==='string') {
+      // The global Revoke snapshot may carry a partial in-memory identity for
+      // the same request. Prefer the journal record with exact documentId and
+      // operationId, without collapsing two distinct journal operations.
+      if (matchingKey && matchingKey.startsWith('legacy:'))
+        uniqueOperations.delete(matchingKey);
+      uniqueOperations.set('operation:'+item.operationId,item);
+    } else if (!matchingKey) {
+      uniqueOperations.set('legacy:'+item.tabId+':'+String(item.requestId||'')+
+        ':'+String(item.command||''),item);
+    }
   }
   for (const item of uniqueOperations.values()) {
     const rows=recoveredByTab.get(item.tabId)||[];
