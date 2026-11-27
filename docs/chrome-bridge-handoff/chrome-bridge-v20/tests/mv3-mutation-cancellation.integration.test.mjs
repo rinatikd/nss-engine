@@ -220,7 +220,8 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
     assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
     console.log('[R4 MUTATION CANCEL STEP] created provider fixture target');
-    const tab=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.query({url:'+JSON.stringify(providerUrl)+'},tabs=>resolve(tabs[0]||null)))())'),
+    const tab=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.query({},tabs=>'+
+      'resolve((tabs||[]).find(t=>t.url==='+JSON.stringify(providerUrl)+')||null)))())'),
       15000,'PROVIDER_TAB_ID');
     assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_ID_MISSING');
     const tabId=tab.id;
