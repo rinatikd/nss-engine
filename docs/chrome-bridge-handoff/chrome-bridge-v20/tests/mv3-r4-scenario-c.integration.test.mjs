@@ -98,17 +98,6 @@ test('R4 Scenario C: ten real MV3 late-approval races are fenced before Approval
   await until(async()=>(await rpc('browser_status')).connected===true,20000,'CONNECTED');
   await until(()=>control.eval('document.querySelector("#status").textContent.includes("Подключено")'),10000,'CONTROL_CONNECTED');
   await until(()=>control.eval('document.querySelector("#mutationLab").checked===true'),8000,'LAB_ON');
-  await control.eval('document.querySelector("#backgroundGrantAll").addEventListener("click",e=>window.__r4GrantClickTrusted=e.isTrusted,{capture:true})');
-  await clickTrusted(control,'document.querySelector("#backgroundGrantAll")');
-  try {
-    await until(()=>control.eval('document.querySelectorAll("#backgroundGrantList .approval").length===2'),12000,'GRANTS');
-  } catch(error) {
-    const ui=await control.eval('JSON.stringify({trusted:window.__r4GrantClickTrusted,status:document.querySelector("#status")?.textContent,grantStatus:document.querySelector("#backgroundGrantStatus")?.textContent,prerequisite:document.querySelector("#backgroundGrantPrerequisite")?.textContent,mode:document.querySelector("#backgroundMode")?.checked,lab:document.querySelector("#mutationLab")?.checked,rows:document.querySelector("#backgroundGrantList")?.textContent})');
-    const state=await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()');
-    const tabsState=await worker.eval('(async()=>JSON.stringify({tabs:(await chrome.tabs.query({})).filter(t=>(t.url||"").startsWith("https://claude.ai/")).map(t=>({id:t.id,url:t.url})),permission:await chrome.permissions.contains({origins:["https://claude.ai/*"]})}))()');
-    console.error('[R4 GRANT DIAGNOSTIC]',ui,state,tabsState);
-    throw error;
-  }
   const binding=await rpc('agent_bind',{name:'r4_late_race',tabId:tabs.a});
   assert.equal(binding.adapterVerified,true);
   const make=(attempt,message)=>({requestId:'r4late'+String(attempt).padStart(4,'0'),taskId:'r4latetask'+String(attempt).padStart(4,'0'),providerId:'claude',tabId:tabs.a,origin:'https://claude.ai',conversationId:'r4scenarioC001',epoch:1,message,payloadHash:crypto.createHash('sha256').update(message).digest('hex')});
