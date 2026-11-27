@@ -179,7 +179,7 @@ test('R4 Scenario A: real MV3 Control Revoke cancels A and preserves queued B ov
     sleep(12000).then(()=>{throw Error('IN_FLIGHT_CLICK_DID_NOT_SETTLE_AFTER_REVOKE');})
   ]);
   assert.equal(heldClickResponse.result?.isError,true);
-  assert.equal(heldClickResponse.result?.dispatchState,'NOT_PERFORMED');
+  assert.equal(heldClickResponse.result?.failure?.code,'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT');
   assert.equal(heldClickResponse.result?.content?.[0]?.text,'MUTATION_CANCELLED_BEFORE_SIDE_EFFECT');
   const postRevokeTab=await worker.eval('(async()=>{const [tab,all]=await Promise.all([chrome.tabs.get('+tabs.b+'),chrome.storage.local.get(null)]);const rows=Object.entries(all).filter(([key,value])=>key.startsWith("bridgeMutationOperation.v1.")&&key!=="bridgeMutationOperation.v1.index"&&value?.command==="browser_click");return{url:tab.url,clicked:(await chrome.scripting.executeScript({target:{tabId:'+tabs.b+'},func:()=>document.querySelector("[data-testid=chat-input-send]")?.dataset.clicked==="true"}))[0].result,quarantine:all.bridgeMutationQuarantinedTabs||[],records:rows.map(([key,value])=>({operationId:value.operationId,phase:value.events?.at(-1)?.phase,sideEffect:value.events?.at(-1)?.sideEffect,code:value.events?.at(-1)?.code}))}})()');
   assert.equal(postRevokeTab.clicked,false,'Revoke before the side-effect boundary must not click Send');
