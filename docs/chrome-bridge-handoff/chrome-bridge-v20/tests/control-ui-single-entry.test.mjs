@@ -30,7 +30,7 @@ test('site list does not create redundant legacy Control buttons or misleading s
 
 test('isolated staging packages RC1 modules without cloning installed extension',()=>{
   const stage=readFileSync(new URL('../deployment/stage-background-lab.ps1',import.meta.url),'utf8');
-  for (const name of ['control-targets.js','coordinator-ack.js','background-mode-reconnect.js','control-ui-guard.js','background-control-ui-state.js']) {
+  for (const name of ['control-targets.js','coordinator-ack.js','background-mode-reconnect.js','control-ui-guard.js','background-control-ui-state.js','background-control-list.js']) {
     assert.ok(stage.includes("'"+name+"'"),'Missing source file: '+name);
   }
   assert.doesNotMatch(stage,/Copy-Item\s+-LiteralPath\s+\$installed\s+-Destination\s+\$temp\b/i);
