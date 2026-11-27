@@ -1586,3 +1586,14 @@ test('global quarantine fence remains until every affected tab has its own termi
   assert.deepEqual(audit.map(e=>e.tabId),[79,81]);
   assert.ok(audit.every(e=>e.globalFenceToken===globalToken));
 });
+
+test('quarantine status restricts local and session audit stores before reading them',async()=>{
+  const c=fakeChrome();
+  installBackgroundCoordinator(c);
+  const status=await sendCoordinator(c,'quarantine-status');
+  assert.equal(status.available,true);
+  assert.deepEqual(c.calls.slice(0,2),[
+    ['restrict','TRUSTED_CONTEXTS'],
+    ['session-restrict','TRUSTED_CONTEXTS']
+  ]);
+});
