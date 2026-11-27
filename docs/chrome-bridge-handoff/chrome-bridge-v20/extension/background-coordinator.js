@@ -667,9 +667,6 @@ async function reconcileQuarantinedTab(chromeApi, {
     throw coordinatorError('INVALID_QUARANTINE_TAB','BLOCKED');
   if (confirmed!==true || localGesture!==true)
     throw coordinatorError('OPERATOR_CONFIRMATION_REQUIRED','BLOCKED');
-  if (mutationLanes.has(tabId) || mutationFencedTabs.has(tabId))
-    throw coordinatorError('QUARANTINE_ACTION_STILL_RUNNING','BLOCKED');
-
   return enqueueRevocationFence(async()=>{
     const state=await readQuarantineSnapshot(chromeApi);
     if (state.globalLock)
@@ -680,6 +677,15 @@ async function reconcileQuarantinedTab(chromeApi, {
     const stores=state.recordStores[String(tabId)] || [];
     if (!record || !stores.length || typeof token!=='string' || record.token!==token)
       throw coordinatorError('QUARANTINE_TOKEN_STALE','BLOCKED');
+
+    // Session Authorization is origin-wide. Report this policy boundary before
+    // inspecting in-flight tab state or probing the page, and do not mutate grants.
+    const sessionStatus=await new SessionAuthorization(chromeApi).status();
+    if (sessionStatus.active && sessionStatus.origins.includes(record.origin))
+      throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
+    if (mutationLanes.has(tabId) || mutationFencedTabs.has(tabId))
+      throw coordinatorError('QUARANTINE_ACTION_STILL_RUNNING','BLOCKED');
+
     const pendingGlobal=state.global.record;
     if (pendingGlobal?.pending===true) {
       const affected=pendingGlobal.affectedTabs;
@@ -750,9 +756,6 @@ async function reconcileQuarantinedTab(chromeApi, {
         latestTab.tab.url!==tab.url || latestTab.origin!==record.origin)
       throw coordinatorError('QUARANTINE_TOKEN_STALE','BLOCKED');
 
-    const sessionStatus=await new SessionAuthorization(chromeApi).status();
-    if (sessionStatus.active && sessionStatus.origins.includes(record.origin))
-      throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
     const backgroundGrants=new BackgroundControlGrants(chromeApi);
     const grantRevoke=await enqueueControlOperationBounded(
       ()=>backgroundGrants.revoke(tabId),
