@@ -1238,12 +1238,15 @@ test('operator quarantine reconciliation requires exact terminal evidence and le
   };
   const pending={
     pending:true,token:globalToken,affectedTabs:[tabId],startedAt:now-1000,
+    // A legacy global fence predates operationId/documentId fields and
+    // stores the coordinator-lane start time. The per-tab quarantine record
+    // remains the authoritative exact journal/document identity.
     operations:[{
-      tabId,operationId:record.operationId,requestId,command:record.command,
+      tabId,requestId,command:record.command,
       taskId:record.taskId,providerId:record.providerId,
-      origin:record.origin,conversationId:record.conversationId,
-      documentId:record.documentId,frameId:record.frameId,epoch:record.epoch,
-      payloadHash:record.payloadHash,preparedId:record.preparedId,startedAt:record.startedAt
+      origin:record.origin,conversationId:record.conversationId,epoch:record.epoch,
+      payloadHash:record.payloadHash,preparedId:record.preparedId,
+      startedAt:now-2300
     }]
   };
   let pageState={
