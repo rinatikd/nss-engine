@@ -264,12 +264,22 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   });
   assert.ok(createdControl.targetId,'CONTROL_TARGET_CREATE_FAILED');
   const afterControl=await until(async()=>(await targets()).find(x=>
-    x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),
+    x.id===createdControl.targetId&&x.type==='page'&&
+    x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),
     15000,'CONTROL_AFTER_RESTART');
   control=await Cdp.connect(afterControl.webSocketDebuggerUrl,'control-after-reload');
   await control.call('Runtime.enable');
-  await until(()=>control.eval('document.readyState!=="loading"&&!!document.querySelector("#backgroundGrantList")'),
-    12000,'CONTROL_AFTER_RESTART_READY');
+  try {
+    await until(()=>control.eval('document.readyState!=="loading"&&!!document.querySelector("#backgroundGrantList")'),
+      12000,'CONTROL_AFTER_RESTART_READY');
+  } catch(error) {
+    const snapshot=await control.eval('JSON.stringify({href:location.href,title:document.title,readyState:document.readyState,'+
+      'body:document.body?.innerText?.slice(0,800),grantList:!!document.querySelector("#backgroundGrantList"),'+
+      'status:document.querySelector("#status")?.textContent})').catch(e=>String(e.message));
+    const pageTargets=(await targets()).filter(x=>x.url==='chrome-extension://'+extensionId+'/control.html')
+      .map(x=>({id:x.id,type:x.type,url:x.url,title:x.title,ws:!!x.webSocketDebuggerUrl}));
+    throw Error(error.message+' CONTROL_PAGE='+snapshot+' CONTROL_TARGETS='+JSON.stringify(pageTargets));
+  }
   const restartedWorker=await until(async()=>(await targets()).find(x=>
     x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&
     x.webSocketDebuggerUrl&&x.id!==originalWorkerTargetId),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
