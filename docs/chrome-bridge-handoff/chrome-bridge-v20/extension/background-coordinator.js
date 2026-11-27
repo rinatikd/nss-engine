@@ -52,7 +52,9 @@ function ensureMutationOperationRecovery(chromeApi) {
         throw Error('MUTATION_OPERATION_JOURNAL_CORRUPT');
       }
       if (result.quarantinedTabs.length) {
-        const persisted=await persistMutationQuarantine(chromeApi,result.quarantinedTabs);
+        const persisted=await persistMutationQuarantine(
+          chromeApi,result.quarantinedTabs,result.unresolved
+        );
         if (!persisted.persisted) {
           await persistGlobalQuarantineLock(chromeApi);
           throw Error('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
@@ -243,29 +245,94 @@ async function assertMutationAllowed(chromeApi, tabId) {
 async function persistMutationQuarantine(chromeApi, tabIds, recoveredOperations=[]) {
   for (const tabId of tabIds) mutationQuarantinedTabs.add(tabId);
   const now=Date.now();
-  const recoveredByTab=new Map((Array.isArray(recoveredOperations)?recoveredOperations:[])
-    .filter(item=>item && Number.isSafeInteger(item.tabId) && item.tabId>0)
-    .map(item=>[item.tabId,item]));
+  const operationRows=[...(Array.isArray(recoveredOperations)?recoveredOperations:[])];
+
+  // A caller-triggered Revoke can arrive after the operation has written its
+  // document-bound journal entry but before the coordinator's in-memory lane
+  // context has learned that documentId. Rehydrate from the authoritative
+  // journal rather than persisting a weaker tab-only quarantine.
+  try {
+    const journalRecords=await mutationOperationJournalFor(chromeApi).list();
+    for (const record of journalRecords) {
+      const terminal=record.events.at(-1);
+      const unresolved=terminal.phase==='INJECTING' || terminal.phase==='UNKNOWN' ||
+        (terminal.phase==='COMPLETED' &&
+          terminal.sideEffect==='composer-draft-state-unverified') ||
+        (terminal.phase==='COMPLETED' &&
+          ['browser_click','browser_fill'].includes(record.command) &&
+          terminal.sideEffect==='generic-page-action');
+      if (!unresolved || !tabIds.includes(record.tabId)) continue;
+      const injecting=record.events.find(event=>event.phase==='INJECTING') || null;
+      operationRows.push({
+        operationId:record.operationId,command:record.command,tabId:record.tabId,
+        origin:record.origin,documentId:record.documentId,frameId:record.frameId,
+        conversationId:record.conversationId,requestId:record.requestId,
+        taskId:record.taskId,providerId:record.providerId,
+        preparedId:record.preparedId,payloadHash:record.payloadHash,epoch:record.epoch,
+        startedAt:injecting?.at ?? null,
+        reasonCode:terminal.code || (terminal.phase==='INJECTING'
+          ? 'MUTATION_OPERATION_INJECTING'
+          : terminal.phase==='UNKNOWN'?'MUTATION_OPERATION_UNKNOWN'
+            :'MUTATION_SIDE_EFFECT_UNVERIFIED')
+      });
+    }
+  } catch {
+    // Quarantine must still be persisted when the journal cannot be read.
+    // In that case it remains non-reconcilable and therefore fail-closed.
+  }
+
+  const recoveredByTab=new Map();
+  const uniqueOperations=new Map();
+  for (const item of operationRows) {
+    if (!item || !Number.isSafeInteger(item.tabId) || item.tabId<=0) continue;
+    const key=typeof item.operationId==='string'
+      ? item.operationId : 'legacy:'+item.tabId+':'+String(item.requestId||'');
+    uniqueOperations.set(key,item);
+  }
+  for (const item of uniqueOperations.values()) {
+    const rows=recoveredByTab.get(item.tabId)||[];
+    rows.push(item);
+    recoveredByTab.set(item.tabId,rows);
+  }
+
   const records={};
   for (const tabId of tabIds) {
-    const context=mutationContexts.get(tabId) || recoveredByTab.get(tabId) || null;
+    const rows=recoveredByTab.get(tabId)||[];
+    const liveContext=mutationContexts.get(tabId)||null;
+    const matching=liveContext?.requestId
+      ? rows.filter(item=>item.requestId===liveContext.requestId &&
+          item.command===liveContext.command)
+      : [];
+    const context=matching.length===1?matching[0]:
+      matching.length>1?null:
+      rows.length===1?rows[0]:
+      rows.length>1?null:liveContext;
+    const multipleUnresolved=rows.length>1 && matching.length!==1;
     records[String(tabId)]={
       schemaVersion:1,tabId,token:crypto.randomUUID(),
+      operationId:context?.operationId || null,
       requestId:context?.requestId || null,
       command:context?.command || null,
       taskId:context?.taskId || null,
       providerId:context?.providerId || null,
       origin:context?.origin || null,
       conversationId:context?.conversationId || null,
+      documentId:typeof context?.documentId==='string'?context.documentId:null,
+      frameId:Number.isSafeInteger(context?.frameId)?context.frameId:null,
       epoch:Number.isSafeInteger(context?.epoch)?context.epoch:null,
       payloadHash:context?.payloadHash || null,
       preparedId:context?.preparedId || null,
       startedAt:Number.isFinite(context?.startedAt)?context.startedAt:now,
       quarantinedAt:now,
-      reasonCode:'BACKGROUND_STOP_UNCONFIRMED',
-      reconcilable:Boolean(context?.requestId &&
+      reasonCode:multipleUnresolved?'MULTIPLE_UNRESOLVED_OPERATIONS':
+        context?.reasonCode || 'BACKGROUND_STOP_UNCONFIRMED',
+      reconcilable:Boolean(context?.operationId && context?.requestId &&
         ['provider_prepare','provider_commit'].includes(context?.command) &&
-        typeof context?.origin==='string' && typeof context?.conversationId==='string')
+        typeof context?.origin==='string' &&
+        typeof context?.conversationId==='string' &&
+        typeof context?.documentId==='string' && context.documentId &&
+        context.frameId===0 && Number.isFinite(context?.startedAt) &&
+        !multipleUnresolved)
     };
   }
   const writeTo=async(storage,store)=>{
@@ -601,7 +668,9 @@ async function readQuarantineStatus(chromeApi) {
     const record=state.records[String(tabId)];
     return record ? {
       ...record,store:(state.recordStores[String(tabId)]||[]).join('+'),
-      reconcilable:record.reconcilable===true
+      reconcilable:record.reconcilable===true &&
+        typeof record.operationId==='string' && typeof record.documentId==='string' &&
+        record.documentId.length>0 && record.frameId===0
     } : {
       schemaVersion:1,tabId,token:null,reasonCode:'QUARANTINE_RECORD_MISSING',
       reconcilable:false
@@ -709,10 +778,13 @@ async function reconcileQuarantinedTab(chromeApi, {
         throw coordinatorError('GLOBAL_FENCE_OPERATION_IDENTITY_MISMATCH','BLOCKED');
     }
     if (record.reconcilable!==true ||
+        typeof record.operationId!=='string' ||
         !record.requestId ||
         !['provider_prepare','provider_commit'].includes(record.command) ||
         typeof record.origin!=='string' ||
-        typeof record.conversationId!=='string')
+        typeof record.conversationId!=='string' ||
+        typeof record.documentId!=='string' || !record.documentId ||
+        record.frameId!==0)
       throw coordinatorError('QUARANTINE_PROOF_NOT_BINDABLE','BLOCKED');
 
     const {tab,origin,site}=await permittedTab(chromeApi,tabId);
@@ -723,6 +795,8 @@ async function reconcileQuarantinedTab(chromeApi, {
     const probe=await probeQuarantinedMutation(chromeApi,tabId);
     if (probe.href!==tab.url || probe.origin!==record.origin)
       throw coordinatorError('QUARANTINE_TAB_IDENTITY_CHANGED','BLOCKED');
+    if (probe.documentId!==record.documentId)
+      throw coordinatorError('QUARANTINE_DOCUMENT_IDENTITY_CHANGED','BLOCKED');
     if (probe.lock)
       throw coordinatorError('QUARANTINE_ACTION_STILL_RUNNING','BLOCKED');
     const terminal=probe.terminal;
@@ -768,8 +842,8 @@ async function reconcileQuarantinedTab(chromeApi, {
 
     const auditEvent={
       schemaVersion:1,eventId:crypto.randomUUID(),type:'OPERATOR_RECONCILE',
-      tabId,quarantineToken:record.token,requestId:record.requestId,
-      command:record.command,origin:record.origin,
+      tabId,quarantineToken:record.token,operationId:record.operationId,
+      requestId:record.requestId,command:record.command,origin:record.origin,
       conversationId:record.conversationId,reasonCode:record.reasonCode,
       globalFenceToken:state.global.record?.token || null,
       evidence:{
@@ -852,7 +926,7 @@ async function reconcileQuarantinedTab(chromeApi, {
     mutationQuarantinedTabs.delete(tabId);
     const deliveryState=terminal.clickAttempted===true?'UNKNOWN':'NOT_SENT';
     return {
-      ok:true,tabId,requestId:record.requestId,
+      ok:true,tabId,operationId:record.operationId,requestId:record.requestId,
       state:'RECONCILED',terminalState:terminal.state,deliveryState,
       warning:terminal.clickAttempted===true
         ? 'SEND_CLICK_ATTEMPTED_DELIVERY_UNKNOWN_DO_NOT_REPLAY'
