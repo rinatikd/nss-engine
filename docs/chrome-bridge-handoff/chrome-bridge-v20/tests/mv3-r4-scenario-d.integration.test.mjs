@@ -441,7 +441,7 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
   assert.ok(terminalEvidence.durableTestEvidence,'background must persist terminal evidence');
   assert.equal(terminalEvidence.durableTestEvidence.tabId,tabs.a);
   assert.equal(terminalEvidence.durableTestEvidence.frameId,0);
-  assert.equal(terminalEvidence.durableTestEvidence.documentId,terminalEvidence.record.documentId);
+  assert.equal(terminalEvidence.durableTestEvidence.documentId,terminalEvidence.documentId);
   assert.equal(terminalEvidence.durableTestEvidence.evidence.requestId,terminalEvidence.record.requestId);
   assert.equal(terminalEvidence.durableTestEvidence.evidence.state,'COMMIT_CLICK_ATTEMPTED');
   assert.equal(terminalEvidence.durableTestEvidence.evidence.clickAttempted,true);
