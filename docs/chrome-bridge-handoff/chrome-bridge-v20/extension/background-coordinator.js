@@ -1463,6 +1463,9 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
         const revocationContextSnapshot=name==='session_revoke'
           ? new Map([...mutationContexts.entries()].map(([id,context])=>[id,{...context}]))
           : null;
+        const revocationTabIds=name==='session_revoke'
+          ? [...new Set([...mutationLanes.keys(),...mutationContexts.keys()])]
+          : null;
         if (sessionControlChange) controlClearRequested=true;
         if (name==='session_revoke') approvals.stop();
         let globalRevocationFence=null;
@@ -1475,7 +1478,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
           // reconciled; affected tabs are quarantined if this is a recovery.
           if (name==='session_revoke') {
             globalRevocationFence=await enqueueRevocationFence(
-              ()=>persistGlobalRevocationFence(chromeApi,[...mutationLanes.keys()],
+              ()=>persistGlobalRevocationFence(chromeApi,revocationTabIds,
                 revocationContextSnapshot)
             );
             if (!globalRevocationFence.persisted) {
