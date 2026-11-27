@@ -222,6 +222,10 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // still obtaining the authoritative Chrome tabId from onCreated.
     // Install a one-shot listener in the extension page, then create the
     // provider target through the browser CDP session.
+    await harness.eval('globalThis.__r4AwaitProviderTab=()=>new Promise(resolve=>{'+
+      'const listener=tab=>{if(tab?.url!=='+JSON.stringify("https://claude.ai/chat/r4mutationcancel01")+')return;'+
+      'chrome.tabs.onCreated.removeListener(listener);resolve({id:tab.id,url:tab.url});};'+
+      'chrome.tabs.onCreated.addListener(listener);});true');
     const providerTabWait=harness.eval('globalThis.__r4AwaitProviderTab()');
     const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
     assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
