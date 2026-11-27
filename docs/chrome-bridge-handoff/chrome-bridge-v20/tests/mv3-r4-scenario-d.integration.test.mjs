@@ -110,7 +110,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
  const trackSocket=socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));return socket;};
  const tls=https.createServer({key:fs.readFileSync(key),cert:fs.readFileSync(crt)},(req,res)=>{if(!/^\/chat\/[A-Za-z0-9_-]{8,128}$/.test(new URL(req.url,'https://claude.ai').pathname)){res.writeHead(404);res.end();return;}res.writeHead(200,{'content-type':'text/html'});res.end(html);});
  tls.on('connection',socket=>trackSocket(socket));
- let chrome=null,worker=null,control=null,pageA=null,pageB=null,bridge=null,proxy=null,rpcId=0;
+ let chrome=null,browserCdp=null,worker=null,control=null,pageA=null,pageB=null,bridge=null,proxy=null,rpcId=0;
  const watchdog=setTimeout(()=>{
   console.error('[R4 D WATCHDOG] force-closing disposable Chrome and fixture sockets');
   for(const socket of sockets)socket.destroy();
@@ -145,7 +145,10 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   chrome=spawn(xvfb.stdout.trim(),['-a',browser,'--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--no-first-run','--no-default-browser-check','--disable-background-networking','--ignore-certificate-errors','--proxy-server=http://127.0.0.1:'+proxyPort,'--remote-allow-origins=*','--user-data-dir='+profile,'--load-extension='+ext,'--disable-extensions-except='+ext,'--remote-debugging-port=0','about:blank'],{stdio:'ignore',detached:true});
   const port=await until(()=>{const p=path.join(profile,'DevToolsActivePort');return fs.existsSync(p)?Number(fs.readFileSync(p,'utf8').split(/\r?\n/)[0]):0;},15000,'DEBUG_PORT');
   const targets=async()=>(await(await boundedFetch('http://127.0.0.1:'+port+'/json/list',{},6000)).json());
+  const version=await(await boundedFetch('http://127.0.0.1:'+port+'/json/version',{},6000)).json();
+  browserCdp=await Cdp.connect(version.webSocketDebuggerUrl,'browser-target');
   const w=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),15000,'WORKER');
+  const originalWorkerTargetId=w.id;
   worker=await Cdp.connect(w.webSocketDebuggerUrl,'worker-initial');await worker.call('Runtime.enable');
   await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'WORKER_API');
   const seed='(async()=>{await chrome.storage.local.set({browserToken:'+JSON.stringify(browserToken)+',bridgeBackgroundMode:true,bridgeConnectionDesired:true,bridgeMutationLabMode:true,sites:{"https://claude.ai":{mode:"chat",adapter:"claude"}},adapters:"{}"});const a=await chrome.tabs.create({url:"https://claude.ai/chat/r4scenarioDA001",active:false});const b=await chrome.tabs.create({url:"https://claude.ai/chat/r4scenarioDB001",active:false});const c=await chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true});return{a:a.id,b:b.id,c:c.id};})()';
@@ -253,14 +256,28 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
     sleep(3000)
   ]);
   worker.close();worker=null;
-  const restartedWorker=await until(async()=>(await targets()).find(x=>x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&x.webSocketDebuggerUrl),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
-  worker=await Cdp.connect(restartedWorker.webSocketDebuggerUrl,'worker-after-reload');await worker.call('Runtime.enable');
-  await until(()=>worker.eval('!!chrome.storage?.local&&!!chrome.runtime?.id'),10000,'RESTARTED_WORKER_API');
+  // Reattach through browser-level CDP, not the replacement worker socket.
+  // Chromium can publish a fresh MV3 target while Runtime.enable remains
+  // blocked by the intentionally unresolved executeScript from the old page.
+  const createdControl=await browserCdp.call('Target.createTarget',{
+    url:'chrome-extension://'+extensionId+'/control.html'
+  });
+  assert.ok(createdControl.targetId,'CONTROL_TARGET_CREATE_FAILED');
+  const afterControl=await until(async()=>(await targets()).find(x=>
+    x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),
+    15000,'CONTROL_AFTER_RESTART');
+  control=await Cdp.connect(afterControl.webSocketDebuggerUrl,'control-after-reload');
+  await control.call('Runtime.enable');
+  await until(()=>control.eval('document.readyState!=="loading"&&!!document.querySelector("#backgroundGrantList")'),
+    12000,'CONTROL_AFTER_RESTART_READY');
+  const restartedWorker=await until(async()=>(await targets()).find(x=>
+    x.type==='service_worker'&&x.url==='chrome-extension://'+extensionId+'/background.js'&&
+    x.webSocketDebuggerUrl&&x.id!==originalWorkerTargetId),20000,'WORKER_AFTER_INFLIGHT_RELOAD');
+  assert.notEqual(restartedWorker.id,originalWorkerTargetId,'MV3_RELOAD_MUST_CREATE_A_NEW_WORKER_TARGET');
   const tabAAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDA001'&&x.webSocketDebuggerUrl),15000,'TAB_A_AFTER_RESTART');
   pageA=await Cdp.connect(tabAAfter.webSocketDebuggerUrl,'provider-tab-a-after-reload');await pageA.call('Runtime.enable');
   const tabBAfter=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='https://claude.ai/chat/r4scenarioDB001'&&x.webSocketDebuggerUrl),15000,'TAB_B_AFTER_RESTART');
   pageB=await Cdp.connect(tabBAfter.webSocketDebuggerUrl,'provider-tab-b-after-reload');await pageB.call('Runtime.enable');
-  await worker.eval('(async()=>chrome.tabs.create({url:chrome.runtime.getURL("control.html"),active:true}))()');
 
   // Restart the local test Bridge process as well. The provider journal is
   // reopened from the same stateDir/key; the unresolved COMMITTING record
@@ -305,14 +322,11 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
 
   // Replacement worker/control view must keep the grant store empty and
   // retain durable global pending fence + tab quarantine.
-  const afterControl=await until(async()=>(await targets()).find(x=>x.type==='page'&&x.url==='chrome-extension://'+extensionId+'/control.html'&&x.webSocketDebuggerUrl),15000,'CONTROL_AFTER_RESTART');
-  control=await Cdp.connect(afterControl.webSocketDebuggerUrl,'control-after-reload');await control.call('Runtime.enable');
-  await until(()=>control.eval('document.readyState!=="loading"&&!!document.querySelector("#backgroundGrantList")'),12000,'CONTROL_AFTER_RESTART_READY');
   await until(()=>control.eval('document.querySelector("#status").textContent.includes("Подключено")'),12000,'CONTROL_RECONNECTED');
   const coordinatorAfter=JSON.parse(await control.eval('(async()=>JSON.stringify(await chrome.runtime.sendMessage({target:"bridge-coordinator",type:"background-control-status"})))()'));
   assert.equal(coordinatorAfter.activeCount,0);assert.deepEqual(coordinatorAfter.grants,[]);
   assert.equal(coordinatorAfter.mutationEnabled,false);assert.equal(coordinatorAfter.approvalPending,0);
-  const durableAfter=await worker.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationRevocationPending","bridgeMutationQuarantinedTabs","bridgeMutationLabMode"]),chrome.storage.session.get(["bridgeMutationRevocationPending","bridgeMutationQuarantinedTabs","bridgeBackgroundControlGrants"])]);return{localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null,localQuarantined:l.bridgeMutationQuarantinedTabs||[],sessionQuarantined:s.bridgeMutationQuarantinedTabs||[],localLab:l.bridgeMutationLabMode===true,sessionGrants:s.bridgeBackgroundControlGrants||{}}})()');
+  const durableAfter=await control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get(["bridgeMutationRevocationPending","bridgeMutationQuarantinedTabs","bridgeMutationLabMode"]),chrome.storage.session.get(["bridgeMutationRevocationPending","bridgeMutationQuarantinedTabs","bridgeBackgroundControlGrants"])]);return{localFence:l.bridgeMutationRevocationPending||null,sessionFence:s.bridgeMutationRevocationPending||null,localQuarantined:l.bridgeMutationQuarantinedTabs||[],sessionQuarantined:s.bridgeMutationQuarantinedTabs||[],localLab:l.bridgeMutationLabMode===true,sessionGrants:s.bridgeBackgroundControlGrants||{}}})()');
   assert.equal(durableAfter.localFence?.pending===true||durableAfter.sessionFence?.pending===true,true);
   assert.ok(durableAfter.localQuarantined.includes(tabs.a)||durableAfter.sessionQuarantined.includes(tabs.a));
   assert.equal(durableAfter.localLab,false);assert.deepEqual(durableAfter.sessionGrants,{});
@@ -327,8 +341,8 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   // Re-enable only the disposable profile's lab flag to prove the durable
   // global fence, not merely the UI mode switch, rejects a stale post-restart
   // provider mutation. B has no Grant and remains a clean unrelated tab.
-  await worker.eval('chrome.storage.local.set({bridgeMutationLabMode:true})');
-  await until(()=>worker.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get("bridgeMutationRevocationPending"),chrome.storage.session.get("bridgeMutationRevocationPending")]);return l.bridgeMutationRevocationPending?.pending===true||s.bridgeMutationRevocationPending?.pending===true})()'),5000,'GLOBAL_FENCE_STILL_PRESENT');
+  await control.eval('chrome.storage.local.set({bridgeMutationLabMode:true})');
+  await until(()=>control.eval('(async()=>{const [l,s]=await Promise.all([chrome.storage.local.get("bridgeMutationRevocationPending"),chrome.storage.session.get("bridgeMutationRevocationPending")]);return l.bridgeMutationRevocationPending?.pending===true||s.bridgeMutationRevocationPending?.pending===true})()'),5000,'GLOBAL_FENCE_STILL_PRESENT');
   await rpc('agent_bind',{name:'r4_d_stale_after_restart',tabId:tabs.b});
   const stale=make('r4Drequest0002','r4Dtask0002',tabs.b,'r4scenarioDB001',
     'This post-restart stale mutation must be blocked by durable global fence');
@@ -341,7 +355,7 @@ test('R4 Scenario D: interrupted provider_commit remains UNKNOWN and quarantined
   console.log('[R4 SCENARIO D PASS] Send clicked once; receipt lost; Revoke returned UNKNOWN and quarantined A; MV3 + Bridge restarted; journal UNKNOWN; grants never reappeared; stale post-restart mutation BLOCKED by durable global fence');
  }finally{
   clearTimeout(watchdog);
-  control?.close();pageA?.close();pageB?.close();worker?.close();
+  control?.close();pageA?.close();pageB?.close();worker?.close();browserCdp?.close();
   for(const socket of sockets)socket.destroy();
   if(chrome&&chrome.exitCode===null){
     try{process.kill(-chrome.pid,'SIGKILL');}catch{try{chrome.kill('SIGKILL');}catch{}}
