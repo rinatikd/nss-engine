@@ -167,7 +167,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     client.on('close',()=>upstream.destroy());
     upstream.on('close',()=>client.destroy());
   });
-  let chrome=null,harness=null,browserCdp=null;
+  let chrome=null,harness=null,browserCdp=null;\n  let diagnosticPhase='setup';\n  const diagnosticKeepAlive=setTimeout(()=>console.error('[R4 MUTATION CANCEL DIAGNOSTIC] stalled phase='+diagnosticPhase),5000);
   try{
     await new Promise((resolve,reject)=>{tls.once('error',reject);tls.listen(8443,'127.0.0.1',resolve);});
     await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve);});
@@ -228,21 +228,21 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     // can leave Runtime.evaluate awaiting a Chrome API promise that never
     // settles in this disposable MV3 harness. Resolve the tab by exact URL
     // using the callback form of tabs.query, then probe its document.
-    const providerUrl='https://claude.ai/chat/r4mutationcancel01';
+    const providerUrl='https://claude.ai/chat/r4mutationcancel01';\n    diagnosticPhase='provider Target.createTarget';\n    console.log('[R4 MUTATION CANCEL STEP] creating provider target');
     // Create the provider target through browser CDP, then resolve its
     // Chrome tab ID through the extension API callback. Do not wait for
     // tabs.onCreated in an extension document: Chrome may deliver that event
     // only to the extension service worker in this disposable MV3 setup.
     const providerTarget=await browserCdp.call('Target.createTarget',{url:providerUrl});
-    assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');
+    assert.ok(providerTarget?.targetId,'PROVIDER_TARGET_CREATE_FAILED');\n    diagnosticPhase='provider tabs.query dispatch';\n    console.log('[R4 MUTATION CANCEL STEP] provider target created; querying tabs');
     await harness.eval('globalThis.__r4ProviderTab=null;chrome.tabs.query({},tabs=>{'+
       'if(chrome.runtime.lastError)return;'+
       'globalThis.__r4ProviderTab=tabs.find(t=>t.url==='+JSON.stringify(providerUrl)+
       '||t.pendingUrl==='+JSON.stringify(providerUrl)+')||null;});true');
-    const tab=await until(()=>harness.eval('globalThis.__r4ProviderTab'),10000,'PROVIDER_TAB_QUERY');
+    diagnosticPhase='provider tabs.query receipt';\n    const tab=await until(()=>harness.eval('globalThis.__r4ProviderTab'),10000,'PROVIDER_TAB_QUERY');
     assert.ok(Number.isSafeInteger(tab?.id),'PROVIDER_TAB_CREATE_FAILED');
     const tabId=tab.id;
-    console.log('[R4 MUTATION CANCEL STEP] provider fixture tab created id='+tabId);
+    console.log('[R4 MUTATION CANCEL STEP] provider fixture tab created id='+tabId);\n    diagnosticPhase='provider page readiness and documentId probe';\n    console.log('[R4 MUTATION CANCEL STEP] probing provider documentId');
     const pageInfo=await until(()=>harness.eval('(async()=>new Promise(resolve=>chrome.tabs.get('+tabId+',t=>{'+
       'if(chrome.runtime.lastError||t?.status!=="complete"){resolve(null);return;}'+
       'chrome.scripting.executeScript({target:{tabId:'+tabId+'},func:()=>({origin:location.origin,ready:document.readyState,'+
@@ -250,7 +250,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
       'if(chrome.runtime.lastError||!r?.[0]?.documentId){resolve(null);return;}'+
       'resolve({documentId:r[0].documentId,result:r[0].result});});}))())'),
       20000,'PROVIDER_PAGE_READY');
-    console.log('[R4 MUTATION CANCEL STEP] provider fixture page ready');
+    console.log('[R4 MUTATION CANCEL STEP] provider fixture page ready');\n    diagnosticPhase='mutation operation assertions';
     assert.equal(pageInfo.result.origin,'https://claude.ai');
     const documentId=pageInfo.documentId;
     const target={tabId,documentIds:[documentId]};
@@ -328,7 +328,7 @@ test('real MV3 cancels a document-bound operation before its side-effect boundar
     console.log('[R4 MUTATION CANCEL STEP] post-boundary cancellation refused');
     console.log('[R4 MUTATION CANCEL REAL] exact-document cancellation before boundary PASS; after-boundary cancellation refused');
   }finally{
-    harness?.close();
+    clearTimeout(diagnosticKeepAlive);\n    harness?.close();
     browserCdp?.close();
     if(chrome&&!chrome.killed){try{process.kill(-chrome.pid,'SIGTERM');}catch{chrome.kill('SIGTERM');}}
     if(tls.listening)await new Promise(resolve=>tls.close(resolve));
