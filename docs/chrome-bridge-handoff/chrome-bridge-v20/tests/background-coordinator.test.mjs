@@ -1748,7 +1748,7 @@ test('session_authorize lab-mode enable failure revokes lease and keeps global l
 });
 
 
-test('session_authorize pre-persist write rejection preserves grants and locks ambiguous state',async()=>{
+test('session_authorize pre-persist write rejection preserves grants after verified compensation',async()=>{
   const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-write-reject');
   const c=fakeChrome({...LAB_STATE},{failSessionSet:'bridgeSessionAuthorization'});
   await coordinator.startBackgroundTransport(c);
@@ -1770,7 +1770,8 @@ test('session_authorize pre-persist write rejection preserves grants and locks a
   assert.equal(result.dispatchState,'UNKNOWN');
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
-  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+  assert.equal(c.data.bridgeMutationQuarantineLock,undefined,
+    'verified lease removal with untouched legacy grants does not require a global lock');
 });
 
 test('session_authorize read-back failure after write revokes lease and preserves legacy grants under lock',async()=>{
