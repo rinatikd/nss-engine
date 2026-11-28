@@ -1657,6 +1657,8 @@ test('replacement worker blocks legacy and session mutation paths during persist
   assert.ok(c.session.bridgeBackgroundControlGrants?.['42'],
     'the test pauses at the lease-written / legacy-grants-not-yet-cleared boundary');
   assert.equal(c.data.bridgeSessionAuthorizationTransition?.state,'authorizing');
+  assert.equal(c.data.bridgeMutationLabMode,false,
+    'the legacy mutation-mode switch is disabled before the lease write so older workers also fail closed');
 
   const replacement=await import('../extension/background-coordinator.js?session-auth-transition-replacement');
   replacement.installBackgroundCoordinator(c);
@@ -1685,6 +1687,8 @@ test('replacement worker blocks legacy and session mutation paths during persist
   assert.equal(c.data.bridgeSessionAuthorizationTransition,undefined,
     'the transition marker is removed only after the complete authorization commit');
   assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
+  assert.equal(c.data.bridgeMutationLabMode,true,
+    'Lab mutation mode is re-enabled only after legacy grants are verified absent');
 
   const revoked=await sendCoordinatorTo(c,replacementListener,'dispatch',{command:{
     name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
