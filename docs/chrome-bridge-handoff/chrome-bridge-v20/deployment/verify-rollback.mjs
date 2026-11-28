@@ -66,9 +66,14 @@ try {
   const pending = rpc(original.url, config.agentToken, 'tools/call', {
     name: 'browser_tabs', arguments: {}
   });
-  const pollResponse = await request(original.url + '/bridge/poll', config.browserToken, {});
-  assert.equal(pollResponse.status, 200);
-  const command = (await pollResponse.json()).command;
+  let command = null;
+  for (let attempt = 0; attempt < 40 && !command; attempt++) {
+    const pollResponse = await request(original.url + '/bridge/poll', config.browserToken, {});
+    assert.equal(pollResponse.status, 200);
+    command = (await pollResponse.json()).command;
+    if (!command) await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(command, 'synthetic browser queue command was not delivered before the bounded deadline');
   assert.equal(command.name, 'browser_tabs');
   const resultResponse = await request(original.url + '/bridge/result', config.browserToken, {
     id: command.id,
