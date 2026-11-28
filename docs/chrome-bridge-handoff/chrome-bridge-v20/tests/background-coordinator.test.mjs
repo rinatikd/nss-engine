@@ -15,10 +15,6 @@ function fakeChrome(data={},options={}) {
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
       get:async keys=>keys===null?{...data}:Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
-      remove:async key=>{
-        if (options.beforeSessionRemove) await options.beforeSessionRemove(key,session,calls);
-        delete session[key];
-      },
       set:async next=>{
         const failedKey=Object.keys(next).find(key=>
           options.failLocalSet===true || options.failLocalSet===key ||
@@ -71,6 +67,7 @@ function fakeChrome(data={},options={}) {
       remove:async key=>{
         if(options.failSessionRemove===key)throw Error('SYNTHETIC_SESSION_REMOVE_FAILED');
         if(options.ignoreSessionRemove===key)return;
+        if (options.beforeSessionRemove) await options.beforeSessionRemove(key,session,calls);
         delete session[key];
       }
     }},
