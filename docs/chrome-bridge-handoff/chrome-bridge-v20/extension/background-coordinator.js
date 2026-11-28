@@ -247,7 +247,11 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('TAB_MUTATION_REVOKING');
   if (mutationQuarantinedTabs.has(tabId))
     throw coordinatorError('TAB_MUTATION_QUARANTINED');
-  const authTransition=local[SESSION_AUTH_TRANSITION_KEY];
+  // The first local read may have completed before a concurrent authorization
+  // wrote its durable marker. Re-read after all storage awaits to close that
+  // admission TOCTOU window.
+  const transitionSnapshot=await chromeApi.storage.local.get(SESSION_AUTH_TRANSITION_KEY);
+  const authTransition=transitionSnapshot?.[SESSION_AUTH_TRANSITION_KEY];
   if (authTransition!==undefined && authTransition!==null) {
     if (!authTransition || typeof authTransition!=='object' || Array.isArray(authTransition) ||
         authTransition.schemaVersion!==1 || authTransition.state!=='authorizing' ||
@@ -1594,8 +1598,11 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                 // this transaction commits or an explicit Revoke reconciles it.
                 const transitionRecord={
                   schemaVersion:1,state:'authorizing',
-                  sessionId:msg.command.args?.sessionId,
-                  bridgeEpoch:msg.command.bridgeEpoch,startedAt:Date.now()
+                  sessionId:typeof msg.command.args?.sessionId==='string'
+                    ? msg.command.args.sessionId : '',
+                  bridgeEpoch:typeof msg.command.bridgeEpoch==='string'
+                    ? msg.command.bridgeEpoch : '',
+                  startedAt:Date.now()
                 };
                 const existingTransition=await chromeApi.storage.local.get(SESSION_AUTH_TRANSITION_KEY);
                 if (existingTransition[SESSION_AUTH_TRANSITION_KEY]!=null)
