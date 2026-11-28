@@ -19,6 +19,8 @@ test('Windows Restore requires explicit confirmation and an explicitly selected 
 test('rollback verifier is synthetic-only and contains no Production credential or endpoint references', () => {
   assert.match(verifier, /SYNTHETIC_TEMP_STATE_ONLY/);
   assert.match(verifier, /synthetic-rollback-agent-token-only/);
+  assert.match(verifier, /CHROME_BRIDGE_HOME = state/);
+  assert.match(verifier, /CHROME_BRIDGE_PORT = '0'/);
   assert.doesNotMatch(verifier, /\.chrome-bridge/i);
   assert.doesNotMatch(verifier, /17381|17382/);
   assert.doesNotMatch(verifier, /productionState|realConfig|protectedHashes/i);
