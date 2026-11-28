@@ -1569,7 +1569,11 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                   });
                 } catch(error) {
                   if (error?.message==='SESSION_PERSISTENCE_UNCONFIRMED') {
-                    await failClosedSessionAuthorization(chromeApi,sessionAuthorization,{requireGlobalLock:false});
+                    const compensation=await failClosedSessionAuthorization(
+                      chromeApi,sessionAuthorization,{requireGlobalLock:false}
+                    );
+                    if (compensation.store==='session-revoke-verified')
+                      throw coordinatorError('SESSION_AUTH_PERSISTENCE_FAILED','NOT_PERFORMED');
                     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
                   }
                   throw error;
