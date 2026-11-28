@@ -2011,16 +2011,17 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             if (!settled) throw await unknownRevoke();
             await quarantineUnreconciledGenericActions(chromeApi,[tabId]);
 
-            const {origin}=await permittedTab(chromeApi,tabId);
-            const sessionStatus=await new SessionAuthorization(chromeApi).status();
-            if (sessionStatus.active && sessionStatus.origins.includes(origin))
-              throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
-
-            revokeWriteStarted=true;
-            const revokeWrite=await enqueueControlOperationBounded(
-              () => new BackgroundControlGrants(chromeApi).revoke(tabId),
-              {tabId,allowFencedTab:true}
-            );
+            // Serialize the lease-scope check with the grant mutation. A status
+            // read before entering controlStorageLane can become stale while a
+            // concurrent session_authorize commits its origin-wide lease.
+            const revokeWrite=await enqueueControlOperationBounded(async()=>{
+              const {origin}=await permittedTab(chromeApi,tabId);
+              const sessionStatus=await new SessionAuthorization(chromeApi).status();
+              if (sessionStatus.active && sessionStatus.origins.includes(origin))
+                throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
+              revokeWriteStarted=true;
+              return new BackgroundControlGrants(chromeApi).revoke(tabId);
+            },{tabId,allowFencedTab:true});
             if (!revokeWrite.settled) throw await unknownRevoke();
 
             if (!await enqueueRevocationFence(()=>clearTabRevocationFence(chromeApi,tabId,fenceStores)))
