@@ -54,8 +54,10 @@ async function startBridge(modulePath) {
     server,
     url: `http://127.0.0.1:${server.address().port}`,
     close: async () => {
-      if (server.listening)
+      if (server.listening) {
+        server.closeAllConnections?.();
         await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      }
       openServers.delete(server);
     }
   };
@@ -138,8 +140,10 @@ try {
   console.log('PASS: synthetic-only rollback compatibility; no user profile or Production resources accessed.');
 } finally {
   for (const server of openServers) {
-    if (server.listening)
+    if (server.listening) {
+      server.closeAllConnections?.();
       await new Promise(resolve => server.close(() => resolve()));
+    }
   }
   openServers.clear();
   fs.rmSync(state, { recursive: true, force: true });
