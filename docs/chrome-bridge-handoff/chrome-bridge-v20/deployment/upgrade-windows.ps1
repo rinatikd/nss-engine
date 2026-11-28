@@ -62,8 +62,16 @@ if ($PSCmdlet.ParameterSetName -eq 'Restore') {
   $root = [IO.Path]::GetFullPath($BridgeRoot)
   $productionRoot = [IO.Path]::GetFullPath('C:\Engineering\chrome-bridge')
   Require (-not [string]::Equals($root,$productionRoot,[StringComparison]::OrdinalIgnoreCase)) 'Production BridgeRoot is forbidden for Restore'
-  $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+  $tempRootPath = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+  $tempRoot = $tempRootPath + [IO.Path]::DirectorySeparatorChar
   Require ($root.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'Restore target must be inside the disposable OS temp directory'
+  $rootParent = [IO.Path]::GetFullPath((Split-Path $root -Parent)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+  Require ([string]::Equals($rootParent,$tempRootPath,[StringComparison]::OrdinalIgnoreCase)) 'Restore target must be a direct child of the OS temp directory'
+  $tempItem = Get-Item -LiteralPath $tempRootPath -Force
+  Require (($tempItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'OS temp root must not be a reparse point'
+  Require (Test-Path -LiteralPath $root -PathType Container) 'Disposable Restore target directory is missing'
+  $rootItem = Get-Item -LiteralPath $root -Force
+  Require (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Restore target must not be a symlink or junction'
   $disposableMarker = Join-Path $root '.chrome-bridge-disposable'
   Require (Test-Path -LiteralPath $disposableMarker -PathType Leaf) 'Restore target lacks disposable-profile marker'
   $markerValue = (Get-Content -LiteralPath $disposableMarker -Raw -Encoding UTF8).Trim()
@@ -76,8 +84,21 @@ Require (Test-Path -LiteralPath $installed -PathType Container) 'Installed exten
 if ($PSCmdlet.ParameterSetName -eq 'Restore') {
   $backup = [IO.Path]::GetFullPath($RollbackFrom)
   Require ($backup.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'Restore backup must be inside the disposable OS temp directory'
+  $backupParent = [IO.Path]::GetFullPath((Split-Path $backup -Parent)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+  Require ([string]::Equals($backupParent,$tempRootPath,[StringComparison]::OrdinalIgnoreCase)) 'Restore backup must be a direct child of the OS temp directory'
+  Require (Test-Path -LiteralPath $backup -PathType Container) 'Restore backup directory is missing'
+  $backupItem = Get-Item -LiteralPath $backup -Force
+  Require (($backupItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Restore backup must not be a symlink or junction'
   $backupExtension = Join-Path $backup 'extension'
   Require (Test-Path -LiteralPath $backupExtension -PathType Container) 'Rollback snapshot does not contain extension folder'
+  $installedItem = Get-Item -LiteralPath $installed -Force
+  $backupExtensionItem = Get-Item -LiteralPath $backupExtension -Force
+  Require (($installedItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Installed extension root must not be a symlink or junction'
+  Require (($backupExtensionItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Backup extension root must not be a symlink or junction'
+  $installedReparse = @(Get-ChildItem -LiteralPath $installed -Recurse -Force -ErrorAction Stop | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })
+  $backupReparse = @(Get-ChildItem -LiteralPath $backupExtension -Recurse -Force -ErrorAction Stop | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })
+  Require ($installedReparse.Count -eq 0) 'Installed extension contains a symlink or junction'
+  Require ($backupReparse.Count -eq 0) 'Backup extension contains a symlink or junction'
   ConfirmManifest (Join-Path $backupExtension 'manifest.json') | Out-Null
   Write-Output '[RESTORE] Explicit confirmation accepted for marked disposable profile.'
   $restoreStage = Join-Path $root ('.extension-restore-' + [guid]::NewGuid().ToString('N'))
