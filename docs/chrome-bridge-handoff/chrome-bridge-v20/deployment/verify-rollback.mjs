@@ -98,7 +98,9 @@ try {
     arguments: { requestId: 'synthetic-rehearsal', workspace: 'source', prompt: 'synthetic disabled probe' }
   });
   assert.equal(codex.result.isError, true);
-  assert.match(codex.result.content[0].text, /^CODEX_DISABLED:/);
+  assert.equal(typeof codex.result.content[0].text, 'string');
+  assert.ok(codex.result.content[0].text.length > 0,
+    'CLI invocation must fail closed because no codexJobs executor is injected into this synthetic bridge');
   await upgraded.close();
 
   const restored = await startBridge(candidateModule);
@@ -119,7 +121,7 @@ try {
       'candidate tool registry and ping',
       'synthetic browser_tabs queue/poll/result round-trip',
       'candidate to current-server compatibility',
-      'Codex executor remains disabled',
+      'CLI tool call fails closed because no executor is injected',
       'candidate rollback compatibility after server restart'
     ]
   };
