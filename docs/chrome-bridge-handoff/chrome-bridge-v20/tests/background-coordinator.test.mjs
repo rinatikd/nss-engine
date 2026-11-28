@@ -1720,6 +1720,33 @@ test('session_revoke rejects a resolved no-op lease removal and keeps the global
     ['provider_prepare','provider_commit'].includes(call[1])),false);
 });
 
+test('replacement worker blocks pre-marker legacy state containing both a session lease and old grants',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-legacy-inconsistent-state');
+  const c=fakeChrome({...LAB_STATE});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  const listener=c.listeners.at(-1);
+
+  const legacy=await sendCoordinatorTo(c,listener,'dispatch',{command:{
+    name:'browser_click',bridgeEpoch:'bridge_epoch_0001',expires:Date.now()+90000,
+    args:{tabId:42,selector:'button.synthetic'}
+  }},'transport-host.html');
+  const session=await sendCoordinatorTo(c,listener,'dispatch',{
+    command:providerPrepare(42)
+  },'transport-host.html');
+
+  assert.equal(legacy.error,'SESSION_AUTHORIZATION_STATE_INCONSISTENT');
+  assert.equal(legacy.dispatchState,'BLOCKED');
+  assert.equal(session.error,'SESSION_AUTHORIZATION_STATE_INCONSISTENT');
+  assert.equal(session.dispatchState,'BLOCKED');
+  assert.equal(c.calls.some(call=>call[0]==='script'),false);
+  assert.equal(c.calls.some(call=>call[0]==='approval'),false);
+});
+
 test('session_authorize validation failure preserves existing legacy grants',async()=>{
   const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-1');
   const c=fakeChrome({...LAB_STATE});
