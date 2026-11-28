@@ -19,6 +19,7 @@ const config = {
   browserToken: 'synthetic-rollback-browser-token-only'
 };
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
+const openServers = new Set();
 fs.mkdirSync(output, { recursive: true });
 fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify(config), { mode: 0o600, flag: 'wx' });
 
@@ -48,10 +49,15 @@ async function startBridge(modulePath) {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
   });
+  openServers.add(server);
   return {
     server,
     url: `http://127.0.0.1:${server.address().port}`,
-    close: () => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+    close: async () => {
+      if (server.listening)
+        await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      openServers.delete(server);
+    }
   };
 }
 try {
@@ -131,5 +137,10 @@ try {
   fs.writeFileSync(path.join(output, 'validation.json'), JSON.stringify(report, null, 2));
   console.log('PASS: synthetic-only rollback compatibility; no user profile or Production resources accessed.');
 } finally {
+  for (const server of openServers) {
+    if (server.listening)
+      await new Promise(resolve => server.close(() => resolve()));
+  }
+  openServers.clear();
   fs.rmSync(state, { recursive: true, force: true });
 }
