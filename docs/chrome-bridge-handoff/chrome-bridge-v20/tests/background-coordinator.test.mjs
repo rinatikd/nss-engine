@@ -63,7 +63,11 @@ function fakeChrome(data={},options={}) {
             Object.hasOwn(next,'bridgeSessionAuthorization'))
           throw Error('SYNTHETIC_SESSION_WRITE_REJECTED_AFTER_PERSIST');
       },
-      remove:async key=>{if(options.failSessionRemove===key)throw Error('SYNTHETIC_SESSION_REMOVE_FAILED');delete session[key];}
+      remove:async key=>{
+        if(options.failSessionRemove===key)throw Error('SYNTHETIC_SESSION_REMOVE_FAILED');
+        if(options.ignoreSessionRemove===key)return;
+        delete session[key];
+      }
     }},
     tabs:{
       get:async id=>({id,url:'https://claude.ai/chat/conversation_001'}),
@@ -1824,4 +1828,30 @@ test('Stop racing session lease persistence prevents legacy cleanup and lab-mode
   assert.equal(c.data.bridgeMutationLabMode,false);
   assert.equal(c.calls.some(call=>call[0]==='set'&&call[1]?.bridgeMutationLabMode===true),false,
     'a Stop fence must win before the mutation mode can be enabled');
+});
+
+
+test('session_authorize detects a grant removal that resolves without clearing storage',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-grant-readback');
+  const c=fakeChrome({...LAB_STATE},{ignoreSessionRemove:'bridgeBackgroundControlGrants'});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
 });
