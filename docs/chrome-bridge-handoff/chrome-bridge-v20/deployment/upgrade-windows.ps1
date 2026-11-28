@@ -3,9 +3,10 @@
 [CmdletBinding(DefaultParameterSetName='Upgrade')]
 param(
   [string]$BridgeRoot = 'C:\Engineering\chrome-bridge',
-  [string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
+  [Parameter(ParameterSetName='Upgrade')][string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
   [Parameter(ParameterSetName='Upgrade')][switch]$Apply,
-  [Parameter(ParameterSetName='Restore', Mandatory=$true)][string]$RollbackFrom
+  [Parameter(ParameterSetName='Restore', Mandatory=$true)][string]$RollbackFrom,
+  [Parameter(ParameterSetName='Restore')][switch]$ConfirmRestore
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -49,19 +50,59 @@ function ValidateStaging([string]$Stage) {
     }
   }
 }
-$root = [IO.Path]::GetFullPath($BridgeRoot)
+$osTempRootPath = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+$osTempRoot = $osTempRootPath + [IO.Path]::DirectorySeparatorChar
+if ($PSCmdlet.ParameterSetName -eq 'Restore') {
+  # Restore is a destructive operation. Require an explicit target, explicit
+  # operator confirmation, and a disposable root under the OS temp directory.
+  if (-not $PSBoundParameters.ContainsKey('BridgeRoot')) {
+    throw 'Restore requires an explicit -BridgeRoot; the Production default is never accepted.'
+  }
+  if (-not $ConfirmRestore) {
+    throw 'Restore requires the explicit -ConfirmRestore switch; no files were changed.'
+  }
+  $root = [IO.Path]::GetFullPath($BridgeRoot)
+  $productionRoot = [IO.Path]::GetFullPath('C:\Engineering\chrome-bridge')
+  Require (-not [string]::Equals($root,$productionRoot,[StringComparison]::OrdinalIgnoreCase)) 'Production BridgeRoot is forbidden for Restore'
+  $tempRootPath = $osTempRootPath
+  $tempRoot = $osTempRoot
+  Require ($root.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'Restore target must be inside the disposable OS temp directory'
+  $rootParent = [IO.Path]::GetFullPath((Split-Path $root -Parent)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+  Require ([string]::Equals($rootParent,$tempRootPath,[StringComparison]::OrdinalIgnoreCase)) 'Restore target must be a direct child of the OS temp directory'
+  $tempItem = Get-Item -LiteralPath $tempRootPath -Force
+  Require (($tempItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'OS temp root must not be a reparse point'
+  Require (Test-Path -LiteralPath $root -PathType Container) 'Disposable Restore target directory is missing'
+  $rootItem = Get-Item -LiteralPath $root -Force
+  Require (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Restore target must not be a symlink or junction'
+  $disposableMarker = Join-Path $root '.chrome-bridge-disposable'
+  Require (Test-Path -LiteralPath $disposableMarker -PathType Leaf) 'Restore target lacks disposable-profile marker'
+  $markerValue = (Get-Content -LiteralPath $disposableMarker -Raw -Encoding UTF8).Trim()
+  Require ($markerValue -eq 'CHROME_BRIDGE_DISPOSABLE_RESTORE_V1') 'Disposable-profile marker is invalid'
+} else {
+  $root = [IO.Path]::GetFullPath($BridgeRoot)
+}
 $installed = Join-Path $root 'extension'
 Require (Test-Path -LiteralPath $installed -PathType Container) 'Installed extension directory missing'
 if ($PSCmdlet.ParameterSetName -eq 'Restore') {
   $backup = [IO.Path]::GetFullPath($RollbackFrom)
+  Require ($backup.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'Restore backup must be inside the disposable OS temp directory'
+  $backupParent = [IO.Path]::GetFullPath((Split-Path $backup -Parent)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+  Require ([string]::Equals($backupParent,$tempRootPath,[StringComparison]::OrdinalIgnoreCase)) 'Restore backup must be a direct child of the OS temp directory'
+  Require (Test-Path -LiteralPath $backup -PathType Container) 'Restore backup directory is missing'
+  $backupItem = Get-Item -LiteralPath $backup -Force
+  Require (($backupItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Restore backup must not be a symlink or junction'
   $backupExtension = Join-Path $backup 'extension'
   Require (Test-Path -LiteralPath $backupExtension -PathType Container) 'Rollback snapshot does not contain extension folder'
+  $installedItem = Get-Item -LiteralPath $installed -Force
+  $backupExtensionItem = Get-Item -LiteralPath $backupExtension -Force
+  Require (($installedItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Installed extension root must not be a symlink or junction'
+  Require (($backupExtensionItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) 'Backup extension root must not be a symlink or junction'
+  $installedReparse = @(Get-ChildItem -LiteralPath $installed -Recurse -Force -ErrorAction Stop | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })
+  $backupReparse = @(Get-ChildItem -LiteralPath $backupExtension -Recurse -Force -ErrorAction Stop | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })
+  Require ($installedReparse.Count -eq 0) 'Installed extension contains a symlink or junction'
+  Require ($backupReparse.Count -eq 0) 'Backup extension contains a symlink or junction'
   ConfirmManifest (Join-Path $backupExtension 'manifest.json') | Out-Null
-  if (-not $Apply) {
-    # Restore has its own deliberate confirm gate (script cannot be accidentally
-    # invoked from the ordinary dry-run path).
-    Write-Output '[RESTORE] Request accepted: copy of backup will replace installed extension only.'
-  }
+  Write-Output '[RESTORE] Explicit confirmation accepted for marked disposable profile.'
   $restoreStage = Join-Path $root ('.extension-restore-' + [guid]::NewGuid().ToString('N'))
   Copy-Item -LiteralPath $backupExtension -Destination $restoreStage -Recurse -Force
   $displaced = Join-Path $root ('.extension-displaced-' + [guid]::NewGuid().ToString('N'))
@@ -127,7 +168,15 @@ try {
     Move-Item -LiteralPath $installed -Destination $displaced -ErrorAction Stop
     Move-Item -LiteralPath $stage -Destination $installed -ErrorAction Stop
     Write-Output '[INSTALLED] Candidate extension files are in place. Reload unpacked extension in chrome://extensions.'
-    Write-Output ('[ROLLBACK] .\\deployment\\upgrade-windows.ps1 -BridgeRoot "' + $root + '" -RollbackFrom "' + $backupRoot + '"')
+    $rootParentForRollback = [IO.Path]::GetFullPath((Split-Path $root -Parent)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $rootItemForRollback = Get-Item -LiteralPath $root -Force
+    if ($root.StartsWith($osTempRoot,[StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals($rootParentForRollback,$osTempRootPath,[StringComparison]::OrdinalIgnoreCase) -and
+        (($rootItemForRollback.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)) {
+      Write-Output ('[ROLLBACK] .\\deployment\\upgrade-windows.ps1 -BridgeRoot "' + $root + '" -RollbackFrom "' + $backupRoot + '" -ConfirmRestore (create disposable marker first)')
+    } else {
+      Write-Output '[ROLLBACK] No Restore command emitted: Restore is restricted to a marked direct-child OS-temp profile; Production roots are forbidden.'
+    }
     Remove-Item -LiteralPath $displaced -Recurse -Force
   } catch {
     if (-not (Test-Path -LiteralPath $installed) -and (Test-Path -LiteralPath $displaced)) {
