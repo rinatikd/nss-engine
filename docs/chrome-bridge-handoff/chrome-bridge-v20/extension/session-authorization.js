@@ -90,7 +90,13 @@ export class SessionAuthorization {
         cause: writeError || undefined
       });
     }
-    if (JSON.stringify(persisted) !== JSON.stringify(lease)) {
+    const persistedKeys=persisted && typeof persisted==='object'
+      ? Object.keys(persisted).sort() : [];
+    const leaseKeys=Object.keys(lease).sort();
+    const exactLease=persistedKeys.length===leaseKeys.length &&
+      leaseKeys.every((key,index)=>key===persistedKeys[index] &&
+        JSON.stringify(persisted[key])===JSON.stringify(lease[key]));
+    if (!exactLease) {
       throw Object.assign(Error('SESSION_PERSISTENCE_UNCONFIRMED'), {
         cause: writeError || undefined
       });
