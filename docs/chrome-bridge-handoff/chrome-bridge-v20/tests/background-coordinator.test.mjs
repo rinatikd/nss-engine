@@ -1924,3 +1924,66 @@ test('concurrent authorization and Revoke are fenced until the first lease commi
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.data.bridgeMutationLabMode,false);
 });
+
+
+test('per-tab Revoke rechecks session lease inside the serialized control lane',async()=>{
+  let releaseAuthWrite,signalAuthWrite;
+  const authWriteEntered=new Promise(resolve=>{signalAuthWrite=resolve;});
+  const authWriteGate=new Promise(resolve=>{releaseAuthWrite=resolve;});
+  const coordinator=await import('../extension/background-coordinator.js?per-tab-revoke-session-race');
+  const c=fakeChrome({...LAB_STATE},{beforeSessionSet:async next=>{
+    if(Object.hasOwn(next,'bridgeSessionAuthorization')){
+      signalAuthWrite();
+      await authWriteGate;
+    }
+  }});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const authorization=sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0004',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  await authWriteEntered;
+
+  // Capture the pre-commit (no lease) status snapshot, but delay its delivery
+  // until session_authorize has committed and released its control-lane fence.
+  const originalSessionGet=c.storage.session.get;
+  let staleStatusCaptured,releaseStaleStatus;
+  const staleCaptured=new Promise(resolve=>{staleStatusCaptured=resolve;});
+  const staleGate=new Promise(resolve=>{releaseStaleStatus=resolve;});
+  let held=false;
+  c.storage.session.get=async keys=>{
+    const snapshot=await originalSessionGet(keys);
+    if(!held && keys==='bridgeSessionAuthorization' &&
+       c.session.bridgeSessionAuthorization===undefined){
+      held=true;
+      staleStatusCaptured();
+      await staleGate;
+    }
+    return snapshot;
+  };
+
+  const revoke=sendCoordinator(c,'revoke-background-control',{tabId:42});
+  await staleCaptured;
+  releaseAuthWrite();
+  const authorized=await authorization;
+  releaseStaleStatus();
+  const revoked=await revoke;
+
+  assert.equal(authorized.result?.active,true);
+  assert.equal(revoked.error,'SESSION_WIDE_REVOCATION_REQUIRED',
+    'per-tab Revoke must re-check the lease after it acquires the shared control lane');
+  assert.equal(revoked.outcome,'NOT_PERFORMED');
+  assert.equal(c.session.bridgeSessionAuthorization?.status,'active');
+  assert.deepEqual(c.data.bridgeMutationRevokingTabs||[],
+    [],'a scope denial must clean up its temporary durable tab fence');
+  assert.deepEqual(c.session.bridgeMutationRevokingTabs||[]);
+});
