@@ -50,6 +50,8 @@ function ValidateStaging([string]$Stage) {
     }
   }
 }
+$osTempRootPath = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
+$osTempRoot = $osTempRootPath + [IO.Path]::DirectorySeparatorChar
 if ($PSCmdlet.ParameterSetName -eq 'Restore') {
   # Restore is a destructive operation. Require an explicit target, explicit
   # operator confirmation, and a disposable root under the OS temp directory.
@@ -62,8 +64,8 @@ if ($PSCmdlet.ParameterSetName -eq 'Restore') {
   $root = [IO.Path]::GetFullPath($BridgeRoot)
   $productionRoot = [IO.Path]::GetFullPath('C:\Engineering\chrome-bridge')
   Require (-not [string]::Equals($root,$productionRoot,[StringComparison]::OrdinalIgnoreCase)) 'Production BridgeRoot is forbidden for Restore'
-  $tempRootPath = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)
-  $tempRoot = $tempRootPath + [IO.Path]::DirectorySeparatorChar
+  $tempRootPath = $osTempRootPath
+  $tempRoot = $osTempRoot
   Require ($root.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'Restore target must be inside the disposable OS temp directory'
   $rootParent = [IO.Path]::GetFullPath((Split-Path $root -Parent)).TrimEnd([IO.Path]::DirectorySeparatorChar)
   Require ([string]::Equals($rootParent,$tempRootPath,[StringComparison]::OrdinalIgnoreCase)) 'Restore target must be a direct child of the OS temp directory'
@@ -166,7 +168,15 @@ try {
     Move-Item -LiteralPath $installed -Destination $displaced -ErrorAction Stop
     Move-Item -LiteralPath $stage -Destination $installed -ErrorAction Stop
     Write-Output '[INSTALLED] Candidate extension files are in place. Reload unpacked extension in chrome://extensions.'
-    Write-Output ('[ROLLBACK] .\\deployment\\upgrade-windows.ps1 -BridgeRoot "' + $root + '" -RollbackFrom "' + $backupRoot + '" -ConfirmRestore')
+    $rootParentForRollback = [IO.Path]::GetFullPath((Split-Path $root -Parent)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $rootItemForRollback = Get-Item -LiteralPath $root -Force
+    if ($root.StartsWith($osTempRoot,[StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals($rootParentForRollback,$osTempRootPath,[StringComparison]::OrdinalIgnoreCase) -and
+        (($rootItemForRollback.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)) {
+      Write-Output ('[ROLLBACK] .\\deployment\\upgrade-windows.ps1 -BridgeRoot "' + $root + '" -RollbackFrom "' + $backupRoot + '" -ConfirmRestore (create disposable marker first)')
+    } else {
+      Write-Output '[ROLLBACK] No Restore command emitted: Restore is restricted to a marked direct-child OS-temp profile; Production roots are forbidden.'
+    }
     Remove-Item -LiteralPath $displaced -Recurse -Force
   } catch {
     if (-not (Test-Path -LiteralPath $installed) -and (Test-Path -LiteralPath $displaced)) {
