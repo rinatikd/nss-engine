@@ -162,8 +162,24 @@ export class SessionAuthorization {
   }
 
   async revoke() {
-    if (!this.api.storage.session?.setAccessLevel) return;
+    if (!this.api.storage.session?.setAccessLevel ||
+        typeof this.api.storage.session.remove !== 'function' ||
+        typeof this.api.storage.session.get !== 'function')
+      throw Error('SECURE_SESSION_STORAGE_REQUIRED');
+
     await this.api.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
     await this.api.storage.session.remove(STORAGE_KEY);
+
+    // A fulfilled remove() promise is not proof that Chrome persisted the
+    // deletion. Re-read the exact key before acknowledging Revoke.
+    let snapshot;
+    try {
+      snapshot = await this.api.storage.session.get(STORAGE_KEY);
+    } catch {
+      throw Error('SESSION_REVOKE_UNCONFIRMED');
+    }
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot) ||
+        (snapshot[STORAGE_KEY] !== undefined && snapshot[STORAGE_KEY] !== null))
+      throw Error('SESSION_REVOKE_UNCONFIRMED');
   }
 }
