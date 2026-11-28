@@ -1101,6 +1101,32 @@ test('session_authorize failure to clear legacy grants sets a durable global loc
   assert.equal(restart.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
 });
 
+test('session_revoke rejects a resolved no-op lease removal and keeps the global deny lock',async()=>{
+  const c=fakeChrome({...LAB_STATE},{ignoreSessionRemove:'bridgeSessionAuthorization'});
+  await startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  installBackgroundCoordinator(c);
+  const result=await sendCoordinator(c,'dispatch',{
+    command:{name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{}}
+  },'transport-host.html');
+
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.notEqual(result.result?.revoked,true,
+    'a persisted lease must never be acknowledged as successfully revoked');
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0001');
+  assert.equal(c.data.bridgeMutationQuarantineLock,true,
+    'uncertain lease removal must retain the durable global deny lock');
+  assert.deepEqual(c.session.bridgeBackgroundControlGrants||{},
+    {},'legacy grants remain cleared while lease removal is uncertain');
+  assert.equal(c.calls.some(call=>call[0]==='script'&&
+    ['provider_prepare','provider_commit'].includes(call[1])),false);
+});
+
 test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a durable global reconnect lock',async()=>{
   const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeSessionAuthorization'});
   await startBackgroundTransport(c);
