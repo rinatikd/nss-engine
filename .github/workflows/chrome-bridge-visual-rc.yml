@@ -135,7 +135,7 @@ jobs:
         shell: pwsh
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
-          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-upgrade-fixture'
+          $root = Join-Path ([IO.Path]::GetTempPath()) 'chrome-bridge-upgrade-fixture'
           $installed = Join-Path $root 'extension'
           New-Item -ItemType Directory -Force -Path $installed | Out-Null
           Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $installed
@@ -203,7 +203,7 @@ jobs:
         shell: powershell
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
-          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-ps51-fixture'
+          $root = Join-Path ([IO.Path]::GetTempPath()) 'chrome-bridge-ps51-fixture'
           $installed = Join-Path $root 'extension'
           New-Item -ItemType Directory -Force -Path $installed | Out-Null
           Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $installed
