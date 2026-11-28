@@ -19,9 +19,10 @@ function WriteManifest([string]$Path) {
   }
   [IO.File]::WriteAllText($Path, ($manifest | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
 }
-$fixture = Join-Path ([IO.Path]::GetTempPath()) ('chrome-bridge-restore-safety-' + [guid]::NewGuid().ToString('N'))
-$root = Join-Path $fixture 'profile'
-$backup = Join-Path $fixture 'backup'
+$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$root = Join-Path $tempRoot ('chrome-bridge-restore-profile-' + [guid]::NewGuid().ToString('N'))
+$backup = Join-Path $tempRoot ('chrome-bridge-restore-backup-' + [guid]::NewGuid().ToString('N'))
+$wrongRoot = Join-Path $tempRoot ('chrome-bridge-restore-wrong-' + [guid]::NewGuid().ToString('N'))
 $installed = Join-Path $root 'extension'
 $backupExtension = Join-Path $backup 'extension'
 New-Item -ItemType Directory -Force -Path $installed,$backupExtension | Out-Null
@@ -46,7 +47,6 @@ try {
   ExpectFailure { & $scriptPath -RollbackFrom $backup -ConfirmRestore } 'Restore without explicit -BridgeRoot unexpectedly succeeded'
   ExpectFailure { & $scriptPath -BridgeRoot 'C:\Engineering\chrome-bridge' -RollbackFrom $backup -ConfirmRestore } 'Production BridgeRoot was not rejected'
 
-  $wrongRoot = Join-Path $fixture 'wrong-profile'
   New-Item -ItemType Directory -Force -Path (Join-Path $wrongRoot 'extension') | Out-Null
   WriteManifest (Join-Path $wrongRoot 'extension/manifest.json')
   ExpectFailure { & $scriptPath -BridgeRoot $wrongRoot -RollbackFrom $backup -ConfirmRestore } 'Unmarked disposable target was accepted'
@@ -59,5 +59,5 @@ try {
   Assert ((Get-FileHash -LiteralPath (Join-Path $root 'server/server.mjs')).Hash -eq $serverHash) 'Restore modified server files'
   Write-Output '[PASS] Restore confirmation, explicit disposable target, no-write rejection, and extension-only recovery'
 } finally {
-  Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $root,$backup,$wrongRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
