@@ -1867,7 +1867,7 @@ test('session_authorize detects a grant removal that resolves without clearing s
 });
 
 
-test('concurrent session_authorize is rejected while the first lease commit is pending',async()=>{
+test('concurrent authorization and Revoke are fenced until the first lease commit settles',async()=>{
   let releaseWrite;
   let signalWriteEntered;
   const writeEntered=new Promise(resolve=>{signalWriteEntered=resolve;});
@@ -1900,15 +1900,27 @@ test('concurrent session_authorize is rejected while the first lease commit is p
     expires:Date.now()+90000,
     args:{sessionId:'session_0003',durationMinutes:60,origins:['https://claude.ai']}
   }},'transport-host.html');
+  const revokeDuringCommit=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',args:{}
+  }},'transport-host.html');
 
   releaseWrite();
   const first=await firstPromise;
 
   assert.equal(second.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
   assert.equal(second.dispatchState,'BLOCKED');
+  assert.equal(revokeDuringCommit.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(revokeDuringCommit.dispatchState,'BLOCKED');
   assert.equal(first.result?.active,true);
   assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0002');
   assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
   assert.equal(c.calls.filter(call=>call[0]==='session-set'&&
     Object.hasOwn(call[1]||{},'bridgeSessionAuthorization')).length,1);
+
+  const revokeRetry=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',args:{}
+  }},'transport-host.html');
+  assert.equal(revokeRetry.result?.revoked,true,'Revoke must succeed when retried after the authorization transaction');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationLabMode,false);
 });
