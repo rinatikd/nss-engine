@@ -238,7 +238,8 @@ async function assertMutationAllowed(chromeApi, tabId) {
     session = await chromeApi.storage.session.get([
       'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineRecords',
       'bridgeMutationQuarantineLock','bridgeMutationRevokingTabs',
-      'bridgeMutationRevocationPending'
+      'bridgeMutationRevocationPending','bridgeSessionAuthorization',
+      'bridgeBackgroundControlGrants'
     ]);
   }
   // Recheck after Storage awaits: Revoke may have installed its in-memory
@@ -261,6 +262,18 @@ async function assertMutationAllowed(chromeApi, tabId) {
       throw coordinatorError('SESSION_AUTH_TRANSITION_STATE_INVALID','BLOCKED');
     throw coordinatorError('SESSION_AUTH_TRANSITION_PENDING','BLOCKED');
   }
+  // Compatibility fence for a worker replaced while an older build was in
+  // the lease-written / legacy-grants-not-yet-cleared window (before this
+  // durable marker existed). A lease and any legacy grant are never a valid
+  // committed state; require explicit Revoke to reconcile it.
+  const legacyGrantStore=session.bridgeBackgroundControlGrants;
+  if (legacyGrantStore!==undefined && legacyGrantStore!==null &&
+      (typeof legacyGrantStore!=='object' || Array.isArray(legacyGrantStore)))
+    throw coordinatorError('SESSION_AUTHORIZATION_STATE_INCONSISTENT','BLOCKED');
+  if (session.bridgeSessionAuthorization!==undefined &&
+      session.bridgeSessionAuthorization!==null &&
+      legacyGrantStore && Object.keys(legacyGrantStore).length>0)
+    throw coordinatorError('SESSION_AUTHORIZATION_STATE_INCONSISTENT','BLOCKED');
   if (local.bridgeMutationQuarantineLock === true ||
       session.bridgeMutationQuarantineLock === true)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
