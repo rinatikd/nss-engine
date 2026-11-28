@@ -15,6 +15,7 @@ test('Windows Restore requires explicit confirmation and an explicitly selected 
   assert.match(restore, /direct child of the OS temp directory/);
   assert.match(restore, /ReparsePoint/);
   assert.match(restore, /Production BridgeRoot is forbidden/);
+  assert.match(restore, /No Restore command emitted/);
   assert.doesNotMatch(restore, /Request accepted: copy of backup/);
 });
 
