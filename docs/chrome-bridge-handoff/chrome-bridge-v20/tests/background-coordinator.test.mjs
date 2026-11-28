@@ -1823,8 +1823,8 @@ test('Stop racing session lease persistence prevents legacy cleanup and lab-mode
   }},'transport-host.html');
   if(stopPromise) await stopPromise;
 
-  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
-  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.equal(result.error,'BACKGROUND_STOP_IN_PROGRESS');
+  assert.equal(result.dispatchState,'BLOCKED');
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.data.bridgeMutationLabMode,false);
   assert.equal(c.calls.some(call=>call[0]==='set'&&call[1]?.bridgeMutationLabMode===true),false,
