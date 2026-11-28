@@ -11,6 +11,9 @@ const root = path.resolve(import.meta.dirname, '..');
 const output = path.join(root, 'integration-reports/rollback-recovery');
 const candidate = path.join(root, 'rollback-candidates/v020-cors-recovered');
 const state = fs.mkdtempSync(path.join(os.tmpdir(), 'rollback-verify-synthetic-'));
+// Pin every implicit server default to the synthetic temp fixture as well.
+process.env.CHROME_BRIDGE_HOME = state;
+process.env.CHROME_BRIDGE_PORT = '0';
 const config = {
   agentToken: 'synthetic-rollback-agent-token-only',
   browserToken: 'synthetic-rollback-browser-token-only'
