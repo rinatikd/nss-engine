@@ -1697,13 +1697,14 @@ test('replacement worker blocks legacy and session mutation paths during persist
 });
 
 test('session_revoke rejects a resolved no-op lease removal and keeps the global deny lock',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-revoke-noop-readback');
   const c=fakeChrome({...LAB_STATE},{ignoreSessionRemove:'bridgeSessionAuthorization'});
-  await startBackgroundTransport(c);
+  await coordinator.startBackgroundTransport(c);
   c.session.bridgeSessionAuthorization=sessionLease();
   c.session.bridgeBackgroundControlGrants={
     '42':{origin:'https://claude.ai',expires:Date.now()+60000}
   };
-  installBackgroundCoordinator(c);
+  coordinator.installBackgroundCoordinator(c);
   const result=await sendCoordinator(c,'dispatch',{
     command:{name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
       expires:Date.now()+90000,args:{}}
