@@ -63,6 +63,12 @@ try {
     jsonrpc: '2.0', id: 1, result: {}
   });
 
+  // Establish a synthetic browser heartbeat first; the bridge correctly
+  // rejects extension commands until a browser poll has been observed.
+  const idlePoll = await request(original.url + '/bridge/poll', config.browserToken, {});
+  assert.equal(idlePoll.status, 200);
+  assert.equal((await idlePoll.json()).command, null);
+
   const pending = rpc(original.url, config.agentToken, 'tools/call', {
     name: 'browser_tabs', arguments: {}
   });
