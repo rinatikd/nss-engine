@@ -1766,8 +1766,8 @@ test('session_authorize pre-persist write rejection preserves grants after verif
     args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
   }},'transport-host.html');
 
-  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
-  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.equal(result.error,'SESSION_AUTH_PERSISTENCE_FAILED');
+  assert.equal(result.dispatchState,'NOT_PERFORMED');
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
   assert.equal(c.data.bridgeMutationQuarantineLock,undefined,
