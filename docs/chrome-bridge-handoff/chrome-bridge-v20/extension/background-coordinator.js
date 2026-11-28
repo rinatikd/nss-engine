@@ -1153,20 +1153,29 @@ async function persistGlobalQuarantineLock(chromeApi) {
   }
 }
 
-async function failClosedSessionAuthorization(chromeApi, sessionAuthorization) {
+async function failClosedSessionAuthorization(chromeApi, sessionAuthorization, {
+  requireGlobalLock=true
+}={}) {
   controlClearFailed = true;
   await chromeApi.storage.local.set({bridgeMutationLabMode:false}).catch(()=>{});
 
   // Never restore legacy grants beside a possibly persisted session lease.
-  // Revoke and verify absence; if either step is ambiguous, the durable global
-  // quarantine lock remains the only safe admission decision.
+  // If grants have not been touched and lease revocation is read-back verified,
+  // the prior per-tab authorization state is intact and no global lock is needed.
+  let revokedAndVerified=false;
   try {
     await sessionAuthorization.revoke();
     const state=await chromeApi.storage.session.get('bridgeSessionAuthorization');
     if (state.bridgeSessionAuthorization != null)
       throw Error('SESSION_AUTHORIZATION_REVOKE_UNCONFIRMED');
+    revokedAndVerified=true;
   } catch {
-    // Keep the lock below; do not attempt to restore legacy grants.
+    // An unconfirmed revoke remains fail-closed below.
+  }
+
+  if (revokedAndVerified && !requireGlobalLock) {
+    controlClearFailed=false;
+    return {persisted:true,store:'session-revoke-verified'};
   }
 
   const lock=await persistGlobalQuarantineLock(chromeApi);
@@ -1560,7 +1569,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                   });
                 } catch(error) {
                   if (error?.message==='SESSION_PERSISTENCE_UNCONFIRMED') {
-                    await failClosedSessionAuthorization(chromeApi,sessionAuthorization);
+                    await failClosedSessionAuthorization(chromeApi,sessionAuthorization,{requireGlobalLock:false});
                     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
                   }
                   throw error;
