@@ -12,6 +12,8 @@ test('Windows Restore requires explicit confirmation and an explicitly selected 
   assert.match(restore, /if \(-not \$ConfirmRestore\)/);
   assert.match(restore, /CHROME_BRIDGE_DISPOSABLE_RESTORE_V1/);
   assert.match(restore, /GetTempPath\(\)/);
+  assert.match(restore, /direct child of the OS temp directory/);
+  assert.match(restore, /ReparsePoint/);
   assert.match(restore, /Production BridgeRoot is forbidden/);
   assert.doesNotMatch(restore, /Request accepted: copy of backup/);
 });
