@@ -59,8 +59,11 @@ export class BackgroundControlGrants {
     await this.api.storage.session.set({[KEY]:grants});
   }
   async clear() {
-    if (!this.api.storage.session?.setAccessLevel) return;
+    if (!this.api.storage.session?.setAccessLevel) throw Error('SECURE_SESSION_STORAGE_REQUIRED');
     await this.api.storage.session.setAccessLevel({accessLevel:'TRUSTED_CONTEXTS'});
     await this.api.storage.session.remove(KEY);
+    const state=await this.api.storage.session.get(KEY);
+    if (state[KEY]!==undefined && state[KEY]!==null)
+      throw Error('CONTROL_GRANTS_CLEAR_UNCONFIRMED');
   }
 }

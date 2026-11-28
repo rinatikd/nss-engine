@@ -28,6 +28,10 @@ jobs:
       - name: Verify MCP handshake independently of browser availability
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/mcp-channel-smoke.test.mjs
+
+      - name: Run synthetic-only rollback compatibility verifier
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node deployment/verify-rollback.mjs
       - name: Install Chrome for Testing (unpacked MV3 supported)
         id: setup-mv3-chrome
         uses: browser-actions/setup-chrome@v2.2.0
@@ -131,7 +135,7 @@ jobs:
         shell: pwsh
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
-          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-upgrade-fixture'
+          $root = Join-Path ([IO.Path]::GetTempPath()) 'chrome-bridge-upgrade-fixture'
           $installed = Join-Path $root 'extension'
           New-Item -ItemType Directory -Force -Path $installed | Out-Null
           Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $installed
@@ -164,7 +168,9 @@ jobs:
           if ((Get-Content (Join-Path $installed 'style.css') -Raw) -notmatch 'max-width:940px') { throw 'New styles not deployed' }
           $backups = @(Get-ChildItem (Split-Path $root -Parent) -Directory -Filter 'chrome-bridge-backup-*' | Sort-Object LastWriteTime -Descending)
           if (-not $backups.Count) { throw 'Backup not found' }
-          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName
+          $disposableMarker = Join-Path $root '.chrome-bridge-disposable'
+          Set-Content -LiteralPath $disposableMarker -Value 'CHROME_BRIDGE_DISPOSABLE_RESTORE_V1' -NoNewline
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName -ConfirmRestore
           if ($LASTEXITCODE -ne 0) { throw 'rollback failed' }
           if ((Get-FileHash (Join-Path $installed 'manifest.json')).Hash -ne $originalHash) { throw 'Rollback did not restore manifest' }
           if (Test-Path (Join-Path $installed 'browser-key-store.js')) { throw 'Rollback kept new source file' }
@@ -197,7 +203,7 @@ jobs:
         shell: powershell
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
-          $root = Join-Path $env:RUNNER_TEMP 'chrome-bridge-ps51-fixture'
+          $root = Join-Path ([IO.Path]::GetTempPath()) 'chrome-bridge-ps51-fixture'
           $installed = Join-Path $root 'extension'
           New-Item -ItemType Directory -Force -Path $installed | Out-Null
           Copy-Item extension/background.js,extension/control.js,extension/control.html,extension/permissions.js -Destination $installed
@@ -231,11 +237,18 @@ jobs:
           if ((Get-Content (Join-Path $installed 'style.css') -Raw) -notmatch 'max-width:940px') { throw 'New styles not deployed' }
           $backups = @(Get-ChildItem (Split-Path $root -Parent) -Directory -Filter 'chrome-bridge-backup-*' | Sort-Object LastWriteTime -Descending)
           if ($backups.Count -ne 1) { throw 'Expected exactly one rollback backup' }
-          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName
+          $disposableMarker = Join-Path $root '.chrome-bridge-disposable'
+          Set-Content -LiteralPath $disposableMarker -Value 'CHROME_BRIDGE_DISPOSABLE_RESTORE_V1' -NoNewline
+          & ./deployment/upgrade-windows.ps1 -BridgeRoot $root -RollbackFrom $backups[0].FullName -ConfirmRestore
           if ($LASTEXITCODE -ne 0) { throw 'Rollback failed' }
           if ((Get-FileHash $manifestPath).Hash -ne $originalHash) { throw 'Manifest not restored exactly' }
           if (Test-Path (Join-Path $installed 'browser-key-store.js')) { throw 'New file survived rollback' }
           Write-Output '[PASS] Windows PowerShell 5.1 dry-run/apply/restore with BOM check'
+      - name: Verify Restore fail-closed guards with Windows PowerShell 5.1
+        shell: powershell
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: |
+          & ./tests/upgrade-windows-safety.test.ps1
       - name: Test supervisor probe and scheduled-task dry-run on Windows
         shell: powershell
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20

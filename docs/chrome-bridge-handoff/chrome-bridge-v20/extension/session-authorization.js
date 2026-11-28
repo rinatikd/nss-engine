@@ -73,8 +73,37 @@ export class SessionAuthorization {
       if (previousStatus.active) throw Error('SESSION_ALREADY_ACTIVE');
       await this.revoke();
     }
-    await this.api.storage.session.set({ [STORAGE_KEY]: lease });
-    return this.publicStatus(lease, bridgeEpoch);
+    let writeError = null;
+    try {
+      await this.api.storage.session.set({ [STORAGE_KEY]: lease });
+    } catch (error) {
+      // Chrome Storage may reject after the write reached the backing store.
+      // A rejected promise is therefore UNKNOWN until an exact read-back.
+      writeError = error;
+    }
+
+    let persisted;
+    try {
+      persisted = await this.read();
+    } catch {
+      throw Object.assign(Error('SESSION_PERSISTENCE_UNCONFIRMED'), {
+        cause: writeError || undefined
+      });
+    }
+    const persistedKeys=persisted && typeof persisted==='object'
+      ? Object.keys(persisted).sort() : [];
+    const leaseKeys=Object.keys(lease).sort();
+    const exactLease=persistedKeys.length===leaseKeys.length &&
+      leaseKeys.every((key,index)=>key===persistedKeys[index] &&
+        JSON.stringify(persisted[key])===JSON.stringify(lease[key]));
+    if (!exactLease) {
+      throw Object.assign(Error('SESSION_PERSISTENCE_UNCONFIRMED'), {
+        cause: writeError || undefined
+      });
+    }
+
+    // Exact read-back is the commit point, including the ambiguous-write case.
+    return this.publicStatus(persisted, bridgeEpoch);
   }
 
   publicStatus(lease, bridgeEpoch) {
@@ -133,8 +162,24 @@ export class SessionAuthorization {
   }
 
   async revoke() {
-    if (!this.api.storage.session?.setAccessLevel) return;
+    if (!this.api.storage.session?.setAccessLevel ||
+        typeof this.api.storage.session.remove !== 'function' ||
+        typeof this.api.storage.session.get !== 'function')
+      throw Error('SECURE_SESSION_STORAGE_REQUIRED');
+
     await this.api.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
     await this.api.storage.session.remove(STORAGE_KEY);
+
+    // A fulfilled remove() promise is not proof that Chrome persisted the
+    // deletion. Re-read the exact key before acknowledging Revoke.
+    let snapshot;
+    try {
+      snapshot = await this.api.storage.session.get(STORAGE_KEY);
+    } catch {
+      throw Error('SESSION_REVOKE_UNCONFIRMED');
+    }
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot) ||
+        (snapshot[STORAGE_KEY] !== undefined && snapshot[STORAGE_KEY] !== null))
+      throw Error('SESSION_REVOKE_UNCONFIRMED');
   }
 }
