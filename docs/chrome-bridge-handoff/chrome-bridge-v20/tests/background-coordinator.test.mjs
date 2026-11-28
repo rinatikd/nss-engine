@@ -1644,6 +1644,15 @@ test('session_authorize validation failure preserves existing legacy grants',asy
   assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
   assert.equal(c.session.bridgeSessionAuthorization,undefined);
   assert.equal(c.data.bridgeMutationQuarantineLock,undefined);
+
+  const retry=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  assert.equal(retry.result?.active,true,'a clean validation failure must not strand the control-clear fence');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0002');
 });
 
 test('session_authorize SESSION_ALREADY_ACTIVE preserves legacy grants',async()=>{
