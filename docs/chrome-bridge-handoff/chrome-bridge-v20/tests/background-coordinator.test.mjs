@@ -15,6 +15,10 @@ function fakeChrome(data={},options={}) {
     storage:{local:{
       setAccessLevel:async opts=>calls.push(['restrict',opts.accessLevel]),
       get:async keys=>keys===null?{...data}:Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]])),
+      remove:async key=>{
+        if (options.beforeSessionRemove) await options.beforeSessionRemove(key,session,calls);
+        delete session[key];
+      },
       set:async next=>{
         const failedKey=Object.keys(next).find(key=>
           options.failLocalSet===true || options.failLocalSet===key ||
@@ -27,7 +31,8 @@ function fakeChrome(data={},options={}) {
         }
         if (options.beforeLocalSet) await options.beforeLocalSet(next,data,calls);
         Object.assign(data,next);calls.push(['set',next]);
-      }
+      },
+      remove:async key=>{ delete data[key]; calls.push(['local-remove',key]); }
     },session:{
       setAccessLevel:async opts=>calls.push(['session-restrict',opts.accessLevel]),
       get:async keys=>{
@@ -1621,6 +1626,69 @@ test('quarantine status restricts local and session audit stores before reading 
   ]);
 });
 
+
+test('replacement worker blocks legacy and session mutation paths during persisted authorization transition',async()=>{
+  let transitionReachedResolve,releaseTransitionResolve;
+  const transitionReached=new Promise(resolve=>{transitionReachedResolve=resolve;});
+  const releaseTransition=new Promise(resolve=>{releaseTransitionResolve=resolve;});
+  const original=await import('../extension/background-coordinator.js?session-auth-transition-original');
+  const c=fakeChrome({...LAB_STATE},{beforeSessionRemove:async key=>{
+    if (key==='bridgeBackgroundControlGrants') {
+      transitionReachedResolve();
+      await releaseTransition;
+    }
+  }});
+  await original.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  original.installBackgroundCoordinator(c);
+  const originalListener=c.listeners.at(-1);
+  await sendCoordinatorTo(c,originalListener,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const authorizing=sendCoordinatorTo(c,originalListener,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  await transitionReached;
+
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0002',
+    'the exact new lease is persisted before legacy grants are removed');
+  assert.ok(c.session.bridgeBackgroundControlGrants?.['42'],
+    'the test pauses at the lease-written / legacy-grants-not-yet-cleared boundary');
+  assert.equal(c.data.bridgeSessionAuthorizationTransition?.state,'authorizing');
+
+  const replacement=await import('../extension/background-coordinator.js?session-auth-transition-replacement');
+  replacement.installBackgroundCoordinator(c);
+  const replacementListener=c.listeners.at(-1);
+
+  const legacy=await sendCoordinatorTo(c,replacementListener,'dispatch',{command:{
+    name:'browser_click',bridgeEpoch:'bridge_epoch_0001',expires:Date.now()+90000,
+    args:{tabId:42,selector:'button.synthetic'}
+  }},'transport-host.html');
+  const session=await sendCoordinatorTo(c,replacementListener,'dispatch',{
+    command:providerPrepare(42)
+  },'transport-host.html');
+
+  assert.equal(legacy.error,'SESSION_AUTH_TRANSITION_PENDING');
+  assert.equal(legacy.dispatchState,'BLOCKED');
+  assert.equal(session.error,'SESSION_AUTH_TRANSITION_PENDING');
+  assert.equal(session.dispatchState,'BLOCKED');
+  assert.equal(c.calls.some(call=>call[0]==='script'),false,
+    'no page action may be executed by the replacement worker');
+  assert.equal(c.calls.some(call=>call[0]==='approval'),false,
+    'no approval may be created while reconciliation is pending');
+
+  releaseTransitionResolve();
+  const completed=await authorizing;
+  assert.equal(completed.result?.active,true);
+  assert.equal(c.data.bridgeSessionAuthorizationTransition,undefined,
+    'the transition marker is removed only after the complete authorization commit');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
+});
 
 test('session_authorize validation failure preserves existing legacy grants',async()=>{
   const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-1');
