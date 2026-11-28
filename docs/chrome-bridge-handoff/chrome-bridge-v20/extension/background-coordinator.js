@@ -7,6 +7,7 @@ import { normalizeFailure } from './failure-contract.js';
 import { MutationOperationJournal } from './mutation-operation-journal.js';
 
 const PATH = 'transport-host.html';
+const SESSION_AUTH_TRANSITION_KEY = 'bridgeSessionAuthorizationTransition';
 let creating = null;
 let status = {state:'disconnected',connected:false,error:null,updatedAt:0};
 let starting = null;
@@ -107,6 +108,21 @@ function ensureMutationOperationRecovery(chromeApi) {
 
 function coordinatorError(code, dispatchState='NOT_PERFORMED') {
   return Object.assign(Error(code), {dispatchState});
+}
+
+async function persistSessionAuthorizationTransition(chromeApi, record) {
+  await chromeApi.storage.local.set({[SESSION_AUTH_TRANSITION_KEY]:record});
+  const snapshot=await chromeApi.storage.local.get(SESSION_AUTH_TRANSITION_KEY);
+  if (!snapshot || JSON.stringify(snapshot[SESSION_AUTH_TRANSITION_KEY])!==JSON.stringify(record))
+    throw coordinatorError('SESSION_AUTH_TRANSITION_UNCONFIRMED','UNKNOWN');
+}
+
+async function clearSessionAuthorizationTransition(chromeApi) {
+  await chromeApi.storage.local.remove(SESSION_AUTH_TRANSITION_KEY);
+  const snapshot=await chromeApi.storage.local.get(SESSION_AUTH_TRANSITION_KEY);
+  if (!snapshot || (snapshot[SESSION_AUTH_TRANSITION_KEY]!==undefined &&
+      snapshot[SESSION_AUTH_TRANSITION_KEY]!==null))
+    throw coordinatorError('SESSION_AUTH_TRANSITION_CLEAR_UNCONFIRMED','UNKNOWN');
 }
 
 // Grants, Revoke and global clear all mutate the same session-storage object.
@@ -215,7 +231,7 @@ async function assertMutationAllowed(chromeApi, tabId) {
   const local = await chromeApi.storage.local.get([
     'bridgeMutationQuarantinedTabs','bridgeMutationQuarantineRecords',
     'bridgeMutationQuarantineLock','bridgeMutationRevokingTabs',
-    'bridgeMutationRevocationPending'
+    'bridgeMutationRevocationPending',SESSION_AUTH_TRANSITION_KEY
   ]);
   let session = {};
   if (chromeApi.storage.session?.get) {
@@ -231,6 +247,16 @@ async function assertMutationAllowed(chromeApi, tabId) {
     throw coordinatorError('TAB_MUTATION_REVOKING');
   if (mutationQuarantinedTabs.has(tabId))
     throw coordinatorError('TAB_MUTATION_QUARANTINED');
+  const authTransition=local[SESSION_AUTH_TRANSITION_KEY];
+  if (authTransition!==undefined && authTransition!==null) {
+    if (!authTransition || typeof authTransition!=='object' || Array.isArray(authTransition) ||
+        authTransition.schemaVersion!==1 || authTransition.state!=='authorizing' ||
+        typeof authTransition.sessionId!=='string' ||
+        typeof authTransition.bridgeEpoch!=='string' ||
+        !Number.isFinite(authTransition.startedAt))
+      throw coordinatorError('SESSION_AUTH_TRANSITION_STATE_INVALID','BLOCKED');
+    throw coordinatorError('SESSION_AUTH_TRANSITION_PENDING','BLOCKED');
+  }
   if (local.bridgeMutationQuarantineLock === true ||
       session.bridgeMutationQuarantineLock === true)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE');
@@ -1246,6 +1272,10 @@ async function clearAllBackgroundControls(chromeApi) {
   await new BackgroundControlGrants(chromeApi).clear();
   await new SessionAuthorization(chromeApi).revoke();
   await chromeApi.storage.local.set({bridgeMutationLabMode:false});
+  const mode=await chromeApi.storage.local.get('bridgeMutationLabMode');
+  if (mode.bridgeMutationLabMode!==false)
+    throw Error('SESSION_AUTH_DISABLE_UNCONFIRMED');
+  await clearSessionAuthorizationTransition(chromeApi);
 }
 
 async function stopOffscreenTransport(chromeApi) {
@@ -1559,6 +1589,19 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                   throw coordinatorError('BACKGROUND_TRANSPORT_DISABLED','BLOCKED');
                 if (currentStatus().connected!==true)
                   throw coordinatorError('BRIDGE_NOT_CONNECTED','BLOCKED');
+                // Persist a durable transition fence before writing the lease.
+                // A replacement MV3 worker must deny every mutation until either
+                // this transaction commits or an explicit Revoke reconciles it.
+                const transitionRecord={
+                  schemaVersion:1,state:'authorizing',
+                  sessionId:msg.command.args?.sessionId,
+                  bridgeEpoch:msg.command.bridgeEpoch,startedAt:Date.now()
+                };
+                const existingTransition=await chromeApi.storage.local.get(SESSION_AUTH_TRANSITION_KEY);
+                if (existingTransition[SESSION_AUTH_TRANSITION_KEY]!=null)
+                  throw coordinatorError('SESSION_AUTH_TRANSITION_PENDING','BLOCKED');
+                await persistSessionAuthorizationTransition(chromeApi,transitionRecord);
+
                 // Validate and persist the new lease BEFORE touching legacy
                 // grants. authorize() performs an exact storage.session read-back;
                 // validation/SESSION_ALREADY_ACTIVE failures leave grants intact.
@@ -1572,10 +1615,20 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                     const compensation=await failClosedSessionAuthorization(
                       chromeApi,sessionAuthorization,{requireGlobalLock:false}
                     );
-                    if (compensation.store==='session-revoke-verified')
+                    if (compensation.store==='session-revoke-verified') {
+                      await clearSessionAuthorizationTransition(chromeApi);
                       throw coordinatorError('SESSION_AUTH_PERSISTENCE_FAILED','NOT_PERFORMED');
+                    }
                     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
                   }
+                  // Validation and SESSION_ALREADY_ACTIVE errors occur before
+                  // this authorize() call writes a new lease. Remove only our
+                  // exact transition marker; unknown storage errors stay fenced.
+                  if (['SESSION_ID_INVALID','SESSION_DURATION_INVALID','BRIDGE_EPOCH_INVALID',
+                       'SESSION_ORIGINS_INVALID','SESSION_ORIGINS_DUPLICATE','SESSION_ORIGIN_DENIED',
+                       'SESSION_CLAUDE_REQUIRED','SESSION_SITE_NOT_CONFIGURED',
+                       'SESSION_ORIGIN_NOT_READY','SESSION_ALREADY_ACTIVE'].includes(error?.message))
+                    await clearSessionAuthorizationTransition(chromeApi);
                   throw error;
                 }
 
@@ -1605,10 +1658,12 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                     }
                   );
                   if (!legacyGrantsClearAttempted &&
-                      compensation.store==='session-revoke-verified' &&
-                      ['BACKGROUND_STOP_IN_PROGRESS','BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
-                       'BACKGROUND_CONTROL_CLEAR_FAILED'].includes(error?.message))
-                    throw error;
+                      compensation.store==='session-revoke-verified') {
+                    await clearSessionAuthorizationTransition(chromeApi);
+                    if (['BACKGROUND_STOP_IN_PROGRESS','BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
+                         'BACKGROUND_CONTROL_CLEAR_FAILED'].includes(error?.message))
+                      throw error;
+                  }
                   throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
                 }
 
@@ -1617,6 +1672,7 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                   const mode=await chromeApi.storage.local.get('bridgeMutationLabMode');
                   if (mode.bridgeMutationLabMode!==true)
                     throw Error('SESSION_AUTH_ENABLE_UNCONFIRMED');
+                  await clearSessionAuthorizationTransition(chromeApi);
                 } catch {
                   await failClosedSessionAuthorization(chromeApi,sessionAuthorization);
                   throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
