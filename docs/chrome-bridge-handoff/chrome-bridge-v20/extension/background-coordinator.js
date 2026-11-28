@@ -1598,10 +1598,17 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                   const pendingAfterClear=await readGlobalRevocationFence(chromeApi);
                   if (pendingAfterClear.record)
                     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
-                } catch {
-                  await failClosedSessionAuthorization(chromeApi,sessionAuthorization,{
-                    requireGlobalLock:legacyGrantsClearAttempted
-                  });
+                } catch(error) {
+                  const compensation=await failClosedSessionAuthorization(
+                    chromeApi,sessionAuthorization,{
+                      requireGlobalLock:legacyGrantsClearAttempted
+                    }
+                  );
+                  if (!legacyGrantsClearAttempted &&
+                      compensation.store==='session-revoke-verified' &&
+                      ['BACKGROUND_STOP_IN_PROGRESS','BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
+                       'BACKGROUND_CONTROL_CLEAR_FAILED'].includes(error?.message))
+                    throw error;
                   throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
                 }
 
