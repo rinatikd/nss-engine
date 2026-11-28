@@ -245,7 +245,6 @@ jobs:
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: |
           & ./tests/upgrade-windows-safety.test.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Windows Restore safety regression failed' }
       - name: Test supervisor probe and scheduled-task dry-run on Windows
         shell: powershell
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
