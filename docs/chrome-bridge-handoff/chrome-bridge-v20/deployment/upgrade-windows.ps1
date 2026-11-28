@@ -3,9 +3,10 @@
 [CmdletBinding(DefaultParameterSetName='Upgrade')]
 param(
   [string]$BridgeRoot = 'C:\Engineering\chrome-bridge',
-  [string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
+  [Parameter(ParameterSetName='Upgrade')][string]$CandidateRoot = (Join-Path $PSScriptRoot '..'),
   [Parameter(ParameterSetName='Upgrade')][switch]$Apply,
-  [Parameter(ParameterSetName='Restore', Mandatory=$true)][string]$RollbackFrom
+  [Parameter(ParameterSetName='Restore', Mandatory=$true)][string]$RollbackFrom,
+  [Parameter(ParameterSetName='Restore')][switch]$ConfirmRestore
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -49,19 +50,36 @@ function ValidateStaging([string]$Stage) {
     }
   }
 }
-$root = [IO.Path]::GetFullPath($BridgeRoot)
+if ($PSCmdlet.ParameterSetName -eq 'Restore') {
+  # Restore is a destructive operation. Require an explicit target, explicit
+  # operator confirmation, and a disposable root under the OS temp directory.
+  if (-not $PSBoundParameters.ContainsKey('BridgeRoot')) {
+    throw 'Restore requires an explicit -BridgeRoot; the Production default is never accepted.'
+  }
+  if (-not $ConfirmRestore) {
+    throw 'Restore requires the explicit -ConfirmRestore switch; no files were changed.'
+  }
+  $root = [IO.Path]::GetFullPath($BridgeRoot)
+  $productionRoot = [IO.Path]::GetFullPath('C:\Engineering\chrome-bridge')
+  Require (-not [string]::Equals($root,$productionRoot,[StringComparison]::OrdinalIgnoreCase)) 'Production BridgeRoot is forbidden for Restore'
+  $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+  Require ($root.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'Restore target must be inside the disposable OS temp directory'
+  $disposableMarker = Join-Path $root '.chrome-bridge-disposable'
+  Require (Test-Path -LiteralPath $disposableMarker -PathType Leaf) 'Restore target lacks disposable-profile marker'
+  $markerValue = (Get-Content -LiteralPath $disposableMarker -Raw -Encoding UTF8).Trim()
+  Require ($markerValue -eq 'CHROME_BRIDGE_DISPOSABLE_RESTORE_V1') 'Disposable-profile marker is invalid'
+} else {
+  $root = [IO.Path]::GetFullPath($BridgeRoot)
+}
 $installed = Join-Path $root 'extension'
 Require (Test-Path -LiteralPath $installed -PathType Container) 'Installed extension directory missing'
 if ($PSCmdlet.ParameterSetName -eq 'Restore') {
   $backup = [IO.Path]::GetFullPath($RollbackFrom)
+  Require ($backup.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)) 'Restore backup must be inside the disposable OS temp directory'
   $backupExtension = Join-Path $backup 'extension'
   Require (Test-Path -LiteralPath $backupExtension -PathType Container) 'Rollback snapshot does not contain extension folder'
   ConfirmManifest (Join-Path $backupExtension 'manifest.json') | Out-Null
-  if (-not $Apply) {
-    # Restore has its own deliberate confirm gate (script cannot be accidentally
-    # invoked from the ordinary dry-run path).
-    Write-Output '[RESTORE] Request accepted: copy of backup will replace installed extension only.'
-  }
+  Write-Output '[RESTORE] Explicit confirmation accepted for marked disposable profile.'
   $restoreStage = Join-Path $root ('.extension-restore-' + [guid]::NewGuid().ToString('N'))
   Copy-Item -LiteralPath $backupExtension -Destination $restoreStage -Recurse -Force
   $displaced = Join-Path $root ('.extension-displaced-' + [guid]::NewGuid().ToString('N'))
@@ -127,7 +145,7 @@ try {
     Move-Item -LiteralPath $installed -Destination $displaced -ErrorAction Stop
     Move-Item -LiteralPath $stage -Destination $installed -ErrorAction Stop
     Write-Output '[INSTALLED] Candidate extension files are in place. Reload unpacked extension in chrome://extensions.'
-    Write-Output ('[ROLLBACK] .\\deployment\\upgrade-windows.ps1 -BridgeRoot "' + $root + '" -RollbackFrom "' + $backupRoot + '"')
+    Write-Output ('[ROLLBACK] .\\deployment\\upgrade-windows.ps1 -BridgeRoot "' + $root + '" -RollbackFrom "' + $backupRoot + '" -ConfirmRestore')
     Remove-Item -LiteralPath $displaced -Recurse -Force
   } catch {
     if (-not (Test-Path -LiteralPath $installed) -and (Test-Path -LiteralPath $displaced)) {
