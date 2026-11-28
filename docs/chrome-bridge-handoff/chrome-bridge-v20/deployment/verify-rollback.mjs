@@ -91,7 +91,8 @@ try {
 
   const upgraded = await startBridge(currentModule);
   const upgradedList = await rpc(upgraded.url, config.agentToken, 'tools/list');
-  assert.equal(upgradedList.result.tools.length, 18);
+  assert.ok(upgradedList.result.tools.length > candidateList.result.tools.length,
+    'the candidate and current server registries must be distinguishable without pinning a stale tool count');
   const codex = await rpc(upgraded.url, config.agentToken, 'tools/call', {
     name: 'codex_submit',
     arguments: { requestId: 'synthetic-rehearsal', workspace: 'source', prompt: 'synthetic disabled probe' }
