@@ -1865,3 +1865,50 @@ test('session_authorize detects a grant removal that resolves without clearing s
   assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
   assert.equal(c.data.bridgeMutationQuarantineLock,true);
 });
+
+
+test('concurrent session_authorize is rejected while the first lease commit is pending',async()=>{
+  let releaseWrite;
+  let signalWriteEntered;
+  const writeEntered=new Promise(resolve=>{signalWriteEntered=resolve;});
+  const writeGate=new Promise(resolve=>{releaseWrite=resolve;});
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-concurrent');
+  const c=fakeChrome({...LAB_STATE},{beforeSessionSet:async next=>{
+    if(Object.hasOwn(next,'bridgeSessionAuthorization')){
+      signalWriteEntered();
+      await writeGate;
+    }
+  }});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const firstPromise=sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  await writeEntered;
+
+  const second=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0003',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  releaseWrite();
+  const first=await firstPromise;
+
+  assert.equal(second.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(second.dispatchState,'BLOCKED');
+  assert.equal(first.result?.active,true);
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0002');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
+  assert.equal(c.calls.filter(call=>call[0]==='session-set'&&
+    Object.hasOwn(call[1]||{},'bridgeSessionAuthorization')).length,1);
+});
