@@ -1685,6 +1685,38 @@ test('replacement worker blocks legacy and session mutation paths during persist
   assert.equal(c.data.bridgeSessionAuthorizationTransition,undefined,
     'the transition marker is removed only after the complete authorization commit');
   assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
+
+  const revoked=await sendCoordinatorTo(c,replacementListener,'dispatch',{command:{
+    name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,args:{}
+  }},'transport-host.html');
+  assert.equal(revoked.result?.revoked,true);
+  assert.equal(c.data.bridgeSessionAuthorizationTransition,undefined,
+    'explicit verified Revoke also reconciles and clears a stale transition marker');
+  assert.equal(c.data.bridgeMutationLabMode,false);
+});
+
+test('session_revoke rejects a resolved no-op lease removal and keeps the global deny lock',async()=>{
+  const c=fakeChrome({...LAB_STATE},{ignoreSessionRemove:'bridgeSessionAuthorization'});
+  await startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  installBackgroundCoordinator(c);
+  const result=await sendCoordinator(c,'dispatch',{
+    command:{name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{}}
+  },'transport-host.html');
+
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.notEqual(result.result?.revoked,true);
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0001');
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+  assert.deepEqual(c.session.bridgeBackgroundControlGrants||{},{});
+  assert.equal(c.calls.some(call=>call[0]==='script'&&
+    ['provider_prepare','provider_commit'].includes(call[1])),false);
 });
 
 test('session_authorize validation failure preserves existing legacy grants',async()=>{
