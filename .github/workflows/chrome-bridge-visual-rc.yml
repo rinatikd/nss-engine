@@ -28,6 +28,10 @@ jobs:
       - name: Verify MCP handshake independently of browser availability
         working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
         run: node --test tests/mcp-channel-smoke.test.mjs
+
+      - name: Run synthetic-only rollback compatibility verifier
+        working-directory: docs/chrome-bridge-handoff/chrome-bridge-v20
+        run: node deployment/verify-rollback.mjs
       - name: Install Chrome for Testing (unpacked MV3 supported)
         id: setup-mv3-chrome
         uses: browser-actions/setup-chrome@v2.2.0
