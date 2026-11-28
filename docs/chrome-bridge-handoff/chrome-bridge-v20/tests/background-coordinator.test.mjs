@@ -1972,18 +1972,27 @@ test('per-tab Revoke rechecks session lease inside the serialized control lane',
   };
 
   const revoke=sendCoordinator(c,'revoke-background-control',{tabId:42});
-  await staleCaptured;
+  // Old ordering captures a stale inactive snapshot outside the control lane;
+  // the fixed ordering either blocks on the in-progress authorization fence or
+  // checks the committed lease only after acquiring the shared lane.
+  const stage=await Promise.race([
+    staleCaptured.then(()=> 'stale-status-captured'),
+    revoke.then(()=> 'revoke-settled')
+  ]);
   releaseAuthWrite();
   const authorized=await authorization;
-  releaseStaleStatus();
+  if(stage==='stale-status-captured') releaseStaleStatus();
   const revoked=await revoke;
 
   assert.equal(authorized.result?.active,true);
-  assert.equal(revoked.error,'SESSION_WIDE_REVOCATION_REQUIRED',
-    'per-tab Revoke must re-check the lease after it acquires the shared control lane');
+  assert.notEqual(revoked.ok,true,
+    'per-tab Revoke must never report success against a concurrently committed origin-wide lease');
+  assert.ok(['BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','SESSION_WIDE_REVOCATION_REQUIRED']
+    .includes(revoked.error), 'the denial must identify the active authorization fence or lease scope');
   assert.equal(revoked.outcome,'NOT_PERFORMED');
   assert.equal(c.session.bridgeSessionAuthorization?.status,'active');
   assert.deepEqual(c.data.bridgeMutationRevokingTabs||[],
     [],'a scope denial must clean up its temporary durable tab fence');
-  assert.deepEqual(c.session.bridgeMutationRevokingTabs||[]);
+  assert.deepEqual(c.session.bridgeMutationRevokingTabs||[],[],
+    'the session-store tab fence must also be removed');
 });
