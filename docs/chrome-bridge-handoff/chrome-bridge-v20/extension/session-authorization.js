@@ -73,8 +73,37 @@ export class SessionAuthorization {
       if (previousStatus.active) throw Error('SESSION_ALREADY_ACTIVE');
       await this.revoke();
     }
-    await this.api.storage.session.set({ [STORAGE_KEY]: lease });
-    return this.publicStatus(lease, bridgeEpoch);
+    let writeError = null;
+    try {
+      await this.api.storage.session.set({ [STORAGE_KEY]: lease });
+    } catch (error) {
+      // Chrome Storage may reject after the write reached the backing store.
+      // A rejected promise is therefore UNKNOWN until an exact read-back.
+      writeError = error;
+    }
+
+    let persisted;
+    try {
+      persisted = await this.read();
+    } catch {
+      throw Object.assign(Error('SESSION_PERSISTENCE_UNCONFIRMED'), {
+        cause: writeError || undefined
+      });
+    }
+    const persistedKeys=persisted && typeof persisted==='object'
+      ? Object.keys(persisted).sort() : [];
+    const leaseKeys=Object.keys(lease).sort();
+    const exactLease=persistedKeys.length===leaseKeys.length &&
+      leaseKeys.every((key,index)=>key===persistedKeys[index] &&
+        JSON.stringify(persisted[key])===JSON.stringify(lease[key]));
+    if (!exactLease) {
+      throw Object.assign(Error('SESSION_PERSISTENCE_UNCONFIRMED'), {
+        cause: writeError || undefined
+      });
+    }
+
+    // Exact read-back is the commit point, including the ambiguous-write case.
+    return this.publicStatus(persisted, bridgeEpoch);
   }
 
   publicStatus(lease, bridgeEpoch) {

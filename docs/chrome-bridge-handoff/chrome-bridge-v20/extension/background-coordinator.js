@@ -1153,6 +1153,36 @@ async function persistGlobalQuarantineLock(chromeApi) {
   }
 }
 
+async function failClosedSessionAuthorization(chromeApi, sessionAuthorization, {
+  requireGlobalLock=true
+}={}) {
+  controlClearFailed = true;
+  await chromeApi.storage.local.set({bridgeMutationLabMode:false}).catch(()=>{});
+
+  // Never restore legacy grants beside a possibly persisted session lease.
+  // If grants have not been touched and lease revocation is read-back verified,
+  // the prior per-tab authorization state is intact and no global lock is needed.
+  let revokedAndVerified=false;
+  try {
+    await sessionAuthorization.revoke();
+    const state=await chromeApi.storage.session.get('bridgeSessionAuthorization');
+    if (state.bridgeSessionAuthorization != null)
+      throw Error('SESSION_AUTHORIZATION_REVOKE_UNCONFIRMED');
+    revokedAndVerified=true;
+  } catch {
+    // An unconfirmed revoke remains fail-closed below.
+  }
+
+  if (revokedAndVerified && !requireGlobalLock) {
+    controlClearFailed=false;
+    return {persisted:true,store:'session-revoke-verified'};
+  }
+
+  const lock=await persistGlobalQuarantineLock(chromeApi);
+  if (!lock.persisted) mutationQuarantinePersistenceFailed=true;
+  return lock;
+}
+
 async function assertNoGlobalQuarantineLock(chromeApi) {
   if (mutationQuarantinePersistenceFailed)
     throw coordinatorError('MUTATION_QUARANTINE_STATE_UNAVAILABLE','BLOCKED');
@@ -1529,35 +1559,67 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                   throw coordinatorError('BACKGROUND_TRANSPORT_DISABLED','BLOCKED');
                 if (currentStatus().connected!==true)
                   throw coordinatorError('BRIDGE_NOT_CONNECTED','BLOCKED');
-                // A new session starts only after old per-tab grants are gone.
+                // Validate and persist the new lease BEFORE touching legacy
+                // grants. authorize() performs an exact storage.session read-back;
+                // validation/SESSION_ALREADY_ACTIVE failures leave grants intact.
+                let created;
                 try {
-                  await new BackgroundControlGrants(chromeApi).clear();
-                } catch {
-                  // A failed grant clear leaves the legacy tab-grant path
-                  // potentially live. Keep all mutations blocked until an
-                  // explicit cleanup/reconciliation succeeds.
-                  controlClearFailed=true;
-                  await chromeApi.storage.local.set({bridgeMutationLabMode:false}).catch(()=>{});
-                  await persistGlobalQuarantineLock(chromeApi);
-                  throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
-                }
-                const created=await sessionAuthorization.authorize({
-                  ...msg.command.args,bridgeEpoch:msg.command.bridgeEpoch
-                });
-                try {
-                  await chromeApi.storage.local.set({bridgeMutationLabMode:true});
-                } catch {
-                  // The lease may have been persisted while the feature flag
-                  // was not. Revoke it and leave a lock if cleanup is uncertain.
-                  try {
-                    await sessionAuthorization.revoke();
-                    await chromeApi.storage.local.set({bridgeMutationLabMode:false});
-                  } catch {
-                    controlClearFailed=true;
-                    await persistGlobalQuarantineLock(chromeApi);
+                  created=await sessionAuthorization.authorize({
+                    ...msg.command.args,bridgeEpoch:msg.command.bridgeEpoch
+                  });
+                } catch(error) {
+                  if (error?.message==='SESSION_PERSISTENCE_UNCONFIRMED') {
+                    const compensation=await failClosedSessionAuthorization(
+                      chromeApi,sessionAuthorization,{requireGlobalLock:false}
+                    );
+                    if (compensation.store==='session-revoke-verified')
+                      throw coordinatorError('SESSION_AUTH_PERSISTENCE_FAILED','NOT_PERFORMED');
                     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
                   }
-                  throw coordinatorError('SESSION_AUTH_ENABLE_FAILED','NOT_PERFORMED');
+                  throw error;
+                }
+
+                // Stop/Revoke may install its fence while storage operations are
+                // pending. Recheck immediately before destructive legacy cleanup.
+                let legacyGrantsClearAttempted=false;
+                try {
+                  if (mutationStopRequested || mutationStopCount>0 || controlClearFailed)
+                    throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS','BLOCKED');
+                  const pendingBeforeClear=await readGlobalRevocationFence(chromeApi);
+                  if (pendingBeforeClear.record)
+                    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
+                  legacyGrantsClearAttempted=true;
+                  await new BackgroundControlGrants(chromeApi).clear();
+
+                  // A Stop/Revoke that raced the grant clear wins. Do not enable
+                  // mutation mode with a lease after a newer lifecycle fence.
+                  if (mutationStopRequested || mutationStopCount>0 || controlClearFailed)
+                    throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS','BLOCKED');
+                  const pendingAfterClear=await readGlobalRevocationFence(chromeApi);
+                  if (pendingAfterClear.record)
+                    throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
+                } catch(error) {
+                  const compensation=await failClosedSessionAuthorization(
+                    chromeApi,sessionAuthorization,{
+                      requireGlobalLock:legacyGrantsClearAttempted
+                    }
+                  );
+                  if (!legacyGrantsClearAttempted &&
+                      compensation.store==='session-revoke-verified' &&
+                      ['BACKGROUND_STOP_IN_PROGRESS','BACKGROUND_CONTROL_CLEAR_IN_PROGRESS',
+                       'BACKGROUND_CONTROL_CLEAR_FAILED'].includes(error?.message))
+                    throw error;
+                  throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
+                }
+
+                try {
+                  await chromeApi.storage.local.set({bridgeMutationLabMode:true});
+                  const mode=await chromeApi.storage.local.get('bridgeMutationLabMode');
+                  if (mode.bridgeMutationLabMode!==true)
+                    throw Error('SESSION_AUTH_ENABLE_UNCONFIRMED');
+                } catch {
+                  await failClosedSessionAuthorization(chromeApi,sessionAuthorization);
+                  throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
                 }
                 return created;
               },{allowDuringClear:true});
@@ -1949,16 +2011,17 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
             if (!settled) throw await unknownRevoke();
             await quarantineUnreconciledGenericActions(chromeApi,[tabId]);
 
-            const {origin}=await permittedTab(chromeApi,tabId);
-            const sessionStatus=await new SessionAuthorization(chromeApi).status();
-            if (sessionStatus.active && sessionStatus.origins.includes(origin))
-              throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
-
-            revokeWriteStarted=true;
-            const revokeWrite=await enqueueControlOperationBounded(
-              () => new BackgroundControlGrants(chromeApi).revoke(tabId),
-              {tabId,allowFencedTab:true}
-            );
+            // Serialize the lease-scope check with the grant mutation. A status
+            // read before entering controlStorageLane can become stale while a
+            // concurrent session_authorize commits its origin-wide lease.
+            const revokeWrite=await enqueueControlOperationBounded(async()=>{
+              const {origin}=await permittedTab(chromeApi,tabId);
+              const sessionStatus=await new SessionAuthorization(chromeApi).status();
+              if (sessionStatus.active && sessionStatus.origins.includes(origin))
+                throw coordinatorError('SESSION_WIDE_REVOCATION_REQUIRED','BLOCKED');
+              revokeWriteStarted=true;
+              return new BackgroundControlGrants(chromeApi).revoke(tabId);
+            },{tabId,allowFencedTab:true});
             if (!revokeWrite.settled) throw await unknownRevoke();
 
             if (!await enqueueRevocationFence(()=>clearTabRevocationFence(chromeApi,tabId,fenceStores)))
