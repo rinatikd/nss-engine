@@ -118,6 +118,27 @@ test('explicit revoke removes temporary session lease', async () => {
   assert.equal(Object.keys(f.session).length, 0);
 });
 
+test('revoke rejects a fulfilled no-op remove and succeeds only after exact absence read-back', async () => {
+  const f = fixture();
+  await f.auth.authorize({
+    sessionId, durationMinutes: 60, origins: allOrigins, bridgeEpoch: epoch
+  });
+  const lease = f.session.bridgeSessionAuthorization;
+  const remove = f.chromeApi.storage.session.remove;
+  f.chromeApi.storage.session.remove = async () => {};
+  await assert.rejects(f.auth.revoke(), /SESSION_REVOKE_UNCONFIRMED/);
+  assert.deepEqual(f.session.bridgeSessionAuthorization, lease);
+  f.chromeApi.storage.session.remove = remove;
+  await f.auth.revoke();
+  assert.equal(f.session.bridgeSessionAuthorization, undefined);
+});
+
+test('revoke fails closed when secure session storage cannot be established', async () => {
+  const f = fixture();
+  delete f.chromeApi.storage.session.setAccessLevel;
+  await assert.rejects(f.auth.revoke(), /SECURE_SESSION_STORAGE_REQUIRED/);
+});
+
 test('invalid IDs, duration and epoch fail closed', async () => {
   const f = fixture();
   await assert.rejects(f.auth.authorize({
