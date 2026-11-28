@@ -1620,6 +1620,12 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                 const existingTransition=await chromeApi.storage.local.get(SESSION_AUTH_TRANSITION_KEY);
                 if (existingTransition[SESSION_AUTH_TRANSITION_KEY]!=null)
                   throw coordinatorError('SESSION_AUTH_TRANSITION_PENDING','BLOCKED');
+                // Disable Lab mutations first. This is a compatibility fence
+                // for an older worker that does not know the new marker key.
+                await chromeApi.storage.local.set({bridgeMutationLabMode:false});
+                const disabledMode=await chromeApi.storage.local.get('bridgeMutationLabMode');
+                if (disabledMode.bridgeMutationLabMode!==false)
+                  throw coordinatorError('SESSION_AUTH_TRANSITION_UNCONFIRMED','UNKNOWN');
                 await persistSessionAuthorizationTransition(chromeApi,transitionRecord);
 
                 // Validate and persist the new lease BEFORE touching legacy
