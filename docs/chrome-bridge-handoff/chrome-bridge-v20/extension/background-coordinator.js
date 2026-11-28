@@ -1577,12 +1577,14 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
 
                 // Stop/Revoke may install its fence while storage operations are
                 // pending. Recheck immediately before destructive legacy cleanup.
+                let legacyGrantsClearAttempted=false;
                 try {
                   if (mutationStopRequested || mutationStopCount>0 || controlClearFailed)
                     throw coordinatorError('BACKGROUND_STOP_IN_PROGRESS','BLOCKED');
                   const pendingBeforeClear=await readGlobalRevocationFence(chromeApi);
                   if (pendingBeforeClear.record)
                     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
+                  legacyGrantsClearAttempted=true;
                   await new BackgroundControlGrants(chromeApi).clear();
 
                   // A Stop/Revoke that raced the grant clear wins. Do not enable
@@ -1593,7 +1595,9 @@ export function installBackgroundCoordinator(chromeApi, options={}) {
                   if (pendingAfterClear.record)
                     throw coordinatorError('BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','BLOCKED');
                 } catch {
-                  await failClosedSessionAuthorization(chromeApi,sessionAuthorization);
+                  await failClosedSessionAuthorization(chromeApi,sessionAuthorization,{
+                    requireGlobalLock:legacyGrantsClearAttempted
+                  });
                   throw coordinatorError('BACKGROUND_CONTROL_CLEAR_FAILED','UNKNOWN');
                 }
 
