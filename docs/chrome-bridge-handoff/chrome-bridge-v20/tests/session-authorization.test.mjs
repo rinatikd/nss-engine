@@ -136,6 +136,24 @@ test('revoke rejects a fulfilled no-op remove and succeeds only after exact abse
   assert.equal((await f.auth.status(epoch)).active, false);
 });
 
+test('revoke fails closed when exact lease read-back is unavailable, then permits a verified retry', async () => {
+  const f = fixture();
+  await f.auth.authorize({
+    sessionId, durationMinutes: 60, origins: allOrigins, bridgeEpoch: epoch
+  });
+  const get = f.chromeApi.storage.session.get;
+  f.chromeApi.storage.session.get = async key => {
+    if (key === 'bridgeSessionAuthorization') throw Error('SYNTHETIC_REVOKE_READBACK_UNAVAILABLE');
+    return get(key);
+  };
+  await assert.rejects(f.auth.revoke(), /SESSION_REVOKE_UNCONFIRMED/);
+  assert.equal(f.session.bridgeSessionAuthorization, undefined,
+    'the lease may have been removed, but an unavailable read-back cannot be acknowledged');
+  f.chromeApi.storage.session.get = get;
+  await f.auth.revoke();
+  assert.equal(f.session.bridgeSessionAuthorization, undefined);
+});
+
 test('revoke fails closed when secure session storage cannot be established', async () => {
   const f = fixture();
   delete f.chromeApi.storage.session.setAccessLevel;
