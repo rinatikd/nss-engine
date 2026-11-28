@@ -19,7 +19,8 @@ function fakeChrome(data={},options={}) {
         const failedKey=Object.keys(next).find(key=>
           options.failLocalSet===true || options.failLocalSet===key ||
           (Array.isArray(options.failLocalSet) && options.failLocalSet.includes(key)));
-        if (failedKey || (localWriteFailuresRemaining>0 &&
+        if (failedKey || (options.failLabModeEnable===true && next.bridgeMutationLabMode===true) ||
+            (localWriteFailuresRemaining>0 &&
             (options.failLocalSetOnce===true || options.failLocalSetOnce===Object.keys(next)[0]))) {
           if (localWriteFailuresRemaining>0) localWriteFailuresRemaining--;
           throw Error('SYNTHETIC_LOCAL_STORAGE_WRITE_FAILED:'+(failedKey||Object.keys(next)[0]));
@@ -29,7 +30,14 @@ function fakeChrome(data={},options={}) {
       }
     },session:{
       setAccessLevel:async opts=>calls.push(['session-restrict',opts.accessLevel]),
-      get:async keys=>keys===null?{...session}:Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,session[k]])),
+      get:async keys=>{
+        const requested=Array.isArray(keys)?keys:[keys];
+        if (options.failSessionAuthorizationReadback &&
+            options.sessionAuthorizationWriteAttempted===true &&
+            requested.includes('bridgeSessionAuthorization'))
+          throw Error('SYNTHETIC_SESSION_AUTH_READBACK_FAILED');
+        return keys===null?{...session}:Object.fromEntries(requested.map(k=>[k,session[k]]));
+      },
       set:async next=>{
         const failedKey=Object.keys(next).find(key=>
           options.failSessionSet===true || options.failSessionSet===key ||
@@ -46,12 +54,25 @@ function fakeChrome(data={},options={}) {
           blockedGrantWrite=true;
           await options.beforeGrantStoreWrite(next,session,calls);
         }
+        if (Object.hasOwn(next,'bridgeSessionAuthorization'))
+          options.sessionAuthorizationWriteAttempted=true;
+        if (options.beforeSessionSet) await options.beforeSessionSet(next,session,calls);
         Object.assign(session,next);
         calls.push(['session-set',next]);
+        if (options.persistThenFailSessionSet &&
+            Object.hasOwn(next,'bridgeSessionAuthorization'))
+          throw Error('SYNTHETIC_SESSION_WRITE_REJECTED_AFTER_PERSIST');
       },
-      remove:async key=>{if(options.failSessionRemove===key)throw Error('SYNTHETIC_SESSION_REMOVE_FAILED');delete session[key];}
+      remove:async key=>{
+        if(options.failSessionRemove===key)throw Error('SYNTHETIC_SESSION_REMOVE_FAILED');
+        if(options.ignoreSessionRemove===key)return;
+        delete session[key];
+      }
     }},
-    tabs:{get:async id=>({id,url:'https://claude.ai/chat/conversation_001'})},
+    tabs:{
+      get:async id=>({id,url:'https://claude.ai/chat/conversation_001'}),
+      query:async()=>[{id:42,url:'https://claude.ai/chat/conversation_001'}]
+    },
     permissions:{contains:async()=>true},
     scripting:{executeScript:async({target,args,world,func})=>{
       if (typeof func==='function' && !Array.isArray(args)) {
@@ -1080,6 +1101,32 @@ test('session_authorize failure to clear legacy grants sets a durable global loc
   assert.equal(restart.reason,'BACKGROUND_CONTROL_CLEAR_FAILED');
 });
 
+test('session_revoke rejects a resolved no-op lease removal and keeps the global deny lock',async()=>{
+  const c=fakeChrome({...LAB_STATE},{ignoreSessionRemove:'bridgeSessionAuthorization'});
+  await startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  installBackgroundCoordinator(c);
+  const result=await sendCoordinator(c,'dispatch',{
+    command:{name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',
+      expires:Date.now()+90000,args:{}}
+  },'transport-host.html');
+
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.notEqual(result.result?.revoked,true,
+    'a persisted lease must never be acknowledged as successfully revoked');
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0001');
+  assert.equal(c.data.bridgeMutationQuarantineLock,true,
+    'uncertain lease removal must retain the durable global deny lock');
+  assert.deepEqual(c.session.bridgeBackgroundControlGrants||{},
+    {},'legacy grants remain cleared while lease removal is uncertain');
+  assert.equal(c.calls.some(call=>call[0]==='script'&&
+    ['provider_prepare','provider_commit'].includes(call[1])),false);
+});
+
 test('partial grant/session cleanup failure makes Stop UNKNOWN and leaves a durable global reconnect lock',async()=>{
   const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeSessionAuthorization'});
   await startBackgroundTransport(c);
@@ -1598,4 +1645,380 @@ test('quarantine status restricts local and session audit stores before reading 
     ['restrict','TRUSTED_CONTEXTS'],
     ['session-restrict','TRUSTED_CONTEXTS']
   ]);
+});
+
+
+test('session_authorize validation failure preserves existing legacy grants',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-1');
+  const c=fakeChrome({...LAB_STATE});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:30,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.error,'SESSION_DURATION_INVALID');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationQuarantineLock,undefined);
+
+  const retry=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  assert.equal(retry.result?.active,true,'a clean validation failure must not strand the control-clear fence');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0002');
+});
+
+test('session_authorize SESSION_ALREADY_ACTIVE preserves legacy grants',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-2');
+  const c=fakeChrome({...LAB_STATE});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeSessionAuthorization=sessionLease();
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.error,'SESSION_ALREADY_ACTIVE');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
+  assert.equal(c.session.bridgeSessionAuthorization.sessionId,'session_0001');
+});
+
+test('session_authorize accepts a rejected storage write only after exact lease read-back',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-3');
+  const c=fakeChrome({...LAB_STATE},{persistThenFailSessionSet:true});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.result?.active,true);
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0002');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
+  assert.equal(c.data.bridgeMutationLabMode,true);
+  assert.equal(c.data.bridgeMutationQuarantineLock,undefined);
+});
+
+test('session_authorize grant-clear failure revokes the lease and installs durable quarantine',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-4');
+  const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeBackgroundControlGrants'});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
+  assert.equal(c.data.bridgeMutationLabMode,false);
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+});
+
+test('session_authorize lab-mode enable failure revokes lease and keeps global lock',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-5');
+  const c=fakeChrome({...LAB_STATE},{failLabModeEnable:true});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.session.bridgeBackgroundControlGrants,undefined);
+  assert.equal(c.data.bridgeMutationLabMode,false);
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+});
+
+
+test('session_authorize pre-persist write rejection preserves grants after verified compensation',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-write-reject');
+  const c=fakeChrome({...LAB_STATE},{failSessionSet:'bridgeSessionAuthorization'});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.error,'SESSION_AUTH_PERSISTENCE_FAILED');
+  assert.equal(result.dispatchState,'NOT_PERFORMED');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
+  assert.equal(c.data.bridgeMutationQuarantineLock,undefined,
+    'verified lease removal with untouched legacy grants does not require a global lock');
+});
+
+test('session_authorize read-back failure after write revokes lease and preserves legacy grants under lock',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-readback-fail');
+  const c=fakeChrome({...LAB_STATE},{failSessionAuthorizationReadback:true});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+});
+
+test('Stop racing session lease persistence prevents legacy cleanup and lab-mode enable',async()=>{
+  let stopPromise=null;
+  let coordinator;
+  const c=fakeChrome({...LAB_STATE},{beforeSessionSet:async next=>{
+    if(Object.hasOwn(next,'bridgeSessionAuthorization')&&!stopPromise)
+      stopPromise=coordinator.stopBackgroundTransport(c);
+  }});
+  coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-stop-race');
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  if(stopPromise) await stopPromise;
+
+  assert.equal(result.error,'BACKGROUND_STOP_IN_PROGRESS');
+  assert.equal(result.dispatchState,'BLOCKED');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationLabMode,false);
+  assert.equal(c.calls.some(call=>call[0]==='set'&&call[1]?.bridgeMutationLabMode===true),false,
+    'a Stop fence must win before the mutation mode can be enabled');
+});
+
+
+test('session_authorize detects a grant removal that resolves without clearing storage',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-grant-readback');
+  const c=fakeChrome({...LAB_STATE},{ignoreSessionRemove:'bridgeBackgroundControlGrants'});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const result=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+
+  assert.equal(result.error,'BACKGROUND_CONTROL_CLEAR_FAILED');
+  assert.equal(result.dispatchState,'UNKNOWN');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42']?.origin,'https://claude.ai');
+  assert.equal(c.data.bridgeMutationQuarantineLock,true);
+});
+
+
+test('concurrent authorization and Revoke are fenced until the first lease commit settles',async()=>{
+  let releaseWrite;
+  let signalWriteEntered;
+  const writeEntered=new Promise(resolve=>{signalWriteEntered=resolve;});
+  const writeGate=new Promise(resolve=>{releaseWrite=resolve;});
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-concurrent');
+  const c=fakeChrome({...LAB_STATE},{beforeSessionSet:async next=>{
+    if(Object.hasOwn(next,'bridgeSessionAuthorization')){
+      signalWriteEntered();
+      await writeGate;
+    }
+  }});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const firstPromise=sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0002',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  await writeEntered;
+
+  const second=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0003',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  const revokeDuringCommit=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',args:{}
+  }},'transport-host.html');
+
+  releaseWrite();
+  const first=await firstPromise;
+
+  assert.equal(second.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(second.dispatchState,'BLOCKED');
+  assert.equal(revokeDuringCommit.error,'BACKGROUND_CONTROL_CLEAR_IN_PROGRESS');
+  assert.equal(revokeDuringCommit.dispatchState,'BLOCKED');
+  assert.equal(first.result?.active,true);
+  assert.equal(c.session.bridgeSessionAuthorization?.sessionId,'session_0002');
+  assert.equal(c.session.bridgeBackgroundControlGrants?.['42'],undefined);
+  assert.equal(c.calls.filter(call=>call[0]==='session-set'&&
+    Object.hasOwn(call[1]||{},'bridgeSessionAuthorization')).length,1);
+
+  const revokeRetry=await sendCoordinator(c,'dispatch',{command:{
+    name:'session_revoke',bridgeEpoch:'bridge_epoch_0001',args:{}
+  }},'transport-host.html');
+  assert.equal(revokeRetry.result?.revoked,true,'Revoke must succeed when retried after the authorization transaction');
+  assert.equal(c.session.bridgeSessionAuthorization,undefined);
+  assert.equal(c.data.bridgeMutationLabMode,false);
+});
+
+
+test('per-tab Revoke rechecks session lease inside the serialized control lane',async()=>{
+  let releaseAuthWrite,signalAuthWrite;
+  const authWriteEntered=new Promise(resolve=>{signalAuthWrite=resolve;});
+  const authWriteGate=new Promise(resolve=>{releaseAuthWrite=resolve;});
+  const coordinator=await import('../extension/background-coordinator.js?per-tab-revoke-session-race');
+  const c=fakeChrome({...LAB_STATE},{beforeSessionSet:async next=>{
+    if(Object.hasOwn(next,'bridgeSessionAuthorization')){
+      signalAuthWrite();
+      await authWriteGate;
+    }
+  }});
+  await coordinator.startBackgroundTransport(c);
+  c.session.bridgeBackgroundControlGrants={
+    '42':{origin:'https://claude.ai',expires:Date.now()+60000}
+  };
+  coordinator.installBackgroundCoordinator(c);
+  await sendCoordinator(c,'transport-status',{
+    status:{state:'connected',connected:true}
+  },'transport-host.html');
+
+  const authorization=sendCoordinator(c,'dispatch',{command:{
+    name:'session_authorize',bridgeEpoch:'bridge_epoch_0001',
+    expires:Date.now()+90000,
+    args:{sessionId:'session_0004',durationMinutes:60,origins:['https://claude.ai']}
+  }},'transport-host.html');
+  await authWriteEntered;
+
+  // Capture the pre-commit (no lease) status snapshot, but delay its delivery
+  // until session_authorize has committed and released its control-lane fence.
+  const originalSessionGet=c.storage.session.get;
+  let staleStatusCaptured,releaseStaleStatus;
+  const staleCaptured=new Promise(resolve=>{staleStatusCaptured=resolve;});
+  const staleGate=new Promise(resolve=>{releaseStaleStatus=resolve;});
+  let held=false;
+  c.storage.session.get=async keys=>{
+    const snapshot=await originalSessionGet(keys);
+    if(!held && keys==='bridgeSessionAuthorization' &&
+       c.session.bridgeSessionAuthorization===undefined){
+      held=true;
+      staleStatusCaptured();
+      await staleGate;
+    }
+    return snapshot;
+  };
+
+  const revoke=sendCoordinator(c,'revoke-background-control',{tabId:42});
+  // Old ordering captures a stale inactive snapshot outside the control lane;
+  // the fixed ordering either blocks on the in-progress authorization fence or
+  // checks the committed lease only after acquiring the shared lane.
+  const stage=await Promise.race([
+    staleCaptured.then(()=> 'stale-status-captured'),
+    revoke.then(()=> 'revoke-settled')
+  ]);
+  releaseAuthWrite();
+  const authorized=await authorization;
+  if(stage==='stale-status-captured') releaseStaleStatus();
+  const revoked=await revoke;
+
+  assert.equal(authorized.result?.active,true);
+  assert.notEqual(revoked.ok,true,
+    'per-tab Revoke must never report success against a concurrently committed origin-wide lease');
+  assert.ok(['BACKGROUND_CONTROL_CLEAR_IN_PROGRESS','SESSION_WIDE_REVOCATION_REQUIRED']
+    .includes(revoked.error), 'the denial must identify the active authorization fence or lease scope');
+  assert.equal(revoked.outcome,'NOT_PERFORMED');
+  assert.equal(c.session.bridgeSessionAuthorization?.status,'active');
+  assert.deepEqual(c.data.bridgeMutationRevokingTabs||[],
+    [],'a scope denial must clean up its temporary durable tab fence');
+  assert.deepEqual(c.session.bridgeMutationRevokingTabs||[],[],
+    'the session-store tab fence must also be removed');
 });
