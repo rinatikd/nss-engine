@@ -1664,6 +1664,16 @@ test('replacement worker blocks legacy and session mutation paths during persist
   replacement.installBackgroundCoordinator(c);
   const replacementListener=c.listeners.at(-1);
 
+  const compatibilityFence=await sendCoordinatorTo(c,replacementListener,'dispatch',{command:{
+    name:'browser_click',bridgeEpoch:'bridge_epoch_0001',expires:Date.now()+90000,
+    args:{tabId:42,selector:'button.synthetic'}
+  }},'transport-host.html');
+  assert.equal(compatibilityFence.error,'BACKGROUND_MUTATIONS_DISABLED',
+    'even an older worker that does not know the marker must observe mutation mode disabled');
+
+  // Exercise the marker guard independently of the legacy mode guard. This is
+  // a synthetic stale-setting injection; no live storage or browser is involved.
+  c.data.bridgeMutationLabMode=true;
   const legacy=await sendCoordinatorTo(c,replacementListener,'dispatch',{command:{
     name:'browser_click',bridgeEpoch:'bridge_epoch_0001',expires:Date.now()+90000,
     args:{tabId:42,selector:'button.synthetic'}
