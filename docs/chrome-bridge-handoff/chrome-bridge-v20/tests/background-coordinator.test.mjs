@@ -1610,12 +1610,13 @@ test('quarantine status restricts local and session audit stores before reading 
 
 
 test('session_authorize validation failure preserves existing legacy grants',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-1');
   const c=fakeChrome({...LAB_STATE});
-  await startBackgroundTransport(c);
+  await coordinator.startBackgroundTransport(c);
   c.session.bridgeBackgroundControlGrants={
     '42':{origin:'https://claude.ai',expires:Date.now()+60000}
   };
-  installBackgroundCoordinator(c);
+  coordinator.installBackgroundCoordinator(c);
   await sendCoordinator(c,'transport-status',{
     status:{state:'connected',connected:true}
   },'transport-host.html');
@@ -1633,13 +1634,14 @@ test('session_authorize validation failure preserves existing legacy grants',asy
 });
 
 test('session_authorize SESSION_ALREADY_ACTIVE preserves legacy grants',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-2');
   const c=fakeChrome({...LAB_STATE});
-  await startBackgroundTransport(c);
+  await coordinator.startBackgroundTransport(c);
   c.session.bridgeSessionAuthorization=sessionLease();
   c.session.bridgeBackgroundControlGrants={
     '42':{origin:'https://claude.ai',expires:Date.now()+60000}
   };
-  installBackgroundCoordinator(c);
+  coordinator.installBackgroundCoordinator(c);
   await sendCoordinator(c,'transport-status',{
     status:{state:'connected',connected:true}
   },'transport-host.html');
@@ -1656,12 +1658,13 @@ test('session_authorize SESSION_ALREADY_ACTIVE preserves legacy grants',async()=
 });
 
 test('session_authorize accepts a rejected storage write only after exact lease read-back',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-3');
   const c=fakeChrome({...LAB_STATE},{persistThenFailSessionSet:true});
-  await startBackgroundTransport(c);
+  await coordinator.startBackgroundTransport(c);
   c.session.bridgeBackgroundControlGrants={
     '42':{origin:'https://claude.ai',expires:Date.now()+60000}
   };
-  installBackgroundCoordinator(c);
+  coordinator.installBackgroundCoordinator(c);
   await sendCoordinator(c,'transport-status',{
     status:{state:'connected',connected:true}
   },'transport-host.html');
@@ -1680,12 +1683,13 @@ test('session_authorize accepts a rejected storage write only after exact lease 
 });
 
 test('session_authorize grant-clear failure revokes the lease and installs durable quarantine',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-4');
   const c=fakeChrome({...LAB_STATE},{failSessionRemove:'bridgeBackgroundControlGrants'});
-  await startBackgroundTransport(c);
+  await coordinator.startBackgroundTransport(c);
   c.session.bridgeBackgroundControlGrants={
     '42':{origin:'https://claude.ai',expires:Date.now()+60000}
   };
-  installBackgroundCoordinator(c);
+  coordinator.installBackgroundCoordinator(c);
   await sendCoordinator(c,'transport-status',{
     status:{state:'connected',connected:true}
   },'transport-host.html');
@@ -1705,12 +1709,13 @@ test('session_authorize grant-clear failure revokes the lease and installs durab
 });
 
 test('session_authorize lab-mode enable failure revokes lease and keeps global lock',async()=>{
+  const coordinator=await import('../extension/background-coordinator.js?session-auth-preflight-5');
   const c=fakeChrome({...LAB_STATE},{failLabModeEnable:true});
-  await startBackgroundTransport(c);
+  await coordinator.startBackgroundTransport(c);
   c.session.bridgeBackgroundControlGrants={
     '42':{origin:'https://claude.ai',expires:Date.now()+60000}
   };
-  installBackgroundCoordinator(c);
+  coordinator.installBackgroundCoordinator(c);
   await sendCoordinator(c,'transport-status',{
     status:{state:'connected',connected:true}
   },'transport-host.html');
